@@ -146,6 +146,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
       "ssm:GetParameter",
       "ssm:GetParameters",
       "ssm:GetParametersByPath",
+      "ssm:GetParameterHistory",
       "kms:Decrypt",
       "lambda:GetFunction",
     ]

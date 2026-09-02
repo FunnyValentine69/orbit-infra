@@ -18,13 +18,14 @@ identical); also noted in the local CLAUDE.md.
 
 ## Apply sequence
 
-1. `bootstrap/preflight.sh` (must exit 0)
-2. `terraform -chdir=bootstrap init` (local state)
-3. `terraform -chdir=bootstrap plan`
-4. `terraform -chdir=bootstrap apply`
-5. Copy `backend.tf.example` to `backend.tf`
-6. `terraform -chdir=bootstrap init -migrate-state`
-7. Commit `backend.tf`
+1. `rm -f bootstrap/backend_override.tf`
+2. `bootstrap/preflight.sh` (must exit 0)
+3. `terraform -chdir=bootstrap init` (local state)
+4. `terraform -chdir=bootstrap plan`
+5. `make bootstrap-apply TARGET=aws` (sets `AWS_PROFILE` for preflight and terraform together)
+6. Copy `backend.tf.example` to `backend.tf`
+7. `terraform -chdir=bootstrap init -migrate-state`
+8. Commit `backend.tf`
 
 Terraform auto-loads `terraform.tfvars` from the `-chdir` directory, so
 neither step above needs an explicit `-var-file` flag.

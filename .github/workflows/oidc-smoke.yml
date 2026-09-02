@@ -86,6 +86,12 @@ jobs:
               `| ref | \`${claims.ref}\` |`,
             ].join('\n');
 
+            core.info(`claim sub=${claims.sub}`);
+            core.info(`claim aud=${claims.aud}`);
+            core.info(`claim repository_id=${claims.repository_id}`);
+            core.info(`claim repository_owner_id=${claims.repository_owner_id}`);
+            core.info(`claim ref=${claims.ref}`);
+
             await core.summary.addRaw(summary).write();
             core.setOutput('sub', claims.sub);
 
