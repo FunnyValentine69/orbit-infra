@@ -21,6 +21,12 @@ variable "localstack_container_endpoint" {
   default     = "http://host.docker.internal:4566"
 }
 
+variable "localstack_use_ambient_creds" {
+  description = "When target = \"localstack\", use the ambient AWS credentials (e.g. an assumed deployer-role session) instead of the hardcoded \"test\"/\"test\" static keys. Used to prove the deployer IAM policy against LocalStack (TODO.md P2-7)."
+  type        = bool
+  default     = false
+}
+
 variable "region" {
   description = "AWS region"
   type        = string

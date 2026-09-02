@@ -48,6 +48,20 @@ bootstrap step; CI never uses static keys.
   they run against LocalStack in CI (see ADR 0008).
 - The local IAM-user deviation depends on deactivating keys between
   sessions; documented rather than hidden.
+- The `deployer` role's environment-mutation rights are an enumerated,
+  least-privilege policy (`bootstrap/roles.tf`), not the broad
+  `EnvironmentMutationPlaceholder` statement used through Phase 2's
+  module-building work: separate statements cover EC2 networking, ALB,
+  ECS, Cloud Map, CloudWatch log groups, Secrets Manager, the preview
+  data bucket, and the ECS execution/task IAM roles, each scoped to a
+  resource ARN pattern where AWS supports resource-level permissions and
+  to `resources = ["*"]` only where it documents none (EC2 VPC/subnet/
+  route-table/IGW/endpoint/SG lifecycle, ELBv2 create/register/tag
+  calls, ECS `RegisterTaskDefinition`/`CreateService`, Cloud Map
+  namespace/service, `tag:GetResources`). An explicit `Deny` statement
+  caps the name-substring-scoped IAM grants so the deployer can never
+  mutate or pass its own role, `plan-reader`, or `publisher` (TODO.md
+  P2-7).
 
 ## Alternatives considered
 
