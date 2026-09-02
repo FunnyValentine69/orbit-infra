@@ -8,6 +8,11 @@ terraform.tfstate.*
 bootstrap/backend_override.tf
 bootstrap/.terraform-localstack/
 bootstrap/terraform.localstack.tfstate*
+envs/preview/backend_override.tf
+envs/preview/.terraform-localstack/
+envs/preview/terraform.localstack.tfstate*
+envs/**/.terraform/
+**/terraform.tfstate*
 
 # Local-only
 .env

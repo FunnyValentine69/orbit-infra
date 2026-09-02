@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint check-env-id
 
 TARGET ?= aws
 # preflight and terraform must check the same account and region
@@ -53,3 +53,55 @@ localstack-status:
 
 # Intentionally no bootstrap-destroy target: every bootstrap resource has
 # prevent_destroy = true and this state must never be torn down via make.
+
+# envs/preview: TARGET and ENV_ID are both required for plan/apply/destroy.
+OPERATOR_CIDR ?= $(shell curl -s https://checkip.amazonaws.com | awk '{print $$1"/32"}')
+
+ifeq ($(TARGET),localstack)
+plan apply destroy: check-env-id
+
+check-env-id:
+	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
+
+plan:
+	cp envs/preview/localstack.backend_override.tf.example envs/preview/backend_override.tf
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview plan -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+
+apply:
+	cp envs/preview/localstack.backend_override.tf.example envs/preview/backend_override.tf
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview apply -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR) -auto-approve
+
+destroy:
+	cp envs/preview/localstack.backend_override.tf.example envs/preview/backend_override.tf
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR) -auto-approve
+else
+plan apply destroy: check-env-id
+
+check-env-id:
+	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
+
+plan:
+	rm -f envs/preview/backend_override.tf
+	terraform -chdir=envs/preview plan -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+
+apply:
+	rm -f envs/preview/backend_override.tf
+	terraform -chdir=envs/preview apply -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+
+destroy:
+	rm -f envs/preview/backend_override.tf
+	terraform -chdir=envs/preview destroy -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+endif
+
+test:
+	terraform -chdir=modules/network test
+
+lint:
+	terraform -chdir=modules/network fmt -check -diff
+	terraform -chdir=envs/preview fmt -check -diff
+	tflint --chdir modules/network
+	tflint --chdir envs/preview
+	checkov -d modules -d envs --quiet --compact
