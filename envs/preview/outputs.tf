@@ -49,3 +49,11 @@ output "redis_dns_name" {
 output "clickhouse_dns_name" {
   value = module.clickhouse.discovery_dns_name
 }
+
+output "alb_dns_name" {
+  value = aws_lb.this.dns_name
+}
+
+output "api_url" {
+  value = "http://${aws_lb.this.dns_name}"
+}

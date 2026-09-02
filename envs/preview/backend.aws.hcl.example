@@ -1,0 +1,7 @@
+# Copy this file to backend.aws.hcl (or let the Makefile fall back to this
+# example when backend.aws.hcl is absent). No secrets here; the per-env
+# `key` is injected separately by the Makefile, not set in this file.
+bucket       = "orbit-infra-79s5rw-tfstate"
+region       = "us-east-1"
+use_lockfile = true
+encrypt      = true
