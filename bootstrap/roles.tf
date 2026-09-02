@@ -313,7 +313,17 @@ resource "aws_iam_policy" "task_boundary" {
 
 # --- deployer permissions ---
 
-data "aws_iam_policy_document" "deployer" {
+# F3: deployer permissions, split into customer-managed policies
+# (aws_iam_policy_document.deployer_<group> below) so each attached
+# managed-policy document stays under the AWS 6,144 non-whitespace-
+# character quota; the prior single inline aws_iam_role_policy
+# (~13,966 stripped chars) exceeded the 10,240 inline-aggregate quota.
+# Grouped by service per PR#2 Tier 2b review F3; bootstrap/
+# policy-size-check.sh enforces both quotas in CI via `scripts/gates.sh
+# policy-size`. Statement content/conditions are unchanged from the
+# prior single deployer document except where F1/F4/F5/F6 edited them.
+
+data "aws_iam_policy_document" "deployer_state" {
   # (a) preview env terraform state + apply leases: read/write/list.
   statement {
     sid     = "StateAndLeaseObjects"
@@ -337,7 +347,21 @@ data "aws_iam_policy_document" "deployer" {
       values   = ["envs/preview/*", "leases/*"]
     }
   }
+}
 
+
+
+resource "aws_iam_policy" "deployer_state" {
+  name   = "${var.name}-deployer-state"
+  policy = data.aws_iam_policy_document.deployer_state.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+data "aws_iam_policy_document" "deployer_ec2" {
   # --- (b) EC2 networking. Every action below IS resource-scoped per the
   # verified condition-key table (iam-condition-keys.md, EC2 section);
   # `resources = ["*"]` is kept (the ARN is unknown before create, and
@@ -362,6 +386,7 @@ data "aws_iam_policy_document" "deployer" {
       "ec2:DescribeSecurityGroups",
       "ec2:DescribeSecurityGroupRules", # not one of the table's 7 tested Describe* rows; treated consistently, flagged
       "ec2:DescribeTags",
+      "ec2:DescribeNetworkInterfaces", # F6: ENI discovery only for SG-delete-path lookups; no ENI deletion granted
     ]
     resources = ["*"]
   }
@@ -413,12 +438,20 @@ data "aws_iam_policy_document" "deployer" {
         "CreateRouteTable",
         "CreateInternetGateway",
         "CreateVpcEndpoint",
+        "AuthorizeSecurityGroupIngress",
+        "AuthorizeSecurityGroupEgress",
       ]
     }
   }
 
-  # AuthorizeSecurityGroupIngress/Egress create the security-group-rule
-  # resource and support tag-on-create per the table.
+  # F4: AuthorizeSecurityGroupIngress/Egress create the security-group-rule
+  # resource and support tag-on-create per the table, but ONLY the two
+  # separate-resource rules (aws_vpc_security_group_ingress_rule/
+  # egress_rule in envs/preview/main.tf, which set `tags =`) exercise
+  # this path; the request-tag condition never matches for those calls.
+  # The RequestTag path stays scoped to the security-group-rule resource
+  # type and is paired with the CreateAction values added to
+  # Ec2CreateTagsForCreateActions above, per F4.
   statement {
     sid    = "Ec2SecurityGroupRuleCreateWithTag"
     effect = "Allow"
@@ -435,6 +468,16 @@ data "aws_iam_policy_document" "deployer" {
     }
   }
 
+  # F4: AuthorizeSecurityGroupIngress/Egress and Revoke* are also allowed
+  # here, scoped to the pre-existing security-group* resource's
+  # ec2:ResourceTag (never aws:RequestTag), so the inline ingress/egress
+  # blocks in modules/network/main.tf and envs/preview/main.tf (which
+  # issue Authorize/Revoke calls with no tags on the call itself) keep
+  # working. ec2:ReplaceRoute/ReplaceRouteTableAssociation/
+  # ModifySecurityGroupRules are not covered by iam-condition-keys.md (no
+  # verified condition key), but are conditioned here on the same
+  # ec2:ResourceTag/Project pattern as their sibling route-table*/
+  # security-group* actions per F1 direction, not table backing.
   statement {
     sid    = "Ec2ModifyDeleteWithResourceTag"
     effect = "Allow"
@@ -449,13 +492,18 @@ data "aws_iam_policy_document" "deployer" {
       "ec2:DeleteRouteTable",
       "ec2:CreateRoute",
       "ec2:DeleteRoute",
+      "ec2:ReplaceRoute",
       "ec2:AssociateRouteTable",
       "ec2:DisassociateRouteTable",
+      "ec2:ReplaceRouteTableAssociation",
       "ec2:DeleteVpcEndpoints",
       "ec2:ModifyVpcEndpoint",
       "ec2:DeleteSecurityGroup",
+      "ec2:AuthorizeSecurityGroupIngress",
+      "ec2:AuthorizeSecurityGroupEgress",
       "ec2:RevokeSecurityGroupIngress",
       "ec2:RevokeSecurityGroupEgress",
+      "ec2:ModifySecurityGroupRules",
     ]
     resources = ["*"]
 
@@ -480,23 +528,21 @@ data "aws_iam_policy_document" "deployer" {
       values   = [var.project_tag]
     }
   }
+}
 
-  # ReplaceRoute/ReplaceRouteTableAssociation/ModifySecurityGroupRules are
-  # not covered by iam-condition-keys.md; no verified condition key, kept
-  # unconditioned per R1.
-  statement {
-    #checkov:skip=CKV_AWS_111:not covered by iam-condition-keys.md (EC2 section); no verified condition key exists
-    #checkov:skip=CKV_AWS_356:same as above
-    sid    = "Ec2UntabledActions"
-    effect = "Allow"
-    actions = [
-      "ec2:ReplaceRoute",
-      "ec2:ReplaceRouteTableAssociation",
-      "ec2:ModifySecurityGroupRules",
-    ]
-    resources = ["*"]
+
+
+resource "aws_iam_policy" "deployer_ec2" {
+  name   = "${var.name}-deployer-ec2"
+  policy = data.aws_iam_policy_document.deployer_ec2.json
+
+  lifecycle {
+    prevent_destroy = true
   }
+}
 
+
+data "aws_iam_policy_document" "deployer_elb_ecs" {
   # --- (c) ALB + target group + listener. ---
   statement {
     #checkov:skip=CKV_AWS_111:table-confirmed * only ELBv2 Describe* actions, zero condition keys (iam-condition-keys.md ELBv2 section)
@@ -532,6 +578,11 @@ data "aws_iam_policy_document" "deployer" {
     }
   }
 
+  # F1: RegisterTargets/DeregisterTargets are not covered by
+  # iam-condition-keys.md (no verified condition key), but are
+  # conditioned here on the same elasticloadbalancing:ResourceTag/Project
+  # pattern as their sibling targetgroup* actions per F1 direction, not
+  # table backing.
   statement {
     sid    = "ElbModifyDeleteWithResourceTag"
     effect = "Allow"
@@ -543,6 +594,8 @@ data "aws_iam_policy_document" "deployer" {
       "elasticloadbalancing:ModifyTargetGroupAttributes",
       "elasticloadbalancing:DeleteListener",
       "elasticloadbalancing:ModifyListener",
+      "elasticloadbalancing:RegisterTargets",
+      "elasticloadbalancing:DeregisterTargets",
     ]
     resources = ["*"]
 
@@ -591,18 +644,15 @@ data "aws_iam_policy_document" "deployer" {
     }
   }
 
-  # RegisterTargets/DeregisterTargets/DescribeTargetHealth are not covered
-  # by iam-condition-keys.md; no verified condition key, kept unconditioned.
+  # DescribeTargetHealth is not covered by iam-condition-keys.md; no
+  # verified condition key, kept unconditioned (read-only, consistent
+  # with the ELBv2 Describe* pattern).
   statement {
     #checkov:skip=CKV_AWS_111:not covered by iam-condition-keys.md (ELBv2 section); no verified condition key exists
     #checkov:skip=CKV_AWS_356:same as above
-    sid    = "ElbUntabledActions"
-    effect = "Allow"
-    actions = [
-      "elasticloadbalancing:RegisterTargets",
-      "elasticloadbalancing:DeregisterTargets",
-      "elasticloadbalancing:DescribeTargetHealth",
-    ]
+    sid       = "ElbDescribeTargetHealth"
+    effect    = "Allow"
+    actions   = ["elasticloadbalancing:DescribeTargetHealth"]
     resources = ["*"]
   }
 
@@ -800,7 +850,21 @@ data "aws_iam_policy_document" "deployer" {
     actions   = ["servicediscovery:UntagResource"]
     resources = ["*"]
   }
+}
 
+
+
+resource "aws_iam_policy" "deployer_elb_ecs" {
+  name   = "${var.name}-deployer-elb-ecs"
+  policy = data.aws_iam_policy_document.deployer_elb_ecs.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+data "aws_iam_policy_document" "deployer_data" {
   # --- (f) CloudWatch log groups, /orbit/<env_id>/<name>. ---
   statement {
     #checkov:skip=CKV_AWS_111:table-confirmed * only (DescribeLogGroups) (iam-condition-keys.md CloudWatch Logs section, A3)
@@ -875,12 +939,14 @@ data "aws_iam_policy_document" "deployer" {
     ]
     resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name}-*"]
 
-    # secretsmanager:ResourceTag/tag-key is the table-verified literal key
-    # name for this service (NOT .../${TagKey}; iam-condition-keys.md
-    # Secrets Manager section).
+    # F5: Secrets Manager has no service-specific ResourceTag condition
+    # key (iam-condition-keys.md Secrets Manager section documents only
+    # the literal string "tag-key", an unresolved AWS-docs template
+    # artifact, not a real condition key); the generic aws:ResourceTag
+    # key, also documented present on this row, is used instead.
     condition {
       test     = "StringEquals"
-      variable = "secretsmanager:ResourceTag/tag-key"
+      variable = "aws:ResourceTag/Project"
       values   = [var.project_tag]
     }
   }
@@ -1000,6 +1066,52 @@ data "aws_iam_policy_document" "deployer" {
     resources = ["arn:aws:s3:::${var.name}-*"]
   }
 
+  # (j) the preview data bucket (envs/preview aws_s3_bucket.data, named
+  # "<name>-<env_id>-data") plus its public-access-block and object
+  # lifecycle. Scoped to bucket ARNs containing the project name (see (i)
+  # for why a single env_id can't be baked in here).
+  statement {
+    sid    = "EnvDataBucketLifecycle"
+    effect = "Allow"
+    actions = [
+      "s3:CreateBucket",
+      "s3:DeleteBucket",
+      "s3:GetBucketPolicy",
+      "s3:PutBucketPolicy",
+      "s3:DeleteBucketPolicy",
+      "s3:GetBucketPublicAccessBlock",
+      "s3:PutBucketPublicAccessBlock",
+      "s3:GetBucketTagging",
+      "s3:PutBucketTagging",
+      "s3:GetBucketVersioning",
+      "s3:PutBucketVersioning",
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+      "s3:ListBucket",
+      "s3:ListBucketVersions",
+    ]
+    resources = [
+      "arn:aws:s3:::${var.name}-*-data",
+      "arn:aws:s3:::${var.name}-*-data/*",
+    ]
+  }
+}
+
+
+
+resource "aws_iam_policy" "deployer_data" {
+  name   = "${var.name}-deployer-data"
+  policy = data.aws_iam_policy_document.deployer_data.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+data "aws_iam_policy_document" "deployer_iam" {
   # --- (i) execution/task IAM roles for ECS services. ---
   # A1(ii): CreateRole must set the boundary to the exact task-boundary
   # policy ARN.
@@ -1172,39 +1284,21 @@ data "aws_iam_policy_document" "deployer" {
       values   = ["ecs-tasks.amazonaws.com"]
     }
   }
+}
 
-  # (j) the preview data bucket (envs/preview aws_s3_bucket.data, named
-  # "<name>-<env_id>-data") plus its public-access-block and object
-  # lifecycle. Scoped to bucket ARNs containing the project name (see (i)
-  # for why a single env_id can't be baked in here).
-  statement {
-    sid    = "EnvDataBucketLifecycle"
-    effect = "Allow"
-    actions = [
-      "s3:CreateBucket",
-      "s3:DeleteBucket",
-      "s3:GetBucketPolicy",
-      "s3:PutBucketPolicy",
-      "s3:DeleteBucketPolicy",
-      "s3:GetBucketPublicAccessBlock",
-      "s3:PutBucketPublicAccessBlock",
-      "s3:GetBucketTagging",
-      "s3:PutBucketTagging",
-      "s3:GetBucketVersioning",
-      "s3:PutBucketVersioning",
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject",
-      "s3:DeleteObjectVersion",
-      "s3:ListBucket",
-      "s3:ListBucketVersions",
-    ]
-    resources = [
-      "arn:aws:s3:::${var.name}-*-data",
-      "arn:aws:s3:::${var.name}-*-data/*",
-    ]
+
+
+resource "aws_iam_policy" "deployer_iam" {
+  name   = "${var.name}-deployer-iam"
+  policy = data.aws_iam_policy_document.deployer_iam.json
+
+  lifecycle {
+    prevent_destroy = true
   }
+}
 
+
+data "aws_iam_policy_document" "deployer_guard" {
   # Hard cap: see the historical rationale kept from the pre-PR#2 version
   # of this file — Deny always wins over Allow in IAM evaluation, so this
   # statement is the actual enforcement point keeping the deployer from
@@ -1234,15 +1328,77 @@ data "aws_iam_policy_document" "deployer" {
   }
 }
 
-resource "aws_iam_role_policy" "deployer" {
-  name   = "${var.name}-deployer"
-  role   = aws_iam_role.deployer.id
-  policy = data.aws_iam_policy_document.deployer.json
+
+
+resource "aws_iam_policy" "deployer_guard" {
+  name   = "${var.name}-deployer-guard"
+  policy = data.aws_iam_policy_document.deployer_guard.json
 
   lifecycle {
     prevent_destroy = true
   }
 }
+
+
+resource "aws_iam_role_policy_attachment" "deployer_state" {
+  role       = aws_iam_role.deployer.name
+  policy_arn = aws_iam_policy.deployer_state.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+resource "aws_iam_role_policy_attachment" "deployer_ec2" {
+  role       = aws_iam_role.deployer.name
+  policy_arn = aws_iam_policy.deployer_ec2.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+resource "aws_iam_role_policy_attachment" "deployer_elb_ecs" {
+  role       = aws_iam_role.deployer.name
+  policy_arn = aws_iam_policy.deployer_elb_ecs.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+resource "aws_iam_role_policy_attachment" "deployer_data" {
+  role       = aws_iam_role.deployer.name
+  policy_arn = aws_iam_policy.deployer_data.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+resource "aws_iam_role_policy_attachment" "deployer_iam" {
+  role       = aws_iam_role.deployer.name
+  policy_arn = aws_iam_policy.deployer_iam.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+
+resource "aws_iam_role_policy_attachment" "deployer_guard" {
+  role       = aws_iam_role.deployer.name
+  policy_arn = aws_iam_policy.deployer_guard.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 
 # --- publisher permissions ---
 

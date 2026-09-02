@@ -27,6 +27,17 @@ run_gate validate
 run_gate lint
 run_gate test
 
+# F3 (PR#2 Tier 2b): every aws_iam_policy/aws_iam_role_policy document
+# stays under AWS's size quotas; this needs a real LocalStack plan
+# (jq over the rendered JSON), so it runs directly rather than via `make`.
+if bootstrap/policy-size-check.sh >"$log_dir/gates-policy-size.log" 2>&1; then
+  echo "PASS: policy-size"
+else
+  echo "FAIL: policy-size"
+  cat "$log_dir/gates-policy-size.log"
+  status=1
+fi
+
 # No module or environment may declare a NAT gateway (ADR 0002 no-NAT
 # invariant); terraform test cannot assert against an absent resource
 # type, so this is checked structurally instead.
