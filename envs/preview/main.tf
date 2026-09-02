@@ -1,8 +1,8 @@
 provider "aws" {
   region = var.region
 
-  access_key = var.target == "localstack" ? "test" : null
-  secret_key = var.target == "localstack" ? "test" : null
+  access_key = var.target == "localstack" && !var.localstack_use_ambient_creds ? "test" : null
+  secret_key = var.target == "localstack" && !var.localstack_use_ambient_creds ? "test" : null
 
   skip_credentials_validation = var.target == "localstack" ? true : null
   skip_metadata_api_check     = var.target == "localstack" ? true : null

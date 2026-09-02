@@ -28,7 +28,7 @@
 - [x] P2-4 envs/preview composition: ALB with operator_cidr allowlist, per-environment S3 state keys, env-scoped LocalStack override; two concurrent environments verified
 - [x] P2-5 policy gates: repo-wide .tflint.hcl + .checkov.yaml, make validate/lint/test, scripts/gates.sh
 - [ ] P2-6 infracost breakdown and README cost line — deferred to P3-1 (runs in CI with the INFRACOST_API_KEY secret)
-- [ ] P2-7 narrow the deployer IAM statement in bootstrap/roles.tf to the exact actions the modules use; remove the five checkov skips there
+- [x] P2-7 narrow the deployer IAM statement in bootstrap/roles.tf to the exact actions the modules use; remove the five checkov skips there
 
 ## Phase 3 — CI/CD
 
