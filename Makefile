@@ -56,6 +56,7 @@ localstack-status:
 
 # envs/preview: TARGET and ENV_ID are both required for plan/apply/destroy.
 OPERATOR_CIDR ?= $(shell curl -sf --max-time 5 https://checkip.amazonaws.com | awk '{print $$1"/32"}')
+OPERATOR_CIDR := $(OPERATOR_CIDR)
 
 check-operator-cidr:
 	@if [ -z "$(OPERATOR_CIDR)" ]; then echo "OPERATOR_CIDR auto-detect failed; pass OPERATOR_CIDR=<cidr>" >&2; exit 1; fi
@@ -120,11 +121,12 @@ test:
 	@for d in envs/*/; do \
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \
-			sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$${d}backend_override.tf"; \
-			TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" init -reconfigure -input=false >/dev/null && \
-			TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" test; rc=$$?; \
-			rm -f "$${d}backend_override.tf"; \
-			[ $$rc -eq 0 ] || exit $$rc; \
+			( \
+				trap 'rm -f "$${d}backend_override.tf"' EXIT; \
+				sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$${d}backend_override.tf"; \
+				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" init -reconfigure -input=false >/dev/null && \
+				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" test; \
+			) || exit $$?; \
 		fi; \
 	done
 

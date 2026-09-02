@@ -12,3 +12,8 @@ output "service_name" {
   description = "Name of the underlying ECS service"
   value       = module.service.service_name
 }
+
+output "container_definitions_json" {
+  description = "The underlying ECS service's task definition container_definitions JSON string"
+  value       = module.service.container_definitions_json
+}

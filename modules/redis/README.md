@@ -6,7 +6,8 @@ memory cap, and a `redis-cli ping` health check.
 
 ## Variables
 
-`name` (default `"redis"`), `env_id`, `enabled`, `cluster_arn`, `image`
+`name` (default `"redis"`), `env_id` (1-12 lowercase alphanumerics and
+hyphens, no leading or trailing hyphen), `enabled`, `cluster_arn`, `image`
 (default `redis:7-alpine`; P3-2 replaces this with the private-ECR
 mirror digest), `subnet_ids`, `security_group_ids`,
 `cloud_map_namespace_id` / `register_service_discovery`, `namespace_name`

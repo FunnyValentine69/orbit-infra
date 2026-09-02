@@ -6,7 +6,7 @@ services, clickhouse, redis, S3 data bucket.
 ## Variables
 
 - `target` — `aws` (default) or `localstack`.
-- `env_id` — required; suffixes every resource name/tag.
+- `env_id` — required; suffixes every resource name/tag. Must be 1-12 lowercase alphanumerics and hyphens, with no leading or trailing hyphen.
 - `operator_cidr` — required, no default; CIDR allowed to reach the ALB
   on port 80 (ADR 0004). Never commit a real value — the Makefile
   resolves it via `checkip.amazonaws.com`, or set `OPERATOR_CIDR` in the

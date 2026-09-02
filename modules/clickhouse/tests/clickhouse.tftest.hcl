@@ -1,9 +1,3 @@
-# modules/ecs-service (upstream, not modifiable here) only exposes ARNs/
-# names as outputs, not container_definitions contents — so these mock
-# tests assert what's reachable via outputs (enabled/disabled signal,
-# this module's own port/dns outputs). The actual container command,
-# port mapping, env vars, and health check are verified against the real
-# ECS task definition during the LocalStack apply gate.
 mock_provider "aws" {
   override_resource {
     target = module.service.aws_iam_role.execution
@@ -28,6 +22,16 @@ variables {
   password_secret_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:orbit-test-clickhouse-password"
 }
 
+run "env_id_invalid_rejected" {
+  command = plan
+
+  variables {
+    env_id = "this-env-id-is-too-long"
+  }
+
+  expect_failures = [var.env_id]
+}
+
 run "disabled_yields_zero_resources" {
   command = plan
 
@@ -50,8 +54,18 @@ run "default_topology" {
   }
 
   assert {
-    condition     = output.port == 8123
-    error_message = "port output must be 8123"
+    condition     = jsondecode(output.container_definitions_json)[0].portMappings[0].containerPort == 8123
+    error_message = "container port mapping must be 8123"
+  }
+
+  assert {
+    condition     = contains([for s in jsondecode(output.container_definitions_json)[0].secrets : s.name], "CLICKHOUSE_PASSWORD")
+    error_message = "secrets must contain a CLICKHOUSE_PASSWORD entry"
+  }
+
+  assert {
+    condition     = contains([for e in jsondecode(output.container_definitions_json)[0].environment : e.name], "CLICKHOUSE_DB") && contains([for e in jsondecode(output.container_definitions_json)[0].environment : e.name], "CLICKHOUSE_USER")
+    error_message = "environment must contain CLICKHOUSE_DB and CLICKHOUSE_USER"
   }
 }
 

@@ -44,21 +44,21 @@ variable "env_id" {
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,11}$", var.env_id))
-    error_message = "env_id must be 1-12 lowercase letters, digits, or hyphens, starting alphanumeric: it is embedded in S3 bucket names, Cloud Map DNS names, and the 32-character IAM role prefix that the deployer policy matches on."
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$", var.env_id))
+    error_message = "env_id must be 1-12 lowercase letters, digits, or hyphens, starting alphanumeric, no leading or trailing hyphen: it is embedded in S3 bucket names, Cloud Map DNS names, and the 32-character IAM role prefix that the deployer policy matches on."
   }
 }
 
-# Validated and required now so `make plan` fails fast; consumed by the
-# ALB module added in a later phase-2 module (P2-2+).
-# tflint-ignore: terraform_unused_declarations
+# Validated and required now so `make plan` fails fast.
 variable "operator_cidr" {
   description = "CIDR allowed to reach the ALB"
   type        = string
 
   validation {
-    condition     = can(cidrhost(var.operator_cidr, 0)) && !contains(["0.0.0.0/0", "::/0"], var.operator_cidr) && can(tonumber(split("/", var.operator_cidr)[1])) && tonumber(split("/", var.operator_cidr)[1]) >= 8
-    error_message = "operator_cidr must be a valid CIDR narrower than /8; the ALB is never open to the world (ADR 0004)."
+    condition = can(cidrhost(var.operator_cidr, 0)) && !contains(["0.0.0.0/0", "::/0"], var.operator_cidr) && can(tonumber(split("/", var.operator_cidr)[1])) && (
+      strcontains(var.operator_cidr, ":") ? tonumber(split("/", var.operator_cidr)[1]) >= 32 : tonumber(split("/", var.operator_cidr)[1]) > 8
+    )
+    error_message = "operator_cidr must be a valid CIDR narrower than /8 (IPv4) or at least /32 (IPv6); the ALB is never open to the world (ADR 0004)."
   }
 }
 

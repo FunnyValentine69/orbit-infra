@@ -24,7 +24,8 @@ the full `var.name`.
 
 ## Variables
 
-`name`, `env_id`, `cluster_arn`, `image`, `command` (default `null`),
+`name`, `env_id` (1-12 lowercase alphanumerics and hyphens, no leading or
+trailing hyphen), `cluster_arn`, `image`, `command` (default `null`),
 `container_port`, `cpu` (default `256`), `memory` (default `512`), `env`,
 `secrets` (name => Secrets Manager ARN, default `{}`), `subnet_ids`,
 `security_group_ids`, `assign_public_ip` (default `false`), `enabled`

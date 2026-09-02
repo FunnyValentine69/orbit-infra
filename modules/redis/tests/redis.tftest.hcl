@@ -1,9 +1,3 @@
-# modules/ecs-service (upstream, not modifiable here) only exposes ARNs/
-# names as outputs, not container_definitions contents — so these mock
-# tests assert what's reachable via outputs (enabled/disabled signal,
-# env_id tag on the IAM role, this module's own port/dns outputs). The
-# actual container command, port mapping, and health check are verified
-# against the real ECS task definition during the LocalStack apply gate.
 mock_provider "aws" {
   override_resource {
     target = module.service.aws_iam_role.execution
@@ -25,6 +19,16 @@ variables {
   cluster_arn        = "arn:aws:ecs:us-east-1:000000000000:cluster/orbit-test"
   subnet_ids         = ["subnet-aaaaaaaa"]
   security_group_ids = ["sg-aaaaaaaa"]
+}
+
+run "env_id_invalid_rejected" {
+  command = plan
+
+  variables {
+    env_id = "this-env-id-is-too-long"
+  }
+
+  expect_failures = [var.env_id]
 }
 
 run "disabled_yields_zero_resources" {
@@ -49,8 +53,13 @@ run "default_topology" {
   }
 
   assert {
-    condition     = output.port == 6379
-    error_message = "port output must be 6379"
+    condition     = jsondecode(output.container_definitions_json)[0].portMappings[0].containerPort == 6379
+    error_message = "container port mapping must be 6379"
+  }
+
+  assert {
+    condition     = contains(jsondecode(output.container_definitions_json)[0].command, "--maxmemory") && contains(jsondecode(output.container_definitions_json)[0].command, "200mb")
+    error_message = "container command must set --maxmemory 200mb"
   }
 }
 

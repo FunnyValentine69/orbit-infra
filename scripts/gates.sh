@@ -27,12 +27,20 @@ run_gate test
 # No module or environment may declare a NAT gateway (ADR 0002 no-NAT
 # invariant); terraform test cannot assert against an absent resource
 # type, so this is checked structurally instead.
-if command grep -rn aws_nat_gateway modules/ envs/ --include=*.tf >/tmp/gates-no-nat-gateway.log 2>&1; then
+no_nat_log="$(mktemp)"
+command grep -rn aws_nat_gateway modules/ envs/ --include=*.tf >"$no_nat_log" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then
   echo "FAIL: no-nat-gateway"
-  cat /tmp/gates-no-nat-gateway.log
+  cat "$no_nat_log"
   status=1
-else
+elif [ "$rc" -eq 1 ]; then
   echo "PASS: no-nat-gateway"
+else
+  echo "FAIL: no-nat-gateway (grep error, exit $rc)"
+  cat "$no_nat_log"
+  status=1
 fi
+rm -f "$no_nat_log"
 
 exit "$status"

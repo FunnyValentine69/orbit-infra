@@ -24,6 +24,16 @@ variables {
   security_group_ids = ["sg-aaaaaaaa"]
 }
 
+run "env_id_invalid_rejected" {
+  command = plan
+
+  variables {
+    env_id = "this-env-id-is-too-long"
+  }
+
+  expect_failures = [var.env_id]
+}
+
 run "disabled_yields_zero_resources" {
   command = plan
 

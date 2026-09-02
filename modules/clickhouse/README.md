@@ -8,7 +8,8 @@ Manager ARN, plus an HTTP `/ping` health check with a 30s start period
 
 ## Variables
 
-`name` (default `"clickhouse"`), `env_id`, `enabled`, `cluster_arn`,
+`name` (default `"clickhouse"`), `env_id` (1-12 lowercase alphanumerics
+and hyphens, no leading or trailing hyphen), `enabled`, `cluster_arn`,
 `image` (default `clickhouse/clickhouse-server:24.3-alpine`; P3-2
 replaces this with the private-ECR mirror digest), `subnet_ids`,
 `security_group_ids`, `cloud_map_namespace_id` /

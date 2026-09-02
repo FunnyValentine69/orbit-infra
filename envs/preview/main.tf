@@ -139,6 +139,8 @@ resource "aws_lb_listener" "http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api.arn
   }
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-http" })
 }
 
 resource "aws_security_group" "service" {

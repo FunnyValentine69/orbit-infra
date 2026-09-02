@@ -81,8 +81,8 @@ Local, pre-CI policy gates (`.tflint.hcl`, `.checkov.yaml` at repo root):
 ```
 make validate     # terraform init -backend=false + validate, every module/env
 make lint         # terraform fmt -check, tflint --recursive, checkov
-make test         # terraform test, every module with a tests/ dir
-scripts/gates.sh  # runs all three above, PASS/FAIL summary; CI calls this from Phase 3 onward
+make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
+scripts/gates.sh  # runs all four above (validate, lint, test, no-nat-gateway), PASS/FAIL summary; CI calls this from Phase 3 onward
 ```
 
 ## Toolchain

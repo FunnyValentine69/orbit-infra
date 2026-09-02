@@ -36,6 +36,26 @@ run "env_id_too_long_rejected" {
   expect_failures = [var.env_id]
 }
 
+run "operator_cidr_too_wide_rejected" {
+  command = plan
+
+  variables {
+    operator_cidr = "10.0.0.0/8"
+  }
+
+  expect_failures = [var.operator_cidr]
+}
+
+run "env_id_trailing_hyphen_rejected" {
+  command = plan
+
+  variables {
+    env_id = "dev-"
+  }
+
+  expect_failures = [var.env_id]
+}
+
 run "valid_plan" {
   command = plan
 

@@ -26,7 +26,8 @@ caller must supply `default_tags` and this module additionally stamps
 
 ## Variables
 
-`name`, `env_id`, `cidr` (default `10.42.0.0/16`), `azs` (default: look up
+`name`, `env_id` (1-12 lowercase alphanumerics and hyphens, no leading or
+trailing hyphen), `cidr` (default `10.42.0.0/16`), `azs` (default: look up
 the first two available AZs), `enable_interface_endpoints` (default
 `true` — set `false` where LocalStack doesn't emulate a given service),
 `tags`.

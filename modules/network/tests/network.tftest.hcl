@@ -41,6 +41,16 @@ run "default_topology" {
   }
 }
 
+run "env_id_invalid_rejected" {
+  command = plan
+
+  variables {
+    env_id = "this-env-id-is-too-long"
+  }
+
+  expect_failures = [var.env_id]
+}
+
 run "interface_endpoints_disabled" {
   command = plan
 
