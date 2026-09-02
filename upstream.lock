@@ -1,0 +1,13 @@
+upstream_repo: SuperGokou/happyCoding
+upstream_sha: b1f1123f90000df49110b1fe81a8edf80365f28f
+recorded: 2026-09-02
+recorded_by: git -C $UPSTREAM_DIR rev-parse HEAD
+build_input_sha256: <pending P3-3>
+
+images:
+  orbit-api:
+    digest: <pending P3-3>
+  orbit-worker:
+    digest: <pending P3-3>
+  orbit-clickhouse:
+    digest: <pending P3-3>

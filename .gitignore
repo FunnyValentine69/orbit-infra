@@ -5,10 +5,15 @@ terraform.tfstate.*
 *.tfplan
 *.tfvars
 !*.tfvars.example
+bootstrap/backend_override.tf
+bootstrap/.terraform-localstack/
+bootstrap/terraform.localstack.tfstate*
 
 # Local-only
 .env
 CLAUDE.md
+.localstack/
+volume/
 
 # Upstream boundary
 **/init-clickhouse.sql

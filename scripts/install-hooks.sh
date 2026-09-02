@@ -8,7 +8,7 @@ fi
 
 cat > .git/hooks/pre-push <<'EOF'
 #!/usr/bin/env bash
-exec scripts/pre-push-guard.sh
+exec scripts/pre-push-guard.sh "$@"
 EOF
 
 chmod +x .git/hooks/pre-push
