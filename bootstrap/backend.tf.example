@@ -1,0 +1,12 @@
+# Copy this file to backend.tf AFTER the first local-state apply, then run
+# terraform init -migrate-state
+#
+# terraform {
+#   backend "s3" {
+#     bucket       = "orbit-infra-79s5rw-tfstate"
+#     key          = "bootstrap/terraform.tfstate"
+#     region       = "us-east-1"
+#     use_lockfile = true
+#     encrypt      = true
+#   }
+# }

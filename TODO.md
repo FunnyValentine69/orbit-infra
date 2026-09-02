@@ -15,7 +15,7 @@
 
 ## Phase 2 — Modules + gates
 
-(expanded when the phase starts)
+- [ ] P2-4 also: narrow the deployer IAM statement to the exact actions the modules use; remove the five checkov skips in bootstrap/roles.tf
 
 ## Phase 3 — CI/CD
 

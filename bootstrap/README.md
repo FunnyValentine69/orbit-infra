@@ -13,3 +13,15 @@ Run: `bootstrap/preflight.sh` (live, needs AWS SSO login),
 `bootstrap/preflight.sh --help`. Exit codes: 0 clean, 2 blocked, 3 no creds.
 
 The project suffix (SUFFIX/NAME) is recorded in the local CLAUDE.md.
+
+## Apply sequence
+
+1. `bootstrap/preflight.sh` (must exit 0)
+2. `terraform -chdir=bootstrap init` (local state)
+3. `terraform -chdir=bootstrap plan -var-file=terraform.tfvars`
+4. `terraform -chdir=bootstrap apply`
+5. Copy `backend.tf.example` to `backend.tf`
+6. `terraform -chdir=bootstrap init -migrate-state`
+7. Commit `backend.tf`
+
+Never run `terraform destroy` here — every resource has `prevent_destroy`.
