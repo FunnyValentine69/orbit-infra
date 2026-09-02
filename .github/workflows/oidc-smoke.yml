@@ -41,6 +41,11 @@
 # OIDC token for this repository regardless). No role trusts the
 # `pull_request` subject, so there is nothing for a fork PR to obtain even
 # without the guard.
+#
+# The `github.actor != 'dependabot[bot]'` clause skips Dependabot-actor
+# runs: Dependabot-triggered workflow runs cannot mint OIDC id-tokens
+# (GitHub withholds them), so every assume-* job would fail with a token
+# error rather than a meaningful AccessDenied/success verdict.
 
 name: oidc-smoke
 
@@ -61,7 +66,7 @@ jobs:
   decode-subject:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]'
     outputs:
       sub: ${{ steps.decode.outputs.sub }}
     steps:
@@ -99,7 +104,7 @@ jobs:
     needs: decode-subject
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]'
     steps:
       - name: Require AWS_ROLE_PLAN_READER
         run: |
@@ -207,7 +212,7 @@ jobs:
     needs: decode-subject
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]'
     steps:
       - name: Require AWS_ROLE_DEPLOYER
         run: |
@@ -315,7 +320,7 @@ jobs:
     needs: decode-subject
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]'
     steps:
       - name: Require AWS_ROLE_PUBLISHER
         run: |

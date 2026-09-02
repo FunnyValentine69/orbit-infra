@@ -37,3 +37,4 @@
 ## Phase 5 — Drift, sweeper, threat model, polish
 
 (expanded when the phase starts)
+- [ ] P5-x: per-workflow OIDC subject binding (verify the customized claim on a real token first)

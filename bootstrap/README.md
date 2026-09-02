@@ -16,19 +16,28 @@ The project suffix (SUFFIX/NAME) is hardcoded as the default of `var.name` in
 bootstrap/variables.tf and `NAME` in bootstrap/preflight.sh (keep them
 identical); also noted in the local CLAUDE.md.
 
+The region is set once via the `AWS_REGION` env var (default `us-east-1`,
+same default as `AWS_PROFILE=orbit`) — never in `terraform.tfvars`. The
+`Makefile` exports `AWS_REGION` to both `bootstrap-preflight` (which reads
+it directly) and the `terraform plan`/`apply` targets (passed as
+`-var region=$(AWS_REGION)`). Prefer the Make targets, which set both
+`AWS_PROFILE` and `AWS_REGION` consistently; every direct `terraform`
+invocation below is shown with the equivalent env prefix.
+
 ## Apply sequence
 
 1. `rm -f bootstrap/backend_override.tf`
-2. `bootstrap/preflight.sh` (must exit 0)
-3. `terraform -chdir=bootstrap init` (local state)
-4. `terraform -chdir=bootstrap plan`
-5. `make bootstrap-apply TARGET=aws` (sets `AWS_PROFILE` for preflight and terraform together)
+2. `AWS_PROFILE=orbit AWS_REGION=us-east-1 bootstrap/preflight.sh` (must exit 0)
+3. `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap init` (local state)
+4. `make bootstrap-plan TARGET=aws` (or `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var target=aws -var region=us-east-1`)
+5. `make bootstrap-apply TARGET=aws` (sets `AWS_PROFILE` and `AWS_REGION` for preflight and terraform together)
 6. Copy `backend.tf.example` to `backend.tf`
-7. `terraform -chdir=bootstrap init -migrate-state`
+7. `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap init -migrate-state`
 8. Commit `backend.tf`
 
-Terraform auto-loads `terraform.tfvars` from the `-chdir` directory, so
-neither step above needs an explicit `-var-file` flag.
+Terraform auto-loads `terraform.tfvars` from the `-chdir` directory; the
+`plan`/`apply` invocations above pass `-var-file` explicitly only to match
+what the Make targets do.
 
 Never run `terraform destroy` here — every resource has `prevent_destroy`.
 

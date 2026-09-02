@@ -179,6 +179,8 @@ data "aws_iam_policy_document" "plan_reader_deny" {
       "ssm:GetParameterHistory",
       "kms:Decrypt",
       "lambda:GetFunction",
+      "lambda:GetLayerVersion",
+      "lambda:GetLayerVersionByArn",
     ]
     resources = ["*"]
   }
@@ -325,6 +327,7 @@ data "aws_iam_policy_document" "publisher" {
       "ecr:BatchCheckLayerAvailability",
       "ecr:CompleteLayerUpload",
       "ecr:InitiateLayerUpload",
+      "ecr:GetDownloadUrlForLayer",
       "ecr:PutImage",
       "ecr:UploadLayerPart",
       "ecr:BatchGetImage",

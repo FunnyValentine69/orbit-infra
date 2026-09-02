@@ -48,6 +48,13 @@ bootstrap step; CI never uses static keys.
   they run against LocalStack in CI (see ADR 0008).
 - The local IAM-user deviation depends on deactivating keys between
   sessions; documented rather than hidden.
+- Accepted for now; harden in Phase 5 (accepted 2026-09-02): all three
+  roles trust the same main-ref subject, so any main-branch workflow with
+  `id-token: write` can assume any of them; on this solo repo the boundary
+  is branch protection on main, not the subject. Hardening candidate for
+  Phase 5: per-workflow subject binding via GitHub's OIDC subject
+  customization (`workflow` claim), to be verified against a real token
+  before adoption.
 
 ## Alternatives considered
 

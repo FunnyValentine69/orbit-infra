@@ -1,11 +1,12 @@
 .PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status
 
 TARGET ?= aws
-# preflight and terraform must check the same account
+# preflight and terraform must check the same account and region
 AWS_PROFILE ?= orbit
+AWS_REGION ?= us-east-1
 
 bootstrap-preflight:
-	AWS_PROFILE=$(AWS_PROFILE) bootstrap/preflight.sh
+	AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) bootstrap/preflight.sh
 
 bootstrap-fmt:
 	terraform -chdir=bootstrap fmt -check
@@ -33,11 +34,11 @@ bootstrap-apply:
 else
 bootstrap-plan:
 	rm -f bootstrap/backend_override.tf
-	AWS_PROFILE=$(AWS_PROFILE) terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var target=$(TARGET)
+	AWS_PROFILE=$(AWS_PROFILE) terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var target=$(TARGET) -var region=$(AWS_REGION)
 
 bootstrap-apply: bootstrap-preflight
 	rm -f bootstrap/backend_override.tf
-	AWS_PROFILE=$(AWS_PROFILE) terraform -chdir=bootstrap apply -var-file=terraform.tfvars -var target=$(TARGET)
+	AWS_PROFILE=$(AWS_PROFILE) terraform -chdir=bootstrap apply -var-file=terraform.tfvars -var target=$(TARGET) -var region=$(AWS_REGION)
 endif
 
 localstack-up:

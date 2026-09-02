@@ -49,6 +49,21 @@ done
 
 AWS_BASE=(aws --profile "$AWS_PROFILE" --region "$AWS_REGION")
 
+# State-aware retries: a resource whose Terraform address is already in
+# `terraform state list` is classified MANAGED, not BLOCK, since it is a
+# prior apply's output rather than an ownership conflict.
+STATE_LIST=""
+in_state() {
+  # $1 = terraform address
+  [[ -n "$STATE_LIST" ]] && grep -qxF "$1" <<<"$STATE_LIST"
+}
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  :
+else
+  STATE_LIST="$(terraform -chdir=bootstrap state list 2>/dev/null || true)"
+fi
+
 run_aws() {
   # $1 = human label for --dry-run, remaining args = the aws subcommand/args
   local label="$1"; shift
@@ -67,6 +82,8 @@ block() {
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "== preflight.sh --dry-run =="
   echo "NAME=$NAME PROFILE=$AWS_PROFILE REGION=$AWS_REGION"
+  echo "-- terraform state --"
+  echo "DRY-RUN: terraform -chdir=bootstrap state list"
   echo "-- caller identity --"
   run_aws "identity" sts get-caller-identity --query Arn --output text
   echo "-- S3 state bucket --"
@@ -114,7 +131,11 @@ check_s3_bucket() {
   local bucket="${NAME}-tfstate"
   local err
   if err=$("${AWS_BASE[@]}" s3api head-bucket --bucket "$bucket" 2>&1); then
-    block "s3_bucket $bucket exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_s3_bucket.state $bucket"
+    if in_state "aws_s3_bucket.state"; then
+      echo "MANAGED: s3_bucket $bucket already in state"
+    else
+      block "s3_bucket $bucket exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_s3_bucket.state $bucket"
+    fi
   else
     if echo "$err" | grep -qE '\(404\)|\(NoSuchBucket\)'; then
       echo "OK: s3_bucket $bucket absent"
@@ -128,7 +149,11 @@ check_iam_role() {
   local role="$1" address="$2"
   local err
   if err=$("${AWS_BASE[@]}" iam get-role --role-name "$role" 2>&1); then
-    block "iam_role $role exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import $address $role"
+    if in_state "$address"; then
+      echo "MANAGED: iam_role $role already in state"
+    else
+      block "iam_role $role exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import $address $role"
+    fi
   else
     if echo "$err" | grep -qi "NoSuchEntity"; then
       echo "OK: iam_role $role absent"
@@ -142,7 +167,11 @@ check_ecr_repo() {
   local repo="$1" short="${1#${NAME}/}"
   local err
   if err=$("${AWS_BASE[@]}" ecr describe-repositories --repository-names "$repo" 2>&1); then
-    block "ecr_repository $repo exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import 'aws_ecr_repository.repos[\"$short\"]' $repo"
+    if in_state "aws_ecr_repository.repos[\"$short\"]"; then
+      echo "MANAGED: ecr_repository $repo already in state"
+    else
+      block "ecr_repository $repo exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import 'aws_ecr_repository.repos[\"$short\"]' $repo"
+    fi
   else
     if echo "$err" | grep -qi "RepositoryNotFoundException"; then
       echo "OK: ecr_repository $repo absent"
@@ -157,7 +186,11 @@ check_kms_alias() {
   local err key_id
   if err=$("${AWS_BASE[@]}" kms describe-key --key-id "$alias" 2>&1); then
     key_id=$("${AWS_BASE[@]}" kms describe-key --key-id "$alias" --query KeyMetadata.KeyId --output text 2>&1) || key_id="<key-id-lookup-failed>"
-    block "kms_alias $alias exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_kms_key.signing $key_id && terraform -chdir=bootstrap import aws_kms_alias.signing $alias"
+    if in_state "aws_kms_alias.signing"; then
+      echo "MANAGED: kms_alias $alias already in state"
+    else
+      block "kms_alias $alias exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_kms_key.signing $key_id && terraform -chdir=bootstrap import aws_kms_alias.signing $alias"
+    fi
   else
     if echo "$err" | grep -qi "NotFoundException"; then
       echo "OK: kms_alias $alias absent"
@@ -171,7 +204,11 @@ check_budget() {
   local budget="${NAME}-monthly"
   local err
   if err=$("${AWS_BASE[@]}" budgets describe-budget --account-id "$ACCOUNT_ID" --budget-name "$budget" 2>&1); then
-    block "budget $budget exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import 'aws_budgets_budget.monthly[0]' $ACCOUNT_ID:$budget"
+    if in_state "aws_budgets_budget.monthly[0]"; then
+      echo "MANAGED: budget $budget already in state"
+    else
+      block "budget $budget exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import 'aws_budgets_budget.monthly[0]' $ACCOUNT_ID:$budget"
+    fi
   else
     if echo "$err" | grep -qi "NotFoundException"; then
       echo "OK: budget $budget absent"
