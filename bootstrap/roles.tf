@@ -145,7 +145,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
   statement {
     sid       = "DenyListBucketOutsideScopePrefix"
     effect    = "Deny"
-    actions   = ["s3:ListBucket"]
+    actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
     resources = [aws_s3_bucket.state.arn]
 
     condition {
@@ -158,7 +158,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
   statement {
     sid       = "DenyListBucketMissingPrefix"
     effect    = "Deny"
-    actions   = ["s3:ListBucket"]
+    actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
     resources = [aws_s3_bucket.state.arn]
 
     condition {
@@ -179,6 +179,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
       "ssm:GetParameterHistory",
       "kms:Decrypt",
       "lambda:GetFunction",
+      "lambda:GetFunctionConfiguration",
       "lambda:GetLayerVersion",
       "lambda:GetLayerVersionByArn",
     ]

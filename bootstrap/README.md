@@ -26,14 +26,15 @@ invocation below is shown with the equivalent env prefix.
 
 ## Apply sequence
 
-1. `rm -f bootstrap/backend_override.tf`
-2. `AWS_PROFILE=orbit AWS_REGION=us-east-1 bootstrap/preflight.sh` (must exit 0)
-3. `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap init` (local state)
-4. `make bootstrap-plan TARGET=aws` (or `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var target=aws -var region=us-east-1`)
-5. `make bootstrap-apply TARGET=aws` (sets `AWS_PROFILE` and `AWS_REGION` for preflight and terraform together)
-6. Copy `backend.tf.example` to `backend.tf`
-7. `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap init -migrate-state`
-8. Commit `backend.tf`
+1. `cp bootstrap/terraform.tfvars.example bootstrap/terraform.tfvars` and edit `budget_email` (`terraform.tfvars` is gitignored; verify with `git check-ignore bootstrap/terraform.tfvars`)
+2. `rm -f bootstrap/backend_override.tf`
+3. `AWS_PROFILE=orbit AWS_REGION=us-east-1 bootstrap/preflight.sh` (must exit 0)
+4. `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap init` (local state)
+5. `make bootstrap-plan TARGET=aws` (or `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var target=aws -var region=us-east-1`)
+6. `make bootstrap-apply TARGET=aws` (sets `AWS_PROFILE` and `AWS_REGION` for preflight and terraform together)
+7. Copy `backend.tf.example` to `backend.tf`
+8. `AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap init -migrate-state`
+9. Commit `backend.tf`
 
 Terraform auto-loads `terraform.tfvars` from the `-chdir` directory; the
 `plan`/`apply` invocations above pass `-var-file` explicitly only to match
@@ -69,8 +70,8 @@ in logs for repository variables but does mask for secrets; the ARNs are
 never committed to this repo), then dispatch the smoke test:
 
 ```
-terraform -chdir=bootstrap output -raw plan_reader_role_arn | gh secret set AWS_ROLE_PLAN_READER
-terraform -chdir=bootstrap output -raw deployer_role_arn | gh secret set AWS_ROLE_DEPLOYER
-terraform -chdir=bootstrap output -raw publisher_role_arn | gh secret set AWS_ROLE_PUBLISHER
+AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw plan_reader_role_arn | gh secret set AWS_ROLE_PLAN_READER
+AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw deployer_role_arn | gh secret set AWS_ROLE_DEPLOYER
+AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw publisher_role_arn | gh secret set AWS_ROLE_PUBLISHER
 gh workflow run oidc-smoke.yml
 ```

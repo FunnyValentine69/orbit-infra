@@ -169,7 +169,18 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-plan-reader-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
+            raw_arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-plan-reader-stdout.json'))['AssumedRoleUser']['Arn'])")
+            arn=$(echo "$raw_arn" | sed -E 's/[0-9]{12}/************/g')
+            if ! echo "$raw_arn" | grep -q ":assumed-role/orbit-infra-79s5rw-plan-reader/"; then
+              echo "secret AWS_ROLE_PLAN_READER does not point at the plan-reader role"
+              echo "$arn"
+              {
+                echo "### plan-reader verdict"
+                echo ""
+                echo "FAIL: secret AWS_ROLE_PLAN_READER does not point at the plan-reader role"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             {
               echo "### plan-reader verdict"
               echo ""
@@ -277,7 +288,18 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-deployer-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
+            raw_arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-deployer-stdout.json'))['AssumedRoleUser']['Arn'])")
+            arn=$(echo "$raw_arn" | sed -E 's/[0-9]{12}/************/g')
+            if ! echo "$raw_arn" | grep -q ":assumed-role/orbit-infra-79s5rw-deployer/"; then
+              echo "secret AWS_ROLE_DEPLOYER does not point at the deployer role"
+              echo "$arn"
+              {
+                echo "### deployer verdict"
+                echo ""
+                echo "FAIL: secret AWS_ROLE_DEPLOYER does not point at the deployer role"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             {
               echo "### deployer verdict"
               echo ""
@@ -385,7 +407,18 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-publisher-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
+            raw_arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-publisher-stdout.json'))['AssumedRoleUser']['Arn'])")
+            arn=$(echo "$raw_arn" | sed -E 's/[0-9]{12}/************/g')
+            if ! echo "$raw_arn" | grep -q ":assumed-role/orbit-infra-79s5rw-publisher/"; then
+              echo "secret AWS_ROLE_PUBLISHER does not point at the publisher role"
+              echo "$arn"
+              {
+                echo "### publisher verdict"
+                echo ""
+                echo "FAIL: secret AWS_ROLE_PUBLISHER does not point at the publisher role"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             {
               echo "### publisher verdict"
               echo ""

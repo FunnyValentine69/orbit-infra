@@ -235,7 +235,11 @@ check_oidc_provider() {
     return
   fi
   if echo "$detail" | jq -e 'index("sts.amazonaws.com")' >/dev/null 2>&1; then
-    echo "EXTERNAL: OIDC provider present and valid; bootstrap will reference it as a data source (set TF_VAR_oidc_provider_external=true)"
+    if in_state "aws_iam_openid_connect_provider.github[0]"; then
+      echo "MANAGED: OIDC provider $arn already in state"
+    else
+      echo "EXTERNAL: OIDC provider present and valid; bootstrap will reference it as a data source (set TF_VAR_oidc_provider_external=true)"
+    fi
   else
     block "OIDC provider present but audience sts.amazonaws.com missing from ClientIDList; fix manually before bootstrap"
   fi

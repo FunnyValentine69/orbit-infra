@@ -58,12 +58,15 @@ tip_shas="$(printf '%s\n' "$tip_shas" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
 
 if [ -z "$commits" ]; then
   echo "pre-push guard: no commits to scan"
+else
+  echo "pre-push guard: outgoing commits (reporting only):"
+  printf '%s\n' "$commits"
+fi
+
+if [ -z "$tip_shas" ]; then
   echo "pre-push guard: OK"
   exit 0
 fi
-
-echo "pre-push guard: outgoing commits (reporting only):"
-printf '%s\n' "$commits"
 
 # Content checks (email-shape, forbidden paths) run against each pushed
 # ref's tip commit tree/content only, not every commit in the range.
