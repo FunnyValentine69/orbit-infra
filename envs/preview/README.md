@@ -67,3 +67,22 @@ directory, rendered override, and `*.tfstate*` files. `PREVIEW_ROOT`
 `envs/preview` on the `aws` target) points at the active run directory.
 The `aws` target refuses to run while `envs/preview/backend_override.tf`
 is present.
+
+## Lease lifecycle
+
+Every environment has a durable lease at `leases/<ENV_ID>.json` in the
+state bucket (ADR 0006): `open -> closing -> closed | cleanup_failed`,
+CAS'd on the S3 object's ETag so concurrent writers never both win.
+`scripts/lease.sh` reads/writes it directly; `make close` /
+`scripts/close-env.sh` drive it through stage 1 of close (manifest,
+scale-to-zero, destroy with retries, `DeleteTaskDefinitions`, cost-
+bearing-zero check). See `RUNBOOKS.md`, "Stuck-environment
+force-destroy", for recovery from `cleanup_failed` or a stalled
+`closing`.
+
+```
+make lease-list
+make lease-get ENV_ID=<id>
+make close TARGET=aws        ENV_ID=<id>
+make close TARGET=localstack ENV_ID=<id>
+```

@@ -1,0 +1,199 @@
+# session-apply
+#
+# Human-triggered, main-only apply of a preview environment against real
+# AWS (ADR 0006). Assumes AWS_ROLE_DEPLOYER, which trusts only the
+# `ref:refs/heads/main` OIDC subject (bootstrap/roles.tf) -- this
+# workflow cannot run from any other ref, matching that trust policy.
+#
+# Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov
+# (scripts/gates.sh) -> lease open (CAS) -> plan/apply -> negative
+# ingress test. Static-gate failures never create a lease or resources.
+# Any failure after the lease exists runs scripts/close-env.sh (stage 1
+# of close) so a crashed apply never orphans billable resources.
+#
+# concurrency queue setting: per ADR 0006 / ARCHITECTURE.md, apply,
+# destroy, and the sweeper share the `preview-<env_id>` group so they
+# never overlap; the queue setting below keeps at most one queued run
+# behind the in-flight one. This key is carried over verbatim from those
+# docs -- this session could not confirm the GitHub Actions concurrency
+# schema accepts it against a live workflow run (no network access beyond
+# api.github.com/checkip.amazonaws.com); flagged in the confession.
+
+name: session-apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      env_id:
+        description: 'Preview environment id (lowercase alphanumeric + hyphen, 1-20 chars)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: preview-${{ inputs.env_id }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  validate-input:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate env_id
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+        run: |
+          if ! echo "$ENV_ID" | grep -qE '^[a-z0-9-]{1,20}$'; then
+            echo "env_id '$ENV_ID' does not match ^[a-z0-9-]{1,20}\$" >&2
+            exit 1
+          fi
+
+  runner-cidr-check:
+    needs: validate-input
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject if runner IP is inside the operator CIDR
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+        run: |
+          runner_ip=$(curl -s https://checkip.amazonaws.com | tr -d '[:space:]')
+          if [ -z "$OPERATOR_CIDR" ]; then
+            echo "OPERATOR_CIDR repository secret is unset" >&2
+            exit 1
+          fi
+          python3 - "$runner_ip" "$OPERATOR_CIDR" <<'EOF'
+          import ipaddress
+          import sys
+
+          runner_ip, operator_cidr = sys.argv[1], sys.argv[2]
+          if ipaddress.ip_address(runner_ip) in ipaddress.ip_network(operator_cidr, strict=False):
+              print("runner IP falls inside the operator CIDR; refusing to run", file=sys.stderr)
+              sys.exit(1)
+          EOF
+
+  gates:
+    needs: runner-cidr-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Read tflint version from tools.lock
+        id: tflint-version
+        run: echo "version=$(grep '^tflint ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Read checkov version from tools.lock
+        id: checkov-version
+        run: echo "version=$(grep '^checkov ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@6e1e0642c0289bd619021bf6b34e3c08ed1e005a # v6.3.0
+        with:
+          tflint_version: v${{ steps.tflint-version.outputs.version }}
+
+      - name: Install checkov
+        run: pip install checkov==${{ steps.checkov-version.outputs.version }}
+
+      - name: tflint --init
+        run: tflint --init
+
+      - name: Lint + checkov (validate/lint minus test)
+        run: |
+          make validate
+          make lint
+
+  apply:
+    needs: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (deployer)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_DEPLOYER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Open lease
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+        run: scripts/lease.sh open "$ENV_ID"
+
+      - name: Terraform plan (AWS)
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          ENV_ID: ${{ inputs.env_id }}
+        run: make plan TARGET=aws ENV_ID="$ENV_ID"
+
+      - name: Terraform apply (AWS)
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          ENV_ID: ${{ inputs.env_id }}
+        run: make apply TARGET=aws ENV_ID="$ENV_ID"
+
+      - name: Negative ingress test (from the runner, expect timeout/refusal)
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+        run: |
+          alb_dns=$(terraform -chdir=envs/preview output -raw alb_dns_name)
+          if curl -sf --max-time 10 "http://${alb_dns}" >/dev/null 2>&1; then
+            echo "runner unexpectedly reached the ALB; ingress allowlist is not enforcing OPERATOR_CIDR" >&2
+            exit 1
+          fi
+          echo "runner correctly refused/timed out reaching the ALB (outside OPERATOR_CIDR)"
+
+      - name: Close on failure (stage 1)
+        if: failure()
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          ENV_ID: ${{ inputs.env_id }}
+          TARGET: aws
+        run: scripts/close-env.sh "$ENV_ID"
+
+      - name: Masked summary
+        if: always()
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### session-apply"
+            echo ""
+            echo "env_id: $ENV_ID"
+            echo "result: $JOB_STATUS"
+          } | sed -E 's/[0-9]{12}/************/g' >> "$GITHUB_STEP_SUMMARY"

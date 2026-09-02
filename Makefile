@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr render-localstack-backend placeholder-build check-placeholder-image
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr render-localstack-backend placeholder-build check-placeholder-image lease-list lease-get close
 
 TARGET ?= aws
 # preflight and terraform must check the same account and region
@@ -201,3 +201,21 @@ lint:
 	tflint --init --recursive --config "$(CURDIR)/.tflint.hcl"
 	tflint --recursive --config "$(CURDIR)/.tflint.hcl"
 	checkov --config-file .checkov.yaml
+
+# Preview environment leases (ADR 0006). See scripts/lease.sh --help.
+lease-list:
+	scripts/lease.sh list
+
+lease-get:
+	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make lease-get ENV_ID=dev" >&2; exit 1; fi
+	scripts/lease.sh get $(ENV_ID)
+
+# TARGET=localstack routes close-env.sh at the LocalStack endpoint; TARGET=aws (default) closes against real AWS.
+close: check-env-id
+ifeq ($(TARGET),localstack)
+close:
+	AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 TARGET=$(TARGET) ENV_ID=$(ENV_ID) scripts/close-env.sh $(ENV_ID)
+else
+close:
+	TARGET=$(TARGET) ENV_ID=$(ENV_ID) scripts/close-env.sh $(ENV_ID)
+endif

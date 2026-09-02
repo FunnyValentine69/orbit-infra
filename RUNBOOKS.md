@@ -59,6 +59,55 @@ environment for that ID — only the ALB security-group ingress rule
 actually changes, since it's the only resource that reads
 `var.operator_cidr`.
 
+## Stuck-environment force-destroy
+
+Every preview environment has a durable lease at `leases/<env_id>.json`
+in the state bucket (ADR 0006), states `open -> closing -> closed |
+cleanup_failed`. `scripts/lease.sh` manages it directly;
+`scripts/close-env.sh` (wired into `make close` and `session-destroy.yml`)
+drives it through stage 1 of close.
+
+Check the current state first:
+
+```
+make lease-get ENV_ID=<id>
+# or: scripts/lease.sh get <id>
+```
+
+**Lease is `cleanup_failed`** (a destroy step failed and state was kept
+for retry): re-run close, which resumes from `closing`:
+
+```
+make close TARGET=aws ENV_ID=<id>
+```
+
+**Lease is `closing`** but stalled (task definitions still pending
+deletion, or the job was interrupted mid-close): re-run `make close`
+again -- it detects `closing` and resumes stage 1 rather than failing on
+the CAS precondition. Stage 2 (the sweeper, Phase 5) finishes the
+transition to `closed` once every task definition it recorded in the
+manifest is confirmed gone.
+
+**Lease is `open` but no resources exist** (e.g. a plan-only dry run, or
+resources were removed out-of-band): transition it manually so a future
+`open` isn't blocked:
+
+```
+scripts/lease.sh transition <id> open closing
+scripts/lease.sh transition <id> closing closed
+```
+
+**Manual, targeted recovery** when the automated close can't proceed
+(e.g. a resource type close-env.sh doesn't know how to retry): inspect
+the manifest it already wrote (`state_resources`, `task_definition_arns`,
+`tagging_inventory`) via `scripts/lease.sh get <id> | jq .manifest`, clear
+the offending resource by hand, then re-run `make close`.
+
+On LocalStack, `DeleteTaskDefinitions` is unsupported
+(`scripts/close-env.sh` detects this, notes it in the summary, and leaves
+the lease `closing` rather than failing) -- this is expected in local
+development and is not itself a stuck-environment condition.
+
 ## Credential rotation
 
 CI reads only `LOCALSTACK_AUTH_TOKEN` and `INFRACOST_API_KEY` (both
