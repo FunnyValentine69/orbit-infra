@@ -44,3 +44,7 @@
 
 (expanded when the phase starts)
 - [ ] P5-x: per-workflow OIDC subject binding (verify the customized claim on a real token first)
+- [ ] P5-5: `bootstrap/preflight.sh` runs `terraform init` (or detects an uninitialized backend) before `terraform state list`, so a fresh checkout that already has `backend.tf` is not treated as empty state (Tier-3 P2 on PR #1)
+- [ ] P5-6: `bootstrap/preflight.sh` propagates `TF_VAR_oidc_provider_external=true` into the apply path when the OIDC provider already exists, instead of only printing the instruction (Tier-3 P2 on PR #1)
+- [ ] P5-7: `oidc-smoke.yml` drops the plan-reader role secret from the `pull_request` job, since a same-repo PR can edit the workflow and print the ARN (Tier-3 P2 on PR #1)
+- [ ] P5-8: exclude the bootstrap state key from the plan-reader read grant, or keep the budget email out of state, because sensitive variables are stored in plaintext state (Tier-3 P2 on PR #1)
