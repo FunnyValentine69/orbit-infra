@@ -38,8 +38,6 @@ resource "aws_subnet" "public" {
   vpc_id            = aws_vpc.this.id
   cidr_block        = cidrsubnet(var.cidr, 4, count.index)
   availability_zone = local.azs[count.index]
-  #checkov:skip=CKV_AWS_130:Public subnets host only the ALB, which requires a public IP; ADR 0004 restricts inbound to operator_cidr and tasks never run here (ADR 0002)
-  map_public_ip_on_launch = true
 
   tags = merge(local.tags, { Name = "${var.name}-public-${local.azs[count.index]}" })
 }

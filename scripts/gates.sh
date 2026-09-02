@@ -8,14 +8,17 @@ cd "$(dirname "$0")/.." || exit 1
 
 status=0
 
+log_dir="$(mktemp -d)"
+trap 'rm -rf "$log_dir"' EXIT
+
 run_gate() {
   local name="$1"
   shift
-  if make "$name" >/tmp/gates-"$name".log 2>&1; then
+  if make "$name" >"$log_dir/gates-$name.log" 2>&1; then
     echo "PASS: $name"
   else
     echo "FAIL: $name"
-    cat /tmp/gates-"$name".log
+    cat "$log_dir/gates-$name.log"
     status=1
   fi
 }
@@ -27,7 +30,7 @@ run_gate test
 # No module or environment may declare a NAT gateway (ADR 0002 no-NAT
 # invariant); terraform test cannot assert against an absent resource
 # type, so this is checked structurally instead.
-no_nat_log="$(mktemp)"
+no_nat_log="$log_dir/no-nat-gateway.log"
 command grep -rn aws_nat_gateway modules/ envs/ --include=*.tf >"$no_nat_log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then

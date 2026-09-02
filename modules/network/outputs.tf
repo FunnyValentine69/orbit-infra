@@ -32,3 +32,8 @@ output "azs" {
   description = "Availability zones used by this VPC"
   value       = local.azs
 }
+
+output "s3_prefix_list_id" {
+  description = "Prefix list ID of the S3 gateway VPC endpoint, for use in security group egress rules"
+  value       = aws_vpc_endpoint.s3.prefix_list_id
+}

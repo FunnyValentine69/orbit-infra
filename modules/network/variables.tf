@@ -23,6 +23,16 @@ variable "azs" {
   description = "Availability zones to use (first = private+public AZ, second = second public AZ). Empty list means: look up the first two AZs in the region."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = length(var.azs) == 0 || length(var.azs) == 2
+    error_message = "azs must be empty (auto-lookup) or contain exactly 2 availability zones."
+  }
+
+  validation {
+    condition     = length(distinct(var.azs)) == length(var.azs)
+    error_message = "azs must not contain duplicate availability zones."
+  }
 }
 
 variable "enable_interface_endpoints" {

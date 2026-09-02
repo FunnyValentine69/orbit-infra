@@ -3,7 +3,14 @@
 # the no-NAT-gateway grep step in scripts/gates.sh, since terraform test
 # cannot assert against a resource type absent from the configuration.
 
-mock_provider "aws" {}
+mock_provider "aws" {
+  override_resource {
+    target = aws_vpc_endpoint.s3
+    values = {
+      prefix_list_id = "pl-mock12345"
+    }
+  }
+}
 
 variables {
   name   = "orbit-test"
@@ -39,6 +46,11 @@ run "default_topology" {
     condition     = aws_subnet.public[0].tags["env_id"] == "test" && aws_subnet.public[1].tags["env_id"] == "test" && aws_subnet.private.tags["env_id"] == "test"
     error_message = "every subnet must carry the env_id tag"
   }
+
+  assert {
+    condition     = output.s3_prefix_list_id != null && output.s3_prefix_list_id != ""
+    error_message = "s3_prefix_list_id output must be non-null so callers can reference it in egress rules"
+  }
 }
 
 run "env_id_invalid_rejected" {
@@ -49,6 +61,36 @@ run "env_id_invalid_rejected" {
   }
 
   expect_failures = [var.env_id]
+}
+
+run "azs_one_element_rejected" {
+  command = plan
+
+  variables {
+    azs = ["us-east-1a"]
+  }
+
+  expect_failures = [var.azs]
+}
+
+run "azs_three_elements_rejected" {
+  command = plan
+
+  variables {
+    azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  }
+
+  expect_failures = [var.azs]
+}
+
+run "azs_duplicate_rejected" {
+  command = plan
+
+  variables {
+    azs = ["us-east-1a", "us-east-1a"]
+  }
+
+  expect_failures = [var.azs]
 }
 
 run "interface_endpoints_disabled" {

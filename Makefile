@@ -1,9 +1,15 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-env-id check-operator-cidr render-localstack-backend
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr render-localstack-backend
 
 TARGET ?= aws
 # preflight and terraform must check the same account and region
 AWS_PROFILE ?= orbit
 AWS_REGION ?= us-east-1
+
+check-target:
+	@case "$(TARGET)" in \
+		aws|localstack) ;; \
+		*) echo "TARGET must be aws or localstack, got: $(TARGET)" >&2; exit 1 ;; \
+	esac
 
 bootstrap-preflight:
 	AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) bootstrap/preflight.sh
@@ -16,7 +22,8 @@ bootstrap-validate:
 	terraform -chdir=bootstrap validate
 
 bootstrap-lint:
-	tflint --chdir bootstrap
+	tflint --chdir bootstrap --init --recursive --config "$(CURDIR)/.tflint.hcl"
+	tflint --chdir bootstrap --recursive --config "$(CURDIR)/.tflint.hcl"
 
 # LocalStack applies are disposable; real AWS keeps the interactive confirmation
 ifeq ($(TARGET),localstack)
@@ -62,10 +69,11 @@ check-operator-cidr:
 	@if [ -z "$(OPERATOR_CIDR)" ]; then echo "OPERATOR_CIDR auto-detect failed; pass OPERATOR_CIDR=<cidr>" >&2; exit 1; fi
 
 ifeq ($(TARGET),localstack)
-plan apply destroy: check-env-id check-operator-cidr
+plan apply destroy: check-target check-env-id check-operator-cidr
 
 check-env-id:
 	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
+	@printf '%s' "$(ENV_ID)" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $(ENV_ID)" >&2; exit 1; }
 
 render-localstack-backend:
 	sed 's/ENV_ID_PLACEHOLDER/$(ENV_ID)/' envs/preview/localstack.backend_override.tf.example > envs/preview/backend_override.tf
@@ -73,22 +81,23 @@ render-localstack-backend:
 plan:
 	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview plan -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview plan -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
 
 apply:
 	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview apply -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR) -auto-approve
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview apply -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)" -auto-approve
 
 destroy:
 	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR) -auto-approve
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)" -auto-approve
 else
-plan apply destroy: check-env-id check-operator-cidr
+plan apply destroy: check-target check-env-id check-operator-cidr
 
 check-env-id:
 	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
+	@printf '%s' "$(ENV_ID)" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $(ENV_ID)" >&2; exit 1; }
 
 # backend.aws.hcl is operator-provided (copied from backend.aws.hcl.example,
 # not committed); fall back to the example when it's absent, since the
@@ -97,18 +106,18 @@ BACKEND_HCL := $(if $(wildcard envs/preview/backend.aws.hcl),envs/preview/backen
 
 plan:
 	rm -f envs/preview/backend_override.tf
-	terraform -chdir=envs/preview init -reconfigure -backend-config=$(BACKEND_HCL) -backend-config="key=envs/preview/$(ENV_ID).tfstate"
-	terraform -chdir=envs/preview plan -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+	terraform -chdir=envs/preview init -reconfigure -backend-config="$(BACKEND_HCL)" -backend-config="key=envs/preview/$(ENV_ID).tfstate"
+	terraform -chdir=envs/preview plan -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
 
 apply:
 	rm -f envs/preview/backend_override.tf
-	terraform -chdir=envs/preview init -reconfigure -backend-config=$(BACKEND_HCL) -backend-config="key=envs/preview/$(ENV_ID).tfstate"
-	terraform -chdir=envs/preview apply -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+	terraform -chdir=envs/preview init -reconfigure -backend-config="$(BACKEND_HCL)" -backend-config="key=envs/preview/$(ENV_ID).tfstate"
+	terraform -chdir=envs/preview apply -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
 
 destroy:
 	rm -f envs/preview/backend_override.tf
-	terraform -chdir=envs/preview init -reconfigure -backend-config=$(BACKEND_HCL) -backend-config="key=envs/preview/$(ENV_ID).tfstate"
-	terraform -chdir=envs/preview destroy -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
+	terraform -chdir=envs/preview init -reconfigure -backend-config="$(BACKEND_HCL)" -backend-config="key=envs/preview/$(ENV_ID).tfstate"
+	terraform -chdir=envs/preview destroy -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
 endif
 
 test:
@@ -143,5 +152,6 @@ validate:
 
 lint:
 	terraform fmt -check -recursive
-	tflint --recursive
+	tflint --init --recursive --config "$(CURDIR)/.tflint.hcl"
+	tflint --recursive --config "$(CURDIR)/.tflint.hcl"
 	checkov --config-file .checkov.yaml

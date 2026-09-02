@@ -170,6 +170,13 @@ resource "aws_ecs_task_definition" "this" {
   container_definitions = jsonencode([local.container_definition])
 
   tags = merge(local.tags, { Name = "${var.name}-task" })
+
+  depends_on = [
+    aws_iam_role_policy_attachment.execution_managed,
+    aws_iam_role_policy.execution_secrets,
+    aws_iam_role_policy.task_exec_command,
+    aws_iam_role_policy.task_custom,
+  ]
 }
 
 resource "aws_service_discovery_service" "this" {

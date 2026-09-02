@@ -188,6 +188,14 @@ resource "aws_security_group" "service" {
     security_groups = [module.network.endpoint_sg_id]
   }
 
+  egress {
+    description     = "S3 gateway endpoint"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [module.network.s3_prefix_list_id]
+  }
+
   tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-service-sg" })
 
   lifecycle {
@@ -213,6 +221,11 @@ resource "random_password" "clickhouse" {
 
 resource "aws_secretsmanager_secret" "clickhouse_password" {
   name = "${var.name}-${var.env_id}-clickhouse-password"
+
+  # env_id is reused across ephemeral apply/destroy cycles; without this,
+  # Secrets Manager's default 30-day recovery window blocks re-creating the
+  # same secret name on the next apply of the same env_id.
+  recovery_window_in_days = 0
 
   tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-clickhouse-password" })
 }
@@ -264,6 +277,8 @@ module "clickhouse" {
   password_secret_arn = aws_secretsmanager_secret.clickhouse_password.arn
 
   tags = var.tags
+
+  depends_on = [aws_secretsmanager_secret_version.clickhouse_password]
 }
 
 resource "aws_s3_bucket" "data" {
@@ -343,6 +358,8 @@ module "api" {
   register_service_discovery = true
 
   tags = var.tags
+
+  depends_on = [aws_lb_listener.http]
 }
 
 module "worker" {

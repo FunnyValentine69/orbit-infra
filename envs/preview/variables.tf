@@ -55,10 +55,8 @@ variable "operator_cidr" {
   type        = string
 
   validation {
-    condition = can(cidrhost(var.operator_cidr, 0)) && !contains(["0.0.0.0/0", "::/0"], var.operator_cidr) && can(tonumber(split("/", var.operator_cidr)[1])) && (
-      strcontains(var.operator_cidr, ":") ? tonumber(split("/", var.operator_cidr)[1]) >= 32 : tonumber(split("/", var.operator_cidr)[1]) > 8
-    )
-    error_message = "operator_cidr must be a valid CIDR narrower than /8 (IPv4) or at least /32 (IPv6); the ALB is never open to the world (ADR 0004)."
+    condition     = can(cidrhost(var.operator_cidr, 0)) && !strcontains(var.operator_cidr, ":") && can(tonumber(split("/", var.operator_cidr)[1])) && tonumber(split("/", var.operator_cidr)[1]) > 8
+    error_message = "operator_cidr must be a valid IPv4 CIDR narrower than /8; the ALB listener is IPv4-only and is never open to the world (ADR 0004)."
   }
 }
 

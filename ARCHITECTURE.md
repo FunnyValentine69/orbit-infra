@@ -22,8 +22,12 @@ hold the ALB (which requires at least two AZs); one private subnet in a
 single AZ holds every ECS task. Interface VPC endpoints — ECR `api`/`dkr`,
 CloudWatch Logs, Secrets Manager, `ssmmessages` (ECS Exec) — live only in
 the private AZ, plus the no-cost S3 gateway endpoint. With no NAT, every
-image a task pulls must come from private ECR, and every AWS API a task
-calls needs a matching endpoint.
+AWS API a task calls needs a matching endpoint. On LocalStack, tasks pull
+the locally built `placeholder:local` api image and the public Docker Hub
+`redis`/`clickhouse` images directly, since LocalStack does not enforce
+ECR-only pulls; on real AWS, with no NAT, every image a task pulls must
+come from the private-ECR digests that Phase 3's `mirror-images.yml` and
+`sign-images.yml` workflows produce.
 
 One ECS Fargate cluster (ARM64) hosts four services via Cloud Map: `api`
 (behind the ALB), `clickhouse`, `redis`, and an optional `worker`

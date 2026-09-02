@@ -46,6 +46,16 @@ run "operator_cidr_too_wide_rejected" {
   expect_failures = [var.operator_cidr]
 }
 
+run "operator_cidr_ipv6_rejected" {
+  command = plan
+
+  variables {
+    operator_cidr = "2001:db8::/32"
+  }
+
+  expect_failures = [var.operator_cidr]
+}
+
 run "env_id_trailing_hyphen_rejected" {
   command = plan
 

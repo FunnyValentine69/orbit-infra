@@ -8,6 +8,7 @@
 - [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget (authored; apply deferred with P0-3)
 - [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
+- [ ] P0-3c (with P0-3b): add `redis_image` and `clickhouse_image` passthrough variables to envs/preview so the real-AWS apply can use the private-ECR mirror digests from mirror-images.yml (Tier-2 B5 on PR #2)
 
 ## Phase 1 — Repo docs + save-file
 
@@ -49,3 +50,5 @@
 - [ ] P5-6: `bootstrap/preflight.sh` propagates `TF_VAR_oidc_provider_external=true` into the apply path when the OIDC provider already exists, instead of only printing the instruction (Tier-3 P2 on PR #1)
 - [ ] P5-7: `oidc-smoke.yml` drops the plan-reader role secret from the `pull_request` job, since a same-repo PR can edit the workflow and print the ARN (Tier-3 P2 on PR #1)
 - [ ] P5-8: exclude the bootstrap state key from the plan-reader read grant, or keep the budget email out of state, because sensitive variables are stored in plaintext state (Tier-3 P2 on PR #1)
+- [ ] P5-9: preview secret value is stored in state readable by plan-reader; move to secret_string_wo/ephemeral or split state (Tier-2 P2 on PR #2)
+- [ ] P5-10: data bucket name is globally preclaimable; use bucket_prefix or a persisted random suffix and update the deployer S3 ARN pattern (Tier-2 P2 on PR #2)
