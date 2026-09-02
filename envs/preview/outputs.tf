@@ -37,3 +37,15 @@ output "api_service_name" {
 output "worker_service_name" {
   value = module.worker.service_name
 }
+
+output "data_bucket_name" {
+  value = aws_s3_bucket.data.bucket
+}
+
+output "redis_dns_name" {
+  value = module.redis.discovery_dns_name
+}
+
+output "clickhouse_dns_name" {
+  value = module.clickhouse.discovery_dns_name
+}
