@@ -15,6 +15,12 @@ variable "localstack_endpoint" {
   default     = "http://localhost:4566"
 }
 
+variable "localstack_container_endpoint" {
+  description = "LocalStack endpoint URL as reached from inside an ECS task container (not the host); used only when target = \"localstack\" to wire AWS_ENDPOINT_URL into the api task"
+  type        = string
+  default     = "http://host.docker.internal:4566"
+}
+
 variable "region" {
   description = "AWS region"
   type        = string

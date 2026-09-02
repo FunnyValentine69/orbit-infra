@@ -20,6 +20,7 @@ provider "aws" {
       logs                 = var.localstack_endpoint
       secretsmanager       = var.localstack_endpoint
       iam                  = var.localstack_endpoint
+      s3                   = var.localstack_endpoint
     }
   }
 
@@ -115,6 +116,124 @@ resource "aws_security_group" "service" {
   }
 }
 
+resource "random_password" "clickhouse" {
+  length  = 24
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "clickhouse_password" {
+  name = "${var.name}-${var.env_id}-clickhouse-password"
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-clickhouse-password" })
+}
+
+resource "aws_secretsmanager_secret_version" "clickhouse_password" {
+  secret_id     = aws_secretsmanager_secret.clickhouse_password.id
+  secret_string = random_password.clickhouse.result
+}
+
+module "redis" {
+  source = "../../modules/redis"
+
+  providers = {
+    aws = aws
+  }
+
+  # env_id-prefixed, not var.name-prefixed: modules/ecs-service derives
+  # IAM name_prefix as "${var.name}-exec-"/"-task-", capped at 38 chars by
+  # AWS; the full "${var.name}-${var.env_id}-clickhouse" project prefix
+  # overflows that limit, and env_id alone already disambiguates within
+  # this account/region.
+  name        = "${var.env_id}-redis"
+  env_id      = var.env_id
+  cluster_arn = aws_ecs_cluster.this.arn
+
+  subnet_ids         = [module.network.private_subnet_id]
+  security_group_ids = [aws_security_group.service.id]
+
+  cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
+  register_service_discovery = true
+  namespace_name             = aws_service_discovery_private_dns_namespace.this.name
+
+  tags = var.tags
+}
+
+module "clickhouse" {
+  source = "../../modules/clickhouse"
+
+  providers = {
+    aws = aws
+  }
+
+  name        = "${var.env_id}-clickhouse"
+  env_id      = var.env_id
+  cluster_arn = aws_ecs_cluster.this.arn
+
+  subnet_ids         = [module.network.private_subnet_id]
+  security_group_ids = [aws_security_group.service.id]
+
+  cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
+  register_service_discovery = true
+  namespace_name             = aws_service_discovery_private_dns_namespace.this.name
+
+  password_secret_arn = aws_secretsmanager_secret.clickhouse_password.arn
+
+  tags = var.tags
+}
+
+resource "aws_s3_bucket" "data" {
+  #checkov:skip=CKV_AWS_144:This platform is ephemeral (ADR 0001); cross-region replication has no purpose for a session-scoped environment
+  #checkov:skip=CKV_AWS_145:No KMS key exists in this stack's cost model; default AWS-owned SSE is sufficient for a session-scoped environment
+  #checkov:skip=CKV2_AWS_61:No lifecycle policy needed; the bucket is force-destroyed with the rest of the environment
+  #checkov:skip=CKV2_AWS_62:No idle budget for event notifications on a session-scoped bucket
+  #checkov:skip=CKV_AWS_21:Versioning is intentionally off; ADR 0001 treats this environment as ephemeral
+  bucket        = "${var.name}-${var.env_id}-data"
+  force_destroy = true
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-data" })
+}
+
+resource "aws_s3_bucket_public_access_block" "data" {
+  bucket = aws_s3_bucket.data.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+locals {
+  api_bucket_policy_json = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+      Resource = ["${aws_s3_bucket.data.arn}/*"]
+    }]
+  })
+
+  # LocalStack task containers reach the emulator over a container-visible
+  # endpoint (not localhost) and need dummy static credentials; real AWS
+  # tasks resolve everything through the task role instead.
+  api_localstack_env = var.target == "localstack" ? {
+    AWS_ENDPOINT_URL      = var.localstack_container_endpoint
+    AWS_ACCESS_KEY_ID     = "test"
+    AWS_SECRET_ACCESS_KEY = "test"
+  } : {}
+
+  api_env = merge(
+    {
+      CLICKHOUSE_HOST    = module.clickhouse.discovery_dns_name
+      CLICKHOUSE_PORT    = tostring(module.clickhouse.port)
+      REDIS_HOST         = module.redis.discovery_dns_name
+      REDIS_PORT         = tostring(module.redis.port)
+      PLACEHOLDER_BUCKET = aws_s3_bucket.data.bucket
+      AWS_REGION         = var.region
+    },
+    local.api_localstack_env,
+  )
+}
+
 module "api" {
   source = "../../modules/ecs-service"
 
@@ -130,6 +249,9 @@ module "api" {
   container_port     = 8000
   subnet_ids         = [module.network.private_subnet_id]
   security_group_ids = [aws_security_group.service.id]
+
+  env                   = local.api_env
+  task_role_policy_json = local.api_bucket_policy_json
 
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true
