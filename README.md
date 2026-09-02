@@ -18,7 +18,7 @@ exist anywhere in the pipeline.
 | OIDC-federated Actions, no static AWS keys | in progress |
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
-| Policy gates: tflint + checkov on every plan | in progress |
+| Policy gates: tflint + checkov on every plan | done |
 | SBOM (syft) + Trivy scan + cosign keyless signing + GitHub attestations | planned |
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
@@ -88,6 +88,9 @@ scripts/gates.sh  # runs all four above (validate, lint, test, no-nat-gateway), 
 plan of `bootstrap/` and requires every planned IAM policy document to be
 plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone
 with `bootstrap/policy-size-check.sh`.
+
+CI: terraform-plan.yml runs the gates and a LocalStack plan on every pull
+request; no AWS credentials are involved.
 
 ## Toolchain
 

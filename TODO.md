@@ -34,6 +34,7 @@
 ## Phase 3 — CI/CD
 
 (expanded when the phase starts)
+- [x] P3-1 terraform-plan.yml: gates + LocalStack plan + sticky PR comment + gated infracost job; no AWS credentials (P2-6's cost line lands from the first CI run)
 - [ ] P3-x: document that fork PRs skip oidc-smoke jobs (green-by-skip) in README/RUNBOOKS
 - [ ] P3-2: digest-pin the placeholder base image and add pip hash pinning (reproducible signed build)
 
