@@ -1,0 +1,23 @@
+# Homebrew-installed toolchain, recorded 2026-09-02; verify with: brew list --versions <name>
+terraform 1.16.0
+awscli 2.36.37
+tflint 0.64.0
+trivy 0.74.0
+checkov 3.3.10
+infracost 2.16.2
+cosign 3.1.3
+syft 1.51.1
+gitleaks 8.30.1
+session-manager-plugin 1.2.835.0
+orbstack 2.2.3
+
+# Homebrew bottle checksums
+terraform <checksum unavailable: bottle key not arm64_tahoe>
+awscli d9cb349e5df37ef0eccdc45a9fa7a67a612d613d9d925d77ecf2e1fc9552dca9
+tflint <checksum unavailable: bottle key not arm64_tahoe>
+trivy e2d5390bfd71240ba47eb2ef480d95b172d7379ff2a7d7c74024efa44ecad4b4
+checkov 79ab4aaa2a5d42c3fc10b9f0137defdac7502c396ae7690fa3a290e3f99171bf
+infracost 134117d5ea0dc2a7f9a20f2b9206a3bc63d7425ed9281d04f5dd9e88b728f82a
+cosign 0a945ba6dbde67cfc2a079b21e74875e2cbd3dcd46b190a64878fb7c08a84431
+syft 953c3f99e76db3f63362fd035cf428ff75173ea858e86e321dd5eefacb210e57
+gitleaks ea543daa28d39acc7af3aab4491ef53d62c0402b540d087008ff4dce7e2484b3
