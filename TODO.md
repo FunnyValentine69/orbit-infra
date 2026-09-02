@@ -2,16 +2,22 @@
 
 - [x] P0-1 Install terraform, awscli, tflint, OrbStack
 - [x] P0-2 Install scanners, signing tools, gitleaks, session-manager-plugin; write tools.lock
-- [ ] P0-3 AWS account: Free Plan, IAM Identity Center user, SSO login, permission simulation (in progress)
+- [ ] P0-3 AWS account: Free Plan, IAM Identity Center user, SSO login, permission simulation (deferred: upgrade to Paid Plan when ready; Free Plan SCPs block the stack)
 - [ ] P0-4 Create repo, skeleton, .gitignore, leak checks, secrets (in progress: secrets pending)
 - [ ] P0-5 bootstrap/preflight.sh ownership discovery (in progress: written, not yet run)
-- [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget (in progress: authored, not yet applied)
-- [ ] P0-7 Confirm Budgets notification email
-- [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (in progress: written, runs after P0-6 apply)
+- [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget (authored; apply deferred with P0-3)
+- [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
+- [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
 
 ## Phase 1 — Repo docs + save-file
 
-(expanded when the phase starts)
+- [ ] P1-1 layout
+- [ ] P1-2 README
+- [ ] P1-3 ARCHITECTURE + ADRs 0001-0007 (in progress, separate worker)
+- [x] P1-4 STATE/TODO
+- [x] P1-5 local CLAUDE.md (done)
+- [x] P1-6 upstream.lock
+- [x] P1-7 placeholder image
 
 ## Phase 2 — Modules + gates
 
