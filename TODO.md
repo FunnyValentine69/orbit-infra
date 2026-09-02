@@ -36,7 +36,8 @@
 (expanded when the phase starts)
 - [x] P3-1 terraform-plan.yml: gates + LocalStack plan + sticky PR comment + gated infracost job; no AWS credentials (P2-6's cost line lands from the first CI run)
 - [ ] P3-x: document that fork PRs skip oidc-smoke jobs (green-by-skip) in README/RUNBOOKS
-- [ ] P3-2: digest-pin the placeholder base image and add pip hash pinning (reproducible signed build)
+- [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
+- [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
 
 ## Phase 4 — Parallel environments + runbooks
 
