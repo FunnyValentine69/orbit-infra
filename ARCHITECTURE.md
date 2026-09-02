@@ -2,6 +2,9 @@
 
 ## Purpose
 
+This document describes the target architecture; STATE.md and TODO.md
+record what is implemented and verified.
+
 orbit-infra is an ephemeral, near-zero-idle AWS platform for running a
 containerized workload on demand. It is a portfolio project: the platform
 itself — OIDC-federated CI/CD, per-environment lease lifecycle, signed
@@ -70,19 +73,20 @@ flowchart LR
 
 Three OIDC-federated IAM roles, no static AWS keys anywhere in CI. Every
 role's trust policy matches the immutable-ID subject form
-`repo:<owner>@<owner_id>/<repo>@<repo_id>:...` with `aud` pinned. The two
-mutating roles (`deployer`, `publisher`) trust only `ref:refs/heads/main`,
-so credentials only exist in a workflow run on `main` — never against
-unmerged code. `plan-reader` additionally trusts `pull_request` and is
-read-only, including no write of Terraform lock objects (`-lock=false`
-plans). Fork PRs never obtain any credential. Locally, the AWS Free Plan's
+`repo:<owner>@<owner_id>/<repo>@<repo_id>:...` with `aud` pinned, and all
+three roles — including `plan-reader`, which is read-only and never
+writes Terraform lock objects (`-lock=false` plans) — trust only
+`ref:refs/heads/main`, so credentials only ever exist in a workflow run on
+`main`, never against unmerged code and never in a pull_request-triggered
+job. Pull-request-triggered Terraform plans run against LocalStack instead
+(see ADR 0008), never against real AWS. Locally, the AWS Free Plan's
 IAM Identity Center restriction forced a deviation: bootstrap runs from an
 IAM user (MFA required, keys local-only), used solely for one-time
 bootstrap; CI is unaffected. See ADR 0005.
 
 ## Environment lifecycle summary
 
-Each `env_id` has its own state key and a durable lease with states
+Each `env_id` will have its own state key and a durable lease with states
 `open → closing → closed | cleanup_failed` and a monotonically increasing
 `generation`; every transition is a compare-and-swap on the object's S3
 ETag, so two writers can never both win. The lease is created only after
@@ -93,20 +97,22 @@ job caps at 6: stage 1 tears down and calls `DeleteTaskDefinitions`,
 leaving the lease `closing`; stage 2 (the nightly sweeper) confirms
 deletion and sets `closed`, also re-running stage 1 for stale `open` and
 `cleanup_failed` leases, sharing the `preview-<env_id>` concurrency group
-with manual apply/destroy (`queue: max`) so they never overlap. Closed
-leases prune after 7 days. See ADR 0006.
+with manual apply/destroy (`queue: max`) so they never overlap: a queued
+destroy is preserved by `queue: max`; a third dispatch is refused by the
+lease state, not by the queue. Closed leases prune after 7 days. See ADR
+0006.
 
 ## Image supply chain summary
 
-Every image a task pulls lives in private ECR (no-NAT tasks can reach
-nothing else). The public placeholder is built/pushed by CI, signed
+Every image a task pulls will live in private ECR (no-NAT tasks can reach
+nothing else). The public placeholder will be built/pushed by CI, signed
 keyless with cosign (Rekor upload on, since it's already public), and
-attested with build provenance. Private upstream images are built locally,
-never in hosted CI, from a `git archive` of the pinned, verified upstream
-commit — never a working tree — signed with an asymmetric KMS key
+attested with build provenance. Private upstream images will be built
+locally, never in hosted CI, from a `git archive` of the pinned, verified
+upstream commit — never a working tree — signed with an asymmetric KMS key
 (`--tlog-upload=false`), since Rekor would otherwise publish account ID,
-region, and repository names. Every image gets an SBOM (syft) and a Trivy
-scan. See ADR 0007.
+region, and repository names. Every image will get an SBOM (syft) and a
+Trivy scan. See ADR 0007.
 
 ## Cost model
 

@@ -3,31 +3,44 @@
 # What this proves: the immutable-ID OIDC subject form configured in
 # bootstrap/roles.tf and bootstrap/outputs.tf (repo:<owner>@<owner_id>/
 # <repo>@<repo_id>:...) actually authenticates against AWS STS, and that
-# PR runs (which match only the plan-reader role's `:pull_request` subject)
-# cannot obtain the deployer or publisher roles, which are scoped to
-# `:ref:refs/heads/main` only.
+# every role's trust policy refuses the exact subject it should refuse.
+# No role trusts the `pull_request` subject: plan-reader, deployer, and
+# publisher all trust only `:ref:refs/heads/main`. Pull-request-triggered
+# jobs therefore never hold AWS credentials of any kind; PR-triggered
+# Terraform plans run against LocalStack instead (see terraform-plan.yml,
+# Phase 3). This workflow's own pull_request runs exist only to prove that
+# refusal: they must fail every one of the three role-assumption attempts
+# with AccessDenied.
 #
 # The three AWS_ROLE_PLAN_READER / AWS_ROLE_DEPLOYER / AWS_ROLE_PUBLISHER
-# values are GitHub repository VARIABLES (vars.*), not secrets. Role ARNs
-# are not secret material, but they are never committed to this repo --
-# they are read from Terraform outputs after apply and set as repo
-# variables (see bootstrap/README.md, "After apply").
+# values are GitHub repository SECRETS (secrets.*), not variables, even
+# though role ARNs are not sensitive on their own merit -- GitHub masks
+# secrets in logs, and the ARN embeds the 12-digit AWS account ID, which
+# this project treats as not-for-disclosure. They are never committed to
+# this repo -- they are read from Terraform outputs after apply and set as
+# repo secrets (see bootstrap/README.md, "After apply").
 #
 # This workflow only ever calls sts:GetCallerIdentity or
 # sts:AssumeRoleWithWebIdentity. It performs no other AWS API calls and
 # makes no infrastructure changes.
 #
-# assume-deployer and assume-publisher call AssumeRoleWithWebIdentity
-# directly via the AWS CLI (rather than via aws-actions/configure-aws-
-# credentials with an ignored-failure step outcome) so the smoke test
-# can assert on the *reason* for failure, not just failure/success. The
-# trust policy scopes deployer/publisher to ref:refs/heads/main only, so
-# success is expected ONLY when this run is not a pull_request AND is on
-# refs/heads/main (workflow_dispatch from main); every other case --
-# pull_request, or workflow_dispatch from any non-main branch -- must
-# fail with an AccessDenied error from the trust policy. Any other
-# failure (e.g. a malformed role ARN) is treated as a broken test, not a
-# passing one.
+# All three assume-* jobs call AssumeRoleWithWebIdentity directly via the
+# AWS CLI (rather than via aws-actions/configure-aws-credentials with an
+# ignored-failure step outcome) so the smoke test can assert on the
+# *reason* for failure, not just failure/success. Every role's trust
+# policy scopes it to ref:refs/heads/main only, so success is expected
+# ONLY when this run is not a pull_request AND is on refs/heads/main
+# (workflow_dispatch from main); every other case -- pull_request, or
+# workflow_dispatch from any non-main branch -- must fail with an
+# AccessDenied error from the trust policy. Any other failure (e.g. a
+# malformed role ARN) is treated as a broken test, not a passing one.
+#
+# The `head.repo.full_name == github.repository` fork guard below is a
+# cost/no-op filter, not a security boundary: it exists only to skip
+# running this workflow's own jobs on fork PRs (which cannot receive an
+# OIDC token for this repository regardless). No role trusts the
+# `pull_request` subject, so there is nothing for a fork PR to obtain even
+# without the guard.
 
 name: oidc-smoke
 
@@ -84,26 +97,105 @@ jobs:
     steps:
       - name: Require AWS_ROLE_PLAN_READER
         run: |
-          if [ -z "${{ vars.AWS_ROLE_PLAN_READER }}" ]; then
-            echo "AWS_ROLE_PLAN_READER repository variable is unset"
+          if [ -z "${{ secrets.AWS_ROLE_PLAN_READER }}" ]; then
+            echo "AWS_ROLE_PLAN_READER repository secret is unset"
             exit 1
           fi
 
-      - name: Assume plan-reader role
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6
+      - name: Get OIDC token
+        id: token
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_PLAN_READER }}
-          aws-region: us-east-1
-          role-session-name: oidc-smoke-plan-reader
+          script: |
+            const fs = require('fs');
+            const token = await core.getIDToken('sts.amazonaws.com');
+            const tokenFile = `${process.env.RUNNER_TEMP}/oidc-smoke-plan-reader-token`;
+            fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+            core.setOutput('token_file', tokenFile);
 
-      - name: Confirm identity
+      - name: Attempt to assume plan-reader role
+        id: assume
         run: |
-          arn=$(aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/************/')
+          set +e
+          stderr=$(aws sts assume-role-with-web-identity \
+            --role-arn "${{ secrets.AWS_ROLE_PLAN_READER }}" \
+            --role-session-name oidc-smoke \
+            --web-identity-token "file://${{ steps.token.outputs.token_file }}" \
+            --duration-seconds 900 \
+            --region us-east-1 \
+            --output json 2>&1 >/tmp/assume-plan-reader-stdout.json)
+          status=$?
+          set -e
           {
-            echo "### plan-reader identity"
-            echo ""
-            echo "\`$arn\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "status<<EOF"
+            echo "$status"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          delimiter="EOF_$(date +%s%N)"
+          {
+            echo "stderr<<${delimiter}"
+            echo "$stderr"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify expected outcome
+        env:
+          ASSUME_STDERR: ${{ steps.assume.outputs.stderr }}
+          EXPECT_SUCCESS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        run: |
+          status="${{ steps.assume.outputs.status }}"
+          stderr=$(echo "$ASSUME_STDERR" | sed -E 's/[0-9]{12}/************/g')
+          expect_success="$EXPECT_SUCCESS"
+
+          if [ "$expect_success" = "true" ]; then
+            if [ "$status" != "0" ]; then
+              echo "plan-reader role assumption failed on a workflow_dispatch run from refs/heads/main"
+              echo "$stderr"
+              {
+                echo "### plan-reader verdict"
+                echo ""
+                echo "FAIL: plan-reader role assumption failed on a workflow_dispatch run from refs/heads/main"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-plan-reader-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
+            {
+              echo "### plan-reader verdict"
+              echo ""
+              echo "PASS: plan-reader role assumption succeeded on a workflow_dispatch run from refs/heads/main"
+              echo ""
+              echo "\`$arn\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ "$status" = "0" ]; then
+              echo "plan-reader was assumable from a run that is not workflow_dispatch-from-main; trust policy is too broad"
+              {
+                echo "### plan-reader verdict"
+                echo ""
+                echo "FAIL: plan-reader was assumable from a run that is not workflow_dispatch-from-main; trust policy is too broad"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            if ! echo "$stderr" | grep -q "(AccessDenied)"; then
+              echo "expected AccessDenied from the trust policy; got a different failure"
+              echo "$stderr"
+              {
+                echo "### plan-reader verdict"
+                echo ""
+                echo "FAIL: expected AccessDenied from the trust policy; got a different failure"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            {
+              echo "### plan-reader verdict"
+              echo ""
+              echo "PASS: plan-reader role assumption correctly failed with AccessDenied on a non-main/PR run"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Remove OIDC token file
+        if: always()
+        run: rm -f "${{ steps.token.outputs.token_file }}" /tmp/assume-plan-reader-stdout.json
 
   assume-deployer:
     needs: decode-subject
@@ -113,8 +205,8 @@ jobs:
     steps:
       - name: Require AWS_ROLE_DEPLOYER
         run: |
-          if [ -z "${{ vars.AWS_ROLE_DEPLOYER }}" ]; then
-            echo "AWS_ROLE_DEPLOYER repository variable is unset"
+          if [ -z "${{ secrets.AWS_ROLE_DEPLOYER }}" ]; then
+            echo "AWS_ROLE_DEPLOYER repository secret is unset"
             exit 1
           fi
 
@@ -134,7 +226,7 @@ jobs:
         run: |
           set +e
           stderr=$(aws sts assume-role-with-web-identity \
-            --role-arn "${{ vars.AWS_ROLE_DEPLOYER }}" \
+            --role-arn "${{ secrets.AWS_ROLE_DEPLOYER }}" \
             --role-session-name oidc-smoke \
             --web-identity-token "file://${{ steps.token.outputs.token_file }}" \
             --duration-seconds 900 \
@@ -160,7 +252,7 @@ jobs:
           EXPECT_SUCCESS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         run: |
           status="${{ steps.assume.outputs.status }}"
-          stderr="$ASSUME_STDERR"
+          stderr=$(echo "$ASSUME_STDERR" | sed -E 's/[0-9]{12}/************/g')
           expect_success="$EXPECT_SUCCESS"
 
           if [ "$expect_success" = "true" ]; then
@@ -221,8 +313,8 @@ jobs:
     steps:
       - name: Require AWS_ROLE_PUBLISHER
         run: |
-          if [ -z "${{ vars.AWS_ROLE_PUBLISHER }}" ]; then
-            echo "AWS_ROLE_PUBLISHER repository variable is unset"
+          if [ -z "${{ secrets.AWS_ROLE_PUBLISHER }}" ]; then
+            echo "AWS_ROLE_PUBLISHER repository secret is unset"
             exit 1
           fi
 
@@ -242,7 +334,7 @@ jobs:
         run: |
           set +e
           stderr=$(aws sts assume-role-with-web-identity \
-            --role-arn "${{ vars.AWS_ROLE_PUBLISHER }}" \
+            --role-arn "${{ secrets.AWS_ROLE_PUBLISHER }}" \
             --role-session-name oidc-smoke \
             --web-identity-token "file://${{ steps.token.outputs.token_file }}" \
             --duration-seconds 900 \
@@ -268,7 +360,7 @@ jobs:
           EXPECT_SUCCESS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         run: |
           status="${{ steps.assume.outputs.status }}"
-          stderr="$ASSUME_STDERR"
+          stderr=$(echo "$ASSUME_STDERR" | sed -E 's/[0-9]{12}/************/g')
           expect_success="$EXPECT_SUCCESS"
 
           if [ "$expect_success" = "true" ]; then

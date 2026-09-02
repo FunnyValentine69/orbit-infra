@@ -50,6 +50,11 @@ variable "budget_email" {
   description = "Email address to notify on budget alerts"
   type        = string
   sensitive   = true
+
+  validation {
+    condition     = var.target != "aws" || can(regex("^[^@\\s]+@[^@\\s]+$", var.budget_email))
+    error_message = "budget_email must be a real email address when target = \"aws\"."
+  }
 }
 
 variable "target" {

@@ -36,7 +36,6 @@ output "oidc_provider_arn" {
 output "oidc_subjects" {
   description = "Exact OIDC subject strings used in role trust policies, for the smoke test"
   value = {
-    plan_reader_pull_request = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}:pull_request"
-    main_branch              = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}:ref:refs/heads/main"
+    main_branch = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}:ref:refs/heads/main"
   }
 }

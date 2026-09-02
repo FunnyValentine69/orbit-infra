@@ -37,18 +37,22 @@ def s3_roundtrip(response: Response) -> dict:
     body = datetime.now(timezone.utc).isoformat().encode("utf-8")
 
     created = False
+    result: dict = {}
     try:
         _s3.put_object(Bucket=bucket, Key=key, Body=body)
         created = True
         _s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-        return {"bucket": bucket, "key": key, "ok": True}
+        result = {"bucket": bucket, "key": key, "ok": True}
     except Exception as exc:
         logger.exception("s3 roundtrip failed")
         response.status_code = 500
-        return {"ok": False, "error": type(exc).__name__}
+        result = {"ok": False, "error": type(exc).__name__}
     finally:
         if created:
             try:
                 _s3.delete_object(Bucket=bucket, Key=key)
-            except Exception:
+            except Exception as exc:
                 logger.exception("s3 roundtrip cleanup delete failed")
+                response.status_code = 500
+                result = {"ok": False, "error": type(exc).__name__}
+    return result

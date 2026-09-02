@@ -30,10 +30,11 @@ exist anywhere in the pipeline.
 
 Development and CI run against LocalStack, using the GitHub Student
 Developer Pack's LocalStack Student plan (Ultimate-tier service coverage),
-so the stack can be built and tested without AWS spend. Real AWS is the
-promotion target once the platform is proven. Three things are verified
-only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact OIDC
-trust-condition semantics. See ADR 0008.
+so the stack can be built and tested without AWS spend. Pull-request CI
+runs Terraform plans on LocalStack and never holds AWS credentials. Real
+AWS is the promotion target once the platform is proven. Three things are
+verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact
+OIDC trust-condition semantics. See ADR 0008.
 
 ## Quickstart (LocalStack)
 

@@ -20,12 +20,12 @@ ifeq ($(TARGET),localstack)
 bootstrap-plan:
 	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var target=$(TARGET) -var budget_email=none@localhost
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var target=$(TARGET) -var budget_email=unused
 
 bootstrap-apply:
 	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var target=$(TARGET) -var budget_email=none@localhost -auto-approve
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var target=$(TARGET) -var budget_email=unused -auto-approve
 else
 bootstrap-plan:
 	rm -f bootstrap/backend_override.tf

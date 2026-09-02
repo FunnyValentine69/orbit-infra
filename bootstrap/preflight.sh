@@ -90,10 +90,15 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 CALLER_ARN=""
-if ! CALLER_ARN=$("${AWS_BASE[@]}" sts get-caller-identity --query Arn --output text 2>/dev/null); then
+CALLER_ERR_FILE="$(mktemp)"
+if ! CALLER_ARN=$("${AWS_BASE[@]}" sts get-caller-identity --query Arn --output text 2>"$CALLER_ERR_FILE"); then
+  CALLER_ERR="$(sed -E 's/[0-9]{12}/************/g' "$CALLER_ERR_FILE")"
+  rm -f "$CALLER_ERR_FILE"
+  echo "BLOCK: caller identity failed: $CALLER_ERR" >&2
   echo "AWS credentials not available for profile $AWS_PROFILE; run: aws configure --profile orbit (Free Plan has no Identity Center; see RUNBOOKS.md)" >&2
   exit 3
 fi
+rm -f "$CALLER_ERR_FILE"
 ACCOUNT_ID=""
 if ! ACCOUNT_ID=$("${AWS_BASE[@]}" sts get-caller-identity --query Account --output text 2>&1); then
   block "caller identity lookup failed: $ACCOUNT_ID"

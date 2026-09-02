@@ -53,13 +53,14 @@ nothing here is durable.
 
 ## After apply
 
-Publish the three role ARNs as GitHub repository variables (not secrets;
-the ARNs are not secret but are never committed to this repo), then
-dispatch the smoke test:
+Publish the three role ARNs as GitHub repository secrets (not variables --
+role ARNs embed the 12-digit AWS account ID, which GitHub does not mask
+in logs for repository variables but does mask for secrets; the ARNs are
+never committed to this repo), then dispatch the smoke test:
 
 ```
-terraform -chdir=bootstrap output -raw plan_reader_role_arn | gh variable set AWS_ROLE_PLAN_READER
-terraform -chdir=bootstrap output -raw deployer_role_arn | gh variable set AWS_ROLE_DEPLOYER
-terraform -chdir=bootstrap output -raw publisher_role_arn | gh variable set AWS_ROLE_PUBLISHER
+terraform -chdir=bootstrap output -raw plan_reader_role_arn | gh secret set AWS_ROLE_PLAN_READER
+terraform -chdir=bootstrap output -raw deployer_role_arn | gh secret set AWS_ROLE_DEPLOYER
+terraform -chdir=bootstrap output -raw publisher_role_arn | gh secret set AWS_ROLE_PUBLISHER
 gh workflow run oidc-smoke.yml
 ```
