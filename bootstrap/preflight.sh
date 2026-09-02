@@ -86,7 +86,7 @@ fi
 
 CALLER_ARN=""
 if ! CALLER_ARN=$("${AWS_BASE[@]}" sts get-caller-identity --query Arn --output text 2>/dev/null); then
-  echo "AWS credentials not available for profile $AWS_PROFILE; run: aws sso login --profile orbit" >&2
+  echo "AWS credentials not available for profile $AWS_PROFILE; run: aws configure --profile orbit (Free Plan has no Identity Center; see RUNBOOKS.md)" >&2
   exit 3
 fi
 ACCOUNT_ID=$("${AWS_BASE[@]}" sts get-caller-identity --query Account --output text)
