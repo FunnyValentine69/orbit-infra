@@ -52,6 +52,23 @@ variable "budget_email" {
   sensitive   = true
 }
 
+variable "target" {
+  description = "Apply target: real aws or a local localstack instance"
+  type        = string
+  default     = "aws"
+
+  validation {
+    condition     = contains(["aws", "localstack"], var.target)
+    error_message = "target must be one of: aws, localstack."
+  }
+}
+
+variable "localstack_endpoint" {
+  description = "LocalStack endpoint URL, used only when target = \"localstack\""
+  type        = string
+  default     = "http://localhost:4566"
+}
+
 variable "tags" {
   description = "Default tags applied to all resources"
   type        = map(string)

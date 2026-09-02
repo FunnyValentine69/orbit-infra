@@ -26,6 +26,15 @@ The project suffix (SUFFIX/NAME) is recorded in the local CLAUDE.md.
 
 Never run `terraform destroy` here — every resource has `prevent_destroy`.
 
+## LocalStack target
+
+`make bootstrap-apply TARGET=localstack` (and `bootstrap-plan TARGET=localstack`)
+point this root at a local LocalStack instance instead of real AWS. It always
+uses the local state file in `bootstrap/` — this target is never migrated to
+the S3 backend. `aws_budgets_budget.monthly` is skipped (Budgets is not
+emulated by LocalStack). Running `localstack stop` (`make localstack-down`)
+discards everything created this way; nothing here is durable.
+
 ## After apply
 
 Publish the three role ARNs as GitHub repository variables (not secrets;

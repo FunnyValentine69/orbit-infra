@@ -19,7 +19,7 @@ terraform -chdir=bootstrap import 'aws_ecr_repository.repos["mirror/clickhouse"]
 terraform -chdir=bootstrap import 'aws_ecr_repository.repos["mirror/redis"]' orbit-infra-79s5rw/mirror/redis
 terraform -chdir=bootstrap import aws_kms_alias.signing alias/orbit-infra-79s5rw-signing
 terraform -chdir=bootstrap import aws_iam_openid_connect_provider.github[0] <oidc-provider-arn>
-terraform -chdir=bootstrap import aws_budgets_budget.monthly <account-id>:orbit-infra-79s5rw-monthly
+terraform -chdir=bootstrap import 'aws_budgets_budget.monthly[0]' <account-id>:orbit-infra-79s5rw-monthly
 ```
 
 `<account-id>` is a placeholder — substitute the real 12-digit account ID

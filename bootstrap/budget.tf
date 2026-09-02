@@ -1,4 +1,7 @@
 resource "aws_budgets_budget" "monthly" {
+  # Budgets is not emulated by LocalStack; skip entirely on that target.
+  count = var.target == "aws" ? 1 : 0
+
   name         = "${var.name}-monthly"
   budget_type  = "COST"
   time_unit    = "MONTHLY"
