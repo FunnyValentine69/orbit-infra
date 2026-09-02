@@ -28,17 +28,16 @@ exist anywhere in the pipeline.
 
 ## Two targets
 
-Development and CI run against LocalStack, using the GitHub Student
+Development runs against LocalStack, using the GitHub Student
 Developer Pack's LocalStack Student plan (Ultimate-tier service coverage),
-so the stack can be built and tested without AWS spend. Pull-request CI
-runs Terraform plans on LocalStack and never holds AWS credentials. Real
+so the stack can be built and tested without AWS spend. The terraform-plan
+CI workflow (running Terraform plans on LocalStack, never holding AWS
+credentials) lands with Phase 3; until then, gates run locally. Real
 AWS is the promotion target once the platform is proven. Three things are
 verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact
 OIDC trust-condition semantics. See ADR 0008.
 
 ## Quickstart (LocalStack)
-
-Arrives in Phase 2. Planned commands:
 
 ```
 make localstack-up

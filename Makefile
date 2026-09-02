@@ -5,14 +5,16 @@ TARGET ?= aws
 AWS_PROFILE ?= orbit
 AWS_REGION ?= us-east-1
 
+export TARGET ENV_ID OPERATOR_CIDR AWS_PROFILE AWS_REGION
+
 check-target:
-	@case "$(TARGET)" in \
+	@case "$$TARGET" in \
 		aws|localstack) ;; \
-		*) echo "TARGET must be aws or localstack, got: $(TARGET)" >&2; exit 1 ;; \
+		*) echo "TARGET must be aws or localstack, got: $$TARGET" >&2; exit 1 ;; \
 	esac
 
 bootstrap-preflight:
-	AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) bootstrap/preflight.sh
+	bootstrap/preflight.sh
 
 bootstrap-fmt:
 	terraform -chdir=bootstrap fmt -check
@@ -30,22 +32,22 @@ ifeq ($(TARGET),localstack)
 bootstrap-plan:
 	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf; \
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var target=$(TARGET) -var budget_email=unused; \
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var "target=$$TARGET" -var budget_email=unused; \
 	rc=$$?; rm -f bootstrap/backend_override.tf; exit $$rc
 
 bootstrap-apply:
 	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf; \
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var target=$(TARGET) -var budget_email=unused -auto-approve; \
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var "target=$$TARGET" -var budget_email=unused -auto-approve; \
 	rc=$$?; rm -f bootstrap/backend_override.tf; exit $$rc
 else
 bootstrap-plan:
 	rm -f bootstrap/backend_override.tf
-	AWS_PROFILE=$(AWS_PROFILE) terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var target=$(TARGET) -var region=$(AWS_REGION)
+	terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var "target=$$TARGET" -var "region=$$AWS_REGION"
 
 bootstrap-apply: bootstrap-preflight
 	rm -f bootstrap/backend_override.tf
-	AWS_PROFILE=$(AWS_PROFILE) terraform -chdir=bootstrap apply -var-file=terraform.tfvars -var target=$(TARGET) -var region=$(AWS_REGION)
+	terraform -chdir=bootstrap apply -var-file=terraform.tfvars -var "target=$$TARGET" -var "region=$$AWS_REGION"
 endif
 
 localstack-up:
@@ -66,64 +68,66 @@ OPERATOR_CIDR ?= $(shell curl -sf --max-time 5 https://checkip.amazonaws.com | a
 OPERATOR_CIDR := $(OPERATOR_CIDR)
 
 check-operator-cidr:
-	@if [ -z "$(OPERATOR_CIDR)" ]; then echo "OPERATOR_CIDR auto-detect failed; pass OPERATOR_CIDR=<cidr>" >&2; exit 1; fi
+	@if [ -z "$$OPERATOR_CIDR" ]; then echo "OPERATOR_CIDR auto-detect failed; pass OPERATOR_CIDR=<cidr>" >&2; exit 1; fi
 
 ifeq ($(TARGET),localstack)
 plan apply destroy: check-target check-env-id check-operator-cidr
 
 check-env-id:
-	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
-	@printf '%s' "$(ENV_ID)" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $(ENV_ID)" >&2; exit 1; }
+	@if [ -z "$$ENV_ID" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
+	@printf '%s' "$$ENV_ID" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $$ENV_ID" >&2; exit 1; }
 
 render-localstack-backend:
-	sed 's/ENV_ID_PLACEHOLDER/$(ENV_ID)/' envs/preview/localstack.backend_override.tf.example > envs/preview/backend_override.tf
+	awk -v id="$$ENV_ID" '{ gsub(/ENV_ID_PLACEHOLDER/, id); print }' envs/preview/localstack.backend_override.tf.example > envs/preview/backend_override.tf
 
 plan:
 	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview plan -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
 
 apply:
 	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview apply -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)" -auto-approve
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve
 
 destroy:
 	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)" -auto-approve
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve
 else
 plan apply destroy: check-target check-env-id check-operator-cidr
 
 check-env-id:
-	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
-	@printf '%s' "$(ENV_ID)" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $(ENV_ID)" >&2; exit 1; }
+	@if [ -z "$$ENV_ID" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
+	@printf '%s' "$$ENV_ID" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $$ENV_ID" >&2; exit 1; }
 
 # backend.aws.hcl is operator-provided (copied from backend.aws.hcl.example,
 # not committed); fall back to the example when it's absent, since the
 # example carries no secrets.
 BACKEND_HCL := $(if $(wildcard envs/preview/backend.aws.hcl),envs/preview/backend.aws.hcl,envs/preview/backend.aws.hcl.example)
+export BACKEND_HCL
 
 plan:
 	rm -f envs/preview/backend_override.tf
-	terraform -chdir=envs/preview init -reconfigure -backend-config="$(BACKEND_HCL)" -backend-config="key=envs/preview/$(ENV_ID).tfstate"
-	terraform -chdir=envs/preview plan -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
+	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
+	terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
 
 apply:
 	rm -f envs/preview/backend_override.tf
-	terraform -chdir=envs/preview init -reconfigure -backend-config="$(BACKEND_HCL)" -backend-config="key=envs/preview/$(ENV_ID).tfstate"
-	terraform -chdir=envs/preview apply -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
+	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
+	terraform -chdir=envs/preview apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
 
 destroy:
 	rm -f envs/preview/backend_override.tf
-	terraform -chdir=envs/preview init -reconfigure -backend-config="$(BACKEND_HCL)" -backend-config="key=envs/preview/$(ENV_ID).tfstate"
-	terraform -chdir=envs/preview destroy -var target="$(TARGET)" -var env_id="$(ENV_ID)" -var operator_cidr="$(OPERATOR_CIDR)"
+	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
+	terraform -chdir=envs/preview destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
 endif
 
 test:
 	@for d in modules/*/; do \
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \
+			terraform -chdir="$$d" init -backend=false -input=false >/dev/null && \
 			terraform -chdir="$$d" test || exit 1; \
 		fi; \
 	done

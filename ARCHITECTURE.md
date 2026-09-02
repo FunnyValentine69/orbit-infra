@@ -58,7 +58,6 @@ flowchart LR
     api --> redis
     api -.-> worker
     api --> gw
-    ch --> gw
     priv --> ep
     gw --> s3[(S3 bucket)]
 ```
