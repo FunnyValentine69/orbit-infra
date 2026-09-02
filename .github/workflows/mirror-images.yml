@@ -1,0 +1,274 @@
+# mirror-images
+#
+# Publishes the public placeholder image (built, signed keyless, Rekor
+# transparency, attested with CI build provenance -- ADR 0007) and mirrors
+# two third-party base images (redis, clickhouse-server) into private ECR
+# so no-NAT ECS tasks never reach a public registry. Mirrors are signed
+# with the KMS key (--tlog-upload=false) since they live in private ECR
+# and their tag/digest must never appear in the public Rekor log (ADR
+# 0007). This workflow needs the real-AWS bootstrap (P0-3b) applied and
+# the AWS_ROLE_PUBLISHER / AWS_KMS_SIGNING_KEY_ARN repository secrets set
+# (see bootstrap/README.md, "After apply"). It cannot run against
+# LocalStack: OIDC federation, Rekor, and AWS KMS signing are all
+# real-cloud services with no LocalStack emulation used here.
+
+name: mirror-images
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 1 * *'
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+
+concurrency:
+  group: mirror-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (publisher)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_PUBLISHER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Resolve registry
+        id: registry
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::${account_id}"
+          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
+          echo "::add-mask::${registry}"
+          echo "registry=${registry}" >> "$GITHUB_OUTPUT"
+
+      - name: ECR login
+        run: |
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "${{ steps.registry.outputs.registry }}"
+
+      - name: Read cosign version from tools.lock
+        id: cosign-version
+        run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v${{ steps.cosign-version.outputs.version }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # --- placeholder: public, built in CI, keyless signing + Rekor ---
+
+      - name: Check whether placeholder tag already exists
+        id: placeholder-check
+        run: |
+          if aws ecr describe-images --repository-name orbit-infra-79s5rw/placeholder \
+            --image-ids imageTag="${{ github.sha }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push placeholder
+        if: steps.placeholder-check.outputs.exists == 'false'
+        run: |
+          docker buildx build --platform linux/arm64 \
+            -t "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder:${{ github.sha }}" \
+            --push placeholder/
+
+      - name: Print already-published notice (placeholder)
+        if: steps.placeholder-check.outputs.exists == 'true'
+        run: echo "already published"
+
+      - name: Inspect pushed placeholder digest
+        id: placeholder-digest
+        run: |
+          digest=$(docker buildx imagetools inspect \
+            "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder:${{ github.sha }}" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy scan placeholder
+        if: steps.placeholder-check.outputs.exists == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Cosign sign placeholder (keyless)
+        if: steps.placeholder-check.outputs.exists == 'false'
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          cosign sign --yes \
+            "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}"
+
+      - name: Cosign verify placeholder (keyless, Rekor)
+        run: |
+          cosign verify \
+            --certificate-identity-regexp '^https://github.com/FunnyValentine69/orbit-infra/\.github/workflows/mirror-images\.yml@refs/heads/main$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}"
+
+      - name: Attest placeholder build provenance
+        if: steps.placeholder-check.outputs.exists == 'false'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder
+          subject-digest: ${{ steps.placeholder-digest.outputs.digest }}
+          push-to-registry: false
+
+      # --- mirrors: private ECR, KMS-signed with --tlog-upload=false (ADR 0007) ---
+
+      - name: Mirror redis:7-alpine
+        id: mirror-redis
+        env:
+          SOURCE_IMAGE: redis:7-alpine
+          MIRROR_NAME: redis
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+        run: |
+          source_digest=$(docker buildx imagetools inspect "${SOURCE_IMAGE}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          tag="${source_digest#sha256:}"
+          tag="${tag:0:12}"
+          dest="${REGISTRY}/orbit-infra-79s5rw/mirror/${MIRROR_NAME}"
+
+          if aws ecr describe-images --repository-name "orbit-infra-79s5rw/mirror/${MIRROR_NAME}" \
+            --image-ids imageTag="${tag}" >/dev/null 2>&1; then
+            echo "already published"
+            status=skipped
+          else
+            docker buildx imagetools create --tag "${dest}:${tag}" "${SOURCE_IMAGE}@${source_digest}"
+            status=published
+          fi
+
+          if cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
+            "${dest}@${source_digest}" >/dev/null 2>&1; then
+            echo "already signed"
+          else
+            cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              "${dest}@${source_digest}"
+
+            predicate_file=$(mktemp)
+            printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
+              "${SOURCE_IMAGE}" "${source_digest}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
+
+            cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+              --predicate "${predicate_file}" \
+              "${dest}@${source_digest}"
+          fi
+
+          echo "digest=${source_digest}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify redis mirror signature
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+        run: |
+          # --insecure-ignore-tlog is required here: mirror signatures use
+          # --tlog-upload=false (ADR 0007), so no Rekor entry exists to
+          # look up -- the KMS public key is the only trust anchor.
+          cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
+            "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}"
+
+      - name: Trivy scan redis mirror
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+
+      - name: Mirror clickhouse/clickhouse-server:24.3-alpine
+        id: mirror-clickhouse
+        env:
+          SOURCE_IMAGE: clickhouse/clickhouse-server:24.3-alpine
+          MIRROR_NAME: clickhouse
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+        run: |
+          source_digest=$(docker buildx imagetools inspect "${SOURCE_IMAGE}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          tag="${source_digest#sha256:}"
+          tag="${tag:0:12}"
+          dest="${REGISTRY}/orbit-infra-79s5rw/mirror/${MIRROR_NAME}"
+
+          if aws ecr describe-images --repository-name "orbit-infra-79s5rw/mirror/${MIRROR_NAME}" \
+            --image-ids imageTag="${tag}" >/dev/null 2>&1; then
+            echo "already published"
+            status=skipped
+          else
+            docker buildx imagetools create --tag "${dest}:${tag}" "${SOURCE_IMAGE}@${source_digest}"
+            status=published
+          fi
+
+          if cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
+            "${dest}@${source_digest}" >/dev/null 2>&1; then
+            echo "already signed"
+          else
+            cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              "${dest}@${source_digest}"
+
+            predicate_file=$(mktemp)
+            printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
+              "${SOURCE_IMAGE}" "${source_digest}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
+
+            cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+              --predicate "${predicate_file}" \
+              "${dest}@${source_digest}"
+          fi
+
+          echo "digest=${source_digest}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify clickhouse mirror signature
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+        run: |
+          # --insecure-ignore-tlog is required here: mirror signatures use
+          # --tlog-upload=false (ADR 0007), so no Rekor entry exists to
+          # look up -- the KMS public key is the only trust anchor.
+          cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
+            "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}"
+
+      - name: Trivy scan clickhouse mirror
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "### mirror-images"
+            echo ""
+            echo "| image | digest | status |"
+            echo "|---|---|---|"
+            echo "| placeholder | \`${{ steps.placeholder-digest.outputs.digest }}\` | ${{ steps.placeholder-check.outputs.exists == 'true' && 'skipped (already published)' || 'published' }} |"
+            echo "| mirror/redis | \`${{ steps.mirror-redis.outputs.digest }}\` | ${{ steps.mirror-redis.outputs.status }} |"
+            echo "| mirror/clickhouse | \`${{ steps.mirror-clickhouse.outputs.digest }}\` | ${{ steps.mirror-clickhouse.outputs.status }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

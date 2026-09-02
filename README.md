@@ -19,7 +19,7 @@ exist anywhere in the pipeline.
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov on every plan | done |
-| SBOM (syft) + Trivy scan + cosign keyless signing + GitHub attestations | planned |
+| SBOM (syft) + Trivy scan + cosign keyless signing + GitHub attestations | in progress |
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |

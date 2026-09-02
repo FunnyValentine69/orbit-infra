@@ -1,7 +1,7 @@
 # STATE
 
 ```
-LOCATION   Phase 3 / P3-1 written (unverified until PR #2 opens)
+LOCATION   Phase 3 / P3-2 written (runs after real-AWS bootstrap)
 STATE      full preview stack (network, ALB, api, redis, clickhouse, secret, bucket) applies/destroys on LocalStack; two concurrent envs verified
 BLOCKER    PR #1 Tier-3 subject-form question
 NEXT       merge PR #1, rebase feat/phase2-modules, open PR #2

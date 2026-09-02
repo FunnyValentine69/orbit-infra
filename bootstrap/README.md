@@ -62,5 +62,9 @@ never committed to this repo), then dispatch the smoke test:
 terraform -chdir=bootstrap output -raw plan_reader_role_arn | gh secret set AWS_ROLE_PLAN_READER
 terraform -chdir=bootstrap output -raw deployer_role_arn | gh secret set AWS_ROLE_DEPLOYER
 terraform -chdir=bootstrap output -raw publisher_role_arn | gh secret set AWS_ROLE_PUBLISHER
+terraform -chdir=bootstrap output -raw kms_signing_key_arn | gh secret set AWS_KMS_SIGNING_KEY_ARN
 gh workflow run oidc-smoke.yml
 ```
+
+`AWS_KMS_SIGNING_KEY_ARN` is consumed by `.github/workflows/mirror-images.yml` to
+KMS-sign the redis/clickhouse mirror images (`--tlog-upload=false`, ADR 0007).
