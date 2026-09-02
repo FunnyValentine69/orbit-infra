@@ -4,9 +4,11 @@ output "discovery_dns_name" {
 }
 
 output "port" {
-  value = 6379
+  description = "TCP port Redis listens on"
+  value       = 6379
 }
 
 output "service_name" {
-  value = module.service.service_name
+  description = "Name of the underlying ECS service"
+  value       = module.service.service_name
 }
