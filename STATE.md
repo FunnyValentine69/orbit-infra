@@ -1,7 +1,7 @@
 # STATE
 
 ```
-LOCATION   Phase 2 complete except P2-6 (moved to P3-1); PR #1 in Tier 3
+LOCATION   Phase 3 / P3-1 written (unverified until PR #2 opens)
 STATE      full preview stack (network, ALB, api, redis, clickhouse, secret, bucket) applies/destroys on LocalStack; two concurrent envs verified
 BLOCKER    PR #1 Tier-3 subject-form question
 NEXT       merge PR #1, rebase feat/phase2-modules, open PR #2

@@ -18,7 +18,7 @@ exist anywhere in the pipeline.
 | OIDC-federated Actions, no static AWS keys | in progress |
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
-| Policy gates: tflint + checkov on every plan | in progress |
+| Policy gates: tflint + checkov on every plan | done |
 | SBOM (syft) + Trivy scan + cosign keyless signing + GitHub attestations | planned |
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
@@ -84,6 +84,9 @@ make lint         # terraform fmt -check, tflint --recursive, checkov
 make test         # terraform test, every module with a tests/ dir
 scripts/gates.sh  # runs all three above, PASS/FAIL summary; what CI calls
 ```
+
+CI: terraform-plan.yml runs the gates and a LocalStack plan on every pull
+request; no AWS credentials are involved.
 
 ## Toolchain
 

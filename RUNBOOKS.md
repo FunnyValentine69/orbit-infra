@@ -59,6 +59,10 @@ for a specific environment.
 
 ## Credential rotation
 
+CI reads only `LOCALSTACK_AUTH_TOKEN` and `INFRACOST_API_KEY` (both
+repository secrets, consumed by terraform-plan.yml); no AWS credentials
+are read by any workflow.
+
 The Infracost service-account token expires one year after creation
 (created 2026-09-02), and the LocalStack student license renews yearly
 (2027-09-02). Rotate via `gh secret set INFRACOST_API_KEY` /
