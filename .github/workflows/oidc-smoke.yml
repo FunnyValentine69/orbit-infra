@@ -20,11 +20,14 @@
 # assume-deployer and assume-publisher call AssumeRoleWithWebIdentity
 # directly via the AWS CLI (rather than via aws-actions/configure-aws-
 # credentials with an ignored-failure step outcome) so the smoke test
-# can assert on the *reason* for failure, not just failure/success. On
-# pull_request runs the call must
-# fail with an AccessDenied error from the trust policy; any other
+# can assert on the *reason* for failure, not just failure/success. The
+# trust policy scopes deployer/publisher to ref:refs/heads/main only, so
+# success is expected ONLY when this run is not a pull_request AND is on
+# refs/heads/main (workflow_dispatch from main); every other case --
+# pull_request, or workflow_dispatch from any non-main branch -- must
+# fail with an AccessDenied error from the trust policy. Any other
 # failure (e.g. a malformed role ARN) is treated as a broken test, not a
-# passing one. On workflow_dispatch the call must succeed.
+# passing one.
 
 name: oidc-smoke
 
@@ -154,18 +157,38 @@ jobs:
       - name: Verify expected outcome
         env:
           ASSUME_STDERR: ${{ steps.assume.outputs.stderr }}
+          EXPECT_SUCCESS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         run: |
           status="${{ steps.assume.outputs.status }}"
           stderr="$ASSUME_STDERR"
-          event="${{ github.event_name }}"
+          expect_success="$EXPECT_SUCCESS"
 
-          if [ "$event" = "pull_request" ]; then
-            if [ "$status" = "0" ]; then
-              echo "deployer was assumable from a pull_request run; trust policy is too broad"
+          if [ "$expect_success" = "true" ]; then
+            if [ "$status" != "0" ]; then
+              echo "deployer role assumption failed on a workflow_dispatch run from refs/heads/main"
+              echo "$stderr"
               {
                 echo "### deployer verdict"
                 echo ""
-                echo "FAIL: deployer was assumable from a pull_request run; trust policy is too broad"
+                echo "FAIL: deployer role assumption failed on a workflow_dispatch run from refs/heads/main"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-deployer-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
+            {
+              echo "### deployer verdict"
+              echo ""
+              echo "PASS: deployer role assumption succeeded on a workflow_dispatch run from refs/heads/main"
+              echo ""
+              echo "\`$arn\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ "$status" = "0" ]; then
+              echo "deployer was assumable from a run that is not workflow_dispatch-from-main; trust policy is too broad"
+              {
+                echo "### deployer verdict"
+                echo ""
+                echo "FAIL: deployer was assumable from a run that is not workflow_dispatch-from-main; trust policy is too broad"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
@@ -182,26 +205,7 @@ jobs:
             {
               echo "### deployer verdict"
               echo ""
-              echo "PASS: deployer role assumption correctly failed with AccessDenied on a pull_request run"
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            if [ "$status" != "0" ]; then
-              echo "deployer role assumption failed on a non-pull_request (dispatch/main) run"
-              echo "$stderr"
-              {
-                echo "### deployer verdict"
-                echo ""
-                echo "FAIL: deployer role assumption failed on a non-pull_request run"
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-deployer-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
-            {
-              echo "### deployer verdict"
-              echo ""
-              echo "PASS: deployer role assumption succeeded on a workflow_dispatch run"
-              echo ""
-              echo "\`$arn\`"
+              echo "PASS: deployer role assumption correctly failed with AccessDenied on a non-main/PR run"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -261,18 +265,38 @@ jobs:
       - name: Verify expected outcome
         env:
           ASSUME_STDERR: ${{ steps.assume.outputs.stderr }}
+          EXPECT_SUCCESS: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
         run: |
           status="${{ steps.assume.outputs.status }}"
           stderr="$ASSUME_STDERR"
-          event="${{ github.event_name }}"
+          expect_success="$EXPECT_SUCCESS"
 
-          if [ "$event" = "pull_request" ]; then
-            if [ "$status" = "0" ]; then
-              echo "publisher was assumable from a pull_request run; trust policy is too broad"
+          if [ "$expect_success" = "true" ]; then
+            if [ "$status" != "0" ]; then
+              echo "publisher role assumption failed on a workflow_dispatch run from refs/heads/main"
+              echo "$stderr"
               {
                 echo "### publisher verdict"
                 echo ""
-                echo "FAIL: publisher was assumable from a pull_request run; trust policy is too broad"
+                echo "FAIL: publisher role assumption failed on a workflow_dispatch run from refs/heads/main"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-publisher-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
+            {
+              echo "### publisher verdict"
+              echo ""
+              echo "PASS: publisher role assumption succeeded on a workflow_dispatch run from refs/heads/main"
+              echo ""
+              echo "\`$arn\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ "$status" = "0" ]; then
+              echo "publisher was assumable from a run that is not workflow_dispatch-from-main; trust policy is too broad"
+              {
+                echo "### publisher verdict"
+                echo ""
+                echo "FAIL: publisher was assumable from a run that is not workflow_dispatch-from-main; trust policy is too broad"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
@@ -289,26 +313,7 @@ jobs:
             {
               echo "### publisher verdict"
               echo ""
-              echo "PASS: publisher role assumption correctly failed with AccessDenied on a pull_request run"
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            if [ "$status" != "0" ]; then
-              echo "publisher role assumption failed on a non-pull_request (dispatch/main) run"
-              echo "$stderr"
-              {
-                echo "### publisher verdict"
-                echo ""
-                echo "FAIL: publisher role assumption failed on a non-pull_request run"
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-            arn=$(python3 -c "import json,sys;print(json.load(open('/tmp/assume-publisher-stdout.json'))['AssumedRoleUser']['Arn'])" | sed -E 's/[0-9]{12}/************/g')
-            {
-              echo "### publisher verdict"
-              echo ""
-              echo "PASS: publisher role assumption succeeded on a workflow_dispatch run"
-              echo ""
-              echo "\`$arn\`"
+              echo "PASS: publisher role assumption correctly failed with AccessDenied on a non-main/PR run"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

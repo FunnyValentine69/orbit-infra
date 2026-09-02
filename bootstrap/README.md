@@ -34,11 +34,22 @@ Never run `terraform destroy` here — every resource has `prevent_destroy`.
 ## LocalStack target
 
 `make bootstrap-apply TARGET=localstack` (and `bootstrap-plan TARGET=localstack`)
-point this root at a local LocalStack instance instead of real AWS. It always
-uses the local state file in `bootstrap/` — this target is never migrated to
-the S3 backend. `aws_budgets_budget.monthly` is skipped (Budgets is not
-emulated by LocalStack). Running `localstack stop` (`make localstack-down`)
-discards everything created this way; nothing here is durable.
+point this root at a local LocalStack instance instead of real AWS. State
+isolation from the real-AWS backend uses Terraform's override-file
+mechanism: `bootstrap/localstack.backend_override.tf.example` is copied to
+`bootstrap/backend_override.tf` (gitignored), which Terraform loads after
+the primary configuration and merges as an override — replacing the
+backend block for that run only, without editing `backend.tf` (the S3
+backend added post-bootstrap, see below). The override backend is
+`local`, writing to `bootstrap/terraform.localstack.tfstate` (gitignored)
+under its own `TF_DATA_DIR=.terraform-localstack` (gitignored), so the
+LocalStack state, working directory, and provider cache never share
+anything with the real-AWS state or `.terraform/`. `make bootstrap-apply
+TARGET=aws` removes `bootstrap/backend_override.tf` if present so the
+default (real) backend and `TF_DATA_DIR` apply. `aws_budgets_budget.monthly`
+is skipped (Budgets is not emulated by LocalStack). Running `localstack
+stop` (`make localstack-down`) discards everything created this way;
+nothing here is durable.
 
 ## After apply
 

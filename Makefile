@@ -15,17 +15,24 @@ bootstrap-validate:
 bootstrap-lint:
 	tflint --chdir bootstrap
 
+# LocalStack applies are disposable; real AWS keeps the interactive confirmation
 ifeq ($(TARGET),localstack)
 bootstrap-plan:
-	terraform -chdir=bootstrap plan -var target=$(TARGET) -var budget_email=none@localhost
+	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var target=$(TARGET) -var budget_email=none@localhost
 
 bootstrap-apply:
-	terraform -chdir=bootstrap apply -var target=$(TARGET) -var budget_email=none@localhost
+	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false
+	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var target=$(TARGET) -var budget_email=none@localhost -auto-approve
 else
 bootstrap-plan:
+	rm -f bootstrap/backend_override.tf
 	terraform -chdir=bootstrap plan -var-file=terraform.tfvars -var target=$(TARGET)
 
-bootstrap-apply:
+bootstrap-apply: bootstrap-preflight
+	rm -f bootstrap/backend_override.tf
 	terraform -chdir=bootstrap apply -var-file=terraform.tfvars -var target=$(TARGET)
 endif
 

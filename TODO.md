@@ -28,6 +28,7 @@
 
 (expanded when the phase starts)
 - [ ] P3-x: document that fork PRs skip oidc-smoke jobs (green-by-skip) in README/RUNBOOKS
+- [ ] P3-2: digest-pin the placeholder base image and add pip hash pinning (reproducible signed build)
 
 ## Phase 4 — Parallel environments + runbooks
 

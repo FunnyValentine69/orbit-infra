@@ -26,6 +26,8 @@ terraform -chdir=bootstrap import 'aws_ecr_repository.repos["orbit-worker"]' orb
 terraform -chdir=bootstrap import 'aws_ecr_repository.repos["orbit-clickhouse"]' orbit-infra-79s5rw/orbit-clickhouse
 terraform -chdir=bootstrap import 'aws_ecr_repository.repos["mirror/clickhouse"]' orbit-infra-79s5rw/mirror/clickhouse
 terraform -chdir=bootstrap import 'aws_ecr_repository.repos["mirror/redis"]' orbit-infra-79s5rw/mirror/redis
+# Find <key-id> via: aws kms describe-key --key-id alias/orbit-infra-79s5rw-signing --query KeyMetadata.KeyId --output text
+terraform -chdir=bootstrap import aws_kms_key.signing <key-id>
 terraform -chdir=bootstrap import aws_kms_alias.signing alias/orbit-infra-79s5rw-signing
 terraform -chdir=bootstrap import aws_iam_openid_connect_provider.github[0] <oidc-provider-arn>
 terraform -chdir=bootstrap import 'aws_budgets_budget.monthly[0]' <account-id>:orbit-infra-79s5rw-monthly

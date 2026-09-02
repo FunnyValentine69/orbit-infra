@@ -12,6 +12,10 @@ resource "aws_s3_bucket_versioning" "state" {
   versioning_configuration {
     status = "Enabled"
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
@@ -22,6 +26,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
       sse_algorithm = "AES256"
     }
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "state" {
@@ -31,6 +39,10 @@ resource "aws_s3_bucket_public_access_block" "state" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_ownership_controls" "state" {
@@ -38,5 +50,9 @@ resource "aws_s3_bucket_ownership_controls" "state" {
 
   rule {
     object_ownership = "BucketOwnerEnforced"
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }

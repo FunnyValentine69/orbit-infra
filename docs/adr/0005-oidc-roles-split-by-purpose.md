@@ -30,8 +30,12 @@ bootstrap step; CI never uses static keys.
 ## Consequences
 
 - No static AWS credentials exist anywhere in GitHub Actions.
-- A pull-request run, including from a fork, can never obtain `deployer`
-  or `publisher`; `oidc-smoke` proves this on every dispatch and PR.
+- Same-repository PRs are proved by `oidc-smoke`: it asserts `deployer`
+  and `publisher` assumption fails with AccessDenied on every same-repo
+  pull_request run and on every workflow_dispatch not from
+  `refs/heads/main`. Fork PRs skip the credentialed jobs entirely
+  (green-by-skip, via the `head.repo.full_name == github.repository`
+  guard) and never receive an OIDC token in the first place.
 - The local IAM-user deviation depends on deactivating keys between
   sessions; documented rather than hidden.
 

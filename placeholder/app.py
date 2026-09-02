@@ -36,12 +36,19 @@ def s3_roundtrip(response: Response) -> dict:
     key = f"roundtrip/{uuid.uuid4()}.txt"
     body = datetime.now(timezone.utc).isoformat().encode("utf-8")
 
+    created = False
     try:
         _s3.put_object(Bucket=bucket, Key=key, Body=body)
+        created = True
         _s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-        _s3.delete_object(Bucket=bucket, Key=key)
         return {"bucket": bucket, "key": key, "ok": True}
     except Exception as exc:
         logger.exception("s3 roundtrip failed")
         response.status_code = 500
         return {"ok": False, "error": type(exc).__name__}
+    finally:
+        if created:
+            try:
+                _s3.delete_object(Bucket=bucket, Key=key)
+            except Exception:
+                logger.exception("s3 roundtrip cleanup delete failed")

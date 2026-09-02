@@ -12,6 +12,11 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 DRY_RUN=0
 BLOCKED=0
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required by preflight.sh (OIDC audience check) but was not found on PATH" >&2
+  exit 3
+fi
+
 usage() {
   cat <<EOF
 Usage: bootstrap/preflight.sh [--dry-run] [--help]
@@ -89,7 +94,11 @@ if ! CALLER_ARN=$("${AWS_BASE[@]}" sts get-caller-identity --query Arn --output 
   echo "AWS credentials not available for profile $AWS_PROFILE; run: aws configure --profile orbit (Free Plan has no Identity Center; see RUNBOOKS.md)" >&2
   exit 3
 fi
-ACCOUNT_ID=$("${AWS_BASE[@]}" sts get-caller-identity --query Account --output text)
+ACCOUNT_ID=""
+if ! ACCOUNT_ID=$("${AWS_BASE[@]}" sts get-caller-identity --query Account --output text 2>&1); then
+  block "caller identity lookup failed: $ACCOUNT_ID"
+  ACCOUNT_ID=""
+fi
 MASKED_ARN=$(echo "$CALLER_ARN" | sed -E 's/[0-9]{12}/************/')
 
 echo "== preflight: $NAME =="
@@ -102,7 +111,7 @@ check_s3_bucket() {
   if err=$("${AWS_BASE[@]}" s3api head-bucket --bucket "$bucket" 2>&1); then
     block "s3_bucket $bucket exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_s3_bucket.state $bucket"
   else
-    if echo "$err" | grep -qi "Not Found\|404\|NoSuchBucket"; then
+    if echo "$err" | grep -qE '\(404\)|\(NoSuchBucket\)'; then
       echo "OK: s3_bucket $bucket absent"
     else
       block "s3_bucket $bucket check failed: $err"
@@ -140,9 +149,10 @@ check_ecr_repo() {
 
 check_kms_alias() {
   local alias="alias/${NAME}-signing"
-  local err
+  local err key_id
   if err=$("${AWS_BASE[@]}" kms describe-key --key-id "$alias" 2>&1); then
-    block "kms_alias $alias exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_kms_alias.signing $alias"
+    key_id=$("${AWS_BASE[@]}" kms describe-key --key-id "$alias" --query KeyMetadata.KeyId --output text 2>&1) || key_id="<key-id-lookup-failed>"
+    block "kms_alias $alias exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_kms_key.signing $key_id && terraform -chdir=bootstrap import aws_kms_alias.signing $alias"
   else
     if echo "$err" | grep -qi "NotFoundException"; then
       echo "OK: kms_alias $alias absent"
@@ -178,14 +188,14 @@ check_oidc_provider() {
     return
   fi
   local detail
-  if ! detail=$("${AWS_BASE[@]}" iam get-open-id-connect-provider --open-id-connect-provider-arn "$arn" --output json 2>&1); then
+  if ! detail=$("${AWS_BASE[@]}" iam get-open-id-connect-provider --open-id-connect-provider-arn "$arn" --query 'ClientIDList' --output json 2>&1); then
     block "oidc_provider detail fetch failed for $arn: $detail"
     return
   fi
-  if echo "$detail" | grep -q "sts.amazonaws.com"; then
+  if echo "$detail" | jq -e 'index("sts.amazonaws.com")' >/dev/null 2>&1; then
     echo "EXTERNAL: OIDC provider present and valid; bootstrap will reference it as a data source (set TF_VAR_oidc_provider_external=true)"
   else
-    block "OIDC provider present but audience sts.amazonaws.com missing; fix manually before bootstrap"
+    block "OIDC provider present but audience sts.amazonaws.com missing from ClientIDList; fix manually before bootstrap"
   fi
 }
 
@@ -200,7 +210,11 @@ check_ecr_repo "${NAME}/orbit-clickhouse"
 check_ecr_repo "${NAME}/mirror/clickhouse"
 check_ecr_repo "${NAME}/mirror/redis"
 check_kms_alias
-check_budget
+if [[ -n "$ACCOUNT_ID" ]]; then
+  check_budget
+else
+  echo "SKIP: budget check skipped; caller identity lookup failed above"
+fi
 check_oidc_provider
 
 echo

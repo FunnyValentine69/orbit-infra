@@ -113,6 +113,55 @@ resource "aws_iam_role" "publisher" {
 resource "aws_iam_role_policy_attachment" "plan_reader_readonly" {
   role       = aws_iam_role.plan_reader.name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# ReadOnlyAccess grants s3:Get* on *; PR-triggered code must not read
+# arbitrary buckets or secrets.
+data "aws_iam_policy_document" "plan_reader_deny" {
+  statement {
+    sid     = "DenyReadStateObjectsOutsideScope"
+    effect  = "Deny"
+    actions = ["s3:GetObject", "s3:GetObjectVersion"]
+    not_resources = [
+      "${aws_s3_bucket.state.arn}/envs/preview/*",
+      "${aws_s3_bucket.state.arn}/bootstrap/*",
+    ]
+  }
+
+  statement {
+    sid           = "DenyListBucketOutsideScope"
+    effect        = "Deny"
+    actions       = ["s3:ListBucket"]
+    not_resources = [aws_s3_bucket.state.arn]
+  }
+
+  statement {
+    sid    = "DenySecretsAndParams"
+    effect = "Deny"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+      "kms:Decrypt",
+      "lambda:GetFunction",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_reader_deny" {
+  name   = "${var.name}-plan-reader-deny"
+  role   = aws_iam_role.plan_reader.id
+  policy = data.aws_iam_policy_document.plan_reader_deny.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # plan-reader may list/read only the preview env state and the bootstrap
@@ -146,6 +195,10 @@ resource "aws_iam_role_policy" "plan_reader_state" {
   name   = "${var.name}-plan-reader-state"
   role   = aws_iam_role.plan_reader.id
   policy = data.aws_iam_policy_document.plan_reader_state.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # --- deployer permissions ---
@@ -160,7 +213,7 @@ data "aws_iam_policy_document" "deployer" {
   statement {
     sid     = "StateAndLeaseObjects"
     effect  = "Allow"
-    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucketVersions", "s3:DeleteObjectVersion"]
+    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
     resources = [
       "${aws_s3_bucket.state.arn}/envs/preview/*",
       "${aws_s3_bucket.state.arn}/leases/*",
@@ -170,8 +223,14 @@ data "aws_iam_policy_document" "deployer" {
   statement {
     sid       = "ListStateBucket"
     effect    = "Allow"
-    actions   = ["s3:ListBucket"]
+    actions   = ["s3:ListBucketVersions", "s3:ListBucket"]
     resources = [aws_s3_bucket.state.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["envs/preview/*", "leases/*"]
+    }
   }
 
   # (b) placeholder for environment mutation rights; tighten at Phase 2
@@ -213,6 +272,10 @@ resource "aws_iam_role_policy" "deployer" {
   name   = "${var.name}-deployer"
   role   = aws_iam_role.deployer.id
   policy = data.aws_iam_policy_document.deployer.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # --- publisher permissions ---
@@ -254,4 +317,8 @@ resource "aws_iam_role_policy" "publisher" {
   name   = "${var.name}-publisher"
   role   = aws_iam_role.publisher.id
   policy = data.aws_iam_policy_document.publisher.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }

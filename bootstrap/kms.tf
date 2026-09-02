@@ -14,4 +14,8 @@ resource "aws_kms_key" "signing" {
 resource "aws_kms_alias" "signing" {
   name          = "alias/${var.name}-signing"
   target_key_id = aws_kms_key.signing.key_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
