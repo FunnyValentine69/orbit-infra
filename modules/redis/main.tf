@@ -25,6 +25,8 @@ module "service" {
   subnet_ids         = var.subnet_ids
   security_group_ids = var.security_group_ids
 
+  permissions_boundary_arn = var.permissions_boundary_arn
+
   cloud_map_namespace_id     = var.cloud_map_namespace_id
   register_service_discovery = var.register_service_discovery
 

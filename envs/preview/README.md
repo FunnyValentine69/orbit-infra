@@ -20,6 +20,17 @@ locally if you want your own; the Makefile falls back to the example
 when it's absent — no secrets in either). The Makefile injects the
 per-environment state key: `envs/preview/<ENV_ID>.tfstate`.
 
+## Task permissions boundary
+
+Every ECS execution/task role created here (api, worker, redis,
+clickhouse) gets `permissions_boundary_arn = local.task_boundary_arn`,
+computed as `arn:<partition>:iam::<account>:policy/${var.name}-task-boundary`.
+This must exactly match the `${var.name}-task-boundary` policy
+`bootstrap/roles.tf` creates (naming contract — no cross-root data
+source, just matching name strings); on real AWS the deployer's
+`iam:CreateRole`/`iam:PutRolePolicy`/`iam:AttachRolePolicy` grants are
+denied unless this ARN is set as the boundary.
+
 ## Commands
 
 ```

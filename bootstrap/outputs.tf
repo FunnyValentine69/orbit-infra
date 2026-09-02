@@ -39,6 +39,12 @@ output "oidc_provider_arn" {
   sensitive   = true
 }
 
+output "task_boundary_policy_arn" {
+  description = "ARN of the permissions boundary policy attached to ECS execution/task roles; naming contract: <var.name>-task-boundary"
+  value       = aws_iam_policy.task_boundary.arn
+  sensitive   = true
+}
+
 output "oidc_subjects" {
   description = "Exact OIDC subject strings used in role trust policies, for the smoke test"
   value = {

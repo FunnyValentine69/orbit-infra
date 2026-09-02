@@ -62,6 +62,24 @@ is skipped (Budgets is not emulated by LocalStack). Running `localstack
 stop` (`make localstack-down`) discards everything created this way;
 nothing here is durable.
 
+## Task permissions boundary (PR #2 Tier 2)
+
+`bootstrap/roles.tf` creates `aws_iam_policy.task_boundary`, named
+`${var.name}-task-boundary` (output `task_boundary_policy_arn`). This is
+the maximum permission set the deployer is allowed to attach as a
+permissions boundary on any execution/task role it creates via
+`modules/ecs-service`; the deployer policy denies `iam:CreateRole`,
+`iam:PutRolePolicy`, and `iam:AttachRolePolicy` unless the exact boundary
+ARN is set, and denies `iam:DeleteRolePermissionsBoundary` outright.
+`envs/preview/main.tf` computes this same ARN from `var.name` plus
+`data.aws_caller_identity`/`data.aws_partition` (naming contract only —
+it does not read the bootstrap output) and passes it to every
+`ecs-service`/`redis`/`clickhouse` module call as
+`permissions_boundary_arn`. Mutation actions in the deployer policy are
+also conditioned on the `Project` tag (`var.project_tag`, default
+`orbit-infra`), matching `default_tags.Project` set in
+`envs/preview/main.tf`'s provider block via `var.tags`.
+
 ## After apply
 
 Publish the three role ARNs as GitHub repository secrets (not variables --

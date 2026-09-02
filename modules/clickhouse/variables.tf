@@ -77,6 +77,12 @@ variable "password_secret_arn" {
   type        = string
 }
 
+variable "permissions_boundary_arn" {
+  description = "Permissions boundary attached to the execution and task roles; required by the deployer policy on real AWS"
+  type        = string
+  default     = null
+}
+
 variable "cpu" {
   description = "Task CPU units"
   type        = number

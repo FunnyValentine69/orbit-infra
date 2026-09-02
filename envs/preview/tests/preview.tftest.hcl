@@ -9,6 +9,23 @@ mock_provider "aws" {
       names = ["us-east-1a", "us-east-1b"]
     }
   }
+
+  override_data {
+    target = data.aws_caller_identity.current
+    values = {
+      account_id = "000000000000"
+      arn        = "arn:aws:iam::000000000000:user/mock"
+      user_id    = "AIDAMOCK"
+    }
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = {
+      partition  = "aws"
+      dns_suffix = "amazonaws.com"
+    }
+  }
 }
 
 variables {

@@ -127,6 +127,12 @@ variable "health_check" {
   default = null
 }
 
+variable "permissions_boundary_arn" {
+  description = "Permissions boundary attached to the execution and task roles; required by the deployer policy on real AWS"
+  type        = string
+  default     = null
+}
+
 variable "task_role_policy_json" {
   description = "Additional inline policy document (JSON) attached to the task role"
   type        = string

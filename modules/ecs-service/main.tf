@@ -86,8 +86,9 @@ locals {
 resource "aws_iam_role" "execution" {
   count = local.enabled
 
-  name_prefix        = local.iam_prefix
-  assume_role_policy = local.ecs_tasks_assume_role_policy
+  name_prefix          = local.iam_prefix
+  assume_role_policy   = local.ecs_tasks_assume_role_policy
+  permissions_boundary = var.permissions_boundary_arn
 
   tags = merge(local.tags, { Name = "${var.name}-execution-role" })
 }
@@ -117,8 +118,9 @@ resource "aws_iam_role_policy" "execution_secrets" {
 resource "aws_iam_role" "task" {
   count = local.enabled
 
-  name_prefix        = local.iam_prefix
-  assume_role_policy = local.ecs_tasks_assume_role_policy
+  name_prefix          = local.iam_prefix
+  assume_role_policy   = local.ecs_tasks_assume_role_policy
+  permissions_boundary = var.permissions_boundary_arn
 
   tags = merge(local.tags, { Name = "${var.name}-task-role" })
 }

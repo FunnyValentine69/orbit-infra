@@ -22,6 +22,7 @@ provider "aws" {
       secretsmanager         = var.localstack_endpoint
       iam                    = var.localstack_endpoint
       s3                     = var.localstack_endpoint
+      sts                    = var.localstack_endpoint
     }
   }
 
@@ -43,8 +44,17 @@ module "network" {
   tags                       = var.tags
 }
 
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
 locals {
   tags = merge(var.tags, { env_id = var.env_id })
+
+  # Naming contract with bootstrap/roles.tf: the task-boundary policy is
+  # created there as "${var.name}-task-boundary" (see bootstrap/README.md
+  # and ADR 0005 Amendment 2026-09-02).
+  task_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name}-task-boundary"
 }
 
 resource "aws_ecs_cluster" "this" {
@@ -249,6 +259,8 @@ module "redis" {
   subnet_ids         = [module.network.private_subnet_id]
   security_group_ids = [aws_security_group.service.id]
 
+  permissions_boundary_arn = local.task_boundary_arn
+
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true
   namespace_name             = aws_service_discovery_private_dns_namespace.this.name
@@ -269,6 +281,8 @@ module "clickhouse" {
 
   subnet_ids         = [module.network.private_subnet_id]
   security_group_ids = [aws_security_group.service.id]
+
+  permissions_boundary_arn = local.task_boundary_arn
 
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true
@@ -354,6 +368,8 @@ module "api" {
   task_role_policy_json = local.api_bucket_policy_json
   alb_target_group_arn  = aws_lb_target_group.api.arn
 
+  permissions_boundary_arn = local.task_boundary_arn
+
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true
 
@@ -379,6 +395,8 @@ module "worker" {
   container_port     = 8000
   subnet_ids         = [module.network.private_subnet_id]
   security_group_ids = [aws_security_group.service.id]
+
+  permissions_boundary_arn = local.task_boundary_arn
 
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true

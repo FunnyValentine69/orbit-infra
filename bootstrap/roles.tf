@@ -234,11 +234,86 @@ resource "aws_iam_role_policy" "plan_reader_state" {
   }
 }
 
+# --- task permissions boundary (PR #2 Tier 2 / R3, A1) ---
+#
+# Maximum permission set an ECS execution or task role created by the
+# deployer may ever hold, per modules/ecs-service/main.tf (execution_managed,
+# execution_secrets, task_exec_command) and envs/preview/main.tf
+# (local.api_bucket_policy_json). This is a superset of every grant those
+# resources make so attaching it never removes functionality; see ADR 0005
+# Amendment 2026-09-02 for the naming contract (${var.name}-task-boundary).
+data "aws_iam_policy_document" "task_boundary" {
+  statement {
+    sid       = "EcrAuth"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcrPull"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchCheckLayerAvailability",
+    ]
+    resources = [for r in aws_ecr_repository.repos : r.arn]
+  }
+
+  statement {
+    sid       = "LogStreams"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/orbit/*"]
+  }
+
+  statement {
+    sid       = "ProjectSecrets"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name}-*"]
+  }
+
+  statement {
+    sid    = "EcsExec"
+    effect = "Allow"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ProjectDataBucket"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:DeleteObject",
+    ]
+    resources = [
+      "arn:aws:s3:::${var.name}-*",
+      "arn:aws:s3:::${var.name}-*/*",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "task_boundary" {
+  name   = "${var.name}-task-boundary"
+  policy = data.aws_iam_policy_document.task_boundary.json
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 # --- deployer permissions ---
 
 data "aws_iam_policy_document" "deployer" {
-  #checkov:skip=CKV_AWS_111:every action enumerated below carries resources=["*"] only where the AWS IAM reference documents no resource-level permission for that action family (EC2 VPC/subnet/route-table/IGW/endpoint/SG lifecycle, ELBv2 Create/Register/tag calls, ECS RegisterTaskDefinition/CreateService, Cloud Map namespace/service, tag:GetResources) — the ARN doesn't exist until the call returns, or AWS documents no resource type at all; every action that DOES support resource-level scoping (S3 objects/buckets, CloudWatch log groups, Secrets Manager secrets, IAM roles) is scoped to a name-derived ARN pattern below (TODO.md P2-7)
-  #checkov:skip=CKV_AWS_356:same constraint as CKV_AWS_111 above — the "*" resources are confined to actions AWS itself does not support resource-level ARN restriction for; see the per-statement comments in this document (TODO.md P2-7)
   # (a) preview env terraform state + apply leases: read/write/list.
   statement {
     sid     = "StateAndLeaseObjects"
@@ -263,211 +338,742 @@ data "aws_iam_policy_document" "deployer" {
     }
   }
 
-  # (b) EC2 networking (VPC, subnets, route tables/routes, IGW, interface +
-  # gateway VPC endpoints, security groups + rules) created by
-  # modules/network and envs/preview. AWS does not support resource-level
-  # IAM permissions for these Create/Delete/Describe/Modify actions (they
-  # operate before the resource ARN exists, or the action family has no
-  # documented resource type in the EC2 IAM reference) so `resources = ["*"]`
-  # is required; scoped instead by action enumeration.
+  # --- (b) EC2 networking. Every action below IS resource-scoped per the
+  # verified condition-key table (iam-condition-keys.md, EC2 section);
+  # `resources = ["*"]` is kept (the ARN is unknown before create, and
+  # Terraform's IAM engine still enforces the conditions below against
+  # any resource matched by "*"), scoped instead by tag conditions.
+  # Only the 7 Describe* actions the table confirms `* only` (plus two
+  # untested-but-consistent Describe* calls, flagged) are left bare.
   statement {
-    sid    = "Ec2NetworkLifecycle"
+    #checkov:skip=CKV_AWS_111:table-confirmed * only EC2 Describe* actions; no condition key exists (iam-condition-keys.md EC2 section)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "Ec2DescribeStarOnly"
     effect = "Allow"
     actions = [
       "ec2:DescribeAvailabilityZones",
       "ec2:DescribeRegions",
-      "ec2:CreateVpc",
-      "ec2:DeleteVpc",
       "ec2:DescribeVpcs",
-      "ec2:DescribeVpcAttribute",
-      "ec2:ModifyVpcAttribute",
-      "ec2:CreateSubnet",
-      "ec2:DeleteSubnet",
+      "ec2:DescribeVpcAttribute", # not one of the table's 7 tested Describe* rows; treated consistently, flagged
       "ec2:DescribeSubnets",
-      "ec2:ModifySubnetAttribute",
-      "ec2:CreateInternetGateway",
-      "ec2:DeleteInternetGateway",
-      "ec2:AttachInternetGateway",
-      "ec2:DetachInternetGateway",
       "ec2:DescribeInternetGateways",
-      "ec2:CreateRouteTable",
-      "ec2:DeleteRouteTable",
       "ec2:DescribeRouteTables",
-      "ec2:CreateRoute",
-      "ec2:DeleteRoute",
-      "ec2:ReplaceRoute",
-      "ec2:AssociateRouteTable",
-      "ec2:DisassociateRouteTable",
-      "ec2:ReplaceRouteTableAssociation",
-      "ec2:CreateVpcEndpoint",
-      "ec2:DeleteVpcEndpoints",
       "ec2:DescribeVpcEndpoints",
-      "ec2:ModifyVpcEndpoint",
-      "ec2:CreateSecurityGroup",
-      "ec2:DeleteSecurityGroup",
       "ec2:DescribeSecurityGroups",
-      "ec2:DescribeSecurityGroupRules",
-      "ec2:AuthorizeSecurityGroupIngress",
-      "ec2:AuthorizeSecurityGroupEgress",
-      "ec2:RevokeSecurityGroupIngress",
-      "ec2:RevokeSecurityGroupEgress",
-      "ec2:ModifySecurityGroupRules",
-      "ec2:CreateTags",
-      "ec2:DeleteTags",
+      "ec2:DescribeSecurityGroupRules", # not one of the table's 7 tested Describe* rows; treated consistently, flagged
       "ec2:DescribeTags",
     ]
     resources = ["*"]
   }
 
-  # (c) ALB + target group + listener, created by envs/preview. ELBv2
-  # Create/Register/Deregister/Add|RemoveTags calls target a load
-  # balancer/target-group ARN that does not exist before the call
-  # completes, so resource-level scoping is not workable for this
-  # lifecycle; `resources = ["*"]` is required.
   statement {
-    sid    = "ElbLifecycle"
+    sid    = "Ec2CreateWithTag"
     effect = "Allow"
     actions = [
-      "elasticloadbalancing:CreateLoadBalancer",
-      "elasticloadbalancing:DeleteLoadBalancer",
-      "elasticloadbalancing:DescribeLoadBalancers",
-      "elasticloadbalancing:DescribeLoadBalancerAttributes",
-      "elasticloadbalancing:ModifyLoadBalancerAttributes",
-      "elasticloadbalancing:CreateTargetGroup",
-      "elasticloadbalancing:DeleteTargetGroup",
-      "elasticloadbalancing:DescribeTargetGroups",
-      "elasticloadbalancing:DescribeTargetGroupAttributes",
-      "elasticloadbalancing:ModifyTargetGroup",
-      "elasticloadbalancing:ModifyTargetGroupAttributes",
-      "elasticloadbalancing:RegisterTargets",
-      "elasticloadbalancing:DeregisterTargets",
-      "elasticloadbalancing:DescribeTargetHealth",
-      "elasticloadbalancing:CreateListener",
-      "elasticloadbalancing:DeleteListener",
-      "elasticloadbalancing:DescribeListeners",
-      "elasticloadbalancing:ModifyListener",
-      "elasticloadbalancing:AddTags",
-      "elasticloadbalancing:RemoveTags",
-      "elasticloadbalancing:DescribeTags",
+      "ec2:CreateVpc",
+      "ec2:CreateSubnet",
+      "ec2:CreateSecurityGroup",
+      "ec2:CreateRouteTable",
+      "ec2:CreateInternetGateway",
+      "ec2:CreateVpcEndpoint",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # ec2:CreateTags is the dependent action the table shows carries
+  # `ec2:CreateAction` on all 106 of its resource-type rows; scoped here
+  # to only the create actions above (iam-condition-keys.md EC2 notes).
+  statement {
+    sid    = "Ec2CreateTagsForCreateActions"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateTags",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values = [
+        "CreateVpc",
+        "CreateSubnet",
+        "CreateSecurityGroup",
+        "CreateRouteTable",
+        "CreateInternetGateway",
+        "CreateVpcEndpoint",
+      ]
+    }
+  }
+
+  # AuthorizeSecurityGroupIngress/Egress create the security-group-rule
+  # resource and support tag-on-create per the table.
+  statement {
+    sid    = "Ec2SecurityGroupRuleCreateWithTag"
+    effect = "Allow"
+    actions = [
+      "ec2:AuthorizeSecurityGroupIngress",
+      "ec2:AuthorizeSecurityGroupEgress",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "Ec2ModifyDeleteWithResourceTag"
+    effect = "Allow"
+    actions = [
+      "ec2:DeleteVpc",
+      "ec2:ModifyVpcAttribute",
+      "ec2:DeleteSubnet",
+      "ec2:ModifySubnetAttribute",
+      "ec2:DeleteInternetGateway",
+      "ec2:AttachInternetGateway",
+      "ec2:DetachInternetGateway",
+      "ec2:DeleteRouteTable",
+      "ec2:CreateRoute",
+      "ec2:DeleteRoute",
+      "ec2:AssociateRouteTable",
+      "ec2:DisassociateRouteTable",
+      "ec2:DeleteVpcEndpoints",
+      "ec2:ModifyVpcEndpoint",
+      "ec2:DeleteSecurityGroup",
+      "ec2:RevokeSecurityGroupIngress",
+      "ec2:RevokeSecurityGroupEgress",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "Ec2DeleteTags"
+    effect = "Allow"
+    actions = [
+      "ec2:DeleteTags",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # ReplaceRoute/ReplaceRouteTableAssociation/ModifySecurityGroupRules are
+  # not covered by iam-condition-keys.md; no verified condition key, kept
+  # unconditioned per R1.
+  statement {
+    #checkov:skip=CKV_AWS_111:not covered by iam-condition-keys.md (EC2 section); no verified condition key exists
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "Ec2UntabledActions"
+    effect = "Allow"
+    actions = [
+      "ec2:ReplaceRoute",
+      "ec2:ReplaceRouteTableAssociation",
+      "ec2:ModifySecurityGroupRules",
     ]
     resources = ["*"]
   }
 
-  # (d) ECS cluster/service/task definitions, created by envs/preview,
-  # modules/ecs-service, modules/redis, modules/clickhouse.
-  # RegisterTaskDefinition/CreateService do not support resource-level
-  # scoping (the task-definition/service ARN is only known after the
-  # call), so `resources = ["*"]` is required.
+  # --- (c) ALB + target group + listener. ---
   statement {
-    sid    = "EcsLifecycle"
+    #checkov:skip=CKV_AWS_111:table-confirmed * only ELBv2 Describe* actions, zero condition keys (iam-condition-keys.md ELBv2 section)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "ElbDescribeStarOnly"
+    effect = "Allow"
+    actions = [
+      "elasticloadbalancing:DescribeLoadBalancers",
+      "elasticloadbalancing:DescribeLoadBalancerAttributes",
+      "elasticloadbalancing:DescribeTargetGroups",
+      "elasticloadbalancing:DescribeTargetGroupAttributes",
+      "elasticloadbalancing:DescribeListeners",
+      "elasticloadbalancing:DescribeTags",
+      "elasticloadbalancing:DescribeListenerAttributes", # A3: provider 6.62.0 read
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ElbCreateWithTag"
+    effect = "Allow"
+    actions = [
+      "elasticloadbalancing:CreateLoadBalancer",
+      "elasticloadbalancing:CreateTargetGroup",
+      "elasticloadbalancing:CreateListener",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "ElbModifyDeleteWithResourceTag"
+    effect = "Allow"
+    actions = [
+      "elasticloadbalancing:DeleteLoadBalancer",
+      "elasticloadbalancing:ModifyLoadBalancerAttributes",
+      "elasticloadbalancing:DeleteTargetGroup",
+      "elasticloadbalancing:ModifyTargetGroup",
+      "elasticloadbalancing:ModifyTargetGroupAttributes",
+      "elasticloadbalancing:DeleteListener",
+      "elasticloadbalancing:ModifyListener",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "elasticloadbalancing:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # AddTags carries elasticloadbalancing:CreateAction on all 10 of its
+  # resource-type rows (iam-condition-keys.md ELBv2 notes).
+  statement {
+    sid       = "ElbAddTags"
+    effect    = "Allow"
+    actions   = ["elasticloadbalancing:AddTags"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "elasticloadbalancing:CreateAction"
+      values = [
+        "CreateLoadBalancer",
+        "CreateTargetGroup",
+        "CreateListener",
+      ]
+    }
+  }
+
+  statement {
+    sid       = "ElbRemoveTags"
+    effect    = "Allow"
+    actions   = ["elasticloadbalancing:RemoveTags"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "elasticloadbalancing:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # RegisterTargets/DeregisterTargets/DescribeTargetHealth are not covered
+  # by iam-condition-keys.md; no verified condition key, kept unconditioned.
+  statement {
+    #checkov:skip=CKV_AWS_111:not covered by iam-condition-keys.md (ELBv2 section); no verified condition key exists
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "ElbUntabledActions"
+    effect = "Allow"
+    actions = [
+      "elasticloadbalancing:RegisterTargets",
+      "elasticloadbalancing:DeregisterTargets",
+      "elasticloadbalancing:DescribeTargetHealth",
+    ]
+    resources = ["*"]
+  }
+
+  # --- (d) ECS cluster/service/task definitions. ---
+  statement {
+    #checkov:skip=CKV_AWS_111:table-confirmed * only ECS actions (iam-condition-keys.md ECS section: DeregisterTaskDefinition, DescribeTaskDefinition)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "EcsStarOnly"
+    effect = "Allow"
+    actions = [
+      "ecs:DeregisterTaskDefinition",
+      "ecs:DescribeTaskDefinition",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcsCreateWithTag"
     effect = "Allow"
     actions = [
       "ecs:CreateCluster",
+      "ecs:CreateService",
+      "ecs:RegisterTaskDefinition",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "EcsModifyDeleteDescribeWithResourceTag"
+    effect = "Allow"
+    actions = [
       "ecs:DeleteCluster",
       "ecs:DescribeClusters",
-      "ecs:CreateService",
       "ecs:UpdateService",
       "ecs:DeleteService",
       "ecs:DescribeServices",
-      "ecs:ListServices",
-      "ecs:RegisterTaskDefinition",
-      "ecs:DeregisterTaskDefinition",
       "ecs:DeleteTaskDefinitions",
-      "ecs:DescribeTaskDefinition",
-      "ecs:ListTaskDefinitions",
-      "ecs:TagResource",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # ecs:TagResource carries ecs:CreateAction on all 9 of its resource-type
+  # rows (iam-condition-keys.md ECS notes).
+  statement {
+    sid       = "EcsTagResource"
+    effect    = "Allow"
+    actions   = ["ecs:TagResource"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:CreateAction"
+      values = [
+        "CreateCluster",
+        "CreateService",
+        "RegisterTaskDefinition",
+      ]
+    }
+  }
+
+  statement {
+    sid    = "EcsUntagAndListTags"
+    effect = "Allow"
+    actions = [
       "ecs:UntagResource",
       "ecs:ListTagsForResource",
     ]
     resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
   }
 
-  # (e) Cloud Map namespace + service, created by envs/preview and
-  # modules/ecs-service. Namespace/service ARNs are unknown pre-create;
-  # `resources = ["*"]` is required.
+  # ListServices/ListTaskDefinitions are not covered by
+  # iam-condition-keys.md; no verified condition key, kept unconditioned.
   statement {
-    sid    = "ServiceDiscoveryLifecycle"
+    #checkov:skip=CKV_AWS_111:not covered by iam-condition-keys.md (ECS section); no verified condition key exists
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "EcsUntabledActions"
     effect = "Allow"
     actions = [
-      "servicediscovery:CreatePrivateDnsNamespace",
-      "servicediscovery:DeleteNamespace",
-      "servicediscovery:GetNamespace",
-      "servicediscovery:GetOperation",
-      "servicediscovery:ListNamespaces",
-      "servicediscovery:CreateService",
-      "servicediscovery:DeleteService",
-      "servicediscovery:GetService",
-      "servicediscovery:UpdateService",
-      "servicediscovery:ListServices",
-      "servicediscovery:TagResource",
-      "servicediscovery:UntagResource",
-      "servicediscovery:ListTagsForResource",
+      "ecs:ListServices",
+      "ecs:ListTaskDefinitions",
     ]
     resources = ["*"]
   }
 
-  # (f) CloudWatch log groups, created by modules/ecs-service at a
-  # deterministic name (/orbit/<env_id>/<name>); resource-scoped to that
-  # prefix.
+  # --- (e) Cloud Map namespace + service. ---
+  # ListTagsForResource is table-confirmed * only with zero condition
+  # keys; ListNamespaces/ListServices are not covered by the table.
   statement {
-    sid    = "LogGroupLifecycle"
+    #checkov:skip=CKV_AWS_111:table-confirmed * only (ListTagsForResource) or uncovered (ListNamespaces/ListServices) Cloud Map actions (iam-condition-keys.md Cloud Map section)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "ServiceDiscoveryStarOnlyNoCondition"
+    effect = "Allow"
+    actions = [
+      "servicediscovery:ListTagsForResource",
+      "servicediscovery:ListNamespaces",
+      "servicediscovery:ListServices",
+    ]
+    resources = ["*"]
+  }
+
+  # CreatePrivateDnsNamespace is table-confirmed * only but supports
+  # tag-on-create via aws:RequestTag (R1: stays Resource = "*").
+  statement {
+    sid       = "ServiceDiscoveryCreateNamespaceWithTag"
+    effect    = "Allow"
+    actions   = ["servicediscovery:CreatePrivateDnsNamespace"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid       = "ServiceDiscoveryCreateServiceWithTag"
+    effect    = "Allow"
+    actions   = ["servicediscovery:CreateService"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # Cloud Map has no service-specific ResourceTag key (R1); the generic
+  # aws:ResourceTag/Project applies.
+  statement {
+    sid    = "ServiceDiscoveryReadDeleteUpdateWithResourceTag"
+    effect = "Allow"
+    actions = [
+      "servicediscovery:DeleteNamespace",
+      "servicediscovery:GetNamespace",
+      "servicediscovery:DeleteService",
+      "servicediscovery:GetService",
+      "servicediscovery:UpdateService",
+      "servicediscovery:GetOperation",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid       = "ServiceDiscoveryTagResource"
+    effect    = "Allow"
+    actions   = ["servicediscovery:TagResource"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # UntagResource: the table shows no aws:ResourceTag/aws:RequestTag
+  # scoping key documented for this action; kept unconditioned.
+  statement {
+    #checkov:skip=CKV_AWS_111:table-confirmed no ResourceTag/RequestTag condition key for servicediscovery:UntagResource (iam-condition-keys.md Cloud Map section)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "ServiceDiscoveryUntagResource"
+    effect    = "Allow"
+    actions   = ["servicediscovery:UntagResource"]
+    resources = ["*"]
+  }
+
+  # --- (f) CloudWatch log groups, /orbit/<env_id>/<name>. ---
+  statement {
+    #checkov:skip=CKV_AWS_111:table-confirmed * only (DescribeLogGroups) (iam-condition-keys.md CloudWatch Logs section, A3)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "LogsDescribeStarOnly"
+    effect    = "Allow"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "LogsCreateWithTag"
     effect = "Allow"
     actions = [
       "logs:CreateLogGroup",
-      "logs:DeleteLogGroup",
-      "logs:DescribeLogGroups",
-      "logs:PutRetentionPolicy",
       "logs:TagResource",
+    ]
+    resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/orbit/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "LogsModifyDeleteWithResourceTag"
+    effect = "Allow"
+    actions = [
+      "logs:DeleteLogGroup",
+      "logs:PutRetentionPolicy",
       "logs:UntagResource",
       "logs:ListTagsForResource",
     ]
     resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/orbit/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
   }
 
-  # (g) the ClickHouse password secret, created by envs/preview at a
-  # deterministic name (<name>-<env_id>-clickhouse-password); resource-
-  # scoped to that prefix.
+  # --- (g) the ClickHouse password secret. ---
   statement {
-    sid    = "ClickhouseSecretLifecycle"
+    sid    = "ClickhouseSecretCreateWithTag"
     effect = "Allow"
     actions = [
       "secretsmanager:CreateSecret",
+      "secretsmanager:TagResource",
+    ]
+    resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "ClickhouseSecretReadModifyWithResourceTag"
+    effect = "Allow"
+    actions = [
       "secretsmanager:DeleteSecret",
       "secretsmanager:DescribeSecret",
       "secretsmanager:PutSecretValue",
       "secretsmanager:GetSecretValue",
-      "secretsmanager:TagResource",
       "secretsmanager:UntagResource",
       "secretsmanager:GetResourcePolicy",
     ]
     resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name}-*"]
+
+    # secretsmanager:ResourceTag/tag-key is the table-verified literal key
+    # name for this service (NOT .../${TagKey}; iam-condition-keys.md
+    # Secrets Manager section).
+    condition {
+      test     = "StringEquals"
+      variable = "secretsmanager:ResourceTag/tag-key"
+      values   = [var.project_tag]
+    }
   }
 
-  # (h) tag-based resource discovery Terraform uses for some data sources;
-  # tag:GetResources has no resource-level scoping.
+  # --- Phase 3: SNS topics + subscriptions, project-scoped. ---
   statement {
+    sid    = "SnsCreateWithTag"
+    effect = "Allow"
+    actions = [
+      "sns:CreateTopic",
+      "sns:TagResource",
+    ]
+    resources = ["arn:aws:sns:${var.region}:${data.aws_caller_identity.current.account_id}:${var.name}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "SnsRestWithResourceTag"
+    effect = "Allow"
+    actions = [
+      "sns:DeleteTopic",
+      "sns:GetTopicAttributes",
+      "sns:SetTopicAttributes",
+      "sns:ListTagsForResource",
+      "sns:UntagResource",
+      "sns:Subscribe",
+      "sns:Unsubscribe",
+      "sns:GetSubscriptionAttributes",
+      "sns:ListSubscriptionsByTopic",
+    ]
+    resources = ["arn:aws:sns:${var.region}:${data.aws_caller_identity.current.account_id}:${var.name}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # --- Phase 3: CloudWatch alarms, project-scoped. ---
+  statement {
+    sid    = "CloudwatchAlarmCreateWithTag"
+    effect = "Allow"
+    actions = [
+      "cloudwatch:PutMetricAlarm",
+      "cloudwatch:TagResource",
+    ]
+    resources = ["arn:aws:cloudwatch:${var.region}:${data.aws_caller_identity.current.account_id}:alarm:${var.name}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  statement {
+    sid    = "CloudwatchAlarmRestWithResourceTag"
+    effect = "Allow"
+    actions = [
+      "cloudwatch:DeleteAlarms",
+      "cloudwatch:DescribeAlarms",
+      "cloudwatch:ListTagsForResource",
+      "cloudwatch:UntagResource",
+    ]
+    resources = ["arn:aws:cloudwatch:${var.region}:${data.aws_caller_identity.current.account_id}:alarm:${var.name}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # --- (h) tag-based resource discovery; tag:GetResources has no
+  # resource-level scoping, not covered by iam-condition-keys.md. ---
+  statement {
+    #checkov:skip=CKV_AWS_111:tag:GetResources documents no resource-level scoping; not covered by iam-condition-keys.md
+    #checkov:skip=CKV_AWS_356:same as above
     sid       = "TagDiscovery"
     effect    = "Allow"
     actions   = ["tag:GetResources"]
     resources = ["*"]
   }
 
-  # (i) execution/task IAM roles for ECS services, created by
-  # modules/ecs-service (name_prefix "<env_id>-<name>-", where <name>
-  # always contains the project name). Scoped to role ARNs containing the
-  # project name, not to a single env_id, because this policy is attached
-  # once at bootstrap time and must cover every future preview env.
+  # --- A3: provider 6.62.0 read additions, project data bucket. ---
+  statement {
+    #checkov:skip=CKV_AWS_111:read-only bucket describe actions; scoped to the project bucket name pattern via Resource, not a tag condition (A3)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "S3BucketDescribeReads"
+    effect = "Allow"
+    actions = [
+      "s3:GetBucketAcl",
+      "s3:GetBucketCORS",
+      "s3:GetBucketWebsite",
+      "s3:GetBucketLogging",
+      "s3:GetBucketObjectLockConfiguration",
+      "s3:GetBucketOwnershipControls",
+      "s3:GetBucketPolicy",
+      "s3:GetBucketPolicyStatus",
+      "s3:GetBucketPublicAccessBlock",
+      "s3:GetBucketRequestPayment",
+      "s3:GetBucketTagging",
+      "s3:GetBucketVersioning",
+      "s3:GetAccelerateConfiguration",
+      "s3:GetEncryptionConfiguration",
+      "s3:GetLifecycleConfiguration",
+      "s3:GetReplicationConfiguration",
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+    ]
+    resources = ["arn:aws:s3:::${var.name}-*"]
+  }
+
+  # --- (i) execution/task IAM roles for ECS services. ---
+  # A1(ii): CreateRole must set the boundary to the exact task-boundary
+  # policy ARN.
+  statement {
+    sid       = "EnvServiceRoleCreateWithBoundary"
+    effect    = "Allow"
+    actions   = ["iam:CreateRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*${var.name}*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [aws_iam_policy.task_boundary.arn]
+    }
+  }
+
+  # A1(ii)+(iv): AttachRolePolicy requires the boundary AND is limited to
+  # the ECS execution managed policy (the module attaches no
+  # customer-managed policy via AttachRolePolicy; task_custom is an
+  # inline aws_iam_role_policy, not an attachment).
+  statement {
+    sid       = "EnvServiceRoleAttachPolicy"
+    effect    = "Allow"
+    actions   = ["iam:AttachRolePolicy"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*${var.name}*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [aws_iam_policy.task_boundary.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PolicyARN"
+      values   = ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"]
+    }
+  }
+
+  statement {
+    sid       = "EnvServiceRolePutPolicy"
+    effect    = "Allow"
+    actions   = ["iam:PutRolePolicy"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*${var.name}*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [aws_iam_policy.task_boundary.arn]
+    }
+  }
+
+  statement {
+    sid       = "EnvServiceRolePermissionsBoundarySet"
+    effect    = "Allow"
+    actions   = ["iam:PutRolePermissionsBoundary"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*${var.name}*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [aws_iam_policy.task_boundary.arn]
+    }
+  }
+
+  # Actions not covered by A1's boundary requirement: no condition added.
   statement {
     sid    = "EnvServiceRoleLifecycle"
     effect = "Allow"
     actions = [
-      "iam:CreateRole",
       "iam:DeleteRole",
       "iam:GetRole",
-      "iam:PutRolePolicy",
       "iam:DeleteRolePolicy",
       "iam:GetRolePolicy",
-      "iam:AttachRolePolicy",
       "iam:DetachRolePolicy",
       "iam:ListRolePolicies",
       "iam:ListAttachedRolePolicies",
@@ -478,9 +1084,82 @@ data "aws_iam_policy_document" "deployer" {
     resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/*${var.name}*"]
   }
 
-  # PassRole is kept as its own statement (not merged into (i)) and
-  # restricted with iam:PassedToService so the deployer can only hand
-  # these roles to ECS, never to itself or another service.
+  # A4: service-linked roles ELBv2 and ECS depend on, each pinned to its
+  # exact service-linked-role ARN and gated by iam:AWSServiceName.
+  statement {
+    sid       = "IamServiceLinkedRoleElb"
+    effect    = "Allow"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["elasticloadbalancing.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "IamServiceLinkedRoleEcs"
+    effect    = "Allow"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["ecs.amazonaws.com"]
+    }
+  }
+
+  # A1(iii): explicit denies enforcing the boundary can never be stripped
+  # or bypassed, regardless of which Allow statement above would
+  # otherwise permit the call.
+  statement {
+    sid       = "DenyDeleteRolePermissionsBoundary"
+    effect    = "Deny"
+    actions   = ["iam:DeleteRolePermissionsBoundary"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "DenyRoleMutationMissingBoundary"
+    effect = "Deny"
+    actions = [
+      "iam:CreateRole",
+      "iam:PutRolePolicy",
+      "iam:AttachRolePolicy",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "Null"
+      variable = "iam:PermissionsBoundary"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "DenyRoleMutationWrongBoundary"
+    effect = "Deny"
+    actions = [
+      "iam:CreateRole",
+      "iam:PutRolePolicy",
+      "iam:AttachRolePolicy",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringNotEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [aws_iam_policy.task_boundary.arn]
+    }
+  }
+
+  # PassRole is kept as its own statement (not merged into the role
+  # statements above) and restricted with iam:PassedToService so the
+  # deployer can only hand these roles to ECS, never to itself or another
+  # service (A1 vi).
   statement {
     sid       = "PassEnvRolesOnly"
     effect    = "Allow"
@@ -526,15 +1205,11 @@ data "aws_iam_policy_document" "deployer" {
     ]
   }
 
-  # Hard cap: the wildcard grants above (EnvServiceRoleLifecycle,
-  # PassEnvRolesOnly) match role ARNs by substring since the ecs-service
-  # module's name_prefix embeds the project name in the middle of a
-  # dynamic string. That substring match could also match the three
-  # fixed-purpose roles this same bootstrap creates (their names are
-  # "${var.name}-deployer" etc., which contain var.name). Deny always
-  # wins over Allow in IAM evaluation, so this statement is the actual
-  # enforcement point keeping the deployer from mutating or passing its
-  # own role, plan-reader, or publisher.
+  # Hard cap: see the historical rationale kept from the pre-PR#2 version
+  # of this file — Deny always wins over Allow in IAM evaluation, so this
+  # statement is the actual enforcement point keeping the deployer from
+  # mutating or passing its own role, plan-reader, or publisher (A1 v:
+  # kept unchanged).
   statement {
     sid    = "DenyMutatingOwnControlRoles"
     effect = "Deny"
@@ -548,6 +1223,8 @@ data "aws_iam_policy_document" "deployer" {
       "iam:TagRole",
       "iam:UntagRole",
       "iam:PassRole",
+      "iam:PutRolePermissionsBoundary",
+      "iam:DeleteRolePermissionsBoundary",
     ]
     resources = [
       aws_iam_role.deployer.arn,

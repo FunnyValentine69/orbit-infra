@@ -145,6 +145,24 @@ run "alb_target_group_attached" {
   }
 }
 
+run "permissions_boundary_applied" {
+  command = plan
+
+  variables {
+    permissions_boundary_arn = "arn:aws:iam::000000000000:policy/orbit-test-task-boundary"
+  }
+
+  assert {
+    condition     = aws_iam_role.execution[0].permissions_boundary == "arn:aws:iam::000000000000:policy/orbit-test-task-boundary"
+    error_message = "execution role must carry the input permissions_boundary_arn"
+  }
+
+  assert {
+    condition     = aws_iam_role.task[0].permissions_boundary == "arn:aws:iam::000000000000:policy/orbit-test-task-boundary"
+    error_message = "task role must carry the input permissions_boundary_arn"
+  }
+}
+
 run "service_discovery_registered" {
   command = plan
 

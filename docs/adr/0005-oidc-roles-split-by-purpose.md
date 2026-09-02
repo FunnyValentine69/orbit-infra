@@ -70,6 +70,45 @@ bootstrap step; CI never uses static keys.
   mutate or pass its own role, `plan-reader`, or `publisher` (TODO.md
   P2-7).
 
+## Amendment 2026-09-02 (PR #2 Tier 2)
+
+The `deployer` role's `iam:CreateRole`/`iam:PutRolePolicy`/
+`iam:AttachRolePolicy` grants for execution/task roles are now
+conditioned on `iam:PermissionsBoundary` matching a dedicated
+`aws_iam_policy.task_boundary` (named `${var.name}-task-boundary`,
+`prevent_destroy = true`), which is itself the documented maximum
+permission set an execution or task role may hold (ECR pull, project
+log-group writes, project secret reads, ECS-Exec ssmmessages, project
+data-bucket object actions). Explicit denies block
+`iam:DeleteRolePermissionsBoundary` outright and block
+`CreateRole`/`PutRolePolicy`/`AttachRolePolicy` whenever the boundary is
+absent (`Null`) or does not match this exact ARN
+(`StringNotEquals`) — Deny wins regardless of which Allow statement
+would otherwise permit the call. `envs/preview/main.tf` computes the
+same ARN by name (`arn:<partition>:iam::<account>:policy/${var.name}-task-boundary`)
+and wires it into every `ecs-service`/`redis`/`clickhouse` module call
+as `permissions_boundary_arn`; see `bootstrap/README.md` and
+`envs/preview/README.md` for the naming contract.
+
+Deployer mutation grants across EC2, ELBv2, ECS, Cloud Map, Secrets
+Manager, SNS, and CloudWatch are additionally scoped, where the AWS IAM
+condition-key reference documents support for it, to
+`aws:RequestTag/Project` (create actions) or the service's
+`ResourceTag` key (delete/modify/read actions), compared against
+`var.project_tag` (default `orbit-infra`, matching
+`envs/preview/main.tf`'s `default_tags.Project`). Actions the reference
+documents no condition key for are left unconditioned, each flagged
+with a comment citing the verified condition-key table. `resources`
+stays `["*"]` on these statements — AWS does not support resource-level
+ARN scoping for freshly-created resources with unknown IDs, but IAM
+still evaluates the tag conditions against a `"*"` resource, so the
+scoping is real even though the wildcard-count grep does not shrink.
+
+Two new service-linked-role allowances (`AWSServiceRoleForElasticLoadBalancing`,
+`AWSServiceRoleForECS`) are pinned to their exact ARNs and gated by
+`iam:AWSServiceName`, replacing implicit reliance on IAM auto-creating
+these roles.
+
 ## Alternatives considered
 
 - **One broad role for all jobs:** rejected — a compromised read-only job
