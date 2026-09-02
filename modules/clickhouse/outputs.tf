@@ -4,9 +4,11 @@ output "discovery_dns_name" {
 }
 
 output "port" {
-  value = 8123
+  description = "TCP port ClickHouse's HTTP interface listens on"
+  value       = 8123
 }
 
 output "service_name" {
-  value = module.service.service_name
+  description = "Name of the underlying ECS service"
+  value       = module.service.service_name
 }

@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint check-env-id render-localstack-backend
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-env-id render-localstack-backend
 
 TARGET ?= aws
 
@@ -103,11 +103,25 @@ destroy:
 endif
 
 test:
-	terraform -chdir=modules/network test
+	@for d in modules/*/; do \
+		if [ -d "$${d}tests" ]; then \
+			echo "== terraform test: $$d =="; \
+			terraform -chdir="$$d" test || exit 1; \
+		fi; \
+	done
+
+validate:
+	terraform -chdir=bootstrap init -backend=false -input=false >/dev/null
+	terraform -chdir=bootstrap validate
+	@for d in modules/*/; do \
+		echo "== terraform validate: $$d =="; \
+		terraform -chdir="$$d" init -backend=false -input=false >/dev/null; \
+		terraform -chdir="$$d" validate || exit 1; \
+	done
+	terraform -chdir=envs/preview init -backend=false -input=false >/dev/null
+	terraform -chdir=envs/preview validate
 
 lint:
-	terraform -chdir=modules/network fmt -check -diff
-	terraform -chdir=envs/preview fmt -check -diff
-	tflint --chdir modules/network
-	tflint --chdir envs/preview
-	checkov -d modules -d envs --quiet --compact
+	terraform fmt -check -recursive
+	tflint --recursive
+	checkov --config-file .checkov.yaml

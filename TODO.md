@@ -22,7 +22,13 @@
 ## Phase 2 — Modules + gates
 
 - [x] P2-0 LocalStack lane: target variable, provider endpoints, make localstack-up/down, gitignore .localstack/ and volume/
-- [ ] P2-4 also: narrow the deployer IAM statement to the exact actions the modules use; remove the five checkov skips in bootstrap/roles.tf
+- [x] P2-1 modules/network: VPC, two public AZs, one private subnet, no NAT, S3 gateway + 5 interface endpoints; mock tests; live LocalStack apply/destroy
+- [x] P2-2 modules/ecs-service: ARM64 Fargate, exec, Cloud Map, optional ALB; preview cluster, namespace, service SG, api + gated worker
+- [x] P2-3 modules/redis + modules/clickhouse; preview secret, data bucket, service wiring; uniform IAM naming; live S3 round-trip
+- [x] P2-4 envs/preview composition: ALB with operator_cidr allowlist, per-environment S3 state keys, env-scoped LocalStack override; two concurrent environments verified
+- [x] P2-5 policy gates: repo-wide .tflint.hcl + .checkov.yaml, make validate/lint/test, scripts/gates.sh
+- [ ] P2-6 infracost breakdown and README cost line — deferred to P3-1 (runs in CI with the INFRACOST_API_KEY secret)
+- [ ] P2-7 narrow the deployer IAM statement in bootstrap/roles.tf to the exact actions the modules use; remove the five checkov skips there
 
 ## Phase 3 — CI/CD
 
