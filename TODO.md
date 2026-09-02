@@ -38,6 +38,8 @@
 - [ ] P3-x: document that fork PRs skip oidc-smoke jobs (green-by-skip) in README/RUNBOOKS
 - [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
 - [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
+- [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock filled with build_input_sha256 and local_id per image
+- [ ] P3-3b: push the three images with PUSH=1 after P0-3b, then dispatch sign-images.yml
 - [x] P3-4: scripts/lease.sh (CAS lease on S3 ETag, ADR 0006) + scripts/close-env.sh (stage 1 of close) + session-apply.yml/session-destroy.yml (main-only, runner-CIDR check, lease open, plan/apply, negative ingress test) + Makefile lease-list/lease-get/close targets; live-verified on LocalStack (open/transition/CAS-race/list, full apply->close cycle)
 - [x] P3-5: SNS alerts topic (optional email subscription via var.alert_email) + UnHealthyHostCount and HTTPCode_Target_5XX_Count CloudWatch alarms on the ALB target group; SLO documented in ARCHITECTURE.md; live-verified on LocalStack (alarms created, not evaluated)
 

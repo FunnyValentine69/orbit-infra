@@ -1,0 +1,127 @@
+# sign-images
+#
+# Signs the three private upstream workload images (built locally by
+# scripts/build-upstream.sh, never in hosted CI -- see ARCHITECTURE.md
+# "Image supply chain summary" and ADR 0007) after they have already been
+# pushed to private ECR by a local `PUSH=1` run of build-upstream.sh. This
+# workflow never builds anything; it only resolves the already-pushed
+# digest, signs it with the KMS key (--tlog-upload=false, ADR 0007), and
+# attests a `local-build/v1` predicate carrying the upstream commit SHA
+# and the build-input hash recorded in upstream.lock. It needs the
+# real-AWS bootstrap (P0-3b) applied and the AWS_ROLE_PUBLISHER /
+# AWS_KMS_SIGNING_KEY_ARN repository secrets set (see bootstrap/README.md,
+# "After apply").
+
+name: sign-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_sha:
+        description: 'Full upstream commit SHA the images were built from'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (publisher)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_PUBLISHER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Resolve registry
+        id: registry
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::${account_id}"
+          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
+          echo "::add-mask::${registry}"
+          echo "registry=${registry}" >> "$GITHUB_OUTPUT"
+
+      - name: ECR login
+        run: |
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "${{ steps.registry.outputs.registry }}"
+
+      - name: Read cosign version from tools.lock
+        id: cosign-version
+        run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v${{ steps.cosign-version.outputs.version }}
+
+      - name: Verify cosign version matches tools.lock
+        run: |
+          installed="$(cosign version | grep '^GitVersion:' | awk '{print $2}')"
+          expected="v${{ steps.cosign-version.outputs.version }}"
+          if [[ "${installed}" != "${expected}" ]]; then
+            echo "cosign version mismatch: installed ${installed}, expected ${expected}" >&2
+            exit 1
+          fi
+
+      - name: Read build_input_sha256 from upstream.lock
+        id: lock
+        run: |
+          build_input_sha256="$(grep '^build_input_sha256:' upstream.lock | awk '{print $2}')"
+          echo "build_input_sha256=${build_input_sha256}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign upstream images
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+          UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+          BUILD_INPUT_SHA256: ${{ steps.lock.outputs.build_input_sha256 }}
+        run: |
+          tag="${UPSTREAM_SHA:0:12}"
+          built_on="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          for name in orbit-api orbit-worker orbit-clickhouse; do
+            image="${REGISTRY}/${name}"
+
+            digest=$(aws ecr describe-images \
+              --repository-name "${name}" \
+              --image-ids imageTag="${tag}" \
+              --query 'imageDetails[0].imageDigest' --output text)
+
+            if cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
+              "${image}@${digest}" >/dev/null 2>&1; then
+              echo "${name}: already signed"
+              continue
+            fi
+
+            syft "${image}@${digest}" -o spdx-json > "${name}-sbom.json"
+
+            trivy image --severity CRITICAL --exit-code 1 "${image}@${digest}"
+
+            cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              "${image}@${digest}"
+
+            predicate_file=$(mktemp)
+            printf '{"predicateType":"https://github.com/FunnyValentine69/orbit-infra/local-build/v1","upstream_sha":"%s","build_input_sha256":"%s","built_on":"%s"}\n' \
+              "${UPSTREAM_SHA}" "${BUILD_INPUT_SHA256}" "${built_on}" > "${predicate_file}"
+
+            cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              --type custom \
+              --predicate "${predicate_file}" \
+              "${image}@${digest}"
+
+            cosign verify-attestation --key "awskms:///${KMS_KEY_ARN}" \
+              --type custom \
+              "${image}@${digest}"
+          done

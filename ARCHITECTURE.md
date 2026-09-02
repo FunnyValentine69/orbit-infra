@@ -117,6 +117,20 @@ upstream commit — never a working tree — signed with an asymmetric KMS key
 region, and repository names. Every image will get an SBOM (syft) and a
 Trivy scan. See ADR 0007.
 
+`scripts/build-upstream.sh` implements the local build side: it asserts
+the local upstream clone's origin, HEAD, and working-tree cleanliness
+against `upstream.lock` before doing anything else, `git archive`s the
+locked commit into a temp dir outside the repo, hashes the tar
+(`build_input_sha256`), and builds `orbit-api`/`orbit-worker` from the
+archived `Dockerfile.api`/`Dockerfile.worker` and `orbit-clickhouse` from
+this repo's `images/clickhouse/Dockerfile`, which layers the upstream
+workload's ClickHouse init SQL onto the same pinned base image
+`mirror-images.yml` mirrors via a named BuildKit build context
+(`--build-context upstream=<archive dir>`) — the SQL is never committed.
+`.github/workflows/sign-images.yml` (`workflow_dispatch` only) signs and
+attests the already-pushed images with the KMS key, reading
+`build_input_sha256` from `upstream.lock`; it never builds anything.
+
 ## Cost model
 
 Per session-hour: roughly $0.05 for five interface/gateway endpoints plus

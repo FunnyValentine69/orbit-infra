@@ -21,3 +21,20 @@ Two signing modes, matched to what each image can disclose. The **public placeho
 - **Keyless signing for every image, including private ones:** rejected — discloses account ID, region, and repository names to the public Rekor log.
 - **No signing for private images:** rejected — loses the ability to prove an image matches a specific, verified upstream commit.
 - **Self-hosted transparency log instead of Rekor:** rejected — adds a persistent service for a guarantee KMS already provides without the disclosure problem.
+
+## Amendment 2026-09-02 (P3-3)
+
+The private upstream images (`orbit-api`, `orbit-worker`, `orbit-clickhouse`)
+are built locally by `scripts/build-upstream.sh`, never in hosted CI: the
+build reads only a `git archive` of the pinned, verified upstream commit
+(`upstream.lock`), never the working tree, after asserting the local
+clone's origin, HEAD, and cleanliness match the lock file. The archive's
+sha256 (`build_input_sha256`) is recorded in `upstream.lock` alongside each
+image's local content id. Signing is a separate, later step:
+`.github/workflows/sign-images.yml` (`workflow_dispatch` only) signs the
+already-pushed images with the same asymmetric KMS key described above
+(`--tlog-upload=false`, verified via the exported public key), and
+attests a `local-build/v1` custom predicate carrying only the upstream
+commit SHA, `build_input_sha256`, and the signing date — no hostname or
+account identifier, and no claim of CI build provenance, since these
+images were never built in CI.
