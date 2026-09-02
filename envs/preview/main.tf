@@ -139,12 +139,7 @@ module "redis" {
     aws = aws
   }
 
-  # env_id-prefixed, not var.name-prefixed: modules/ecs-service derives
-  # IAM name_prefix as "${var.name}-exec-"/"-task-", capped at 38 chars by
-  # AWS; the full "${var.name}-${var.env_id}-clickhouse" project prefix
-  # overflows that limit, and env_id alone already disambiguates within
-  # this account/region.
-  name        = "${var.env_id}-redis"
+  name        = "${var.name}-${var.env_id}-redis"
   env_id      = var.env_id
   cluster_arn = aws_ecs_cluster.this.arn
 
@@ -165,7 +160,7 @@ module "clickhouse" {
     aws = aws
   }
 
-  name        = "${var.env_id}-clickhouse"
+  name        = "${var.name}-${var.env_id}-clickhouse"
   env_id      = var.env_id
   cluster_arn = aws_ecs_cluster.this.arn
 
