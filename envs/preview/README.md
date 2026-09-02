@@ -34,3 +34,22 @@ LocalStack runs use a local backend keyed by `ENV_ID`
 (`terraform.localstack.<ENV_ID>.tfstate`), rendered from
 `localstack.backend_override.tf.example` — separate state per
 environment, never touching the AWS backend.
+
+## Lease lifecycle
+
+Every environment has a durable lease at `leases/<ENV_ID>.json` in the
+state bucket (ADR 0006): `open -> closing -> closed | cleanup_failed`,
+CAS'd on the S3 object's ETag so concurrent writers never both win.
+`scripts/lease.sh` reads/writes it directly; `make close` /
+`scripts/close-env.sh` drive it through stage 1 of close (manifest,
+scale-to-zero, destroy with retries, `DeleteTaskDefinitions`, cost-
+bearing-zero check). See `RUNBOOKS.md`, "Stuck-environment
+force-destroy", for recovery from `cleanup_failed` or a stalled
+`closing`.
+
+```
+make lease-list
+make lease-get ENV_ID=<id>
+make close TARGET=aws        ENV_ID=<id>
+make close TARGET=localstack ENV_ID=<id>
+```
