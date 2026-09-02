@@ -5,9 +5,9 @@
 - [ ] P0-3 AWS account: Free Plan, IAM Identity Center user, SSO login, permission simulation (in progress)
 - [ ] P0-4 Create repo, skeleton, .gitignore, leak checks, secrets (in progress: secrets pending)
 - [ ] P0-5 bootstrap/preflight.sh ownership discovery (in progress: written, not yet run)
-- [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget
+- [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget (in progress: authored, not yet applied)
 - [ ] P0-7 Confirm Budgets notification email
-- [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow
+- [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (in progress: written, runs after P0-6 apply)
 
 ## Phase 1 — Repo docs + save-file
 

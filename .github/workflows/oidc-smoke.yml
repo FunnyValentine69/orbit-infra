@@ -1,0 +1,190 @@
+# oidc-smoke
+#
+# What this proves: the immutable-ID OIDC subject form configured in
+# bootstrap/roles.tf and bootstrap/outputs.tf (repo:<owner>@<owner_id>/
+# <repo>@<repo_id>:...) actually authenticates against AWS STS, and that
+# PR runs (which match only the plan-reader role's `:pull_request` subject)
+# cannot obtain the deployer or publisher roles, which are scoped to
+# `:ref:refs/heads/main` only.
+#
+# The three AWS_ROLE_PLAN_READER / AWS_ROLE_DEPLOYER / AWS_ROLE_PUBLISHER
+# values are GitHub repository VARIABLES (vars.*), not secrets. Role ARNs
+# are not secret material, but they are never committed to this repo --
+# they are read from Terraform outputs after apply and set as repo
+# variables (see bootstrap/README.md, "After apply").
+#
+# This workflow only ever calls sts:GetCallerIdentity. It performs no
+# other AWS API calls and makes no infrastructure changes.
+
+name: oidc-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: oidc-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decode-subject:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      sub: ${{ steps.decode.outputs.sub }}
+    steps:
+      - name: Get OIDC token and decode claims
+        id: decode
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            const payload = token.split('.')[1];
+            const claims = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+
+            const summary = [
+              '### OIDC token claims',
+              '',
+              '| claim | value |',
+              '|---|---|',
+              `| sub | \`${claims.sub}\` |`,
+              `| aud | \`${claims.aud}\` |`,
+              `| repository_id | \`${claims.repository_id}\` |`,
+              `| repository_owner_id | \`${claims.repository_owner_id}\` |`,
+              `| ref | \`${claims.ref}\` |`,
+            ].join('\n');
+
+            await core.summary.addRaw(summary).write();
+            core.setOutput('sub', claims.sub);
+
+  assume-plan-reader:
+    needs: decode-subject
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Assume plan-reader role
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_PLAN_READER }}
+          aws-region: us-east-1
+          role-session-name: oidc-smoke-plan-reader
+
+      - name: Confirm identity
+        run: |
+          arn=$(aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/************/')
+          {
+            echo "### plan-reader identity"
+            echo ""
+            echo "\`$arn\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  assume-deployer:
+    needs: decode-subject
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Attempt to assume deployer role
+        id: assume
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_DEPLOYER }}
+          aws-region: us-east-1
+          role-session-name: oidc-smoke-deployer
+
+      - name: Verify expected outcome
+        run: |
+          outcome="${{ steps.assume.outcome }}"
+          event="${{ github.event_name }}"
+
+          if [ "$event" = "pull_request" ]; then
+            if [ "$outcome" = "success" ]; then
+              echo "deployer was assumable from a pull_request run; trust policy is too broad"
+              {
+                echo "### deployer verdict"
+                echo ""
+                echo "FAIL: deployer was assumable from a pull_request run; trust policy is too broad"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            {
+              echo "### deployer verdict"
+              echo ""
+              echo "PASS: deployer role assumption correctly failed on a pull_request run"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ "$outcome" != "success" ]; then
+              echo "deployer role assumption failed on a non-pull_request (dispatch/main) run"
+              {
+                echo "### deployer verdict"
+                echo ""
+                echo "FAIL: deployer role assumption failed on a non-pull_request run"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            {
+              echo "### deployer verdict"
+              echo ""
+              echo "PASS: deployer role assumption succeeded on a workflow_dispatch run"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  assume-publisher:
+    needs: decode-subject
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Attempt to assume publisher role
+        id: assume
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_PUBLISHER }}
+          aws-region: us-east-1
+          role-session-name: oidc-smoke-publisher
+
+      - name: Verify expected outcome
+        run: |
+          outcome="${{ steps.assume.outcome }}"
+          event="${{ github.event_name }}"
+
+          if [ "$event" = "pull_request" ]; then
+            if [ "$outcome" = "success" ]; then
+              echo "publisher was assumable from a pull_request run; trust policy is too broad"
+              {
+                echo "### publisher verdict"
+                echo ""
+                echo "FAIL: publisher was assumable from a pull_request run; trust policy is too broad"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            {
+              echo "### publisher verdict"
+              echo ""
+              echo "PASS: publisher role assumption correctly failed on a pull_request run"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ "$outcome" != "success" ]; then
+              echo "publisher role assumption failed on a non-pull_request (dispatch/main) run"
+              {
+                echo "### publisher verdict"
+                echo ""
+                echo "FAIL: publisher role assumption failed on a non-pull_request run"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            {
+              echo "### publisher verdict"
+              echo ""
+              echo "PASS: publisher role assumption succeeded on a workflow_dispatch run"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

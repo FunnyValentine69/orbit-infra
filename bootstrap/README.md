@@ -25,3 +25,16 @@ The project suffix (SUFFIX/NAME) is recorded in the local CLAUDE.md.
 7. Commit `backend.tf`
 
 Never run `terraform destroy` here — every resource has `prevent_destroy`.
+
+## After apply
+
+Publish the three role ARNs as GitHub repository variables (not secrets;
+the ARNs are not secret but are never committed to this repo), then
+dispatch the smoke test:
+
+```
+terraform -chdir=bootstrap output -raw plan_reader_role_arn | gh variable set AWS_ROLE_PLAN_READER
+terraform -chdir=bootstrap output -raw deployer_role_arn | gh variable set AWS_ROLE_DEPLOYER
+terraform -chdir=bootstrap output -raw publisher_role_arn | gh variable set AWS_ROLE_PUBLISHER
+gh workflow run oidc-smoke.yml
+```
