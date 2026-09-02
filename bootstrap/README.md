@@ -8,7 +8,7 @@ Classifications: **created** (absent, safe to create) / **external OIDC**
 source) / **unknown-blocks** (a dedicated resource name already exists;
 confirm ownership before bootstrap, then import or rename).
 
-Run: `bootstrap/preflight.sh` (live, needs AWS SSO login),
+Run: `bootstrap/preflight.sh` (live, needs AWS credentials for profile orbit, see RUNBOOKS.md § Local credentials),
 `bootstrap/preflight.sh --dry-run` (prints planned aws calls, no network),
 `bootstrap/preflight.sh --help`. Exit codes: 0 clean, 2 blocked, 3 no creds.
 
