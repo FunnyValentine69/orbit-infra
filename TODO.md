@@ -12,8 +12,8 @@
 ## Phase 1 — Repo docs + save-file
 
 - [ ] P1-1 layout
-- [ ] P1-2 README
-- [ ] P1-3 ARCHITECTURE + ADRs 0001-0007 (in progress, separate worker)
+- [x] P1-2 README
+- [x] P1-3 ARCHITECTURE + ADRs 0001-0007
 - [x] P1-4 STATE/TODO
 - [x] P1-5 local CLAUDE.md (done)
 - [x] P1-6 upstream.lock
@@ -21,6 +21,7 @@
 
 ## Phase 2 — Modules + gates
 
+- [ ] P2-0 LocalStack lane: target variable, provider endpoints, make localstack-up/down, gitignore .localstack/ and volume/
 - [ ] P2-4 also: narrow the deployer IAM statement to the exact actions the modules use; remove the five checkov skips in bootstrap/roles.tf
 
 ## Phase 3 — CI/CD

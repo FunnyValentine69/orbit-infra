@@ -9,7 +9,8 @@ images, policy gates — is the deliverable, not any particular application.
 It ships a public placeholder image so it applies end to end without
 private code, and separately deploys the upstream workload
 (`SuperGokou/happyCoding`) for demonstration; upstream source and images
-are never published.
+are never published. It targets two backends: LocalStack for development
+and CI, real AWS as the final promotion step (see ADR 0008).
 
 ## Topology
 
@@ -138,3 +139,4 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
 - [ADR 0005 — OIDC roles split by purpose](docs/adr/0005-oidc-roles-split-by-purpose.md)
 - [ADR 0006 — Preview lease lifecycle](docs/adr/0006-preview-lease-lifecycle.md)
 - [ADR 0007 — Signing modes and disclosure](docs/adr/0007-signing-modes-and-disclosure.md)
+- [ADR 0008 — LocalStack development lane](docs/adr/0008-localstack-development-lane.md)

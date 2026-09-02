@@ -9,6 +9,8 @@ terraform.tfstate.*
 # Local-only
 .env
 CLAUDE.md
+.localstack/
+volume/
 
 # Upstream boundary
 **/init-clickhouse.sql
