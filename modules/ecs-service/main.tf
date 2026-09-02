@@ -74,12 +74,19 @@ locals {
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
+
+  # Capped well under AWS's role-name limit so the random suffix
+  # name_prefix appends always fits, regardless of how long the
+  # caller-supplied var.name is (the ECS service/log group/Cloud Map
+  # names below stay on the full var.name; only IAM role names are
+  # shortened this way).
+  iam_prefix = substr("${var.env_id}-${var.name}-", 0, 32)
 }
 
 resource "aws_iam_role" "execution" {
   count = local.enabled
 
-  name_prefix        = "${var.name}-exec-"
+  name_prefix        = local.iam_prefix
   assume_role_policy = local.ecs_tasks_assume_role_policy
 
   tags = merge(local.tags, { Name = "${var.name}-execution-role" })
@@ -110,7 +117,7 @@ resource "aws_iam_role_policy" "execution_secrets" {
 resource "aws_iam_role" "task" {
   count = local.enabled
 
-  name_prefix        = "${var.name}-task-"
+  name_prefix        = local.iam_prefix
   assume_role_policy = local.ecs_tasks_assume_role_policy
 
   tags = merge(local.tags, { Name = "${var.name}-task-role" })

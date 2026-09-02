@@ -16,6 +16,12 @@ caller must supply `default_tags` and this module additionally stamps
 `enabled = false` produces zero resources (every resource is `count`-gated
 on it), for the optional `worker` service.
 
+The execution and task IAM roles are named from `"${env_id}-${name}-"`
+truncated to 32 characters and passed as `name_prefix` (not the full
+`var.name`), so AWS's random suffix always fits regardless of caller
+name length; the ECS service, log group, and Cloud Map name stay on
+the full `var.name`.
+
 ## Variables
 
 `name`, `env_id`, `cluster_arn`, `image`, `command` (default `null`),
