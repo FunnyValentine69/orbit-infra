@@ -79,7 +79,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "-- Budget --"
   run_aws "budgets" budgets describe-budget --account-id "<account-id>" --budget-name "${NAME}-monthly"
   echo "-- OIDC provider --"
-  run_aws "iam-oidc" iam list-open-id-connect-providers
+  run_aws "iam-oidc" iam list-open-id-connect-providers --output json
   echo "== dry-run complete; no AWS calls executed =="
   exit 0
 fi
@@ -156,7 +156,7 @@ check_budget() {
   local budget="${NAME}-monthly"
   local err
   if err=$("${AWS_BASE[@]}" budgets describe-budget --account-id "$ACCOUNT_ID" --budget-name "$budget" 2>&1); then
-    block "budget $budget exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import aws_budgets_budget.monthly $ACCOUNT_ID:$budget"
+    block "budget $budget exists; confirm ownership before bootstrap; if confirmed, import with: terraform -chdir=bootstrap import 'aws_budgets_budget.monthly[0]' $ACCOUNT_ID:$budget"
   else
     if echo "$err" | grep -qi "NotFoundException"; then
       echo "OK: budget $budget absent"
@@ -168,7 +168,7 @@ check_budget() {
 
 check_oidc_provider() {
   local list_err arn
-  if ! list_err=$("${AWS_BASE[@]}" iam list-open-id-connect-providers 2>&1); then
+  if ! list_err=$("${AWS_BASE[@]}" iam list-open-id-connect-providers --output json 2>&1); then
     block "oidc_provider list failed: $list_err"
     return
   fi
@@ -178,7 +178,7 @@ check_oidc_provider() {
     return
   fi
   local detail
-  if ! detail=$("${AWS_BASE[@]}" iam get-open-id-connect-provider --open-id-connect-provider-arn "$arn" 2>&1); then
+  if ! detail=$("${AWS_BASE[@]}" iam get-open-id-connect-provider --open-id-connect-provider-arn "$arn" --output json 2>&1); then
     block "oidc_provider detail fetch failed for $arn: $detail"
     return
   fi

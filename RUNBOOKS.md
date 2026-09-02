@@ -32,3 +32,21 @@ restore a prior version instead of re-importing everything:
 aws s3api list-object-versions --bucket orbit-infra-79s5rw-tfstate --prefix bootstrap/terraform.tfstate
 aws s3api copy-object --bucket orbit-infra-79s5rw-tfstate --copy-source "orbit-infra-79s5rw-tfstate/bootstrap/terraform.tfstate?versionId=<version-id>" --key bootstrap/terraform.tfstate
 ```
+
+## Operator CIDR change
+
+The ALB allowlist is the repository secret `OPERATOR_CIDR`. To update it:
+
+```
+gh secret set OPERATOR_CIDR -R FunnyValentine69/orbit-infra --body "$(curl -s https://checkip.amazonaws.com)/32"
+```
+
+Then re-dispatch `session-apply` for each live environment (arrives in
+Phase 3). Local applies use the Makefile's lookup.
+
+## Credential rotation
+
+The Infracost service-account token expires one year after creation
+(created 2026-09-02), and the LocalStack student license renews yearly
+(2027-09-02). Rotate via `gh secret set INFRACOST_API_KEY` /
+`gh secret set LOCALSTACK_AUTH_TOKEN` (hidden prompts).

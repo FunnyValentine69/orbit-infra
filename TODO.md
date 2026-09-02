@@ -21,12 +21,13 @@
 
 ## Phase 2 — Modules + gates
 
-- [ ] P2-0 LocalStack lane: target variable, provider endpoints, make localstack-up/down, gitignore .localstack/ and volume/
+- [x] P2-0 LocalStack lane: target variable, provider endpoints, make localstack-up/down, gitignore .localstack/ and volume/
 - [ ] P2-4 also: narrow the deployer IAM statement to the exact actions the modules use; remove the five checkov skips in bootstrap/roles.tf
 
 ## Phase 3 — CI/CD
 
 (expanded when the phase starts)
+- [ ] P3-x: document that fork PRs skip oidc-smoke jobs (green-by-skip) in README/RUNBOOKS
 
 ## Phase 4 — Parallel environments + runbooks
 

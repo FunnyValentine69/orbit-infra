@@ -1,26 +1,31 @@
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 
 import boto3
-from botocore.exceptions import ClientError
 from fastapi import FastAPI, Response
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
+
+# Low-level clients are thread-safe; the credential chain resolves once per
+# process, so create the client at module level instead of per-request.
+_s3 = boto3.client("s3")
 
 
 @app.get("/health")
-def health():
+def health() -> dict:
     return {"status": "ok"}
 
 
 @app.get("/ready")
-def ready():
+def ready() -> dict:
     return {"status": "ok"}
 
 
 @app.get("/s3-roundtrip")
-def s3_roundtrip(response: Response):
+def s3_roundtrip(response: Response) -> dict:
     bucket = os.environ.get("PLACEHOLDER_BUCKET")
     if not bucket:
         response.status_code = 503
@@ -30,14 +35,11 @@ def s3_roundtrip(response: Response):
     body = datetime.now(timezone.utc).isoformat().encode("utf-8")
 
     try:
-        s3 = boto3.client("s3")
-        s3.put_object(Bucket=bucket, Key=key, Body=body)
-        s3.get_object(Bucket=bucket, Key=key)
-        s3.delete_object(Bucket=bucket, Key=key)
+        _s3.put_object(Bucket=bucket, Key=key, Body=body)
+        _s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        _s3.delete_object(Bucket=bucket, Key=key)
         return {"bucket": bucket, "key": key, "ok": True}
-    except ClientError as exc:
-        response.status_code = 500
-        return {"ok": False, "error": type(exc).__name__}
     except Exception as exc:
+        logger.exception("s3 roundtrip failed")
         response.status_code = 500
         return {"ok": False, "error": type(exc).__name__}

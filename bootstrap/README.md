@@ -12,17 +12,22 @@ Run: `bootstrap/preflight.sh` (live, needs AWS SSO login),
 `bootstrap/preflight.sh --dry-run` (prints planned aws calls, no network),
 `bootstrap/preflight.sh --help`. Exit codes: 0 clean, 2 blocked, 3 no creds.
 
-The project suffix (SUFFIX/NAME) is recorded in the local CLAUDE.md.
+The project suffix (SUFFIX/NAME) is hardcoded as the default of `var.name` in
+bootstrap/variables.tf and `NAME` in bootstrap/preflight.sh (keep them
+identical); also noted in the local CLAUDE.md.
 
 ## Apply sequence
 
 1. `bootstrap/preflight.sh` (must exit 0)
 2. `terraform -chdir=bootstrap init` (local state)
-3. `terraform -chdir=bootstrap plan -var-file=terraform.tfvars`
+3. `terraform -chdir=bootstrap plan`
 4. `terraform -chdir=bootstrap apply`
 5. Copy `backend.tf.example` to `backend.tf`
 6. `terraform -chdir=bootstrap init -migrate-state`
 7. Commit `backend.tf`
+
+Terraform auto-loads `terraform.tfvars` from the `-chdir` directory, so
+neither step above needs an explicit `-var-file` flag.
 
 Never run `terraform destroy` here — every resource has `prevent_destroy`.
 

@@ -4,7 +4,7 @@ Status: Accepted (2026-09-02)
 
 ## Context
 
-Keyless cosign signing uploads the image reference to the public Rekor transparency log. For the public placeholder that's the point. For the private upstream images, the same upload would publish the AWS account ID, region, and private ECR repository names — information this project's rules require never be disclosed.
+Keyless cosign signing uploads the image reference to the public Rekor transparency log. For the public placeholder that's the point. For the private upstream images, the same upload would publish the AWS account ID, region, and private ECR repository names: the AWS account ID, region, and ECR repository names must never be published; the upstream's repository slug is the one permitted public reference.
 
 ## Decision
 
