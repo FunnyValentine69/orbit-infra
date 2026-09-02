@@ -138,6 +138,36 @@ data "aws_iam_policy_document" "plan_reader_deny" {
     not_resources = [aws_s3_bucket.state.arn]
   }
 
+  # ReadOnlyAccess's broad s3:ListBucket would otherwise let plan-reader
+  # enumerate every prefix in the state bucket (leases/*, other envs).
+  # Deny listing the state bucket unless scoped to the allowed prefixes,
+  # and deny it outright when no prefix condition is present at all.
+  statement {
+    sid       = "DenyListBucketOutsideScopePrefix"
+    effect    = "Deny"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.state.arn]
+
+    condition {
+      test     = "StringNotLike"
+      variable = "s3:prefix"
+      values   = ["envs/preview/*", "bootstrap/*", "envs/preview", "bootstrap"]
+    }
+  }
+
+  statement {
+    sid       = "DenyListBucketMissingPrefix"
+    effect    = "Deny"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.state.arn]
+
+    condition {
+      test     = "Null"
+      variable = "s3:prefix"
+      values   = ["true"]
+    }
+  }
+
   statement {
     sid    = "DenySecretsAndParams"
     effect = "Deny"

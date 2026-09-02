@@ -12,7 +12,7 @@ fi
 
 zero_sha="0000000000000000000000000000000000000000"
 forbidden_path_re='(init-clickhouse\.sql|^upstream/|\.upstream-context/|terraform\.tfstate|\.tfvars$|^CLAUDE\.md$|\.env$)'
-email_re='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}'
+email_re='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 
 # The pre-push hook feeds "<local ref> <local sha> <remote ref> <remote sha>"
 # lines on stdin, one per pushed ref. Resolve the range per ref (for
@@ -38,8 +38,13 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
     range="$remote_sha..$local_sha"
   fi
 
-  commits_raw="$commits_raw
-$(git rev-list "$range" 2>/dev/null || true)"
+  if rev_list_out="$(git rev-list "$range" 2>/dev/null)"; then
+    commits_raw="$commits_raw
+$rev_list_out"
+  else
+    commits_raw="$commits_raw
+(range unavailable; scanning tip only)"
+  fi
 done
 
 if [ "$stdin_lines" -eq 0 ]; then
@@ -81,12 +86,12 @@ for tip in $tip_shas; do
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     content="${line#*:*:*:}"
-    matches="$(printf '%s' "$content" | grep -o -E "$email_re" | grep -v -E '^(none@localhost)$' || true)"
+    matches="$(printf '%s' "$content" | grep -o -i -E "$email_re" | grep -v -i -E '^(none@localhost)$' || true)"
     if [ -n "$matches" ]; then
       email_offenders="$email_offenders$line
 "
     fi
-  done < <(git grep -I -n -E "$email_re" "$tip" -- 2>/dev/null || true)
+  done < <(git grep -I -n -i -E "$email_re" "$tip" -- 2>/dev/null || true)
 done
 
 if [ -n "$path_offenders" ]; then
