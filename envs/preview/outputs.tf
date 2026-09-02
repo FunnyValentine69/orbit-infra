@@ -25,3 +25,15 @@ output "endpoint_sg_id" {
 output "azs" {
   value = module.network.azs
 }
+
+output "ecs_cluster_arn" {
+  value = aws_ecs_cluster.this.arn
+}
+
+output "api_service_name" {
+  value = module.api.service_name
+}
+
+output "worker_service_name" {
+  value = module.worker.service_name
+}
