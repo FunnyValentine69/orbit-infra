@@ -42,6 +42,11 @@ variable "name" {
 variable "env_id" {
   description = "Ephemeral environment identifier"
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,11}$", var.env_id))
+    error_message = "env_id must be 1-12 lowercase letters, digits, or hyphens, starting alphanumeric: it is embedded in S3 bucket names, Cloud Map DNS names, and the 32-character IAM role prefix that the deployer policy matches on."
+  }
 }
 
 # Validated and required now so `make plan` fails fast; consumed by the
@@ -52,8 +57,8 @@ variable "operator_cidr" {
   type        = string
 
   validation {
-    condition     = can(cidrhost(var.operator_cidr, 0))
-    error_message = "operator_cidr must be a valid CIDR block."
+    condition     = can(cidrhost(var.operator_cidr, 0)) && !contains(["0.0.0.0/0", "::/0"], var.operator_cidr) && can(tonumber(split("/", var.operator_cidr)[1])) && tonumber(split("/", var.operator_cidr)[1]) >= 8
+    error_message = "operator_cidr must be a valid CIDR narrower than /8; the ALB is never open to the world (ADR 0004)."
   }
 }
 

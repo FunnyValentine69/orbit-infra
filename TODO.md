@@ -27,7 +27,7 @@
 - [x] P2-3 modules/redis + modules/clickhouse; preview secret, data bucket, service wiring; uniform IAM naming; live S3 round-trip
 - [x] P2-4 envs/preview composition: ALB with operator_cidr allowlist, per-environment S3 state keys, env-scoped LocalStack override; two concurrent environments verified
 - [x] P2-5 policy gates: repo-wide .tflint.hcl + .checkov.yaml, make validate/lint/test, scripts/gates.sh
-- [ ] P2-6 infracost breakdown and README cost line — deferred to P3-1 (runs in CI with the INFRACOST_API_KEY secret)
+- [ ] P2-6 infracost breakdown and README cost line — deferred to Phase 3 (terraform-plan.yml infracost job; runs in CI with the INFRACOST_API_KEY secret)
 - [x] P2-7 narrow the deployer IAM statement in bootstrap/roles.tf to the exact actions the modules use; remove the five checkov skips there
 
 ## Phase 3 — CI/CD
@@ -39,6 +39,7 @@
 ## Phase 4 — Parallel environments + runbooks
 
 (expanded when the phase starts)
+- [ ] P4-x: ecs-service applies with wait_for_steady_state = false, so an apply exits 0 even if tasks never reach RUNNING; add a post-apply `aws ecs describe-services` steady-state check to the start-session runbook and session-apply.yml (Tier-1 P2 on PR #2)
 
 ## Phase 5 — Drift, sweeper, threat model, polish
 

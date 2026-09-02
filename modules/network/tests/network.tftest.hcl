@@ -1,8 +1,7 @@
 # This module declares no aws_nat_gateway resource block at all (see
 # ADR 0002 / README no-NAT invariant); that is verified structurally by
-# `command grep -n aws_nat_gateway modules/network/*.tf` in the gate, since
-# terraform test cannot assert against a resource type absent from the
-# configuration.
+# the no-NAT-gateway grep step in scripts/gates.sh, since terraform test
+# cannot assert against a resource type absent from the configuration.
 
 mock_provider "aws" {}
 

@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-env-id render-localstack-backend
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-env-id check-operator-cidr render-localstack-backend
 
 TARGET ?= aws
 # preflight and terraform must check the same account and region
@@ -55,10 +55,13 @@ localstack-status:
 # prevent_destroy = true and this state must never be torn down via make.
 
 # envs/preview: TARGET and ENV_ID are both required for plan/apply/destroy.
-OPERATOR_CIDR ?= $(shell curl -s https://checkip.amazonaws.com | awk '{print $$1"/32"}')
+OPERATOR_CIDR ?= $(shell curl -sf --max-time 5 https://checkip.amazonaws.com | awk '{print $$1"/32"}')
+
+check-operator-cidr:
+	@if [ -z "$(OPERATOR_CIDR)" ]; then echo "OPERATOR_CIDR auto-detect failed; pass OPERATOR_CIDR=<cidr>" >&2; exit 1; fi
 
 ifeq ($(TARGET),localstack)
-plan apply destroy: check-env-id
+plan apply destroy: check-env-id check-operator-cidr
 
 check-env-id:
 	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
@@ -81,7 +84,7 @@ destroy:
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR) -auto-approve
 else
-plan apply destroy: check-env-id
+plan apply destroy: check-env-id check-operator-cidr
 
 check-env-id:
 	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
@@ -112,6 +115,16 @@ test:
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \
 			terraform -chdir="$$d" test || exit 1; \
+		fi; \
+	done
+	@for d in envs/*/; do \
+		if [ -d "$${d}tests" ]; then \
+			echo "== terraform test: $$d =="; \
+			sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$${d}backend_override.tf"; \
+			TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" init -reconfigure -input=false >/dev/null && \
+			TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" test; rc=$$?; \
+			rm -f "$${d}backend_override.tf"; \
+			[ $$rc -eq 0 ] || exit $$rc; \
 		fi; \
 	done
 

@@ -111,3 +111,40 @@ run "execute_command_disabled" {
     error_message = "execute-command policy must be absent when enable_execute_command = false"
   }
 }
+
+run "alb_target_group_attached" {
+  command = plan
+
+  variables {
+    alb_target_group_arn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/orbit-test-api/0000000000000000"
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.this[0].load_balancer) == 1
+    error_message = "alb_target_group_arn set must yield exactly one load_balancer block"
+  }
+
+  assert {
+    condition     = one(aws_ecs_service.this[0].load_balancer).container_name == var.name
+    error_message = "load_balancer container_name must equal the service name"
+  }
+
+  assert {
+    condition     = one(aws_ecs_service.this[0].load_balancer).target_group_arn == "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/orbit-test-api/0000000000000000"
+    error_message = "load_balancer target_group_arn must equal the input alb_target_group_arn"
+  }
+}
+
+run "service_discovery_registered" {
+  command = plan
+
+  variables {
+    register_service_discovery = true
+    cloud_map_namespace_id     = "ns-aaaaaaaaaaaaaaaa"
+  }
+
+  assert {
+    condition     = length(aws_service_discovery_service.this) == 1
+    error_message = "register_service_discovery = true must yield exactly one Cloud Map service"
+  }
+}

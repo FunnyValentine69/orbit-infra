@@ -54,8 +54,10 @@ gh secret set OPERATOR_CIDR -R FunnyValentine69/orbit-infra --body "$(curl -s ht
 
 Then re-dispatch `session-apply` for each live environment (arrives in
 Phase 3). Local applies use the Makefile's lookup; run
-`make apply TARGET=aws ENV_ID=<id>` to re-apply the ALB security group
-for a specific environment.
+`make apply TARGET=aws ENV_ID=<id>` to re-apply the whole preview
+environment for that ID — only the ALB security-group ingress rule
+actually changes, since it's the only resource that reads
+`var.operator_cidr`.
 
 ## Credential rotation
 

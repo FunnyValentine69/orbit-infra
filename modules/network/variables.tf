@@ -6,6 +6,11 @@ variable "name" {
 variable "env_id" {
   description = "Ephemeral environment identifier, applied as the env_id tag on every taggable resource"
   type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,11}$", var.env_id))
+    error_message = "env_id must be 1-12 lowercase letters, digits, or hyphens, starting alphanumeric: it is embedded in S3 bucket names, Cloud Map DNS names, and the 32-character IAM role prefix that the deployer policy matches on."
+  }
 }
 
 variable "cidr" {
