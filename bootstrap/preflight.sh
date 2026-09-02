@@ -172,7 +172,7 @@ check_oidc_provider() {
     block "oidc_provider list failed: $list_err"
     return
   fi
-  arn=$(echo "$list_err" | grep -o '"Arn": *"[^"]*token.actions.githubusercontent.com"' | sed -E 's/.*"(arn:[^"]+)"/\1/' | head -n1)
+  arn=$(echo "$list_err" | grep -o '"Arn": *"[^"]*token.actions.githubusercontent.com"' | sed -E 's/.*"(arn:[^"]+)"/\1/' | head -n1 || true)
   if [[ -z "$arn" ]]; then
     echo "OK: OIDC provider absent; bootstrap will create it"
     return

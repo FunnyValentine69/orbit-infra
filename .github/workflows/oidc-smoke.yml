@@ -152,9 +152,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify expected outcome
+        env:
+          ASSUME_STDERR: ${{ steps.assume.outputs.stderr }}
         run: |
           status="${{ steps.assume.outputs.status }}"
-          stderr="${{ steps.assume.outputs.stderr }}"
+          stderr="$ASSUME_STDERR"
           event="${{ github.event_name }}"
 
           if [ "$event" = "pull_request" ]; then
@@ -167,7 +169,7 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            if ! echo "$stderr" | grep -q "AccessDenied"; then
+            if ! echo "$stderr" | grep -q "(AccessDenied)"; then
               echo "expected AccessDenied from the trust policy; got a different failure"
               echo "$stderr"
               {
@@ -205,7 +207,7 @@ jobs:
 
       - name: Remove OIDC token file
         if: always()
-        run: rm -f "${{ steps.token.outputs.token_file }}"
+        run: rm -f "${{ steps.token.outputs.token_file }}" /tmp/assume-deployer-stdout.json
 
   assume-publisher:
     needs: decode-subject
@@ -257,9 +259,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify expected outcome
+        env:
+          ASSUME_STDERR: ${{ steps.assume.outputs.stderr }}
         run: |
           status="${{ steps.assume.outputs.status }}"
-          stderr="${{ steps.assume.outputs.stderr }}"
+          stderr="$ASSUME_STDERR"
           event="${{ github.event_name }}"
 
           if [ "$event" = "pull_request" ]; then
@@ -272,7 +276,7 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
-            if ! echo "$stderr" | grep -q "AccessDenied"; then
+            if ! echo "$stderr" | grep -q "(AccessDenied)"; then
               echo "expected AccessDenied from the trust policy; got a different failure"
               echo "$stderr"
               {
@@ -310,4 +314,4 @@ jobs:
 
       - name: Remove OIDC token file
         if: always()
-        run: rm -f "${{ steps.token.outputs.token_file }}"
+        run: rm -f "${{ steps.token.outputs.token_file }}" /tmp/assume-publisher-stdout.json

@@ -1,5 +1,14 @@
 # Runbooks
 
+## Local credentials
+
+The AWS Free Plan has no IAM Identity Center, so local bootstrap uses IAM
+user `orbit-bootstrap` (AdministratorAccess, MFA required) with access
+keys held only in `~/.aws/credentials` under profile `orbit`, created via
+`aws configure --profile orbit`. Deactivate the access key in the IAM
+console after bootstrap finishes and re-enable it per session when
+needed. CI never uses this key — it authenticates via OIDC only.
+
 ## Bootstrap recovery
 
 If local Terraform state is lost before the first `-migrate-state` (i.e.

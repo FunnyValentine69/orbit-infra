@@ -7,11 +7,13 @@ import boto3
 from fastapi import FastAPI, Response
 
 app = FastAPI()
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Low-level clients are thread-safe; the credential chain resolves once per
 # process, so create the client at module level instead of per-request.
 _s3 = boto3.client("s3")
+logger.info("s3 client region=%s", _s3.meta.region_name)
 
 
 @app.get("/health")
