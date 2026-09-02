@@ -23,6 +23,8 @@ provider "aws" {
       iam                    = var.localstack_endpoint
       s3                     = var.localstack_endpoint
       sts                    = var.localstack_endpoint
+      sns                    = var.localstack_endpoint
+      cloudwatch             = var.localstack_endpoint
     }
   }
 
@@ -421,4 +423,61 @@ module "worker" {
   register_service_discovery = true
 
   tags = local.tags
+}
+
+resource "aws_sns_topic" "alerts" {
+  name = "${var.name}-${var.env_id}-alerts"
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-alerts" })
+}
+
+resource "aws_sns_topic_subscription" "alerts_email" {
+  count     = var.alert_email != null ? 1 : 0
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts" {
+  alarm_name          = "${var.name}-${var.env_id}-unhealthy-hosts"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.this.arn_suffix
+    TargetGroup  = aws_lb_target_group.api.arn_suffix
+  }
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-unhealthy-hosts" })
+}
+
+resource "aws_cloudwatch_metric_alarm" "target_5xx" {
+  alarm_name          = "${var.name}-${var.env_id}-target-5xx"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "HTTPCode_Target_5XX_Count"
+  namespace           = "AWS/ApplicationELB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.this.arn_suffix
+    TargetGroup  = aws_lb_target_group.api.arn_suffix
+  }
+
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-target-5xx" })
 }

@@ -23,7 +23,7 @@ exist anywhere in the pipeline.
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
-| Observability: CloudWatch logs, one alarm, one written SLO | planned |
+| Observability: CloudWatch logs, one alarm, one written SLO | done |
 | ADRs, runbooks, threat model | in progress |
 
 ## Two targets

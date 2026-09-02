@@ -115,3 +115,10 @@ variable "project_tag" {
   type        = string
   default     = "orbit-infra"
 }
+
+variable "alert_email" {
+  description = "Email address subscribed to the alerts SNS topic. Defaults to null (no subscription created); never committed as a literal value."
+  type        = string
+  default     = null
+  sensitive   = true
+}

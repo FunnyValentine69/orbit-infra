@@ -139,6 +139,14 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   preserves the queued destroy and refuses the third.
 - **Phase 5:** drift detection reports clean; a modified resource is caught.
 
+### SLO
+
+API availability during a session >= 99%: measured as healthy-host time
+over session time from the `UnHealthyHostCount` alarm history; error
+budget per 8-hour session = 4.8 minutes; the `HTTPCode_Target_5XX_Count`
+alarm is the leading indicator. On LocalStack, alarms are created but not
+evaluated (no metric data pipeline), so alarm state stays `INSUFFICIENT_DATA`.
+
 ## Decisions
 
 - [ADR 0001 — Ephemeral over always-on](docs/adr/0001-ephemeral-over-always-on.md)
