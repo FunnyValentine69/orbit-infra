@@ -3,8 +3,8 @@
 - [x] P0-1 Install terraform, awscli, tflint, OrbStack
 - [x] P0-2 Install scanners, signing tools, gitleaks, session-manager-plugin; write tools.lock
 - [ ] P0-3 AWS account: Free Plan, IAM Identity Center user, SSO login, permission simulation (in progress)
-- [ ] P0-4 Create repo, skeleton, .gitignore, leak checks, secrets (in progress)
-- [ ] P0-5 bootstrap/preflight.sh ownership discovery
+- [ ] P0-4 Create repo, skeleton, .gitignore, leak checks, secrets (in progress: secrets pending)
+- [ ] P0-5 bootstrap/preflight.sh ownership discovery (in progress: written, not yet run)
 - [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget
 - [ ] P0-7 Confirm Budgets notification email
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow
