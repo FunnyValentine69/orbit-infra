@@ -13,14 +13,15 @@ provider "aws" {
     for_each = var.target == "localstack" ? [1] : []
 
     content {
-      ec2                  = var.localstack_endpoint
-      servicediscovery     = var.localstack_endpoint
-      elasticloadbalancing = var.localstack_endpoint
-      ecs                  = var.localstack_endpoint
-      logs                 = var.localstack_endpoint
-      secretsmanager       = var.localstack_endpoint
-      iam                  = var.localstack_endpoint
-      s3                   = var.localstack_endpoint
+      ec2                    = var.localstack_endpoint
+      servicediscovery       = var.localstack_endpoint
+      elasticloadbalancing   = var.localstack_endpoint
+      elasticloadbalancingv2 = var.localstack_endpoint
+      ecs                    = var.localstack_endpoint
+      logs                   = var.localstack_endpoint
+      secretsmanager         = var.localstack_endpoint
+      iam                    = var.localstack_endpoint
+      s3                     = var.localstack_endpoint
     }
   }
 
@@ -64,8 +65,84 @@ resource "aws_service_discovery_private_dns_namespace" "this" {
   tags = merge(local.tags, { Name = "${var.env_id}.orbit.internal" })
 }
 
+resource "aws_security_group" "alb" {
+  name_prefix = "${var.name}-${var.env_id}-alb-"
+  description = "ALB ingress from the operator CIDR, egress to the ECS service"
+  vpc_id      = module.network.vpc_id
+
+  ingress {
+    description = "operator HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [var.operator_cidr]
+  }
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-alb-sg" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Separate rule resources (not inline blocks) to avoid a dependency cycle
+# between the ALB SG and the service SG, which reference each other.
+resource "aws_vpc_security_group_egress_rule" "alb_to_service" {
+  security_group_id            = aws_security_group.alb.id
+  description                  = "api"
+  from_port                    = 8000
+  to_port                      = 8000
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.service.id
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-alb-to-service" })
+}
+
+resource "aws_lb" "this" {
+  #checkov:skip=CKV_AWS_150:No TLS listener exists per ADR 0004; deletion protection is intentionally off for an ephemeral, Terraform-destroyed environment
+  #checkov:skip=CKV_AWS_131:No TLS on this ALB (ADR 0004); drop_invalid_header_fields is the applicable hardening control instead
+  name                       = substr("${var.name}-${var.env_id}-alb", 0, 32)
+  internal                   = false
+  load_balancer_type         = "application"
+  subnets                    = module.network.public_subnet_ids
+  security_groups            = [aws_security_group.alb.id]
+  drop_invalid_header_fields = true
+  enable_deletion_protection = false
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-alb" })
+}
+
+resource "aws_lb_target_group" "api" {
+  name        = substr("${var.name}-${var.env_id}-api-tg", 0, 32)
+  port        = 8000
+  protocol    = "HTTP"
+  vpc_id      = module.network.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path = "/health"
+  }
+
+  deregistration_delay = 10
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-api-tg" })
+}
+
+resource "aws_lb_listener" "http" {
+  #checkov:skip=CKV_AWS_2:No TLS listener; ADR 0004 (no domain to bind a cert to)
+  #checkov:skip=CKV_AWS_103:No TLS, so no TLS-policy applies; see ADR 0004
+  load_balancer_arn = aws_lb.this.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+}
+
 resource "aws_security_group" "service" {
-  name_prefix = "${var.name}-svc-"
+  name_prefix = "${var.name}-${var.env_id}-svc-"
   description = "ECS service ingress/egress within the VPC"
   vpc_id      = module.network.vpc_id
 
@@ -109,11 +186,22 @@ resource "aws_security_group" "service" {
     security_groups = [module.network.endpoint_sg_id]
   }
 
-  tags = merge(local.tags, { Name = "${var.name}-service-sg" })
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-service-sg" })
 
   lifecycle {
     create_before_destroy = true
   }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "service_from_alb" {
+  security_group_id            = aws_security_group.service.id
+  description                  = "api from ALB"
+  from_port                    = 8000
+  to_port                      = 8000
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alb.id
+
+  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-service-from-alb" })
 }
 
 resource "random_password" "clickhouse" {
@@ -247,6 +335,7 @@ module "api" {
 
   env                   = local.api_env
   task_role_policy_json = local.api_bucket_policy_json
+  alb_target_group_arn  = aws_lb_target_group.api.arn
 
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true

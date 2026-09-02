@@ -6,10 +6,11 @@
 # for this root, keeping LocalStack state completely separate from real
 # AWS state, in its own file and its own TF_DATA_DIR.
 #
-# Path is not yet keyed by env_id; P2-4 will key this by env_id so
-# concurrent preview environments don't share one state file.
+# The Makefile renders this file to backend_override.tf, substituting
+# ENV_ID_PLACEHOLDER with the real ENV_ID so concurrent preview
+# environments each get their own local state file.
 terraform {
   backend "local" {
-    path = "terraform.localstack.tfstate"
+    path = "terraform.localstack.ENV_ID_PLACEHOLDER.tfstate"
   }
 }

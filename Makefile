@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint check-env-id
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint check-env-id render-localstack-backend
 
 TARGET ?= aws
 
@@ -58,18 +58,21 @@ plan apply destroy: check-env-id
 check-env-id:
 	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
 
+render-localstack-backend:
+	sed 's/ENV_ID_PLACEHOLDER/$(ENV_ID)/' envs/preview/localstack.backend_override.tf.example > envs/preview/backend_override.tf
+
 plan:
-	cp envs/preview/localstack.backend_override.tf.example envs/preview/backend_override.tf
+	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview plan -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
 
 apply:
-	cp envs/preview/localstack.backend_override.tf.example envs/preview/backend_override.tf
+	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview apply -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR) -auto-approve
 
 destroy:
-	cp envs/preview/localstack.backend_override.tf.example envs/preview/backend_override.tf
+	$(MAKE) render-localstack-backend
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
 	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR) -auto-approve
 else
@@ -78,16 +81,24 @@ plan apply destroy: check-env-id
 check-env-id:
 	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
 
+# backend.aws.hcl is operator-provided (copied from backend.aws.hcl.example,
+# not committed); fall back to the example when it's absent, since the
+# example carries no secrets.
+BACKEND_HCL := $(if $(wildcard envs/preview/backend.aws.hcl),envs/preview/backend.aws.hcl,envs/preview/backend.aws.hcl.example)
+
 plan:
 	rm -f envs/preview/backend_override.tf
+	terraform -chdir=envs/preview init -reconfigure -backend-config=$(BACKEND_HCL) -backend-config="key=envs/preview/$(ENV_ID).tfstate"
 	terraform -chdir=envs/preview plan -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
 
 apply:
 	rm -f envs/preview/backend_override.tf
+	terraform -chdir=envs/preview init -reconfigure -backend-config=$(BACKEND_HCL) -backend-config="key=envs/preview/$(ENV_ID).tfstate"
 	terraform -chdir=envs/preview apply -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
 
 destroy:
 	rm -f envs/preview/backend_override.tf
+	terraform -chdir=envs/preview init -reconfigure -backend-config=$(BACKEND_HCL) -backend-config="key=envs/preview/$(ENV_ID).tfstate"
 	terraform -chdir=envs/preview destroy -var target=$(TARGET) -var env_id=$(ENV_ID) -var operator_cidr=$(OPERATOR_CIDR)
 endif
 
