@@ -45,6 +45,30 @@ variable "operator_cidr" {
   }
 }
 
+variable "api_image" {
+  description = "Container image for the api service. Defaults to a placeholder digest; P3-2 replaces this with the private-ECR digest of this repo's placeholder image."
+  type        = string
+  default     = "placeholder:local"
+}
+
+variable "api_command" {
+  description = "Container command override for the api service"
+  type        = list(string)
+  default     = null
+}
+
+variable "worker_image" {
+  description = "Container image for the optional worker service. null disables the worker service."
+  type        = string
+  default     = null
+}
+
+variable "worker_command" {
+  description = "Container command override for the worker service"
+  type        = list(string)
+  default     = null
+}
+
 variable "tags" {
   description = "Default tags applied to all resources"
   type        = map(string)
