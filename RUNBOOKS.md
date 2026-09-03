@@ -200,7 +200,7 @@ digest and KMS signature/attestation gate.
 
 After opening a generation-bound lease, the same job runs `make apply`, waits
 for every enabled ECS service, checks that each service reached its applied
-task definition, probes the LocalStack ALB DNS name from the excluded runner
+task definition, probes the Terraform `api_url` output (the LocalStack ALB) from the excluded runner
 CIDR, records the ALB URL in the summary, and always runs stage-1 close. The
 ALB probe exercises LocalStack's endpoint routing and records whether it
 returned HTTP or refused/timed out. LocalStack routes ALB DNS through its

@@ -80,7 +80,9 @@ cleanup() {
       -f env_id="$ENV_ID" -f target=aws >/dev/null 2>&1 \
       || echo "dispatch-ordering.sh: could not dispatch AWS cleanup for $ENV_ID" >&2
   fi
-  if [ "$CANCEL_ON_EXIT" = 1 ]; then
+  # bash 3.2 (macOS) treats an empty array expansion as unbound under set -u,
+  # and run_ids is empty until the first dispatch succeeds.
+  if [ "$CANCEL_ON_EXIT" = 1 ] && [ "${#run_ids[@]}" -gt 0 ]; then
     for run_id in "${run_ids[@]}"; do
       status="$(gh run view "$run_id" --repo "$REPO" --json status --jq '.status' 2>/dev/null)"
       case "$status" in

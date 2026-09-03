@@ -440,8 +440,11 @@ pass "the ECS services-stable waiter receives a 660-second outer timeout"
 
 # DeleteTaskDefinitions can exit zero while reporting per-ARN failures in
 # stdout. The requested ARN must fail stage 1 instead of being treated as a
-# successful deletion request.
-delete_fixture="$FIXTURES/delete-task-definitions-failure.json"
+# successful deletion request, and a malformed failures entry must fail
+# closed rather than read as "no failure for our ARN".
+run_delete_fixture_case() {
+local delete_fixture="$1" delete_expected_message="$2" delete_pass_text="$3"
+local delete_env_id delete_task_definition_arn delete_out delete_rc delete_lease delete_expected delete_actual
 delete_env_id="$(jq -r '.env_id' "$delete_fixture")"
 delete_task_definition_arn="$(jq -r '.task_definition_arn' "$delete_fixture")"
 env "${lease_env[@]}" "$LEASE" open "$delete_env_id" >/dev/null
@@ -469,13 +472,20 @@ delete_lease="$(env "${lease_env[@]}" "$LEASE" get "$delete_env_id")"
 delete_expected="$(jq -c '.expected' "$delete_fixture")"
 delete_actual="$(jq -c '{status,cleanup_attempt}' <<< "$delete_lease")"
 if [ "$delete_rc" -eq 0 ] || [ "$delete_actual" != "$delete_expected" ] || \
-   ! grep -Fq 'DeleteTaskDefinitions reported a failure for the requested ARN' <<< "$delete_out"; then
-  echo "FAIL: a zero-exit DeleteTaskDefinitions response containing the requested ARN in failures must fail closed" >&2
+   ! grep -Fq "$delete_expected_message" <<< "$delete_out"; then
+  echo "FAIL: $delete_pass_text (fixture $(basename "$delete_fixture"))" >&2
   echo "actual:   $delete_actual (rc=$delete_rc: $delete_out)" >&2
-  echo "expected: $delete_expected" >&2
+  echo "expected: $delete_expected with message '$delete_expected_message'" >&2
   exit 1
 fi
-pass "DeleteTaskDefinitions stdout failures for the requested ARN fail closed"
+pass "$delete_pass_text"
+}
+run_delete_fixture_case "$FIXTURES/delete-task-definitions-failure.json" \
+  'DeleteTaskDefinitions reported a failure for the requested ARN' \
+  "DeleteTaskDefinitions stdout failures for the requested ARN fail closed"
+run_delete_fixture_case "$FIXTURES/delete-task-definitions-malformed.json" \
+  'DeleteTaskDefinitions returned malformed JSON' \
+  "a malformed DeleteTaskDefinitions failures entry fails closed"
 
 # Real-AWS cleanup fails closed before Terraform when an older or malformed
 # lease does not contain the image references required by preview validation.

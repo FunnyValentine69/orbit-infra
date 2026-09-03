@@ -64,13 +64,15 @@ After the change is on `main`, run the LocalStack queue test with:
 ENV_ID=ord1 TARGET=localstack REF=main bash tests/dispatch-ordering.sh
 ```
 
-The LocalStack target proves only GitHub concurrency queueing for the two
-same-environment apply runs, plus the exact `session-destroy target=localstack`
-validation refusal after the queue drains. It is not a cross-run lease test.
-The AWS target uses the same command with `TARGET=aws`; it additionally asserts
-that the same-environment destroy is queued behind both applies and prints all
-three workflow conclusions for audit. Neither target cancels a run unless
-`CANCEL_ON_EXIT=1` is explicitly set.
+Both targets assert GitHub concurrency queueing for the two same-environment
+apply runs, assert that the same-environment `session-destroy` dispatch is
+queued behind them, and print every run's conclusion ordered by start time for
+audit. The only target-specific step is the LocalStack destroy: after the queue
+drains it must fail validation with the exact `session-destroy
+target=localstack` refusal, whereas on AWS it performs the real stage-1 close.
+Neither target is a cross-run lease test (each LocalStack run is a fresh
+emulator). Neither target cancels a run unless `CANCEL_ON_EXIT=1` is
+explicitly set.
 
 The session workflows execute jobs only on `main`. Supplying a non-main `REF`
 is expected to create a skipped run, so it cannot satisfy this ordering test.

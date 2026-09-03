@@ -7,7 +7,9 @@
 #
 # Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov ->
 # target-specific bootstrap/supply-chain checks -> lease open (CAS) and
-# manifest record -> apply -> acceptance -> stage-1 cleanup when required.
+# manifest record -> apply -> acceptance. Any failure or cancellation after
+# the lease exists runs scripts/close-env.sh (stage 1) in this same job; the
+# LocalStack target always closes at the end of the job.
 # Gate failures before the CAS never create a lease or resources.
 #
 # Per ADR 0006 / ARCHITECTURE.md, apply, destroy, and the sweeper share

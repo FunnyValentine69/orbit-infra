@@ -248,4 +248,21 @@ if ! jq -e --arg digest "$exact_digest" 'all(.images[]; .digest == $digest)' <<<
   exit 1
 fi
 
+# PR #4 overflow contracts (P0-3e): every mirror is scanned before it is
+# signed, and the AWS stage-1 close runs on cancellation once the lease exists.
+mirror_workflow="$REPO_ROOT/.github/workflows/mirror-images.yml"
+for mirror in redis clickhouse; do
+  scan_line="$(grep -n "name: Trivy scan $mirror mirror" "$mirror_workflow" | cut -d: -f1)"
+  sign_line="$(grep -n "name: KMS sign and attest $mirror mirror" "$mirror_workflow" | cut -d: -f1)"
+  if [ -z "$scan_line" ] || [ -z "$sign_line" ] || [ "$scan_line" -ge "$sign_line" ]; then
+    echo "mirror-images must scan the $mirror mirror before signing it (scan=$scan_line sign=$sign_line)" >&2
+    exit 1
+  fi
+done
+if ! grep -Fq "if: always() && (failure() || cancelled()) && steps.lease-open.outputs.acquired == 'true' && inputs.target == 'aws'" \
+    "$REPO_ROOT/.github/workflows/session-apply.yml"; then
+  echo "session-apply must run the AWS stage-1 close on failure or cancellation once the lease is acquired" >&2
+  exit 1
+fi
+
 echo "PASS: phase3 shell contracts"

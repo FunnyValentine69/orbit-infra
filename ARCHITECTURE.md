@@ -206,8 +206,9 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
 - **Phase 4:** `tests/localstack-concurrency.sh` runs two environments
   concurrently on one LocalStack instance and checks independent state, tags,
   clusters, lease refusals, generations, and stage-1 close.
-  `tests/dispatch-ordering.sh` confirms same-environment GitHub queueing for
-  both targets, LocalStack destroy refusal, and AWS destroy queueing. The
+  `tests/dispatch-ordering.sh` confirms same-environment GitHub queueing of
+  the second apply and of the destroy for both targets; only the destroy's
+  outcome is target-specific (LocalStack refusal versus AWS stage-1 close). The
   dispatch-only LocalStack CI lane proves its own same-job apply → acceptance →
   close path, never cross-run lease semantics.
 - **Phase 5:** drift detection reports clean; a modified resource is caught.

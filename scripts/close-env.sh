@@ -466,7 +466,12 @@ while IFS= read -r arn; do
     set -e
     delete_response_valid=false
     delete_requested_failure=false
-    if jq -e 'type == "object" and (.failures | type == "array")' "$delete_stdout" >/dev/null 2>&1; then
+    # Valid only when stdout is an object whose failures array holds objects
+    # with a string arn; anything else (including a jq error on a bare string
+    # entry) is malformed and must not read as "no failure for our ARN".
+    if jq -e 'type == "object" and (.failures | type == "array")
+        and all(.failures[]; type == "object" and (.arn | type == "string"))' \
+        "$delete_stdout" >/dev/null 2>&1; then
       delete_response_valid=true
       if jq -e --arg arn "$arn" 'any(.failures[]; .arn == $arn)' "$delete_stdout" >/dev/null; then
         delete_requested_failure=true
@@ -491,8 +496,8 @@ while IFS= read -r arn; do
       else
         if [ "$delete_requested_failure" = true ]; then
           fail "DeleteTaskDefinitions reported a failure for the requested ARN: $arn"
-        elif [ "$delete_response_valid" != true ]; then
-          fail "DeleteTaskDefinitions returned malformed JSON for $arn"
+        elif [ "$delete_rc" -eq 0 ] && [ "$delete_response_valid" != true ]; then
+          fail "DeleteTaskDefinitions returned malformed JSON for $arn: $(head -c 300 "$delete_stdout")"
         else
           fail "DeleteTaskDefinitions failed for $arn: $(cat "$delete_stderr")"
         fi
