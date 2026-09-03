@@ -122,7 +122,9 @@ gh run list --workflow session-apply.yml --branch main --event workflow_dispatch
    three image references. The owner and initial manifest are part of the same
    CAS PUT that created the generation. Use the ALB URL from the run summary
    for the acceptance commands below. For `TARGET=localstack`, the same job
-   always performs owner-bound Stage 1 followed by in-job Stage 2; when every
+   runs owner-bound Stage 1 and, only when Stage 1 succeeds, in-job Stage 2
+   (a Stage-1 failure leaves `cleanup_failed`, and an absent or foreign lease
+   skips both); when every
    recorded task definition confirms deletion the terminal lease is `closed`
    with `manifest.stage2_runs[-1].in_job=true`, and a still-pending definition
    leaves it `closing`. Either way the lease lives on that job's fresh

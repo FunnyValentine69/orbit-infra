@@ -724,6 +724,43 @@ for verifier_fixture in \
   run_verifier_fixture_case "$verifier_fixture"
 done
 
+# A consistent passed:false live result must reach persistence before the
+# zero-second verification deadline records cleanup_failed.
+live_deadline_fixture="$FIXTURES/verifier-live-deadline.json"
+live_deadline_env_id="$(jq -r '.env_id' "$live_deadline_fixture")"
+env "${lease_env[@]}" "$LEASE" open "$live_deadline_env_id" >/dev/null
+set +e
+live_deadline_out="$(env "${lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  CLEANUP_VERIFIER_SH="$tmp_dir/fake-bin/injected-cleanup-verifier" \
+  REAL_CLEANUP_VERIFIER="$VERIFIER" INJECTED_VERIFIER_FIXTURE="$live_deadline_fixture" \
+  TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$CLOSE_ENV" "$live_deadline_env_id" 2>&1)"
+live_deadline_rc=$?
+set -e
+set +e
+live_deadline_lease="$(env "${lease_env[@]}" "$LEASE" get "$live_deadline_env_id" 2>&1)"
+live_deadline_get_rc=$?
+set -e
+if [ "$live_deadline_get_rc" -ne 0 ]; then
+  echo "FAIL: passed:false live-result lease read-back failed (rc=$live_deadline_get_rc: $live_deadline_lease)" >&2
+  exit 1
+fi
+live_deadline_expected="$(jq -c '.expected' "$live_deadline_fixture")"
+live_deadline_actual="$(jq -c '{
+  status,
+  error,
+  passed: .manifest.verification_runs[-1].passed,
+  live: .manifest.verification_runs[-1].summary.live
+}' <<< "$live_deadline_lease")"
+if [ "$live_deadline_rc" -eq 0 ] || [ "$live_deadline_actual" != "$live_deadline_expected" ]; then
+  echo "FAIL: passed:false live result must persist false and record cleanup_failed" >&2
+  echo "actual:   $live_deadline_actual (rc=$live_deadline_rc: $live_deadline_out)" >&2
+  echo "expected: $live_deadline_expected" >&2
+  exit 1
+fi
+pass "end-to-end close persists passed false before a live-result deadline failure"
+
 # A later scheduled tag query cannot be erased by an earlier successful query:
 # incomplete discovery must remain indeterminate and fail stage 1.
 tag_fixture="$FIXTURES/tag-requery-incomplete.json"

@@ -23,14 +23,15 @@ boundary, tag-versus-manifest authority, failed delayed and pre-destroy-only tag
 observations, zero-exit tag responses with a missing key, null list, string
 list, empty stdout, entry missing `ResourceARN`, or numeric `ResourceARN`,
 non-zero and malformed cleanup-verifier results, contradictory summaries,
-invalid outcome strings, and `passed:true` with a live result, exact ECS
+invalid outcome strings, `passed:true` with a live result, and persistence of a
+consistent `passed:false` live result before deadline failure, exact ECS
 `MISSING`/non-`MISSING`/unconfirmed-empty responses, an absent state file,
 required AWS destroy image references and their Terraform forwarding,
 zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
 their `failures` array, atomic owner-plus-manifest lease open with one PUT,
 same-environment second-open refusal, owner- and generation-bound close
 refusals, the three-attempt lease limit, audited force retry, and end-to-end
-stage-1 state retention. The suite currently reports 40 cases.
+stage-1 state retention. The suite currently reports 41 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the

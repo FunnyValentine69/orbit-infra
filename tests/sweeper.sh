@@ -556,7 +556,9 @@ delete_errors_rc=$?
 set -e
 delete_errors_lease="$(run_aws "$LEASE" get aws-happy)"
 [ "$delete_errors_rc" -eq 1 ] || fail "delete-objects Errors must exit 1"
-jq -e '.status == "cleanup_failed" and ((.manifest.stage2_runs // []) | length) == 0' \
+jq -e '.status == "cleanup_failed"
+  and .error == "state deletion failed before all versions were removed"
+  and ((.manifest.stage2_runs // []) | length) == 0' \
   <<< "$delete_errors_lease" >/dev/null || fail "delete-objects Errors reached closed"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-happy.tfstate.json")" -eq 3 ] || \
   fail "delete-objects Errors did not retain remaining versions"
@@ -631,7 +633,12 @@ set +e
 prune_race_output="$(FAKE_PRUNE_CAS_LOSS=1 run_aws "$SWEEPER" env prune-old 2>&1)"
 prune_race_rc=$?
 set -e
-prune_race_lease="$(run_aws "$LEASE" get prune-old)"
+set +e
+prune_race_lease="$(run_aws "$LEASE" get prune-old 2>&1)"
+prune_race_get_rc=$?
+set -e
+[ "$prune_race_get_rc" -eq 0 ] || \
+  fail "prune CAS-loss lease read-back failed with rc $prune_race_get_rc: $prune_race_lease"
 [ "$prune_race_rc" -eq 3 ] || fail "prune If-Match 412 must exit 3, got $prune_race_rc"
 jq -e --argjson expected "$expected_reopened" '. == $expected' \
   <<< "$prune_race_lease" >/dev/null || fail "prune loser deleted or otherwise mutated the reopened lease"
