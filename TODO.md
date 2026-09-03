@@ -40,7 +40,7 @@
 - [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
 - [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
 - [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock filled with build_input_sha256 and local_id per image
-- [x] P3-14: stage-1 close redesign (typed outcomes, bounded tagging re-query, AWS CLI wrapper with timeouts, LocalStack allowances in the manifest, three-attempt retry budget) LOCALSTACK-VERIFIED on p3v3 (fresh) and p3v2 (retry); recorded-fixture suite tests/cleanup-verifier.sh
+- [x] P3-14: stage-1 close redesign (typed outcomes, bounded tagging re-query, AWS CLI wrapper with timeouts, LocalStack allowances in the manifest, three-attempt retry budget) LOCALSTACK-VERIFIED (see ADR 0006, "Live-proof findings 2026-09-02"); recorded-fixture suite tests/cleanup-verifier.sh (14 cases)
 - [ ] P3-3b: push the three images with PUSH=1 after P0-3b, then dispatch sign-images.yml
 - [x] P3-6: AWS `make plan` saves a plan and `make apply` non-interactively consumes that exact plan; session workflows generate the required backend config from bootstrap naming
 - [x] P3-13: terraform-plan.yml reads and removes the LocalStack plan from the per-environment `PREVIEW_ROOT` run directory

@@ -310,7 +310,7 @@ read_err_out="$(env "${lease_env[@]}" FAKE_S3_FAIL=1 \
   "$REPO_ROOT/scripts/close-env.sh" read-error-case 2>&1)"
 read_err_rc=$?
 set -e
-if [ "$read_err_rc" -eq 0 ] || ! grep -q 'could not read the lease' <<< "$read_err_out"; then
+if [ "$read_err_rc" -ne 2 ] || ! grep -q 'could not read the lease' <<< "$read_err_out"; then
   echo "FAIL: a lease read error must abort the close with a non-zero exit (rc=$read_err_rc: $read_err_out)" >&2
   exit 1
 fi

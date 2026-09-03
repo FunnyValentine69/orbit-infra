@@ -91,7 +91,8 @@ tf_destroy() {
 fail() {
   local message="$1"
   echo "close-env.sh: $message" >&2
-  "$LEASE_SH" transition "$ENV_ID" closing cleanup_failed --error "$message" >/dev/null || true
+  "$LEASE_SH" transition "$ENV_ID" closing cleanup_failed --error "$message" >/dev/null \
+    || echo "close-env.sh: could not record cleanup_failed for $ENV_ID (lease may still read closing)" >&2
   exit 1
 }
 
