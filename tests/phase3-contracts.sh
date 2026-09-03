@@ -314,25 +314,42 @@ bash "$REPO_ROOT/tests/policy-size-contracts.sh"
 # GitHub stamps run_started_at at dispatch acceptance, before the concurrency
 # group releases a held run (observed live 2026-09-03).
 ordering_script="$REPO_ROOT/tests/dispatch-ordering.sh"
-# Any jq read of the run-level fields, in any quoting, is forbidden outside
-# the metadata capture (which stores them for audit only).
-if grep -nE "(jq|--jq).*['\"][^'\"]*\.(run_started_at|updated_at)([^A-Za-z0-9_]|$)" "$ordering_script" \
-    | grep -vE "run_started_at:\.run_started_at,updated_at:\.updated_at" >/dev/null; then
-  echo "dispatch-ordering.sh must compare job timestamps, never read run_started_at or updated_at for ordering" >&2
+if [ ! -f "$ordering_script" ]; then
+  echo "tests/dispatch-ordering.sh is missing; the ordering-source contract cannot run" >&2
   exit 1
 fi
-# The two comparison functions must read the job-derived fields themselves,
-# not merely mention them in a comment.
-ordering_reads="$(sed -n '/^assert_terminal_before_start() {/,/^}/p; /^verify_aws_final_cleanup() {/,/^}/p' "$ordering_script")"
-for field in jobs_completed_at jobs_started_at; do
-  if ! grep -Eq "jq -r ['\"]\.${field}['\"]" <<< "$ordering_reads"; then
-    echo "dispatch-ordering.sh ordering comparisons must read .$field via jq" >&2
+# Backslash-continued lines are joined so a jq call split across lines is
+# inspected as one; quotes around the jq filter are optional. Any jq read of
+# the run-level fields is forbidden except the audit capture line.
+ordering_joined="$(sed -e ':a' -e '/\\$/N; s/\\\n//; ta' "$ordering_script")"
+forbidden_reads="$(grep -nE "(jq|--jq)[^#]*['\"]?[^'\"]*\.(run_started_at|updated_at)([^A-Za-z0-9_]|$)" <<< "$ordering_joined" \
+  | grep -vE "run_started_at:\.run_started_at,updated_at:\.updated_at" || true)"
+if [ -n "$forbidden_reads" ]; then
+  echo "dispatch-ordering.sh must compare job timestamps, never read run_started_at or updated_at for ordering:" >&2
+  echo "$forbidden_reads" >&2
+  exit 1
+fi
+# Each comparison function must itself read both job-derived fields via jq.
+for fn in assert_terminal_before_start verify_aws_final_cleanup; do
+  fn_body="$(sed -n "/^${fn}() {/,/^}/p" <<< "$ordering_joined")"
+  if [ -z "$fn_body" ]; then
+    echo "dispatch-ordering.sh must define ${fn}() at column 0 (contract extraction found nothing)" >&2
+    exit 1
+  fi
+  for field in jobs_completed_at jobs_started_at; do
+    if ! grep -Eq "jq -r ['\"]?\.${field}([^A-Za-z0-9_]|$)" <<< "$fn_body"; then
+      echo "dispatch-ordering.sh ${fn}() must read .$field via jq -r" >&2
+      exit 1
+    fi
+  done
+done
+# GitHub reports a concurrency-held run as pending; both pending and queued
+# must be accepted as held, whether in one case arm or two.
+for held in pending queued; do
+  if ! grep -Eq "(^|[^A-Za-z0-9_])${held}(\)|\|)" "$ordering_script"; then
+    echo "dispatch-ordering.sh must treat GitHub's ${held} status as a held run" >&2
     exit 1
   fi
 done
-if ! grep -Eq '(pending\|queued|queued\|pending)\)' "$ordering_script"; then
-  echo "dispatch-ordering.sh must treat GitHub's pending status as a held run" >&2
-  exit 1
-fi
 
 echo "PASS: phase3 shell contracts"
