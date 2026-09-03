@@ -97,15 +97,19 @@ Each `env_id` will have its own state key and a durable lease with states
 ETag, so two writers can never both win. The lease is created only after
 the static gates (runner-CIDR rejection, lint, checkov) and selected-image
 signature/attestation checks pass, so a rejected config or supply-chain
-mismatch never produces a lease or AWS resources. The lease manifest records
-the deployment mode and all three resolved image references. Close is two-stage
+mismatch never produces a lease or AWS resources. Its workflow-run owner and
+initial manifest containing the deployment mode and all three resolved image
+references are written in the same CAS PUT that opens the generation. Close is two-stage
 because ECS task definitions delete asynchronously (up to 24 hours) while a hosted
 job caps at 6: stage 1 tears down and calls `DeleteTaskDefinitions`,
 then verifies a pre-destroy candidate union from the prior manifest, Terraform
 state identifiers, ECS discovery, and eventually consistent tag discovery.
 One exact-service predicate layer records `gone`, `pending`, `live`, or
-`indeterminate` for every candidate and persists partial iterations. Tag
-presence alone is never liveness. Stage 1 retries for five minutes and leaves
+`indeterminate` for every candidate and persists partial iterations. Close
+validates every outcome, recomputes all four counts, and rejects summary,
+`passed`, or stale-tag shape discrepancies. An indeterminate pre-destroy or
+scheduled tag observation adds a durable sentinel; later success cannot erase
+it. Tag presence alone is never liveness. Stage 1 retries for five minutes and leaves
 the lease `closing` with state retained; only deadline-expired `live` or
 `indeterminate` results set `cleanup_failed`. Stage 2 (the nightly sweeper)
 confirms deletion and sets `closed`.
@@ -124,11 +128,25 @@ The lease admits three automatic stage-1 executions per generation, with the
 attempt, next retry time, and manual-intervention flag persisted by ETag CAS.
 After the third failure only an audited force retry can claim stage 1. The
 sweeper shares the `preview-<env_id>` concurrency group with manual
-apply/destroy so running jobs do not overlap. Default GitHub concurrency keeps
-only one pending job; a newly queued job replaces an older pending job in the
-same group. The lease CAS and generation checks are the correctness boundary,
-and an operator re-dispatches any destroy displaced while pending. Closed
-leases prune after 7 days. See ADR 0006.
+apply/destroy so running jobs do not overlap. Both session workflows use the
+documented `queue: max` property with `cancel-in-progress: false`, retaining
+pending dispatches up to GitHub's queue limit. Apply failure/cancellation close
+re-reads the lease and proceeds only for this workflow run's owner token in
+`open` or `closing`; it does not trust lease-step outputs. The lease owner,
+generation, and CAS checks remain the correctness boundary. Closed leases prune
+after 7 days.
+
+The dispatch workflows accept `target=aws|localstack`. AWS keeps independent
+apply and destroy jobs. LocalStack cannot preserve its emulator or state
+across hosted runners, so its owner-only `session-apply` path bootstraps,
+applies, runs acceptance, and performs generation-bound stage-1 close in one
+job; `session-destroy target=localstack` refuses. The LocalStack path uses test
+credentials and no AWS role, and is evidence for workflow control flow rather
+than real-AWS OIDC, IAM, KMS/ECR, or packet-level security-group enforcement.
+Every LocalStack CI run has a fresh runner and emulator, so the gh-driven
+dispatch test proves only GitHub queueing on that target. Lease CAS, lifecycle
+refusals, generation increments, and two-environment state isolation are proved
+locally against one emulator by `tests/localstack-concurrency.sh`. See ADR 0006.
 
 ## Image supply chain summary
 
@@ -169,8 +187,8 @@ placeholder and Redis/ClickHouse private-ECR digests. `session-apply.yml`
 selects either the `upstream` set (upstream API and ClickHouse plus mirrored
 Redis) or the `public` set (placeholder plus mirrored Redis and ClickHouse),
 verifies every signature and attestation against the corresponding lock-file
-inputs before opening a lease, and records the selected mode and three resolved
-image references in the lease manifest.
+inputs before opening a lease, then records the workflow owner, selected mode,
+and three resolved image references atomically in the lease-open CAS.
 
 ## Cost model
 
@@ -192,10 +210,18 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `/health` and `/s3-roundtrip` checks. `session-destroy` leaves no active
   services or cost-bearing resources and leaves the lease `closing` for the
   stage-2 sweeper.
-- **Phase 4:** two concurrently dispatched environments must destroy
-  independently with no shared state; same-environment dispatch tests must
-  cover pending-job displacement and re-dispatch, while the lease CAS and
-  generation checks refuse stale work.
+- **Phase 4:** `tests/localstack-concurrency.sh` runs two environments
+  concurrently on one LocalStack instance and checks independent state,
+  disjoint tag inventories with exact `env_id` values, clusters, lease refusals,
+  generations, stage-1 close, and group-wide worker termination even after a
+  group leader exits. `tests/dispatch-ordering.sh` uses nonce-bearing run names
+  to capture three exact dispatches, proves the full apply-terminal →
+  apply-start → apply-terminal → destroy-start chain, asserts both
+  target-specific conclusion sets, and accepts a final AWS lease in `closing`
+  or `closed` only after a successful destroy; unsafe state dispatches a
+  recovery destroy. The
+  dispatch-only LocalStack CI lane proves its own same-job apply → acceptance →
+  close path, never cross-run lease semantics.
 - **Phase 5:** drift detection reports clean; a modified resource is caught.
 
 ### SLO

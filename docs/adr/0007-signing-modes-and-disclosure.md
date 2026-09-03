@@ -27,7 +27,9 @@ version is pinned in `tools.lock` and checked before signing. Each SBOM, scan,
 signature, and attestation is handled independently on a re-run. Every Trivy
 scan explicitly selects the deployed `linux/arm64` image: the action-based
 mirror scans set `TRIVY_PLATFORM=linux/arm64`, and the direct CLI scan uses
-`--platform linux/arm64`.
+`--platform linux/arm64`. The placeholder and each mirrored digest must pass
+its Trivy scan before that digest is signed or attested, so a first-run scan
+failure cannot publish trust metadata for the failed digest.
 
 Before `session-apply.yml` opens a lease, it exports the KMS public key and
 verifies all three selected image signatures without contacting Rekor. It then

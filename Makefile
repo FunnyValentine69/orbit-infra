@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend placeholder-build check-placeholder-image lease-list lease-get close
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test test-concurrency lint validate check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend check-localstack-read localstack-state-list localstack-show-json localstack-output placeholder-build check-placeholder-image lease-list lease-get close
 
 TARGET ?=
 # preflight and terraform must check the same account and region
@@ -115,6 +115,21 @@ render-localstack-backend:
 	rsync -a --delete --exclude '.terraform/' --exclude '.terraform-localstack*/' --exclude 'backend_override.tf' --exclude '*.tfstate*' envs/preview/ "$$PREVIEW_ROOT/"
 	awk -v id="$$ENV_ID" '{ gsub(/ENV_ID_PLACEHOLDER/, id); print }' envs/preview/localstack.backend_override.tf.example > "$$PREVIEW_ROOT/backend_override.tf"
 
+check-localstack-read: check-target check-env-id
+	@if [ "$$TARGET" != localstack ]; then echo "LocalStack state reads require TARGET=localstack" >&2; exit 1; fi
+
+localstack-state-list localstack-show-json localstack-output: check-localstack-read
+
+localstack-state-list:
+	@$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" state list
+
+localstack-show-json:
+	@$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" show -json
+
+localstack-output:
+	@if [ -z "$$TF_OUTPUT" ]; then echo "TF_OUTPUT is required" >&2; exit 1; fi
+	@$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" output -raw "$$TF_OUTPUT"
+
 plan:
 	( \
 		$(MAKE) render-localstack-backend && \
@@ -199,6 +214,10 @@ test:
 			) || exit $$?; \
 		fi; \
 	done
+
+test-concurrency: check-target
+	@if [ "$$TARGET" != localstack ]; then echo "test-concurrency requires TARGET=localstack" >&2; exit 1; fi
+	@bash tests/localstack-concurrency.sh
 
 validate:
 	terraform -chdir=bootstrap init -backend=false -input=false >/dev/null

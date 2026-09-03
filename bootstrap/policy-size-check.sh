@@ -18,10 +18,23 @@ cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.t
 trap 'rm -f bootstrap/backend_override.tf; rm -rf "$tmp_dir"' EXIT
 
 export TF_DATA_DIR="${POLICY_SIZE_TF_DATA_DIR:-.terraform-localstack}"
-terraform -chdir=bootstrap init -reconfigure -input=false >"$tmp_dir/init.log" 2>&1
-terraform -chdir=bootstrap plan -var target=localstack -var budget_email=unused \
-  -out="$tmp_dir/plan.out" >"$tmp_dir/plan.log" 2>&1
-terraform -chdir=bootstrap show -json "$tmp_dir/plan.out" >"$tmp_dir/plan.json"
+if ! terraform -chdir=bootstrap init -reconfigure -input=false >"$tmp_dir/init.log" 2>&1; then
+  cat "$tmp_dir/init.log" >&2
+  exit 1
+fi
+if ! terraform -chdir=bootstrap plan -var target=localstack -var budget_email=unused \
+  -out="$tmp_dir/plan.out" >"$tmp_dir/plan.log" 2>&1; then
+  cat "$tmp_dir/plan.log" >&2
+  if grep -Eiq 'connection (refused|reset)|could not connect|failed to connect|connect:|dial tcp' "$tmp_dir/plan.log"; then
+    echo "HINT: policy-size requires a reachable LocalStack endpoint (AWS_ENDPOINT_URL)." >&2
+  fi
+  exit 1
+fi
+if ! terraform -chdir=bootstrap show -json "$tmp_dir/plan.out" >"$tmp_dir/show.log" 2>&1; then
+  cat "$tmp_dir/show.log" >&2
+  exit 1
+fi
+mv "$tmp_dir/show.log" "$tmp_dir/plan.json"
 
 status=0
 

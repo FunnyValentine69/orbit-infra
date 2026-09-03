@@ -149,7 +149,14 @@ candidate_from_arn() {
 normalize_tags() {
   local entries
   entries="$(cat)"
-  if ! jq -e 'type == "array" and all(.[]; (.ResourceARN | type) == "string")' <<< "$entries" >/dev/null; then
+  if ! jq -e '
+    type == "array"
+    and all(.[];
+      type == "object"
+      and has("ResourceARN")
+      and (.ResourceARN | type) == "string"
+      and ((has("Tags") | not) or (.Tags | type) == "array"))
+  ' <<< "$entries" >/dev/null; then
     echo "cleanup-verifier.sh: stdin must be a tagging-api entry array" >&2
     exit 2
   fi

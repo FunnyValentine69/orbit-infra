@@ -1,0 +1,10 @@
+{
+  "name": "cleanup-verifier-nonzero-exit",
+  "authored": "close-env verifier invocation contract",
+  "env_id": "verifyrc",
+  "verifier": { "rc": 1, "stdout": "injected verifier failure" },
+  "expected": {
+    "status": "cleanup_failed",
+    "error": "cleanup verifier verify-live failed with exit code 1"
+  }
+}

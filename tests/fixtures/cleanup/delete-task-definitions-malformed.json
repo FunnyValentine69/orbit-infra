@@ -1,0 +1,20 @@
+{
+  "name": "delete-task-definitions-success-exit-with-malformed-failures-entry",
+  "authored": "sanitized authored contract: a zero-exit response whose failures array holds a non-object entry; replace with a recorded backend response when available",
+  "env_id": "delete-bad",
+  "task_definition_arn": "arn:aws:ecs:test-region:placeholder:task-definition/delete-bad:1",
+  "response": {
+    "rc": 0,
+    "stdout": {
+      "taskDefinitions": [],
+      "failures": [
+        "arn:aws:ecs:test-region:placeholder:task-definition/delete-bad:1"
+      ]
+    },
+    "stderr": ""
+  },
+  "expected": {
+    "status": "cleanup_failed",
+    "cleanup_attempt": 1
+  }
+}

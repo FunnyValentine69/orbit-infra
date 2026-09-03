@@ -1,0 +1,13 @@
+{
+  "name": "tag-inventory-empty-stdout",
+  "authored": "Resource Groups Tagging API response schema contract",
+  "env_id": "tagempty",
+  "response": { "rc": 0, "stdout": "" },
+  "expected": {
+    "status": "cleanup_failed",
+    "candidate_id": "tag-inventory-incomplete",
+    "indeterminate": 1,
+    "pre_observation_status": "indeterminate",
+    "scheduled_observation_status": "indeterminate"
+  }
+}

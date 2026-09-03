@@ -112,7 +112,7 @@ jobs:
 
       - name: Read cosign version from tools.lock
         id: cosign-version
-        run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh cosign)" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -242,8 +242,6 @@ jobs:
           SOURCE_IMAGE: ${{ steps.mirror-lock.outputs.redis_source }}
           SOURCE_DIGEST: ${{ steps.mirror-lock.outputs.redis_digest }}
           MIRROR_REPOSITORY: ${{ steps.mirror-lock.outputs.redis_repository }}
-          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
-          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
           REGISTRY: ${{ steps.registry.outputs.registry }}
         run: |
           tag="${SOURCE_DIGEST#sha256:}"
@@ -268,6 +266,28 @@ jobs:
             exit 1
           fi
 
+          echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy scan redis mirror
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+      - name: KMS sign and attest redis mirror
+        env:
+          SOURCE_IMAGE: ${{ steps.mirror-lock.outputs.redis_source }}
+          SOURCE_DIGEST: ${{ steps.mirror-redis.outputs.digest }}
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+        run: |
+          dest="${REGISTRY}/orbit-infra-79s5rw/mirror/redis"
           if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
             echo "already signed"
@@ -291,12 +311,12 @@ jobs:
           if [ "$attestation_matches" = true ]; then
             echo "matching mirror attestation already exists"
           else
-            predicate_file=$(mktemp)
+            predicate_file="$(mktemp)"
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
-              "${SOURCE_IMAGE}" "${SOURCE_DIGEST}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
+              "$SOURCE_IMAGE" "$SOURCE_DIGEST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$predicate_file"
             cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
               --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-              --predicate "${predicate_file}" \
+              --predicate "$predicate_file" \
               "${dest}@${SOURCE_DIGEST}"
             rm -f "$predicate_file"
           fi
@@ -307,10 +327,6 @@ jobs:
                 any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
                   | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
               ' >/dev/null
-
-          echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "status=${status}" >> "$GITHUB_OUTPUT"
 
       - name: Verify redis mirror signature
         env:
@@ -322,23 +338,12 @@ jobs:
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}"
 
-      - name: Trivy scan redis mirror
-        env:
-          TRIVY_PLATFORM: linux/arm64
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}
-          severity: CRITICAL,HIGH
-          exit-code: '1'
-
       - name: Mirror clickhouse/clickhouse-server:24.3-alpine
         id: mirror-clickhouse
         env:
           SOURCE_IMAGE: ${{ steps.mirror-lock.outputs.clickhouse_source }}
           SOURCE_DIGEST: ${{ steps.mirror-lock.outputs.clickhouse_digest }}
           MIRROR_REPOSITORY: ${{ steps.mirror-lock.outputs.clickhouse_repository }}
-          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
-          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
           REGISTRY: ${{ steps.registry.outputs.registry }}
         run: |
           tag="${SOURCE_DIGEST#sha256:}"
@@ -363,6 +368,28 @@ jobs:
             exit 1
           fi
 
+          echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy scan clickhouse mirror
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+      - name: KMS sign and attest clickhouse mirror
+        env:
+          SOURCE_IMAGE: ${{ steps.mirror-lock.outputs.clickhouse_source }}
+          SOURCE_DIGEST: ${{ steps.mirror-clickhouse.outputs.digest }}
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+        run: |
+          dest="${REGISTRY}/orbit-infra-79s5rw/mirror/clickhouse"
           if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
             echo "already signed"
@@ -386,12 +413,12 @@ jobs:
           if [ "$attestation_matches" = true ]; then
             echo "matching mirror attestation already exists"
           else
-            predicate_file=$(mktemp)
+            predicate_file="$(mktemp)"
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
-              "${SOURCE_IMAGE}" "${SOURCE_DIGEST}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
+              "$SOURCE_IMAGE" "$SOURCE_DIGEST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$predicate_file"
             cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
               --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-              --predicate "${predicate_file}" \
+              --predicate "$predicate_file" \
               "${dest}@${SOURCE_DIGEST}"
             rm -f "$predicate_file"
           fi
@@ -403,10 +430,6 @@ jobs:
                   | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
               ' >/dev/null
 
-          echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "status=${status}" >> "$GITHUB_OUTPUT"
-
       - name: Verify clickhouse mirror signature
         env:
           PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
@@ -416,15 +439,6 @@ jobs:
           # look up -- the KMS public key is the only trust anchor.
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}"
-
-      - name: Trivy scan clickhouse mirror
-        env:
-          TRIVY_PLATFORM: linux/arm64
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}
-          severity: CRITICAL,HIGH
-          exit-code: '1'
 
       - name: Step summary
         if: always()

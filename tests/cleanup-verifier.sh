@@ -222,8 +222,8 @@ if [ "$service $operation" = "s3api put-object" ]; then
   exit 0
 fi
 if [ "$service $operation" = "resourcegroupstaggingapi get-resources" ]; then
+  tag_call=1
   if [ -n "${FAKE_TAG_CALLS_FILE:-}" ]; then
-    tag_call=1
     if [ -f "$FAKE_TAG_CALLS_FILE" ]; then
       tag_call=$(( $(cat "$FAKE_TAG_CALLS_FILE") + 1 ))
     fi
@@ -232,6 +232,15 @@ if [ "$service $operation" = "resourcegroupstaggingapi get-resources" ]; then
       echo "An error occurred (AccessDeniedException): simulated delayed tag query failure" >&2
       exit 254
     fi
+  fi
+  if [ -n "${FAKE_TAG_RESPONSE_FIXTURE:-}" ]; then
+    if jq -e '.responses | type == "array"' "$FAKE_TAG_RESPONSE_FIXTURE" >/dev/null; then
+      response_index=$((tag_call - 1))
+      jq -jr --argjson index "$response_index" '.responses[$index].stdout' "$FAKE_TAG_RESPONSE_FIXTURE"
+      exit "$(jq -r --argjson index "$response_index" '.responses[$index].rc' "$FAKE_TAG_RESPONSE_FIXTURE")"
+    fi
+    jq -jr '.response.stdout' "$FAKE_TAG_RESPONSE_FIXTURE"
+    exit "$(jq -r '.response.rc' "$FAKE_TAG_RESPONSE_FIXTURE")"
   fi
   echo '{"ResourceTagMappingList":[]}'
   exit 0
@@ -268,6 +277,19 @@ if [ "${FAKE_ECS_WAITER:-0}" = 1 ]; then
       ;;
   esac
 fi
+if [ -n "${FAKE_TASK_DEFINITION_DELETE_FIXTURE:-}" ]; then
+  case "$service $operation" in
+    "ecs describe-task-definition")
+      arn="$(jq -r '.task_definition_arn' "$FAKE_TASK_DEFINITION_DELETE_FIXTURE")"
+      jq -cn --arg arn "$arn" '{taskDefinition:{taskDefinitionArn:$arn,status:"INACTIVE"}}'
+      exit 0
+      ;;
+    "ecs delete-task-definitions")
+      jq -c '.response.stdout' "$FAKE_TASK_DEFINITION_DELETE_FIXTURE"
+      exit "$(jq -r '.response.rc' "$FAKE_TASK_DEFINITION_DELETE_FIXTURE")"
+      ;;
+  esac
+fi
 if [ "$service $operation" = "ec2 describe-vpcs" ]; then
   echo "An error occurred (InvalidVpcID.NotFound) while calling DescribeVpcs" >&2
   exit 254
@@ -289,6 +311,42 @@ lease_env=(
   "LEASE_BUCKET=test-state"
   "CLEANUP_RETRY_DELAY_SECONDS=0"
 )
+
+# A new generation must publish its owner and initial manifest in the same CAS
+# PUT. A second open of that environment must still be refused without a write.
+atomic_env_id=atomic-open
+atomic_owner=run-owner-a
+atomic_manifest="$tmp_dir/atomic-open-manifest.json"
+atomic_call_log="$tmp_dir/atomic-open-aws-calls.log"
+jq -n '{target:"localstack",mode:"public",images:{api_image:"placeholder:local",redis_image:"redis:7-alpine",clickhouse_image:"clickhouse/clickhouse-server:24.3-alpine"}}' \
+  > "$atomic_manifest"
+: > "$atomic_call_log"
+atomic_lease="$(env "${lease_env[@]}" FAKE_AWS_CALL_LOG="$atomic_call_log" \
+  "$LEASE" open "$atomic_env_id" --owner "$atomic_owner" --manifest "$atomic_manifest")"
+if ! jq -e --arg owner "$atomic_owner" --argjson manifest "$(cat "$atomic_manifest")" \
+    '.owner == $owner and .manifest == $manifest' <<< "$atomic_lease" >/dev/null || \
+   [ "$(grep -c '^s3api put-object ' "$atomic_call_log")" -ne 1 ]; then
+  echo "FAIL: lease open must persist owner and initial manifest in one CAS PUT" >&2
+  cat "$atomic_call_log" >&2
+  exit 1
+fi
+pass "lease open persists owner and initial manifest atomically in one CAS PUT"
+
+set +e
+second_open_out="$(env "${lease_env[@]}" FAKE_AWS_CALL_LOG="$atomic_call_log" \
+  "$LEASE" open "$atomic_env_id" --owner run-owner-b --manifest "$atomic_manifest" 2>&1)"
+second_open_rc=$?
+set -e
+atomic_after_refusal="$(env "${lease_env[@]}" "$LEASE" get "$atomic_env_id")"
+if [ "$second_open_rc" -ne 3 ] || \
+   ! grep -Fq "current status is 'open'" <<< "$second_open_out" || \
+   ! jq -e --arg owner "$atomic_owner" '.status == "open" and .generation == 1 and .owner == $owner' \
+     <<< "$atomic_after_refusal" >/dev/null || \
+   [ "$(grep -c '^s3api put-object ' "$atomic_call_log")" -ne 1 ]; then
+  echo "FAIL: a second open must be refused without mutating the atomic lease" >&2
+  exit 1
+fi
+pass "a second open on the same environment is refused without another PUT"
 
 env "${lease_env[@]}" "$LEASE" open retry-case >/dev/null
 retry_failures="$(jq -r '.failures' "$FIXTURES/retry-exhaustion.json")"
@@ -425,6 +483,55 @@ if [ "$(cat "$tmp_dir/waiter-timeout.log" 2>/dev/null || true)" != 660 ]; then
 fi
 pass "the ECS services-stable waiter receives a 660-second outer timeout"
 
+# DeleteTaskDefinitions can exit zero while reporting per-ARN failures in
+# stdout. The requested ARN must fail stage 1 instead of being treated as a
+# successful deletion request, and a malformed failures entry must fail
+# closed rather than read as "no failure for our ARN".
+run_delete_fixture_case() {
+local delete_fixture="$1" delete_expected_message="$2" delete_pass_text="$3"
+local delete_env_id delete_task_definition_arn delete_out delete_rc delete_lease delete_expected delete_actual
+delete_env_id="$(jq -r '.env_id' "$delete_fixture")"
+delete_task_definition_arn="$(jq -r '.task_definition_arn' "$delete_fixture")"
+env "${lease_env[@]}" "$LEASE" open "$delete_env_id" >/dev/null
+jq -n --arg arn "$delete_task_definition_arn" '
+  {candidates:[{
+    resource_type:"ecs:task-definition",
+    id:$arn,
+    arn:$arn,
+    parent_id:null,
+    sources:["prior-manifest"],
+    tag_entry:null,
+    force_delete:false
+  }]}' > "$tmp_dir/delete-failure-manifest.json"
+env "${lease_env[@]}" "$LEASE" set-manifest \
+  "$delete_env_id" "$tmp_dir/delete-failure-manifest.json" >/dev/null
+set +e
+delete_out="$(env "${lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  FAKE_TASK_DEFINITION_DELETE_FIXTURE="$delete_fixture" \
+  TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$REPO_ROOT/scripts/close-env.sh" "$delete_env_id" 2>&1)"
+delete_rc=$?
+set -e
+delete_lease="$(env "${lease_env[@]}" "$LEASE" get "$delete_env_id")"
+delete_expected="$(jq -c '.expected' "$delete_fixture")"
+delete_actual="$(jq -c '{status,cleanup_attempt}' <<< "$delete_lease")"
+if [ "$delete_rc" -eq 0 ] || [ "$delete_actual" != "$delete_expected" ] || \
+   ! grep -Fq "$delete_expected_message" <<< "$delete_out"; then
+  echo "FAIL: $delete_pass_text (fixture $(basename "$delete_fixture"))" >&2
+  echo "actual:   $delete_actual (rc=$delete_rc: $delete_out)" >&2
+  echo "expected: $delete_expected with message '$delete_expected_message'" >&2
+  exit 1
+fi
+pass "$delete_pass_text"
+}
+run_delete_fixture_case "$FIXTURES/delete-task-definitions-failure.json" \
+  'DeleteTaskDefinitions reported a failure for the requested ARN' \
+  "DeleteTaskDefinitions stdout failures for the requested ARN fail closed"
+run_delete_fixture_case "$FIXTURES/delete-task-definitions-malformed.json" \
+  'DeleteTaskDefinitions returned malformed JSON' \
+  "a malformed DeleteTaskDefinitions failures entry fails closed"
+
 # Real-AWS cleanup fails closed before Terraform when an older or malformed
 # lease does not contain the image references required by preview validation.
 aws_lease_env=(
@@ -501,6 +608,105 @@ for expected in \
 done
 pass "AWS destroy reuses all three image references from the lease manifest"
 
+# A zero-exit tagging response is usable only when it is an object containing
+# the required array. Missing, null, wrong-type, and empty responses must all
+# retain indeterminate discovery evidence and fail stage 1.
+run_tag_schema_fixture_case() {
+  local tag_schema_fixture="$1"
+  local tag_schema_env_id tag_schema_out tag_schema_rc tag_schema_lease
+  local tag_schema_expected tag_schema_actual tag_schema_offsets tag_schema_calls
+  tag_schema_env_id="$(jq -r '.env_id' "$tag_schema_fixture")"
+  tag_schema_offsets="$(jq -r '.tag_requery_offsets // "0"' "$tag_schema_fixture")"
+  tag_schema_calls="$tmp_dir/tag-schema-calls-$tag_schema_env_id"
+  rm -f "$tag_schema_calls"
+  env "${lease_env[@]}" "$LEASE" open "$tag_schema_env_id" >/dev/null
+  set +e
+  tag_schema_out="$(env "${lease_env[@]}" \
+    PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+    FAKE_TAG_RESPONSE_FIXTURE="$tag_schema_fixture" FAKE_TAG_CALLS_FILE="$tag_schema_calls" \
+    TAG_REQUERY_OFFSETS="$tag_schema_offsets" CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+    "$REPO_ROOT/scripts/close-env.sh" "$tag_schema_env_id" 2>&1)"
+  tag_schema_rc=$?
+  set -e
+  tag_schema_lease="$(env "${lease_env[@]}" "$LEASE" get "$tag_schema_env_id")"
+  tag_schema_expected="$(jq -c '.expected' "$tag_schema_fixture")"
+  tag_schema_actual="$(jq -c '{
+    status,
+    candidate_id: .manifest.verification_runs[-1].results[]
+      | select(.id == "tag-inventory-incomplete")
+      | .id,
+    indeterminate: .manifest.verification_runs[-1].summary.indeterminate,
+    pre_observation_status: ([.manifest.tag_inventory_observations[]
+      | select(.phase == "pre-destroy")][0].status),
+    scheduled_observation_status: .manifest.tag_inventory_observations[-1].status
+  }' <<< "$tag_schema_lease")"
+  if [ "$tag_schema_rc" -eq 0 ] || [ "$tag_schema_actual" != "$tag_schema_expected" ]; then
+    echo "FAIL: zero-exit malformed tag inventory must fail closed (fixture $(basename "$tag_schema_fixture"))" >&2
+    echo "actual:   $tag_schema_actual (rc=$tag_schema_rc: $tag_schema_out)" >&2
+    echo "expected: $tag_schema_expected" >&2
+    exit 1
+  fi
+  pass "$(jq -r '.name' "$tag_schema_fixture") is indeterminate"
+}
+for tag_schema_fixture in \
+  "$FIXTURES/tag-inventory-missing-key.json" \
+  "$FIXTURES/tag-inventory-null.json" \
+  "$FIXTURES/tag-inventory-string.json" \
+  "$FIXTURES/tag-inventory-empty-stdout.json" \
+  "$FIXTURES/tag-inventory-entry-missing-arn-pre.json" \
+  "$FIXTURES/tag-inventory-entry-numeric-arn-scheduled.json" \
+  "$FIXTURES/tag-pre-malformed-later-valid.json"; do
+  run_tag_schema_fixture_case "$tag_schema_fixture"
+done
+
+# close-env must own verifier process and schema failures so its fail() path
+# records cleanup_failed and a stable lease error.
+cat > "$tmp_dir/fake-bin/injected-cleanup-verifier" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = verify-live ]; then
+  jq -jr '.verifier.stdout' "$INJECTED_VERIFIER_FIXTURE"
+  exit "$(jq -r '.verifier.rc' "$INJECTED_VERIFIER_FIXTURE")"
+fi
+exec "$REAL_CLEANUP_VERIFIER" "$@"
+EOF
+chmod +x "$tmp_dir/fake-bin/injected-cleanup-verifier"
+
+run_verifier_fixture_case() {
+  local verifier_fixture="$1"
+  local verifier_env_id verifier_out verifier_rc verifier_lease
+  local verifier_expected verifier_actual
+  verifier_env_id="$(jq -r '.env_id' "$verifier_fixture")"
+  env "${lease_env[@]}" "$LEASE" open "$verifier_env_id" >/dev/null
+  set +e
+  verifier_out="$(env "${lease_env[@]}" \
+    PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+    CLEANUP_VERIFIER_SH="$tmp_dir/fake-bin/injected-cleanup-verifier" \
+    REAL_CLEANUP_VERIFIER="$VERIFIER" INJECTED_VERIFIER_FIXTURE="$verifier_fixture" \
+    TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+    "$REPO_ROOT/scripts/close-env.sh" "$verifier_env_id" 2>&1)"
+  verifier_rc=$?
+  set -e
+  verifier_lease="$(env "${lease_env[@]}" "$LEASE" get "$verifier_env_id")"
+  verifier_expected="$(jq -c '.expected' "$verifier_fixture")"
+  verifier_actual="$(jq -c '{status,error}' <<< "$verifier_lease")"
+  if [ "$verifier_rc" -eq 0 ] || [ "$verifier_actual" != "$verifier_expected" ]; then
+    echo "FAIL: verifier invocation failure must use close-env fail() (fixture $(basename "$verifier_fixture"))" >&2
+    echo "actual:   $verifier_actual (rc=$verifier_rc: $verifier_out)" >&2
+    echo "expected: $verifier_expected" >&2
+    exit 1
+  fi
+  pass "$(jq -r '.name' "$verifier_fixture") records cleanup_failed"
+}
+for verifier_fixture in \
+  "$FIXTURES/verifier-exit-failure.json" \
+  "$FIXTURES/verifier-malformed-output.json" \
+  "$FIXTURES/verifier-contradictory-summary.json" \
+  "$FIXTURES/verifier-invalid-outcome.json" \
+  "$FIXTURES/verifier-passed-with-live.json"; do
+  run_verifier_fixture_case "$verifier_fixture"
+done
+
 # A later scheduled tag query cannot be erased by an earlier successful query:
 # incomplete discovery must remain indeterminate and fail stage 1.
 tag_fixture="$FIXTURES/tag-requery-incomplete.json"
@@ -561,6 +767,29 @@ if [ "$generation_actual" != "$generation_expected" ] || \
   exit 1
 fi
 pass "generation mismatch exits non-zero without transitioning the lease"
+
+# An owner-bound close must refuse a lease acquired by another run with its own
+# exit code and without claiming or transitioning cleanup.
+owner_guard_env_id=owner-guard
+env "${lease_env[@]}" "$LEASE" open "$owner_guard_env_id" \
+  --owner run-owner-a --manifest "$atomic_manifest" >/dev/null
+set +e
+owner_guard_out="$(env "${lease_env[@]}" \
+  ENV_ID="$owner_guard_env_id" PATH="$tmp_dir/fake-bin:$PATH" \
+  PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  "$REPO_ROOT/scripts/close-env.sh" --generation 1 --owner run-owner-b \
+  "$owner_guard_env_id" 2>&1)"
+owner_guard_rc=$?
+set -e
+owner_guard_lease="$(env "${lease_env[@]}" "$LEASE" get "$owner_guard_env_id")"
+if [ "$owner_guard_rc" -ne 4 ] || \
+   ! grep -Fq 'lease owner mismatch' <<< "$owner_guard_out" || \
+   ! jq -e '.status == "open" and .cleanup_attempt == 0' <<< "$owner_guard_lease" >/dev/null; then
+  echo "FAIL: owner mismatch must exit 4 without transitioning the lease" >&2
+  echo "rc=$owner_guard_rc output=$owner_guard_out" >&2
+  exit 1
+fi
+pass "owner mismatch exits 4 without claiming or transitioning cleanup"
 
 # CAS race: a second writer bumps the object's ETag between read and write;
 # the stale writer must lose loudly (exit 3), never overwrite.

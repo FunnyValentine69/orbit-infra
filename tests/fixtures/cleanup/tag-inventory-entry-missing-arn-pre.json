@@ -1,0 +1,13 @@
+{
+  "name": "pre-destroy-tag-entry-missing-resource-arn",
+  "authored": "Resource Groups Tagging API entry schema contract",
+  "env_id": "tagentrypre",
+  "response": { "rc": 0, "stdout": "{\"ResourceTagMappingList\":[{}]}" },
+  "expected": {
+    "status": "cleanup_failed",
+    "candidate_id": "tag-inventory-incomplete",
+    "indeterminate": 1,
+    "pre_observation_status": "indeterminate",
+    "scheduled_observation_status": "indeterminate"
+  }
+}

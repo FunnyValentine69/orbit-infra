@@ -10,6 +10,7 @@ CLEANUP_VERIFIER_SH="${CLEANUP_VERIFIER_SH:-$SCRIPT_DIR/cleanup-verifier.sh}"
 
 FORCE_RETRY=false
 EXPECTED_GENERATION=""
+EXPECTED_OWNER=""
 ENV_ID="${ENV_ID:-}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -20,6 +21,11 @@ while [ "$#" -gt 0 ]; do
     --generation)
       [ "$#" -ge 2 ] || { echo "close-env.sh: --generation requires a value" >&2; exit 2; }
       EXPECTED_GENERATION="$2"
+      shift 2
+      ;;
+    --owner)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "close-env.sh: --owner requires a nonempty token" >&2; exit 2; }
+      EXPECTED_OWNER="$2"
       shift 2
       ;;
     --*)
@@ -132,12 +138,39 @@ persist_manifest() {
 }
 
 merge_candidate_files() {
-  "$CLEANUP_VERIFIER_SH" merge-candidates "$@"
+  local out
+  if ! out="$("$CLEANUP_VERIFIER_SH" merge-candidates "$@" 2>&1)"; then
+    echo "$out" >&2
+    return 1
+  fi
+  printf '%s\n' "$out"
 }
 
 normalize_tag_entries() {
   local entries="$1"
-  printf '%s\n' "$entries" | "$CLEANUP_VERIFIER_SH" normalize-tags
+  local out
+  if ! out="$(printf '%s\n' "$entries" | "$CLEANUP_VERIFIER_SH" normalize-tags 2>&1)"; then
+    echo "$out" >&2
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+tag_inventory_entries() {
+  local response="$1"
+  jq -ce '
+    if type == "object"
+       and has("ResourceTagMappingList")
+       and (.ResourceTagMappingList | type == "array")
+       and all(.ResourceTagMappingList[];
+         type == "object"
+         and has("ResourceARN")
+         and (.ResourceARN | type) == "string"
+         and ((has("Tags") | not) or (.Tags | type) == "array"))
+    then .ResourceTagMappingList
+    else error("ResourceTagMappingList entries must have string ResourceARN and optional array Tags")
+    end
+  ' <<< "$response"
 }
 
 state_candidates() {
@@ -263,15 +296,16 @@ collect_tag_inventory() {
     delay=$((target - SECONDS))
     [ "$delay" -le 0 ] || sleep "$delay"
     if out="$(aws_cmd resourcegroupstaggingapi get-resources --tag-filters "Key=env_id,Values=$ENV_ID" --output json 2>&1)"; then
-      if ! entries="$(jq -c '.ResourceTagMappingList // []' <<< "$out")"; then
-        entries='[]'
-        observation="$(jq -cn --arg at "$(now_iso)" --arg error malformed-response '{observed_at:$at,status:"indeterminate",error:$error}')"
-      else
-        candidates="$(normalize_tag_entries "$entries")"
+      if entries="$(tag_inventory_entries "$out" 2>/dev/null)"; then
+        if ! candidates="$(normalize_tag_entries "$entries")"; then
+          fail "cleanup verifier normalize-tags failed for scheduled inventory"
+        fi
         printf '%s\n' "$candidates" > "$tmp_dir/tag-candidates-$offset.json"
         all_candidates="$(jq -c --argjson more "$candidates" '. + $more' <<< "$all_candidates")"
         all_entries="$(jq -c --argjson more "$entries" '. + $more | unique_by(.ResourceARN)' <<< "$all_entries")"
         observation="$(jq -cn --arg at "$(now_iso)" --argjson count "$(jq 'length' <<< "$entries")" '{observed_at:$at,status:"ok",count:$count}')"
+      else
+        observation="$(jq -cn --arg at "$(now_iso)" --arg error malformed-response '{observed_at:$at,status:"indeterminate",error:$error}')"
       fi
     else
       observation="$(jq -cn --arg at "$(now_iso)" --arg error "$out" '{observed_at:$at,status:"indeterminate",error:$error}')"
@@ -294,6 +328,11 @@ set -e
 if [ "$lease_get_rc" -eq 0 ]; then
   current_status="$(jq -r '.status' <<< "$lease_json")"
   lease_generation="$(jq -r '.generation // empty' <<< "$lease_json")"
+  lease_owner="$(jq -r 'if (.owner | type) == "string" then .owner else "" end' <<< "$lease_json")"
+  if [ -n "$EXPECTED_OWNER" ] && [ "$lease_owner" != "$EXPECTED_OWNER" ]; then
+    echo "close-env.sh: lease owner mismatch for $ENV_ID; refusing cleanup requested by a different owner" >&2
+    exit 4
+  fi
   if [ -n "$EXPECTED_GENERATION" ] && [ "$lease_generation" != "$EXPECTED_GENERATION" ]; then
     echo "close-env.sh: lease generation mismatch for $ENV_ID: expected $EXPECTED_GENERATION, current ${lease_generation:-missing}; refusing cleanup" >&2
     exit 3
@@ -349,37 +388,63 @@ else
   resource_values_json="$(jq -c '[(.values.root_module? // {}) | recurse(.child_modules[]?) | .resources[]?]' <<< "$state_json")" \
     || fail "terraform show -json returned malformed JSON"
 fi
-state_candidates > "$tmp_dir/state-candidates.json"
-legacy_manifest_candidates > "$tmp_dir/legacy-candidates.json"
-printf '%s\n' "$(jq -c '.candidates // []' <<< "$existing_manifest")" > "$tmp_dir/prior-candidates.json"
-prior_tag_entries="$(jq -c '.tagging_inventory // []' <<< "$existing_manifest")"
-normalize_tag_entries "$prior_tag_entries" > "$tmp_dir/prior-tag-candidates.json"
+if ! state_candidates > "$tmp_dir/state-candidates.json"; then
+  fail "could not normalize Terraform state candidates"
+fi
+if ! legacy_manifest_candidates > "$tmp_dir/legacy-candidates.json"; then
+  fail "could not normalize prior manifest candidates"
+fi
+if ! prior_candidates="$(jq -c '.candidates // []' <<< "$existing_manifest")"; then
+  fail "lease manifest candidates are malformed"
+fi
+printf '%s\n' "$prior_candidates" > "$tmp_dir/prior-candidates.json"
+if ! prior_tag_entries="$(jq -c '.tagging_inventory // []' <<< "$existing_manifest")"; then
+  fail "lease manifest tagging inventory is malformed"
+fi
+if ! normalize_tag_entries "$prior_tag_entries" > "$tmp_dir/prior-tag-candidates.json"; then
+  fail "cleanup verifier normalize-tags failed for prior inventory"
+fi
 
 if pre_tag_out="$(aws_cmd resourcegroupstaggingapi get-resources --tag-filters "Key=env_id,Values=$ENV_ID" --output json 2>&1)"; then
-  pre_tag_entries="$(jq -c '.ResourceTagMappingList // []' <<< "$pre_tag_out")" \
-    || fail "pre-destroy tag inventory returned malformed JSON"
-  pre_tag_status=ok
+  if pre_tag_entries="$(tag_inventory_entries "$pre_tag_out" 2>/dev/null)"; then
+    pre_tag_status=ok
+    pre_tag_observation="$(jq -cn --arg at "$(now_iso)" --arg phase pre-destroy --argjson count "$(jq 'length' <<< "$pre_tag_entries")" '{observed_at:$at,phase:$phase,status:"ok",count:$count}')"
+  else
+    pre_tag_entries='[]'
+    pre_tag_status=indeterminate
+    pre_tag_observation="$(jq -cn --arg at "$(now_iso)" --arg phase pre-destroy --arg error malformed-response '{observed_at:$at,phase:$phase,status:"indeterminate",error:$error}')"
+  fi
 else
   pre_tag_entries='[]'
   pre_tag_status=indeterminate
+  pre_tag_observation="$(jq -cn --arg at "$(now_iso)" --arg phase pre-destroy --arg error "$pre_tag_out" '{observed_at:$at,phase:$phase,status:"indeterminate",error:$error}')"
 fi
-normalize_tag_entries "$pre_tag_entries" > "$tmp_dir/pre-tag-candidates.json"
+if ! normalize_tag_entries "$pre_tag_entries" > "$tmp_dir/pre-tag-candidates.json"; then
+  fail "cleanup verifier normalize-tags failed for pre-destroy inventory"
+fi
 
-base_candidates="$(merge_candidate_files \
+if ! base_candidates="$(merge_candidate_files \
   "$tmp_dir/prior-candidates.json" \
   "$tmp_dir/legacy-candidates.json" \
   "$tmp_dir/prior-tag-candidates.json" \
   "$tmp_dir/state-candidates.json" \
-  "$tmp_dir/pre-tag-candidates.json")"
-discover_ecs_candidates "$base_candidates" > "$tmp_dir/ecs-candidates.json"
+  "$tmp_dir/pre-tag-candidates.json")"; then
+  fail "cleanup verifier merge-candidates failed for pre-destroy candidates"
+fi
+if ! discover_ecs_candidates "$base_candidates" > "$tmp_dir/ecs-candidates.json"; then
+  fail "ECS candidate discovery helper failed"
+fi
 printf '%s\n' "$base_candidates" > "$tmp_dir/base-candidates.json"
-candidates="$(merge_candidate_files "$tmp_dir/base-candidates.json" "$tmp_dir/ecs-candidates.json")"
+if ! candidates="$(merge_candidate_files "$tmp_dir/base-candidates.json" "$tmp_dir/ecs-candidates.json")"; then
+  fail "cleanup verifier merge-candidates failed after ECS discovery"
+fi
 
 manifest_json="$(jq -cn \
   --argjson old "$existing_manifest" \
   --arg env_id "$ENV_ID" \
   --arg target "$TARGET" \
   --arg pre_tag_status "$pre_tag_status" \
+  --argjson pre_tag_observation "$pre_tag_observation" \
   --argjson candidates "$candidates" \
   --argjson pre_tag_entries "$pre_tag_entries" \
   --argjson state_resources "$(jq -R -s -c 'split("\n") | map(select(length > 0))' <<< "$state_list")" '
@@ -392,6 +457,7 @@ manifest_json="$(jq -cn \
       task_definition_arns: [$candidates[] | select(.resource_type == "ecs:task-definition") | .id] | unique,
       tagging_inventory_status: $pre_tag_status,
       tagging_inventory: (($old.tagging_inventory // []) + $pre_tag_entries | unique_by(.ResourceARN)),
+      tag_inventory_observations: (($old.tag_inventory_observations // []) + [$pre_tag_observation]),
       stale_tag_entries: ($old.stale_tag_entries // {count:0,entries:[]}),
       allowances: ($old.allowances // []),
       verification_runs: ($old.verification_runs // [])
@@ -464,7 +530,21 @@ while IFS= read -r arn; do
     aws_cmd ecs delete-task-definitions --task-definitions "$arn" >"$delete_stdout" 2>"$delete_stderr"
     delete_rc=$?
     set -e
-    if [ "$delete_rc" -eq 0 ]; then
+    delete_response_valid=false
+    delete_requested_failure=false
+    # Valid only when stdout is an object whose failures array holds objects
+    # with a string arn; anything else (including a jq error on a bare string
+    # entry) is malformed and must not read as "no failure for our ARN".
+    if jq -e 'type == "object" and (.failures | type == "array")
+        and all(.failures[]; type == "object" and (.arn | type == "string"))' \
+        "$delete_stdout" >/dev/null 2>&1; then
+      delete_response_valid=true
+      if jq -e --arg arn "$arn" 'any(.failures[]; .arn == $arn)' "$delete_stdout" >/dev/null; then
+        delete_requested_failure=true
+      fi
+    fi
+    if [ "$delete_rc" -eq 0 ] && [ "$delete_response_valid" = true ] && \
+       [ "$delete_requested_failure" = false ]; then
       echo "requested task-definition deletion: $arn"
     else
       allowance_fixture="$tmp_dir/delete-allowance.json"
@@ -480,24 +560,34 @@ while IFS= read -r arn; do
           .allowances = ((.allowances // []) + [$allowance] | unique_by([.id,.arn]))' <<< "$manifest_json")"
         persist_manifest
       else
-        fail "DeleteTaskDefinitions failed for $arn: $(cat "$delete_stderr")"
+        if [ "$delete_requested_failure" = true ]; then
+          fail "DeleteTaskDefinitions reported a failure for the requested ARN: $arn"
+        elif [ "$delete_rc" -eq 0 ] && [ "$delete_response_valid" != true ]; then
+          fail "DeleteTaskDefinitions returned malformed JSON for $arn: $(head -c 300 "$delete_stdout")"
+        else
+          fail "DeleteTaskDefinitions failed for $arn: $(cat "$delete_stderr")"
+        fi
       fi
     fi
   fi
 done < <(jq -r '.task_definition_arns[]?' <<< "$manifest_json")
 
-collect_tag_inventory
+if ! collect_tag_inventory; then
+  fail "scheduled tag inventory helper failed"
+fi
 discovery_candidates='[]'
-if ! jq -e 'length > 0 and all(.[]; .status == "ok")' \
+if [ "$pre_tag_status" = indeterminate ] || ! jq -e 'length > 0 and all(.[]; .status == "ok")' \
   "$tmp_dir/tag-observations.json" >/dev/null; then
   discovery_candidates='[{"resource_type":"unsupported","id":"tag-inventory-incomplete","arn":null,"parent_id":null,"sources":["tag-discovery"],"tag_entry":null,"force_delete":false}]'
 fi
 printf '%s\n' "$candidates" > "$tmp_dir/pre-final-candidates.json"
 printf '%s\n' "$discovery_candidates" > "$tmp_dir/discovery-candidates.json"
-candidates="$(merge_candidate_files \
+if ! candidates="$(merge_candidate_files \
   "$tmp_dir/pre-final-candidates.json" \
   "$tmp_dir/tag-candidates.json" \
-  "$tmp_dir/discovery-candidates.json")"
+  "$tmp_dir/discovery-candidates.json")"; then
+  fail "cleanup verifier merge-candidates failed for final candidates"
+fi
 manifest_json="$(jq -c \
   --argjson candidates "$candidates" \
   --argjson entries "$(cat "$tmp_dir/tag-entries.json")" \
@@ -506,7 +596,8 @@ manifest_json="$(jq -c \
     | .tagging_inventory = ((.tagging_inventory // []) + $entries | unique_by(.ResourceARN))
     | .tag_inventory_observations = ((.tag_inventory_observations // []) + $observations)
     | .tagging_inventory_status = (
-        if ($observations | length) > 0 and all($observations[]; .status == "ok")
+        if (.tag_inventory_observations | length) > 0
+           and all(.tag_inventory_observations[]; .status == "ok")
         then "ok"
         else "indeterminate"
         end
@@ -519,24 +610,90 @@ verification_deadline=$((verification_start + CLEANUP_VERIFY_DEADLINE_SECONDS))
 backoff_index=0
 read -r -a verification_backoff <<< "$CLEANUP_VERIFY_BACKOFF"
 while :; do
+  set +e
   verification="$("$CLEANUP_VERIFIER_SH" verify-live "$tmp_dir/final-candidates.json")"
-  run="$(jq -c --arg started_at "$(date -u -r "$verification_start" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$verification_start" +%Y-%m-%dT%H:%M:%SZ)" --arg completed_at "$(now_iso)" '
-    {started_at:$started_at,completed_at:$completed_at,results:.results,summary:.summary}' <<< "$verification")"
-  stale_entries="$(jq -c '.stale_tag_entries' <<< "$verification")"
+  verification_rc=$?
+  set -e
+  [ "$verification_rc" -eq 0 ] \
+    || fail "cleanup verifier verify-live failed with exit code $verification_rc"
+  if ! jq -e '
+    type == "object"
+    and (.passed | type == "boolean")
+    and (.summary | type == "object")
+    and all(.summary.gone, .summary.pending, .summary.live, .summary.indeterminate;
+      type == "number" and . >= 0 and floor == .)
+    and (.results | type == "array")
+  ' <<< "$verification" >/dev/null 2>&1; then
+    fail "cleanup verifier verify-live returned malformed output"
+  fi
+  if ! jq -e '
+    (has("stale_tag_entries") | not)
+    or ((.stale_tag_entries | type) == "array"
+      and all(.stale_tag_entries[]; type == "object"))
+  ' <<< "$verification" >/dev/null 2>&1; then
+    fail "cleanup verifier stale_tag_entries mismatch: expected an array of objects when present"
+  fi
+  if ! jq -e '
+    all(.results[];
+      type == "object"
+      and (.outcome | type) == "string"
+      and (.outcome == "gone"
+        or .outcome == "pending"
+        or .outcome == "live"
+        or .outcome == "indeterminate"))
+  ' <<< "$verification" >/dev/null 2>&1; then
+    fail "cleanup verifier results contain invalid outcome; allowed outcomes are gone, pending, live, indeterminate"
+  fi
+  if ! recomputed_summary="$(jq -c '
+    .results as $results
+    | {
+        gone: ([$results[] | select(.outcome == "gone")] | length),
+        pending: ([$results[] | select(.outcome == "pending")] | length),
+        live: ([$results[] | select(.outcome == "live")] | length),
+        indeterminate: ([$results[] | select(.outcome == "indeterminate")] | length)
+      }' <<< "$verification")"; then
+    fail "could not recompute cleanup verifier summary"
+  fi
+  reported_summary="$(jq -c '.summary' <<< "$verification")"
+  if ! jq -e --argjson recomputed "$recomputed_summary" '.summary == $recomputed' \
+      <<< "$verification" >/dev/null; then
+    fail "cleanup verifier summary mismatch: reported=$reported_summary recomputed=$recomputed_summary"
+  fi
+  pending_count="$(jq -r '.pending' <<< "$recomputed_summary")"
+  live_count="$(jq -r '.live' <<< "$recomputed_summary")"
+  indeterminate_count="$(jq -r '.indeterminate' <<< "$recomputed_summary")"
+  reported_passed="$(jq -r '.passed' <<< "$verification")"
+  if [ "$live_count" -eq 0 ] && [ "$indeterminate_count" -eq 0 ]; then
+    expected_passed=true
+  else
+    expected_passed=false
+  fi
+  if [ "$reported_passed" != "$expected_passed" ]; then
+    fail "cleanup verifier passed mismatch: reported=$reported_passed expected=$expected_passed for live=$live_count indeterminate=$indeterminate_count"
+  fi
+
+  results_json="$(jq -c '.results' <<< "$verification")"
+  run="$(jq -cn \
+    --arg started_at "$(date -u -r "$verification_start" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$verification_start" +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg completed_at "$(now_iso)" \
+    --argjson results "$results_json" \
+    --argjson summary "$recomputed_summary" \
+    '{started_at:$started_at,completed_at:$completed_at,results:$results,summary:$summary}')"
+  stale_entries="$(jq -c '.stale_tag_entries // []' <<< "$verification")"
   manifest_json="$(jq -c --argjson run "$run" --argjson stale "$stale_entries" '
     ((.stale_tag_entries.entries // []) + $stale | unique_by(.ResourceARN)) as $entries
     | .stale_tag_entries = {count:($entries|length),entries:$entries}
     | .verification_runs = ((.verification_runs // []) + [$run])' <<< "$manifest_json")"
   persist_manifest
 
-  live_count="$(jq -r '.summary.live' <<< "$verification")"
-  pending_count="$(jq -r '.summary.pending' <<< "$verification")"
-  indeterminate_count="$(jq -r '.summary.indeterminate' <<< "$verification")"
-  if [ "$live_count" -eq 0 ] && [ "$pending_count" -eq 0 ] && [ "$indeterminate_count" -eq 0 ]; then
+  if [ "$pre_tag_status" = indeterminate ] && [ "$reported_passed" = true ]; then
+    fail "cleanup verification cannot pass while the pre-destroy tag inventory is indeterminate"
+  fi
+  if [ "$reported_passed" = true ] && [ "$pending_count" -eq 0 ]; then
     break
   fi
   if [ "$(now_epoch)" -ge "$verification_deadline" ]; then
-    if [ "$live_count" -gt 0 ] || [ "$indeterminate_count" -gt 0 ]; then
+    if [ "$reported_passed" != true ] || [ "$pre_tag_status" = indeterminate ]; then
       fail "cleanup verification deadline reached: live=$live_count indeterminate=$indeterminate_count pending=$pending_count"
     fi
     echo "close-env.sh: verification deadline reached with pending=$pending_count deletion transitions still in progress; stage 2 (sweeper) re-verifies them"

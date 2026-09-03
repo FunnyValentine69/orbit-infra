@@ -1,6 +1,6 @@
 # ADR 0006: Preview environment lease lifecycle
 
-Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+Status: Accepted (2026-09-02; amended 2026-09-03). Evidence: local apply/close is LOCALSTACK-VERIFIED; the LocalStack session workflow is CODE-ONLY until its first owner dispatch; every real-AWS behavior is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
@@ -8,13 +8,33 @@ Environments are created/destroyed by independent CI dispatches that can be inte
 
 ## Decision
 
-Each `env_id` has a durable lease at `leases/<env_id>.json` with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every transition is a compare-and-swap (S3 conditional write on the ETag, asserting prior state/generation) — two writers can never both win. Apply order: runner-CIDR check → lint → checkov → verify every selected image signature and attestation against the lock files → create lease (only if none exists or `closed`, generation N+1) → record the mode and resolved image references → init → plan → apply; static and supply-chain gate failures never create a lease or resources. The apply workflow emits acquisition state and generation only after its CAS open succeeds. Its failure handler runs only for that acquisition and passes the generation to `close-env.sh`, which refuses without a transition if the current lease generation differs. On AWS, close reuses the three resolved image references in the lease manifest so Terraform can load the configuration before destroy; a missing reference fails closed. The LocalStack lane continues to use its local defaults.
+Each `env_id` has a durable lease at `leases/<env_id>.json` with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every transition is a compare-and-swap (S3 conditional write on the ETag, asserting prior state/generation) — two writers can never both win. Apply order: runner-CIDR check → lint → checkov → verify every selected image signature and attestation against the lock files → create the lease only if absent or `closed` (generation N+1), with the workflow-run owner and initial target/mode/resolved-image manifest in that same CAS PUT → init → plan → apply; static and supply-chain gate failures never create a lease or resources, and there is no post-open manifest race. The apply workflow emits acquisition state and generation only after its CAS open succeeds, for summary reporting only. Its failure/cancellation handler does not depend on those step outputs: it reads the lease and invokes `close-env.sh` only when the lease is `open` or `closing` and its owner matches the current GitHub run ID and attempt. `close-env.sh --owner` independently refuses a mismatched owner with exit 4 before any transition; the generation guard remains independent. On AWS, close reuses the three resolved image references in the lease manifest so Terraform can load the configuration before destroy; a missing reference fails closed. The LocalStack lane continues to use its local defaults.
+
+The session workflows accept `target=aws|localstack` and record the target in
+the lease manifest. The AWS path retains the independent apply and destroy
+dispatches. LocalStack state and the emulator live only on one hosted runner,
+so `session-apply` performs the complete bootstrap → apply → acceptance →
+stage-1 close cycle in one job and always closes its acquired generation at
+the end. `session-destroy target=localstack` refuses with a clear error because
+a fresh job has neither the emulator nor its state; it cannot prove cross-job
+destroy. The owner-only LocalStack job uses test credentials and never assumes
+or reads an AWS role. This asymmetry is intentional and is not evidence for
+the real-AWS cross-dispatch lifecycle.
+
+Every LocalStack CI run starts on a fresh hosted runner with a fresh emulator.
+Therefore the gh-driven dispatch-ordering test can prove only GitHub
+concurrency queueing on the LocalStack target; it cannot observe cross-run
+lease CAS, lease-state refusals (`open`/`closing`/`cleanup_failed`; the
+static `target=localstack` input refusal it does observe is not lease state),
+retained state, or generation increments. Those
+lease semantics are proved locally by `tests/localstack-concurrency.sh`, which
+runs both environments against one already-running LocalStack instance.
 
 Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) re-checks the manifest; once every task definition is deleted, it removes state versions and sets `closed`. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
 
 ### Cleanup verifier amendment (2026-09-02)
 
-The stage-1 candidate set is created before destroy and is the union of the prior manifest, identifiers from Terraform state, ECS discovery, and the pre-destroy tag inventory. Resource Groups Tagging API results are discovery evidence only. They are re-queried at 0, 2, 4, 8, 16, and 30 seconds after destroy and unioned into the candidate set, but neither a nonempty nor an empty tag response decides liveness. Every scheduled observation must succeed; if any observation fails, an unsupported `tag-inventory-incomplete` candidate remains `indeterminate` so stage 1 fails closed.
+The stage-1 candidate set is created before destroy and is the union of the prior manifest, identifiers from Terraform state, ECS discovery, and the pre-destroy tag inventory. Resource Groups Tagging API results are discovery evidence only. They are re-queried at 0, 2, 4, 8, 16, and 30 seconds after destroy and unioned into the candidate set, but neither a nonempty nor an empty tag response decides liveness. A tag query is successful only when its zero-exit stdout is a JSON object whose `ResourceTagMappingList` is an array and every member is an object with a string `ResourceARN` and, when present, an array `Tags`. Every other response is an indeterminate observation. An indeterminate pre-destroy observation or any indeterminate scheduled observation adds the unsupported `tag-inventory-incomplete` candidate; a later successful query cannot erase it, and verification cannot pass while the pre-destroy status is indeterminate.
 
 One exact-resource verifier assigns one result to every candidate and persists every iteration:
 
@@ -23,7 +43,7 @@ One exact-resource verifier assigns one result to every candidate and persists e
 - `live`: the exact API proves the resource remains usable or active.
 - `indeterminate`: the exact probe timed out, was denied, returned malformed data, or has an unsupported resource type.
 
-Stage 1 retries `pending`, post-destroy `live`, and transient `indeterminate` results for up to five minutes, with backoff capped at 30 seconds. Partial results are appended to `manifest.verification_runs` on every iteration. At the deadline, `live` or `indeterminate` results set `cleanup_failed`; `pending` may remain for stage 2. Stale tag records whose exact probes are `gone` are persisted under `manifest.stale_tag_entries` and never fail stage 1.
+Stage 1 retries `pending`, post-destroy `live`, and transient `indeterminate` results for up to five minutes, with backoff capped at 30 seconds. Partial results are appended to `manifest.verification_runs` on every iteration. A non-zero verifier exit or malformed verifier result is routed through the same `cleanup_failed` lease transition with a recorded error. Before using a verifier result, close validates the outcome vocabulary, recomputes all four counts from `results`, requires the reported summary to match, and requires `passed` to equal the verifier rule (`live == 0 && indeterminate == 0`; pending is left for stage 2). If present, `stale_tag_entries` must be an array of objects. Any discrepancy records `cleanup_failed`, and close decisions use only the recomputed counts plus the validated `passed` value. At the deadline, `live` or `indeterminate` results set `cleanup_failed`; `pending` may remain for stage 2. Stale tag records whose exact probes are `gone` are persisted under `manifest.stale_tag_entries` and never fail stage 1.
 
 All cleanup and lease AWS CLI calls pass through `scripts/aws-cli.sh`, with five-second connect and 20-second read timeouts inside a 30-second process-group deadline. The ECS service-stability waiter is the deliberate exception: it gets a 660-second outer deadline for the AWS CLI's ten-minute wait window. `TARGET` is mandatory. `localstack` requires an explicit localhost endpoint, test credentials, disabled metadata lookup, and no `AWS_PROFILE`; `aws` rejects a LocalStack endpoint.
 

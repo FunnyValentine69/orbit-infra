@@ -1,0 +1,13 @@
+{
+  "name": "cleanup-verifier-passed-with-live-result",
+  "authored": "close-env verifier passed consistency contract",
+  "env_id": "verifypass",
+  "verifier": {
+    "rc": 0,
+    "stdout": "{\"passed\":true,\"summary\":{\"gone\":0,\"pending\":0,\"live\":1,\"indeterminate\":0},\"results\":[{\"outcome\":\"live\"}],\"stale_tag_entries\":[]}"
+  },
+  "expected": {
+    "status": "cleanup_failed",
+    "error": "cleanup verifier passed mismatch: reported=true expected=false for live=1 indeterminate=0"
+  }
+}

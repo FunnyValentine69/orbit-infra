@@ -1,0 +1,13 @@
+{
+  "name": "cleanup-verifier-invalid-outcome",
+  "authored": "close-env verifier result vocabulary contract",
+  "env_id": "verifyoutcome",
+  "verifier": {
+    "rc": 0,
+    "stdout": "{\"passed\":false,\"summary\":{\"gone\":0,\"pending\":0,\"live\":0,\"indeterminate\":0},\"results\":[{\"outcome\":\"unknown\"}],\"stale_tag_entries\":[]}"
+  },
+  "expected": {
+    "status": "cleanup_failed",
+    "error": "cleanup verifier results contain invalid outcome; allowed outcomes are gone, pending, live, indeterminate"
+  }
+}

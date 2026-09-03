@@ -248,4 +248,66 @@ if ! jq -e --arg digest "$exact_digest" 'all(.images[]; .digest == $digest)' <<<
   exit 1
 fi
 
+# PR #4 overflow contracts (P0-3e): every mirror is scanned before it is
+# signed, and the AWS stage-1 close runs on failure or cancellation once the
+# lease exists.
+mirror_workflow="$REPO_ROOT/.github/workflows/mirror-images.yml"
+for mirror in redis clickhouse; do
+  scan_line="$(grep -n "name: Trivy scan $mirror mirror" "$mirror_workflow" | cut -d: -f1)"
+  sign_line="$(grep -n "name: KMS sign and attest $mirror mirror" "$mirror_workflow" | cut -d: -f1)"
+  if [ -z "$scan_line" ] || [ -z "$sign_line" ] || [ "$scan_line" -ge "$sign_line" ]; then
+    echo "mirror-images must scan the $mirror mirror before signing it (scan=$scan_line sign=$sign_line)" >&2
+    exit 1
+  fi
+done
+if ! grep -Fq "if: always() && (failure() || cancelled()) && inputs.target == 'aws'" \
+    "$REPO_ROOT/.github/workflows/session-apply.yml"; then
+  echo "session-apply must inspect the lease on AWS failure or cancellation without relying on step outputs" >&2
+  exit 1
+fi
+
+apply_workflow="$REPO_ROOT/.github/workflows/session-apply.yml"
+validate_guard="$(sed -n '/^  validate-input:/,/^  apply:/s/^    if: //p' "$apply_workflow")"
+apply_guard="$(sed -n '/^  apply:/,/^    runs-on:/s/^    if: //p' "$apply_workflow")"
+setup_localstack_guard="$(sed -n '/      - name: Start LocalStack/,/        uses:/s/^        if: //p' "$apply_workflow")"
+for guard_record in \
+  "validate-input job|$validate_guard" \
+  "apply job|$apply_guard" \
+  "setup-localstack step|$setup_localstack_guard"; do
+  guard_label="${guard_record%%|*}"
+  guard="${guard_record#*|}"
+  for required_owner_check in \
+    'github.actor == github.repository_owner' \
+    'github.triggering_actor == github.repository_owner'; do
+    if [[ "$guard" != *"$required_owner_check"* ]]; then
+      echo "session-apply $guard_label LocalStack guard must include: $required_owner_check" >&2
+      exit 1
+    fi
+  done
+done
+
+bash "$REPO_ROOT/tests/localstack-concurrency-signal.sh"
+
+# tools.lock lists each tool twice (version and checksum sections); every
+# workflow version read must go through scripts/tool-version.sh, which prints
+# exactly one semantic version (a multi-line value is an invalid GITHUB_OUTPUT
+# record and broke the PR plan lane on PR #5).
+if grep -rnE "(grep|awk)[^\n]*tools\.lock" "$REPO_ROOT/.github/workflows" >/dev/null; then
+  echo "workflows must read tool versions through scripts/tool-version.sh, never grep or awk on tools.lock" >&2
+  exit 1
+fi
+for tool in terraform tflint checkov cosign syft trivy; do
+  version_lines="$("$REPO_ROOT/scripts/tool-version.sh" "$tool" | wc -l | tr -d ' ')"
+  if [ "$version_lines" != 1 ]; then
+    echo "scripts/tool-version.sh $tool must print exactly one line, printed $version_lines" >&2
+    exit 1
+  fi
+done
+if "$REPO_ROOT/scripts/tool-version.sh" no-such-tool >/dev/null 2>&1; then
+  echo "scripts/tool-version.sh must fail for an unknown tool" >&2
+  exit 1
+fi
+
+bash "$REPO_ROOT/tests/policy-size-contracts.sh"
+
 echo "PASS: phase3 shell contracts"

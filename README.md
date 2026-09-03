@@ -21,6 +21,7 @@ exist anywhere in the pipeline.
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov on every plan | done |
+| Dispatch-only LocalStack CI apply → acceptance → close cycle | implemented, CODE-ONLY until first dispatch |
 | SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
@@ -70,9 +71,11 @@ locked `orbit-api` and `orbit-clickhouse` images plus mirrored Redis. `public`
 selects the locked private-ECR placeholder plus mirrored Redis and ClickHouse.
 The workflow opens no lease until every repository name matches
 `bootstrap/ecr.tf`, every selected lock entry is digest-pinned, and every image
-has a valid signature and lock-matching attestation. The opened lease records
-the mode and resolved image references so AWS cleanup can load the same
-Terraform configuration for destroy.
+has a valid signature and lock-matching attestation. The lease-open CAS records
+the workflow-run owner, mode, and resolved image references atomically so AWS
+cleanup can load the same Terraform configuration for destroy. Failure and
+cancellation cleanup re-reads that lease and runs only when the same workflow
+run owns an `open` or `closing` generation.
 
 ## Repository layout
 
@@ -98,13 +101,20 @@ Local, pre-CI policy gates (`.tflint.hcl`, `.checkov.yaml` at repo root):
 make validate     # terraform init -backend=false + validate, every module/env
 make lint         # terraform fmt -check, tflint --recursive, checkov
 make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
+make test-concurrency TARGET=localstack OPERATOR_CIDR=10.255.255.255/32  # two live environments on one already-running emulator
 scripts/gates.sh  # runs all four above (validate, lint, test, no-nat-gateway), PASS/FAIL summary; CI calls this from Phase 3 onward
 ```
 
-`scripts/gates.sh` also runs the `policy-size` gate: it renders a LocalStack
-plan of `bootstrap/` and requires every planned IAM policy document to be
-plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone
-with `bootstrap/policy-size-check.sh`.
+The live concurrency target, its LocalStack-free SIGTERM/process-group test,
+and the nonce-bound post-merge GitHub dispatch-ordering test are documented in
+`tests/README.md`; none starts, stops, or reconfigures LocalStack.
+
+`scripts/gates.sh` also requires the `policy-size` gate by default: it renders
+a LocalStack plan of `bootstrap/` and requires every planned IAM policy
+document to be plan-time known (see `bootstrap/README.md` § Gates / size). Run
+it standalone with `bootstrap/policy-size-check.sh`. The secret-free PR gates
+set `GATES_POLICY_SIZE=skip`; the owner-only `plan-localstack` job runs the
+check after LocalStack is healthy.
 
 CI: `terraform-plan.yml` runs static gates on every pull request. Its
 LocalStack plan and Infracost comment jobs run only for the repository owner's

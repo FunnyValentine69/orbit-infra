@@ -1702,7 +1702,7 @@ data "aws_iam_policy_document" "publisher" {
   statement {
     sid       = "SigningKey"
     effect    = "Allow"
-    actions   = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"]
+    actions   = ["kms:Sign", "kms:Verify", "kms:GetPublicKey", "kms:DescribeKey"]
     resources = ["arn:${data.aws_partition.current.partition}:kms:${var.region}:${data.aws_caller_identity.current.account_id}:key/*"]
 
     # kms:ResourceAliases is multivalued: AWS requires a ForAnyValue or
