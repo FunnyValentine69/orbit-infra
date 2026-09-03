@@ -53,6 +53,36 @@ keeps running, sends SIGTERM to the concurrency script, and requires the
 descendant to be gone after the exit trap targets the recorded process group
 and reaps the recorded worker.
 
+## Phase 5 sweeper fixtures
+
+Run the Stage 2 regression suite without AWS or LocalStack:
+
+```
+bash tests/sweeper.sh
+```
+
+The suite reuses the repository AWS wrapper with a fake AWS CLI and a fake
+versioned S3 lease/state store. It covers every discovery class and age
+boundary, invalid inventory IDs, fresh-read Stage 1 selection, retry-budget
+refusal, exact AWS deleted `ClientException`, paginated/batched state-version
+and delete-marker removal,
+`DELETE_IN_PROGRESS`, malformed describe/candidate refusal, the LocalStack
+allowance, partial deletion, a lease change between delete batches,
+closing-to-closed CAS loss, and ETag-conditional prune.
+
+Fixture provenance:
+
+- `discover-cases.json` — `authored` from ADR 0006 lifecycle thresholds.
+- `aws-deleted-client-exception.json` — `authored` from the AWS ECS deleted
+  DescribeTaskDefinition contract; replace with a sanitized recording during
+  real-AWS promotion.
+- `aws-delete-in-progress.json` — `authored` from the AWS ECS
+  `DELETE_IN_PROGRESS` contract.
+- `aws-malformed-describe.json` — `authored` fail-closed schema case.
+- `localstack-inactive-allowance.json` — `authored` Stage 2 response paired
+  with the Stage 1 allowance recorded from LocalStack 2026.8.1; the
+  orchestrator replaces it only from a sanitized in-job recording.
+
 ## Phase 4 live concurrency
 
 With one already-running LocalStack, an applied LocalStack bootstrap, and the

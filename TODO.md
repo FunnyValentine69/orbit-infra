@@ -66,6 +66,11 @@
 ## Phase 5 — Drift, sweeper, threat model, polish
 
 (expanded when the phase starts)
+- [x] P5-1b: Stage-2 sweeper (`scripts/sweep.sh`, AWS-only nightly matrix, — LOCALSTACK-VERIFIED locally 2026-09-03 (env sw1: apply 59, stage-1 close, `SWEEP_IN_JOB=true scripts/sweep.sh env sw1` → 3 task definitions deleted-by-allowance, state versions and delete markers removed, lease `closed` with `stage2_runs[-1].in_job`; second sweep no-op within the retention window; reopen gave generation 2); the in-job CI run and the nightly AWS sweeper remain CODE-ONLY until their promotion commands run
+  in-job LocalStack Stage 2, version/delete-marker state removal, ETag prune,
+  fixture suite) — CODE-ONLY until orchestrator promotion:
+  - static fixture command: `bash tests/sweeper.sh`
+  - in-job LocalStack command after merge: `gh workflow run session-apply.yml --ref main -f env_id=sw1 -f target=localstack -f mode=public`
 - [ ] P5-x: per-workflow OIDC subject binding (verify the customized claim on a real token first)
 - [ ] P5-5: `bootstrap/preflight.sh` runs `terraform init` (or detects an uninitialized backend) before `terraform state list`, so a fresh checkout that already has `backend.tf` is not treated as empty state (Tier-3 P2 on PR #1)
 - [ ] P5-6: `bootstrap/preflight.sh` propagates `TF_VAR_oidc_provider_external=true` into the apply path when the OIDC provider already exists, instead of only printing the instruction (Tier-3 P2 on PR #1)

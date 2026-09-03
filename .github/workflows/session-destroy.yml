@@ -67,7 +67,7 @@ jobs:
           case "$TARGET" in
             aws) ;;
             localstack)
-              echo "session-destroy refuses target=localstack: LocalStack state is runner-local, so session-apply performs apply -> acceptance -> close in one job" >&2
+              echo "session-destroy refuses target=localstack: LocalStack state is runner-local, so session-apply performs apply -> acceptance -> close -> sweep in one job" >&2
               exit 1
               ;;
             *) echo "target must be aws or localstack" >&2; exit 1 ;;

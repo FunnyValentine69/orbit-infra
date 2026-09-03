@@ -14,9 +14,9 @@ The session workflows accept `target=aws|localstack` and record the target in
 the lease manifest. The AWS path retains the independent apply and destroy
 dispatches. LocalStack state and the emulator live only on one hosted runner,
 so `session-apply` performs the complete bootstrap → apply → acceptance →
-stage-1 close cycle in one job and always closes its acquired generation at
-the end. `session-destroy target=localstack` refuses with a clear error because
-a fresh job has neither the emulator nor its state; it cannot prove cross-job
+Stage 1 → Stage 2 cycle in one job and closes its acquired generation only
+after state-version removal. `session-destroy target=localstack` refuses with
+a clear error because a fresh job has neither the emulator nor its state; it cannot prove cross-job
 destroy. The owner-only LocalStack job uses test credentials and never assumes
 or reads an AWS role. This asymmetry is intentional and is not evidence for
 the real-AWS cross-dispatch lifecycle.
@@ -31,6 +31,59 @@ lease semantics are proved locally by `tests/localstack-concurrency.sh`, which
 runs both environments against one already-running LocalStack instance.
 
 Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) re-checks the manifest; once every task definition is deleted, it removes state versions and sets `closed`. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
+
+### Stage 2 sweeper amendment (2026-09-03)
+
+`scripts/sweep.sh discover` reads JSON lines only from `lease.sh list`. It
+classifies open leases older than 24 hours for Stage 1, due non-manual
+`cleanup_failed` leases below the three-attempt budget for Stage 1 retry,
+`closing` leases for Stage 2, and `closed` leases older than seven days for
+prune. `sweep.sh env` always re-reads the lease and acts on that current state,
+never on a discovery result. It never supplies `--force-retry`.
+
+For every `manifest.candidates[]` entry whose `resource_type` is
+`ecs:task-definition`, Stage 2 calls `DescribeTaskDefinition` through the
+repository AWS wrapper. Under `TARGET=aws`, deletion is proved only by this
+exact AWS CLI error:
+
+> An error occurred (ClientException) when calling the DescribeTaskDefinition operation: Unable to describe task definition.
+
+This is intentionally narrower than the Stage 1 not-found matcher. The AWS
+[task-definition state](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-definition-state.html)
+and [DescribeTaskDefinition API](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTaskDefinition.html)
+contracts say `DELETE_IN_PROGRESS` remains retrievable and deletion can take
+up to 24 hours, so `ACTIVE`, `INACTIVE`, and `DELETE_IN_PROGRESS` are pending
+in Stage 2. A zero-exit response must contain the exact candidate ARN and a
+recognized status; any other response is indeterminate and transitions
+`closing → cleanup_failed`. The exact deleted response remains an authored
+fixture until real-AWS promotion records it.
+
+LocalStack has one additional deleted-by-allowance outcome: the candidate ARN
+must already carry the Stage 1
+`localstack-delete-task-definitions-inactive` allowance, the current describe
+must return that exact ARN in `INACTIVE`, and `TARGET` must be `localstack`.
+The sweeper records the allowance ID, ARN, and timestamp under
+`manifest.stage2_allowances`; AWS never honors it.
+
+After every task definition is deleted or deleted-by-allowance, Stage 2
+re-reads the lease and requires the last Stage 1 verification run to record
+`passed:true`, `live:0`, and `indeterminate:0`. It does not repeat Stage 1's
+destroy-time probes. It then re-reads `closing`, paginates every version and
+delete marker for the exact `envs/preview/<env_id>.tfstate` key, deletes them
+in batches of at most 1,000, and performs a final empty-version read. A partial
+or indeterminate deletion transitions to `cleanup_failed`; `closed` is
+forbidden while any version remains. The final transition is lease CAS.
+
+Prune re-reads a `closed` lease older than seven days with its ETag and deletes
+the current lease object with an `If-Match` precondition through `lease.sh`.
+The nightly workflow is main-only and AWS-only. Discovery fails rather than
+creating a matrix larger than 20; per-environment jobs use the shared
+`preview-<env_id>` concurrency group, `queue: max`, `max-parallel: 3`, and do
+not cancel sibling failures. LocalStack proves Stage 2 only in the same
+`session-apply` job, using the emulator's versioned state bucket and identical
+state-key layout; a second sweep over its new `closed` lease is a retention
+no-op. Both the nightly AWS path and in-job LocalStack path are CODE-ONLY until
+P0-3b promotion.
 
 ### Cleanup verifier amendment (2026-09-02)
 

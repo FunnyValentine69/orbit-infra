@@ -13,10 +13,12 @@ Usage: lease.sh <subcommand> [args]
 
 Subcommands:
   get <env_id>
+  get-with-etag <env_id>
   open <env_id> [--owner <token>] [--manifest <file>]
   transition <env_id> <from> <to> [--error <text>]
   begin-cleanup <env_id> [--force-retry]
   set-manifest <env_id> <file>
+  delete-closed <env_id> <expected-etag>
   list
 
 open creates generation N+1 only for an absent or closed lease. Its optional
@@ -100,6 +102,21 @@ cmd_get() {
     exit 1
   fi
   cat "$LEASE_BODY_FILE"
+  rm -f "$LEASE_BODY_FILE"
+}
+
+cmd_get_with_etag() {
+  local env_id="${1:?env_id required}"
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "no lease for $env_id"
+    exit 1
+  fi
+  jq -cn \
+    --arg etag "$LEASE_ETAG" \
+    --argjson lease "$(cat "$LEASE_BODY_FILE")" \
+    '{etag:$etag,lease:$lease}'
   rm -f "$LEASE_BODY_FILE"
 }
 
@@ -319,6 +336,51 @@ cmd_set_manifest() {
   put_lease set-manifest "$env_id" "$body_file" --if-match "$etag"
 }
 
+cmd_delete_closed() {
+  local env_id="${1:?env_id required}"
+  local expected_etag="${2:?expected ETag required}"
+  [ "$#" -eq 2 ] || { err "delete-closed requires env_id and expected ETag"; exit 2; }
+
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "delete-closed $env_id: lease no longer exists"
+    exit 3
+  fi
+  local status
+  status="$(jq -r '.status // empty' "$LEASE_BODY_FILE")"
+  rm -f "$LEASE_BODY_FILE"
+  if [ "$status" != closed ]; then
+    err "delete-closed $env_id: current status is '$status', expected 'closed'"
+    exit 3
+  fi
+  if [ "$LEASE_ETAG" != "$expected_etag" ]; then
+    err "delete-closed $env_id: lost the CAS race"
+    exit 3
+  fi
+
+  local delete_out
+  if ! delete_out="$(aws_cmd s3api delete-object \
+      --bucket "$LEASE_BUCKET" --key "$(lease_key "$env_id")" \
+      --if-match "$expected_etag" 2>&1)"; then
+    if grep -qE 'PreconditionFailed|At least one of the pre-conditions|412' <<< "$delete_out"; then
+      err "delete-closed $env_id: lost the CAS race"
+      exit 3
+    fi
+    err "delete-object failed: $delete_out"
+    exit 2
+  fi
+
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" = 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "delete-closed $env_id: lease is still readable after delete"
+    exit 2
+  fi
+  rm -f "$LEASE_BODY_FILE"
+  echo "deleted closed lease: $env_id"
+}
+
 cmd_list() {
   local out keys now results key env_id body_file lease updated_epoch age
   out="$(aws_cmd s3api list-objects-v2 --bucket "$LEASE_BUCKET" --prefix leases/ --output json)"
@@ -334,7 +396,7 @@ cmd_list() {
     rm -f "$body_file"
     updated_epoch="$(iso_to_epoch "$(jq -r '.updated_at' <<< "$lease")")"
     age=$((now - updated_epoch))
-    results="$(jq -c --argjson entry "$(jq --argjson age "$age" '{env_id,status,generation,opened_at,updated_at,cleanup_attempt,manual_intervention_required,age_seconds:$age}' <<< "$lease")" '. + [$entry]' <<< "$results")"
+    results="$(jq -c --argjson entry "$(jq --argjson age "$age" '{env_id,status,generation,opened_at,updated_at,cleanup_attempt,next_retry_at,manual_intervention_required,age_seconds:$age}' <<< "$lease")" '. + [$entry]' <<< "$results")"
   done <<< "$keys"
   jq -c '.[]' <<< "$results"
 }
@@ -343,10 +405,12 @@ main() {
   local sub="${1:-}"
   case "$sub" in
     get) shift; cmd_get "$@" ;;
+    get-with-etag) shift; cmd_get_with_etag "$@" ;;
     open) shift; cmd_open "$@" ;;
     transition) shift; cmd_transition "$@" ;;
     begin-cleanup) shift; cmd_begin_cleanup "$@" ;;
     set-manifest) shift; cmd_set_manifest "$@" ;;
+    delete-closed) shift; cmd_delete_closed "$@" ;;
     list) shift; cmd_list "$@" ;;
     --help|-h) usage ;;
     "") usage; exit 2 ;;

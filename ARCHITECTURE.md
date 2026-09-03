@@ -111,8 +111,14 @@ validates every outcome, recomputes all four counts, and rejects summary,
 scheduled tag observation adds a durable sentinel; later success cannot erase
 it. Tag presence alone is never liveness. Stage 1 retries for five minutes and leaves
 the lease `closing` with state retained; only deadline-expired `live` or
-`indeterminate` results set `cleanup_failed`. Stage 2 (the nightly sweeper)
-confirms deletion and sets `closed`.
+`indeterminate` results set `cleanup_failed`. Stage 2 re-reads the lease,
+requires the persisted Stage 1 verification to have passed with zero live or
+indeterminate results, and probes only the recorded task-definition candidates.
+The exact deleted `ClientException` is gone; `DELETE_IN_PROGRESS` remains
+pending. LocalStack may additionally accept exact `INACTIVE` only for the same
+ARN's recorded Stage 1 allowance. Once all candidates are gone, Stage 2 deletes
+every version and delete marker for `envs/preview/<env_id>.tfstate`, verifies
+none remain, records the run, and CAS-transitions to `closed`.
 
 Cleanup execution is bound to an explicit `TARGET`. The LocalStack branch
 requires a localhost endpoint, test credentials, disabled metadata lookup, and
@@ -139,14 +145,19 @@ after 7 days.
 The dispatch workflows accept `target=aws|localstack`. AWS keeps independent
 apply and destroy jobs. LocalStack cannot preserve its emulator or state
 across hosted runners, so its owner-only `session-apply` path bootstraps,
-applies, runs acceptance, and performs generation-bound stage-1 close in one
-job; `session-destroy target=localstack` refuses. The LocalStack path uses test
-credentials and no AWS role, and is evidence for workflow control flow rather
+applies, runs acceptance, performs generation-bound Stage 1, and completes
+Stage 2 in one job; `session-destroy target=localstack` refuses. The LocalStack
+path uses test credentials and no AWS role, and is evidence for workflow control flow rather
 than real-AWS OIDC, IAM, KMS/ECR, or packet-level security-group enforcement.
-Every LocalStack CI run has a fresh runner and emulator, so the gh-driven
-dispatch test proves only GitHub queueing on that target. Lease CAS, lifecycle
-refusals, generation increments, and two-environment state isolation are proved
-locally against one emulator by `tests/localstack-concurrency.sh`. See ADR 0006.
+Every LocalStack CI run has a fresh runner and fresh emulator, so the gh-driven
+dispatch test proves only GitHub queueing on that target. The preview override
+uses the emulator's versioned state bucket and the same state key as AWS;
+`session-apply` therefore runs Stage 2 immediately after successful Stage 1 and
+records `in_job:true` before closing the lease. The nightly sweeper refuses
+LocalStack because a later runner cannot recover that emulator. Lease CAS,
+lifecycle refusals, generation increments, and two-environment state isolation
+are proved locally against one emulator by `tests/localstack-concurrency.sh`.
+See ADR 0006. The new Stage 2 paths remain CODE-ONLY until P0-3b.
 
 ## Image supply chain summary
 

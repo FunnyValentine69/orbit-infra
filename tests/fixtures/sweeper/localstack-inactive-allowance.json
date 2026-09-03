@@ -1,0 +1,23 @@
+{
+  "authored": "LocalStack Stage-2 INACTIVE describe response paired with the recorded Stage-1 allowance; replace only with a sanitized live recording from the in-job lane",
+  "env_id": "local-allow",
+  "target": "localstack",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/stage-two:4",
+  "describe": {
+    "rc": 0,
+    "stdout": "{\"taskDefinition\":{\"taskDefinitionArn\":\"arn:aws:ecs:region:account:task-definition/stage-two:4\",\"status\":\"INACTIVE\"}}\n",
+    "stderr": ""
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/local-allow.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    },
+    {
+      "Key": "envs/preview/local-allow.tfstate",
+      "VersionId": "marker-1",
+      "type": "delete-marker"
+    }
+  ]
+}

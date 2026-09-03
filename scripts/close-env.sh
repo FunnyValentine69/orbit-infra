@@ -676,9 +676,10 @@ while :; do
   run="$(jq -cn \
     --arg started_at "$(date -u -r "$verification_start" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$verification_start" +%Y-%m-%dT%H:%M:%SZ)" \
     --arg completed_at "$(now_iso)" \
+    --argjson passed "$reported_passed" \
     --argjson results "$results_json" \
     --argjson summary "$recomputed_summary" \
-    '{started_at:$started_at,completed_at:$completed_at,results:$results,summary:$summary}')"
+    '{started_at:$started_at,completed_at:$completed_at,passed:$passed,results:$results,summary:$summary}')"
   stale_entries="$(jq -c '.stale_tag_entries // []' <<< "$verification")"
   manifest_json="$(jq -c --argjson run "$run" --argjson stale "$stale_entries" '
     ((.stale_tag_entries.entries // []) + $stale | unique_by(.ResourceARN)) as $entries

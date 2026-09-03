@@ -1,0 +1,18 @@
+{
+  "authored": "fail-closed DescribeTaskDefinition response-schema contract",
+  "env_id": "aws-bad",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/stage-two:3",
+  "describe": {
+    "rc": 0,
+    "stdout": "{\"taskDefinition\":{\"status\":\"INACTIVE\"}}\n",
+    "stderr": ""
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/aws-bad.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}

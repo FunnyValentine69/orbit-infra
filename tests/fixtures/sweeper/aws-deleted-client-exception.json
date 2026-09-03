@@ -1,0 +1,28 @@
+{
+  "authored": "AWS ECS DescribeTaskDefinition deleted-revision contract; replace with a sanitized recorded AWS response during P0-3b promotion",
+  "env_id": "aws-happy",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/stage-two:1",
+  "describe": {
+    "rc": 254,
+    "stdout": "",
+    "stderr": "An error occurred (ClientException) when calling the DescribeTaskDefinition operation: Unable to describe task definition.\n"
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/aws-happy.tfstate",
+      "VersionId": "version-3",
+      "type": "version"
+    },
+    {
+      "Key": "envs/preview/aws-happy.tfstate",
+      "VersionId": "marker-2",
+      "type": "delete-marker"
+    },
+    {
+      "Key": "envs/preview/aws-happy.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}

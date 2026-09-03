@@ -23,7 +23,7 @@ exist anywhere in the pipeline.
 | Policy gates: tflint + checkov on every plan | done |
 | Dispatch-only LocalStack CI apply → acceptance → close cycle | implemented, CODE-ONLY until first dispatch |
 | SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
-| Dispatch-created parallel environments with nightly auto-destroy | planned |
+| Lease-CAS parallel environments + AWS-only nightly Stage 2 sweeper | implemented, CODE-ONLY until P0-3b |
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
 | Observability: CloudWatch logs, two alarms, one written SLO | done |
