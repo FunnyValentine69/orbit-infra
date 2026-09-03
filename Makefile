@@ -206,16 +206,15 @@ lint:
 lease-list:
 	scripts/lease.sh list
 
-lease-get:
-	@if [ -z "$(ENV_ID)" ]; then echo "ENV_ID is required, e.g. make lease-get ENV_ID=dev" >&2; exit 1; fi
-	scripts/lease.sh get $(ENV_ID)
+lease-get: check-env-id
+	scripts/lease.sh get "$$ENV_ID"
 
 # TARGET=localstack routes close-env.sh at the LocalStack endpoint; TARGET=aws (default) closes against real AWS.
-close: check-env-id
+close: check-target check-env-id
 ifeq ($(TARGET),localstack)
 close:
-	AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 TARGET=$(TARGET) ENV_ID=$(ENV_ID) scripts/close-env.sh $(ENV_ID)
+	AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 scripts/close-env.sh "$$ENV_ID"
 else
 close:
-	TARGET=$(TARGET) ENV_ID=$(ENV_ID) scripts/close-env.sh $(ENV_ID)
+	scripts/close-env.sh "$$ENV_ID"
 endif
