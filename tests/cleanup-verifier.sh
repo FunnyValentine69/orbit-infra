@@ -8,7 +8,14 @@ AWS_WRAPPER="$REPO_ROOT/scripts/aws-cli.sh"
 LEASE="$REPO_ROOT/scripts/lease.sh"
 
 tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
+created_backend_hcl=false
+cleanup() {
+  rm -rf "$tmp_dir"
+  if [ "$created_backend_hcl" = true ]; then
+    rm -f "$REPO_ROOT/envs/preview/backend.aws.hcl"
+  fi
+}
+trap cleanup EXIT
 
 pass_count=0
 pass() {
@@ -121,9 +128,12 @@ assert_jq "$timeout_result" '.results[0].outcome == "indeterminate" and .results
 sleep 1
 grandchild_pid="$(cat "$tmp_dir/timeout-child.pid")"
 if kill -0 "$grandchild_pid" 2>/dev/null; then
-  kill "$grandchild_pid" 2>/dev/null || true
-  echo "FAIL: the outer timeout must kill the whole process group (grandchild $grandchild_pid survived)" >&2
-  exit 1
+  grandchild_stat="$(ps -o stat= -p "$grandchild_pid" 2>/dev/null | awk '{print $1}')"
+  if [[ "$grandchild_stat" != Z* ]]; then
+    kill "$grandchild_pid" 2>/dev/null || true
+    echo "FAIL: the outer timeout must kill the whole process group (grandchild $grandchild_pid survived with state $grandchild_stat)" >&2
+    exit 1
+  fi
 fi
 pass "the outer timeout reaps the CLI's process group, not just its pid"
 if [ "$timeout_rc" -ne 124 ] || [ "$elapsed" -ge 30 ] || [ "$(cat "$apply_log")" != "profile-unset" ] || \
@@ -149,6 +159,10 @@ cat > "$tmp_dir/fake-bin/aws" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+original_args="$*"
+if [ -n "${FAKE_AWS_CALL_LOG:-}" ]; then
+  printf '%s\n' "$original_args" >> "$FAKE_AWS_CALL_LOG"
+fi
 service="$1"
 operation="$2"
 shift 2
@@ -208,8 +222,51 @@ if [ "$service $operation" = "s3api put-object" ]; then
   exit 0
 fi
 if [ "$service $operation" = "resourcegroupstaggingapi get-resources" ]; then
+  if [ -n "${FAKE_TAG_CALLS_FILE:-}" ]; then
+    tag_call=1
+    if [ -f "$FAKE_TAG_CALLS_FILE" ]; then
+      tag_call=$(( $(cat "$FAKE_TAG_CALLS_FILE") + 1 ))
+    fi
+    printf '%s\n' "$tag_call" > "$FAKE_TAG_CALLS_FILE"
+    if [ "$tag_call" -eq "${FAKE_TAG_FAIL_ON_CALL:-0}" ]; then
+      echo "An error occurred (AccessDeniedException): simulated delayed tag query failure" >&2
+      exit 254
+    fi
+  fi
   echo '{"ResourceTagMappingList":[]}'
   exit 0
+fi
+if [ "${FAKE_ECS_WAITER:-0}" = 1 ]; then
+  case "$service $operation" in
+    "ecs list-services")
+      echo '{"serviceArns":["service-waiter"]}'
+      exit 0
+      ;;
+    "ecs list-tasks")
+      echo '{"taskArns":[]}'
+      exit 0
+      ;;
+    "ecs describe-services")
+      if [[ "$original_args" == *"--query services[0].status"* ]]; then
+        echo ACTIVE
+      else
+        echo '{"services":[],"failures":[{"arn":"service-waiter","reason":"MISSING"}]}'
+      fi
+      exit 0
+      ;;
+    "ecs update-service")
+      echo '{}'
+      exit 0
+      ;;
+    "ecs wait")
+      printf '%s\n' "${AWS_OUTER_TIMEOUT_SECONDS:-unset}" > "$FAKE_WAITER_TIMEOUT_LOG"
+      exit 0
+      ;;
+    "ecs describe-clusters")
+      echo '{"clusters":[],"failures":[{"arn":"cluster-waiter","reason":"MISSING"}]}'
+      exit 0
+      ;;
+  esac
 fi
 if [ "$service $operation" = "ec2 describe-vpcs" ]; then
   echo "An error occurred (InvalidVpcID.NotFound) while calling DescribeVpcs" >&2
@@ -268,9 +325,32 @@ cat > "$tmp_dir/fake-bin/terraform" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "\$*" >> "$tmp_dir/terraform-calls.log"
+if [ "\${EXPECT_AWS_IMAGE_VARS:-0}" = 1 ] && [[ "\$*" == *" destroy "* ]]; then
+  for expected in \
+    "api_image=\$EXPECTED_API_IMAGE" \
+    "redis_image=\$EXPECTED_REDIS_IMAGE" \
+    "clickhouse_image=\$EXPECTED_CLICKHOUSE_IMAGE"; do
+    if [[ "\$*" != *"-var \$expected"* ]]; then
+      echo "missing destroy image variable: \$expected" >&2
+      exit 91
+    fi
+  done
+fi
 case "\$*" in
-  *" state list"*) echo 'module.network.aws_vpc.this' ;;
-  *" show -json"*) cat "$FIXTURES/close-state.json" ;;
+  *" state list"*)
+    if [ "\${FAKE_TF_NO_STATE:-0}" = 1 ]; then
+      echo 'No state file was found!' >&2
+      exit 1
+    fi
+    echo 'module.network.aws_vpc.this'
+    ;;
+  *" show -json"*)
+    if [ "\${FAKE_TF_NO_STATE:-0}" = 1 ]; then
+      echo 'terraform show must not run after a no-state result' >&2
+      exit 92
+    fi
+    cat "$FIXTURES/close-state.json"
+    ;;
   *) ;;
 esac
 EOF
@@ -300,6 +380,158 @@ if [ ! -f "$state_marker" ]; then
   exit 1
 fi
 pass "end-to-end close retains state and leaves the lease closing, never closed"
+
+# Terraform's explicit no-state result is an empty candidate set; `show -json`
+# is invalid in that case and must not be attempted.
+env "${lease_env[@]}" "$LEASE" open no-state-case >/dev/null
+: > "$tmp_dir/terraform-calls.log"
+env "${lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  FAKE_TF_NO_STATE=1 TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$REPO_ROOT/scripts/close-env.sh" no-state-case >/dev/null
+no_state_lease="$(env "${lease_env[@]}" "$LEASE" get no-state-case)"
+if [ "$(jq -r '.status' <<< "$no_state_lease")" != closing ] || \
+   grep -Fq 'show -json' "$tmp_dir/terraform-calls.log"; then
+  echo "FAIL: no-state cleanup must skip terraform show and remain closing" >&2
+  exit 1
+fi
+pass "an explicit Terraform no-state result skips show and uses empty resources"
+
+# ECS's services-stable waiter can consume its full 40x15-second retry window,
+# so only that call receives a process timeout with room for the waiter itself.
+env "${lease_env[@]}" "$LEASE" open waiter-case >/dev/null
+jq -n '{candidates:[{
+  resource_type:"ecs:cluster",
+  id:"cluster-waiter",
+  arn:"cluster-waiter",
+  parent_id:null,
+  sources:["prior-manifest"],
+  tag_entry:null,
+  force_delete:false
+}]}' > "$tmp_dir/waiter-manifest.json"
+env "${lease_env[@]}" "$LEASE" set-manifest waiter-case "$tmp_dir/waiter-manifest.json" >/dev/null
+env "${lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  FAKE_ECS_WAITER=1 \
+  FAKE_WAITER_TIMEOUT_LOG="$tmp_dir/waiter-timeout.log" FAKE_AWS_CALL_LOG="$tmp_dir/waiter-aws-calls.log" \
+  TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$REPO_ROOT/scripts/close-env.sh" waiter-case >/dev/null
+if [ "$(cat "$tmp_dir/waiter-timeout.log" 2>/dev/null || true)" != 660 ]; then
+  echo "FAIL: services-stable must receive an explicit timeout of at least ten minutes" >&2
+  cat "$tmp_dir/terraform-calls.log" >&2
+  cat "$tmp_dir/waiter-aws-calls.log" >&2
+  env "${lease_env[@]}" "$LEASE" get waiter-case >&2
+  exit 1
+fi
+pass "the ECS services-stable waiter receives a 660-second outer timeout"
+
+# Real-AWS cleanup fails closed before Terraform when an older or malformed
+# lease does not contain the image references required by preview validation.
+aws_lease_env=(
+  "TARGET=aws"
+  "AWS_CLI_BIN=$tmp_dir/fake-bin/aws"
+  "FAKE_S3_DIR=$tmp_dir/fake-s3"
+  "LEASE_BUCKET=test-state"
+  "CLEANUP_RETRY_DELAY_SECONDS=0"
+)
+if [ ! -e "$REPO_ROOT/envs/preview/backend.aws.hcl" ]; then
+  printf 'bucket = "test-state"\n' > "$REPO_ROOT/envs/preview/backend.aws.hcl"
+  created_backend_hcl=true
+fi
+printf '{"mode":"public"}\n' > "$tmp_dir/missing-images-manifest.json"
+env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open aws-missing-images >/dev/null
+env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
+  "$LEASE" set-manifest aws-missing-images "$tmp_dir/missing-images-manifest.json" >/dev/null
+set +e
+missing_images_out="$(env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$REPO_ROOT/scripts/close-env.sh" aws-missing-images 2>&1)"
+missing_images_rc=$?
+set -e
+if [ "$missing_images_rc" -eq 0 ] || ! grep -Fq 'lease manifest lacks required AWS image reference' <<< "$missing_images_out"; then
+  echo "FAIL: AWS cleanup must fail closed when lease image references are absent" >&2
+  exit 1
+fi
+pass "AWS cleanup fails closed with a clear error when lease images are absent"
+
+# Real-AWS destroy must reuse the exact digest-pinned image references recorded
+# before apply. Terraform validates those variables even while destroying.
+aws_images_fixture="$FIXTURES/aws-destroy-images.json"
+aws_images_env_id="$(jq -r '.env_id' "$aws_images_fixture")"
+api_image="$(jq -r '.manifest.images.api_image' "$aws_images_fixture")"
+redis_image="$(jq -r '.manifest.images.redis_image' "$aws_images_fixture")"
+clickhouse_image="$(jq -r '.manifest.images.clickhouse_image' "$aws_images_fixture")"
+aws_lease_env=(
+  "TARGET=aws"
+  "AWS_CLI_BIN=$tmp_dir/fake-bin/aws"
+  "FAKE_S3_DIR=$tmp_dir/fake-s3"
+  "LEASE_BUCKET=test-state"
+  "CLEANUP_RETRY_DELAY_SECONDS=0"
+)
+env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open "$aws_images_env_id" >/dev/null
+jq -c '.manifest' "$aws_images_fixture" > "$tmp_dir/aws-images-manifest.json"
+env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
+  "$LEASE" set-manifest "$aws_images_env_id" "$tmp_dir/aws-images-manifest.json" >/dev/null
+
+if [ ! -e "$REPO_ROOT/envs/preview/backend.aws.hcl" ]; then
+  printf 'bucket = "test-state"\n' > "$REPO_ROOT/envs/preview/backend.aws.hcl"
+  created_backend_hcl=true
+fi
+: > "$tmp_dir/terraform-calls.log"
+env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" \
+  PREVIEW_ROOT="$tmp_dir/preview" \
+  OPERATOR_CIDR=test-cidr \
+  EXPECT_AWS_IMAGE_VARS=1 \
+  EXPECTED_API_IMAGE="$api_image" \
+  EXPECTED_REDIS_IMAGE="$redis_image" \
+  EXPECTED_CLICKHOUSE_IMAGE="$clickhouse_image" \
+  TAG_REQUERY_OFFSETS=0 \
+  CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$REPO_ROOT/scripts/close-env.sh" "$aws_images_env_id" >/dev/null
+for expected in \
+  "api_image=$api_image" \
+  "redis_image=$redis_image" \
+  "clickhouse_image=$clickhouse_image"; do
+  if ! grep -Fq -- "-var $expected" "$tmp_dir/terraform-calls.log"; then
+    echo "FAIL: AWS destroy command omitted $expected" >&2
+    exit 1
+  fi
+done
+pass "AWS destroy reuses all three image references from the lease manifest"
+
+# A later scheduled tag query cannot be erased by an earlier successful query:
+# incomplete discovery must remain indeterminate and fail stage 1.
+tag_fixture="$FIXTURES/tag-requery-incomplete.json"
+tag_env_id="$(jq -r '.env_id' "$tag_fixture")"
+tag_offsets="$(jq -r '.tag_requery_offsets' "$tag_fixture")"
+tag_fail_call="$(jq -r '.fail_on_tag_call' "$tag_fixture")"
+env "${lease_env[@]}" "$LEASE" open "$tag_env_id" >/dev/null
+set +e
+tag_out="$(env "${lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  FAKE_TAG_CALLS_FILE="$tmp_dir/tag-query-count" FAKE_TAG_FAIL_ON_CALL="$tag_fail_call" \
+  TAG_REQUERY_OFFSETS="$tag_offsets" CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$REPO_ROOT/scripts/close-env.sh" "$tag_env_id" 2>&1)"
+tag_rc=$?
+set -e
+tag_lease="$(env "${lease_env[@]}" "$LEASE" get "$tag_env_id")"
+tag_expected="$(jq -c '.expected' "$tag_fixture")"
+tag_actual="$(jq -c '{
+  status,
+  candidate_id: .manifest.verification_runs[-1].results[]
+    | select(.id == "tag-inventory-incomplete")
+    | .id,
+  indeterminate: .manifest.verification_runs[-1].summary.indeterminate
+}' <<< "$tag_lease")"
+if [ "$tag_rc" -eq 0 ] || [ "$tag_actual" != "$tag_expected" ]; then
+  echo "FAIL: a failed later tag query must retain indeterminate discovery evidence" >&2
+  echo "actual:   $tag_actual (rc=$tag_rc: $tag_out)" >&2
+  echo "expected: $tag_expected" >&2
+  exit 1
+fi
+pass "a failed later tag re-query retains an indeterminate discovery candidate"
 
 # A failed apply may only close the lease generation that its successful CAS
 # open returned. A later generation belongs to a different run.

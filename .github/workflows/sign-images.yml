@@ -187,7 +187,7 @@ jobs:
 
             "$SYFT_CMD" "${image}@${digest}" -o spdx-json > "${name}-sbom.spdx.json"
 
-            trivy image --severity CRITICAL --exit-code 1 "${image}@${digest}"
+            trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1 "${image}@${digest}"
 
             if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               "${image}@${digest}" >/dev/null 2>&1; then

@@ -368,8 +368,8 @@ resource "aws_iam_policy" "task_boundary" {
 # (~13,966 stripped chars) exceeded the 10,240 inline-aggregate quota.
 # Grouped by service per PR#2 Tier 2b review F3; bootstrap/
 # policy-size-check.sh enforces both quotas in CI via `scripts/gates.sh
-# policy-size`. Statement content/conditions are unchanged from the
-# prior single deployer document except where F1/F4/F5/F6 edited them.
+# policy-size`. Later review amendments add only the documented narrow grants;
+# the remaining statement content/conditions match the prior split policy.
 
 data "aws_iam_policy_document" "deployer_state" {
   # (a) preview env terraform state + apply leases: read/write/list.
@@ -1041,6 +1041,40 @@ resource "aws_iam_policy" "deployer_elb_ecs" {
 
 
 data "aws_iam_policy_document" "deployer_data" {
+  # Read-only supply-chain verification performed before session-apply opens
+  # a lease. The auth token action does not support resource-level scoping.
+  statement {
+    #checkov:skip=CKV_AWS_111:ecr:GetAuthorizationToken does not support resource-level scoping
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "EcrVerificationAuth"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcrVerificationPull"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = local.ecr_repo_arns
+  }
+
+  statement {
+    sid       = "SigningPublicKeyRead"
+    effect    = "Allow"
+    actions   = ["kms:GetPublicKey"]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:${var.region}:${data.aws_caller_identity.current.account_id}:key/*"]
+
+    condition {
+      test     = "ForAnyValue:StringEquals"
+      variable = "kms:ResourceAliases"
+      values   = [local.kms_signing_alias]
+    }
+  }
+
   # --- (f) CloudWatch log groups, /orbit/<env_id>/<name>. ---
   statement {
     #checkov:skip=CKV_AWS_111:table-confirmed * only (DescribeLogGroups) (iam-condition-keys.md CloudWatch Logs section, A3)

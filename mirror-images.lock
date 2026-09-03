@@ -3,6 +3,7 @@
 # selected mode's entries are digest-pinned.
 placeholder_repository: orbit-infra-79s5rw/placeholder
 placeholder_digest: <pending real-AWS push (P0-3b)>
+placeholder_source_sha: <pending real-AWS push (P0-3b)>
 redis_source: redis:7-alpine
 redis_digest: sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
 redis_repository: orbit-infra-79s5rw/mirror/redis

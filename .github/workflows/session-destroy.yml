@@ -25,6 +25,9 @@ permissions:
 concurrency:
   group: preview-${{ inputs.env_id }}
   cancel-in-progress: false
+  # queue: max keeps every pending dispatch (GitHub changelog 2026-05-07);
+  # it requires cancel-in-progress: false. The lease CAS remains the
+  # correctness barrier (ADR 0006).
   queue: max
 
 jobs:

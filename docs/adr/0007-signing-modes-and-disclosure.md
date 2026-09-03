@@ -24,7 +24,20 @@ upstream archive hash, the repository-owned build-input hash, and the build
 date; it does not claim CI build
 provenance. No predicate carries a hostname or account identifier. Cosign's
 version is pinned in `tools.lock` and checked before signing. Each SBOM, scan,
-signature, and attestation is handled independently on a re-run.
+signature, and attestation is handled independently on a re-run. Every Trivy
+scan explicitly selects the deployed `linux/arm64` image: the action-based
+mirror scans set `TRIVY_PLATFORM=linux/arm64`, and the direct CLI scan uses
+`--platform linux/arm64`.
+
+Before `session-apply.yml` opens a lease, it exports the KMS public key and
+verifies all three selected image signatures without contacting Rekor. It then
+requires attestations whose predicates match the selected lock-file inputs:
+the upstream commit and build-input hashes for locally built images, the
+placeholder source commit, and the mirrored source reference and digest. A
+missing signature, missing attestation, or predicate mismatch fails before any
+lease or preview resource is created. The deployer role grants only the ECR
+pull operations and alias-scoped KMS public-key read needed by this gate;
+signing remains exclusive to the publisher role.
 
 ## Consequences
 
@@ -32,6 +45,8 @@ signature, and attestation is handled independently on a re-run.
   their private-ECR references.
 - Images are verified through the exported KMS public key, not a public Rekor
   lookup.
+- Deployment accepts only signed, attested images whose provenance matches the
+  lock files, and scans the same `linux/arm64` platform that ECS runs.
 - The KMS key is a real, small, standing cost accepted as the price of not disclosing account/repo details.
 
 ## Alternatives considered

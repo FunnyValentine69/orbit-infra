@@ -42,6 +42,7 @@ AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 TAG_REQUERY_OFFSETS="${TAG_REQUERY_OFFSETS:-0 2 4 8 16 30}"
 CLEANUP_VERIFY_DEADLINE_SECONDS="${CLEANUP_VERIFY_DEADLINE_SECONDS:-300}"
 CLEANUP_VERIFY_BACKOFF="${CLEANUP_VERIFY_BACKOFF:-2 4 8 16 30}"
+destroy_image_vars=()
 export LEASE_BUCKET TARGET
 
 case "$TARGET" in
@@ -110,7 +111,8 @@ tf_destroy() {
       -auto-approve -var target="$TARGET" -var env_id="$ENV_ID" -var operator_cidr="$OPERATOR_CIDR" -var region="$AWS_REGION"
   else
     terraform -chdir="$PREVIEW_ROOT" destroy \
-      -auto-approve -var target="$TARGET" -var env_id="$ENV_ID" -var operator_cidr="$OPERATOR_CIDR" -var region="$AWS_REGION"
+      -auto-approve -var target="$TARGET" -var env_id="$ENV_ID" -var operator_cidr="$OPERATOR_CIDR" -var region="$AWS_REGION" \
+      "${destroy_image_vars[@]}"
   fi
 }
 
@@ -316,17 +318,37 @@ claim_args=(begin-cleanup "$ENV_ID")
 [ "$FORCE_RETRY" != true ] || claim_args+=(--force-retry)
 "$LEASE_SH" "${claim_args[@]}" >/dev/null
 
+if [ "$TARGET" = aws ]; then
+  for variable in api_image redis_image clickhouse_image; do
+    if ! image_ref="$(jq -er --arg variable "$variable" \
+      '.images[$variable] | select(type == "string" and length > 0)' <<< "$existing_manifest")"; then
+      fail "lease manifest lacks required AWS image reference: $variable"
+    fi
+    destroy_image_vars+=(-var "$variable=$image_ref")
+  done
+fi
+
 tf_init || fail "terraform init failed"
 # Both reads fail closed: a backend or lock error must not shrink the
 # candidate set (an empty state is a successful read that lists nothing).
 state_err="$tmp_dir/state-read.err"
-state_list="$(tf_raw state list 2>"$state_err")" \
-  || { grep -q 'No state file was found' "$state_err" && state_list=""; } \
-  || fail "terraform state list failed: $(cat "$state_err")"
-state_json="$(tf_raw show -json 2>"$state_err")" \
-  || fail "terraform show -json failed: $(cat "$state_err")"
-resource_values_json="$(jq -c '[(.values.root_module? // {}) | recurse(.child_modules[]?) | .resources[]?]' <<< "$state_json")" \
-  || fail "terraform show -json returned malformed JSON"
+set +e
+state_list="$(tf_raw state list 2>"$state_err")"
+state_list_rc=$?
+set -e
+if [ "$state_list_rc" -ne 0 ]; then
+  if grep -q 'No state file was found' "$state_err"; then
+    state_list=""
+    resource_values_json='[]'
+  else
+    fail "terraform state list failed: $(cat "$state_err")"
+  fi
+else
+  state_json="$(tf_raw show -json 2>"$state_err")" \
+    || fail "terraform show -json failed: $(cat "$state_err")"
+  resource_values_json="$(jq -c '[(.values.root_module? // {}) | recurse(.child_modules[]?) | .resources[]?]' <<< "$state_json")" \
+    || fail "terraform show -json returned malformed JSON"
+fi
 state_candidates > "$tmp_dir/state-candidates.json"
 legacy_manifest_candidates > "$tmp_dir/legacy-candidates.json"
 printf '%s\n' "$(jq -c '.candidates // []' <<< "$existing_manifest")" > "$tmp_dir/prior-candidates.json"
@@ -394,7 +416,8 @@ while IFS=$'\t' read -r cluster service; do
       echo "scaling $service to 0"
       aws_cmd ecs update-service --cluster "$cluster" --service "$service" --desired-count 0 >/dev/null \
         || fail "failed to scale $service to 0"
-      aws_cmd ecs wait services-stable --cluster "$cluster" --services "$service" \
+      AWS_OUTER_TIMEOUT_SECONDS=660 \
+        aws_cmd ecs wait services-stable --cluster "$cluster" --services "$service" \
         || fail "$service did not reach stable at 0"
       ;;
     MISSING|None|INACTIVE)
@@ -465,9 +488,9 @@ done < <(jq -r '.task_definition_arns[]?' <<< "$manifest_json")
 
 collect_tag_inventory
 discovery_candidates='[]'
-if [ "$pre_tag_status" != ok ] && \
-   ! jq -e 'any(.[]; .status == "ok")' "$tmp_dir/tag-observations.json" >/dev/null; then
-  discovery_candidates='[{"resource_type":"unsupported","id":"tag-inventory-discovery","arn":null,"parent_id":null,"sources":["tag-discovery"],"tag_entry":null,"force_delete":false}]'
+if ! jq -e 'length > 0 and all(.[]; .status == "ok")' \
+  "$tmp_dir/tag-observations.json" >/dev/null; then
+  discovery_candidates='[{"resource_type":"unsupported","id":"tag-inventory-incomplete","arn":null,"parent_id":null,"sources":["tag-discovery"],"tag_entry":null,"force_delete":false}]'
 fi
 printf '%s\n' "$candidates" > "$tmp_dir/pre-final-candidates.json"
 printf '%s\n' "$discovery_candidates" > "$tmp_dir/discovery-candidates.json"
@@ -482,7 +505,12 @@ manifest_json="$(jq -c \
     .candidates = $candidates
     | .tagging_inventory = ((.tagging_inventory // []) + $entries | unique_by(.ResourceARN))
     | .tag_inventory_observations = ((.tag_inventory_observations // []) + $observations)
-    | .tagging_inventory_status = (if any($observations[]; .status == "ok") then "ok" else .tagging_inventory_status end)' <<< "$manifest_json")"
+    | .tagging_inventory_status = (
+        if ($observations | length) > 0 and all($observations[]; .status == "ok")
+        then "ok"
+        else "indeterminate"
+        end
+      )' <<< "$manifest_json")"
 persist_manifest
 
 printf '%s\n' "$candidates" > "$tmp_dir/final-candidates.json"

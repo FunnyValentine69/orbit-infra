@@ -140,6 +140,12 @@ managed-policy quota — grouped by service, statement content unchanged.
 every planned policy document against both quotas; it runs as the
 `policy-size` gate in `scripts/gates.sh`.
 
+Amendment 2026-09-03: the `-data` policy also grants the deployer the minimum
+read-only supply-chain permissions required before apply: private-ECR token and
+pull operations for the project repositories, plus `kms:GetPublicKey` limited
+to the signing-key alias. Image push and KMS signing permissions remain only on
+the publisher role.
+
 Also in this amendment: the F4 `AuthorizeSecurityGroupIngress`/
 `AuthorizeSecurityGroupEgress`/`Revoke*` statements are now allowed via
 two paths — an `aws:RequestTag/Project`-conditioned path scoped to the

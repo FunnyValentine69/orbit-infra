@@ -69,7 +69,10 @@ through private ECR so the stack can be applied without the private upstream.
 locked `orbit-api` and `orbit-clickhouse` images plus mirrored Redis. `public`
 selects the locked private-ECR placeholder plus mirrored Redis and ClickHouse.
 The workflow opens no lease until every repository name matches
-`bootstrap/ecr.tf` and every selected lock entry is digest-pinned.
+`bootstrap/ecr.tf`, every selected lock entry is digest-pinned, and every image
+has a valid signature and lock-matching attestation. The opened lease records
+the mode and resolved image references so AWS cleanup can load the same
+Terraform configuration for destroy.
 
 ## Repository layout
 

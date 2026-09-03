@@ -100,6 +100,26 @@ grep -Fx 'region       = "us-east-1"' "$backend_hcl" >/dev/null
 grep -Fx 'use_lockfile = true' "$backend_hcl" >/dev/null
 grep -Fx 'encrypt      = true' "$backend_hcl" >/dev/null
 
+deployer_data_policy="$(
+  sed -n '/data "aws_iam_policy_document" "deployer_data"/,/resource "aws_iam_policy" "deployer_data"/p' \
+    "$REPO_ROOT/bootstrap/roles.tf"
+)"
+for required in \
+  '"ecr:GetAuthorizationToken"' \
+  '"ecr:BatchGetImage"' \
+  '"ecr:GetDownloadUrlForLayer"' \
+  '"kms:GetPublicKey"'; do
+  if ! grep -Fq "$required" <<< "$deployer_data_policy"; then
+    echo "deployer role is missing image-verification permission: $required" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'aws ecr get-login-password' "$REPO_ROOT/.github/workflows/session-apply.yml"; then
+  echo "session-apply must authenticate cosign to private ECR before verification" >&2
+  exit 1
+fi
+
 run_dir="$tmp_dir/preview-run"
 make -C "$REPO_ROOT" render-localstack-backend \
   TARGET=localstack ENV_ID=contract PREVIEW_ROOT="$run_dir" >/dev/null

@@ -6,8 +6,9 @@
 # workflow cannot run from any other ref, matching that trust policy.
 #
 # Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov
-# (scripts/gates.sh) -> lease open (CAS) -> plan/apply -> negative
-# ingress test. Static-gate failures never create a lease or resources.
+# (scripts/gates.sh) -> image signature/attestation verification -> lease
+# open (CAS) and manifest record -> plan/apply -> negative ingress test.
+# Gate failures before the CAS never create a lease or resources.
 # Any failure after the lease exists runs scripts/close-env.sh (stage 1
 # of close) so a crashed apply never orphans billable resources.
 #
@@ -39,6 +40,9 @@ permissions:
 concurrency:
   group: preview-${{ inputs.env_id }}
   cancel-in-progress: false
+  # queue: max keeps every pending dispatch (GitHub changelog 2026-05-07);
+  # it requires cancel-in-progress: false. The lease CAS remains the
+  # correctness barrier (ADR 0006).
   queue: max
 
 jobs:
@@ -178,8 +182,14 @@ jobs:
             ' upstream.lock
           }
 
+          upstream_sha="$(lock_scalar upstream_sha upstream.lock)"
+          upstream_archive_sha256="$(lock_scalar upstream_archive_sha256 upstream.lock)"
+          repo_build_inputs_sha256="$(lock_scalar repo_build_inputs_sha256 upstream.lock)"
+          placeholder_source_sha="$(lock_scalar placeholder_source_sha mirror-images.lock)"
+          redis_source="$(lock_scalar redis_source mirror-images.lock)"
           redis_repository="$(lock_scalar redis_repository mirror-images.lock)"
           redis_digest="$(lock_scalar redis_digest mirror-images.lock)"
+          clickhouse_source="$(lock_scalar clickhouse_source mirror-images.lock)"
           case "$MODE" in
             upstream)
               expected_api_repository="orbit-infra-79s5rw/orbit-api"
@@ -188,6 +198,12 @@ jobs:
               api_digest="$(upstream_digest "$api_repository")"
               clickhouse_repository="$expected_clickhouse_repository"
               clickhouse_digest="$(upstream_digest "$clickhouse_repository")"
+              if [[ ! "$upstream_sha" =~ ^[0-9a-f]{40}$ ]] || \
+                 [[ ! "$upstream_archive_sha256" =~ ^[0-9a-f]{64}$ ]] || \
+                 [[ ! "$repo_build_inputs_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+                echo "upstream.lock contains invalid attestation inputs" >&2
+                exit 1
+              fi
               ;;
             public)
               expected_api_repository="orbit-infra-79s5rw/placeholder"
@@ -196,6 +212,10 @@ jobs:
               api_digest="$(lock_scalar placeholder_digest mirror-images.lock)"
               clickhouse_repository="$(lock_scalar clickhouse_repository mirror-images.lock)"
               clickhouse_digest="$(lock_scalar clickhouse_digest mirror-images.lock)"
+              if [[ ! "$placeholder_source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "mirror-images.lock contains an invalid placeholder source commit" >&2
+                exit 1
+              fi
               ;;
             *)
               echo "unsupported deployment mode: $MODE" >&2
@@ -207,6 +227,11 @@ jobs:
              [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
              [[ "$clickhouse_repository" != "$expected_clickhouse_repository" ]]; then
             echo "selected image repositories do not match bootstrap/ecr.tf" >&2
+            exit 1
+          fi
+          if [[ "$redis_source" != "redis:7-alpine" ]] || \
+             [[ "$clickhouse_source" != "clickhouse/clickhouse-server:24.3-alpine" ]]; then
+            echo "mirror-images.lock source names do not match the approved mirrors" >&2
             exit 1
           fi
           for digest in "$api_digest" "$redis_digest" "$clickhouse_digest"; do
@@ -223,7 +248,147 @@ jobs:
             echo "redis_digest=${redis_digest}"
             echo "clickhouse_repository=${clickhouse_repository}"
             echo "clickhouse_digest=${clickhouse_digest}"
+            echo "upstream_sha=${upstream_sha}"
+            echo "upstream_archive_sha256=${upstream_archive_sha256}"
+            echo "repo_build_inputs_sha256=${repo_build_inputs_sha256}"
+            echo "placeholder_source_sha=${placeholder_source_sha}"
+            echo "redis_source=${redis_source}"
+            echo "clickhouse_source=${clickhouse_source}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Read cosign version from tools.lock
+        id: cosign-version
+        run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v${{ steps.cosign-version.outputs.version }}
+
+      - name: Verify cosign version matches tools.lock
+        run: |
+          installed="$(cosign version | awk '$1 == "GitVersion:" { print $2 }')"
+          expected="v${{ steps.cosign-version.outputs.version }}"
+          if [[ "$installed" != "$expected" ]]; then
+            echo "cosign version mismatch: installed $installed, expected $expected" >&2
+            exit 1
+          fi
+
+      - name: Export KMS public key
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+        run: |
+          aws kms get-public-key --key-id "$KMS_KEY_ARN" --query PublicKey --output text \
+            | base64 --decode > "$RUNNER_TEMP/kms-public-key.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/kms-public-key.der" \
+            -out "$RUNNER_TEMP/kms-public-key.pem"
+
+      - name: Resolve private ECR registry
+        id: registry
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          echo "::add-mask::${account_id}"
+          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
+          echo "::add-mask::${registry}"
+          echo "registry=${registry}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate cosign to private ECR
+        run: |
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "${{ steps.registry.outputs.registry }}"
+
+      - name: Verify selected image signatures and attestations
+        env:
+          MODE: ${{ inputs.mode }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+          API_REPOSITORY: ${{ steps.images.outputs.api_repository }}
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_REPOSITORY: ${{ steps.images.outputs.redis_repository }}
+          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
+          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
+          UPSTREAM_SHA: ${{ steps.images.outputs.upstream_sha }}
+          UPSTREAM_ARCHIVE_SHA256: ${{ steps.images.outputs.upstream_archive_sha256 }}
+          REPO_BUILD_INPUTS_SHA256: ${{ steps.images.outputs.repo_build_inputs_sha256 }}
+          PLACEHOLDER_SOURCE_SHA: ${{ steps.images.outputs.placeholder_source_sha }}
+          REDIS_SOURCE: ${{ steps.images.outputs.redis_source }}
+          CLICKHOUSE_SOURCE: ${{ steps.images.outputs.clickhouse_source }}
+        run: |
+          verify_signature() {
+            local label="$1"
+            local image="$2"
+            if ! cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog "$image" >/dev/null; then
+              echo "$label has no valid KMS signature" >&2
+              return 1
+            fi
+          }
+          verify_upstream_attestation() {
+            local label="$1"
+            local image="$2"
+            local attestations
+            if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type custom "$image" 2>/dev/null)" || \
+               ! jq -e --arg upstream_sha "$UPSTREAM_SHA" \
+                 --arg upstream_archive_sha256 "$UPSTREAM_ARCHIVE_SHA256" \
+                 --arg repo_build_inputs_sha256 "$REPO_BUILD_INPUTS_SHA256" '
+                   any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                     | $predicate.upstream_sha == $upstream_sha
+                     and $predicate.upstream_archive_sha256 == $upstream_archive_sha256
+                     and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)
+                 ' <<< "$attestations" >/dev/null; then
+              echo "$label has no custom attestation matching upstream.lock" >&2
+              return 1
+            fi
+          }
+          verify_placeholder_attestation() {
+            local image="$1"
+            local attestations
+            if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type custom "$image" 2>/dev/null)" || \
+               ! jq -e --arg source_sha "$PLACEHOLDER_SOURCE_SHA" '
+                   any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
+                 ' <<< "$attestations" >/dev/null; then
+              echo "api_image has no custom attestation matching mirror-images.lock" >&2
+              return 1
+            fi
+          }
+          verify_mirror_attestation() {
+            local label="$1"
+            local image="$2"
+            local source_ref="$3"
+            local source_digest="$4"
+            local attestations
+            if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+              "$image" 2>/dev/null)" || \
+               ! jq -e --arg source_ref "$source_ref" --arg source_digest "$source_digest" '
+                   any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                     | $predicate.source_ref == $source_ref
+                     and $predicate.source_digest == $source_digest) catch false)
+                 ' <<< "$attestations" >/dev/null; then
+              echo "$label has no mirror attestation matching mirror-images.lock" >&2
+              return 1
+            fi
+          }
+
+          api_image="${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}"
+          redis_image="${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}"
+          clickhouse_image="${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
+          verify_signature api_image "$api_image"
+          verify_signature redis_image "$redis_image"
+          verify_signature clickhouse_image "$clickhouse_image"
+          verify_mirror_attestation redis_image "$redis_image" "$REDIS_SOURCE" "$REDIS_DIGEST"
+          case "$MODE" in
+            upstream)
+              verify_upstream_attestation api_image "$api_image"
+              verify_upstream_attestation clickhouse_image "$clickhouse_image"
+              ;;
+            public)
+              verify_placeholder_attestation "$api_image"
+              verify_mirror_attestation clickhouse_image "$clickhouse_image" "$CLICKHOUSE_SOURCE" "$CLICKHOUSE_DIGEST"
+              ;;
+          esac
 
       - name: Open lease
         id: lease-open
@@ -242,15 +407,28 @@ jobs:
             echo "generation=${generation}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Record deployment mode in lease
+      - name: Record deployment mode and images in lease
         env:
           ENV_ID: ${{ inputs.env_id }}
           MODE: ${{ inputs.mode }}
           TARGET: aws
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+          API_REPOSITORY: ${{ steps.images.outputs.api_repository }}
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_REPOSITORY: ${{ steps.images.outputs.redis_repository }}
+          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
+          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
         run: |
           manifest_file="$(mktemp)"
           trap 'rm -f "$manifest_file"' EXIT
-          jq -n --arg mode "$MODE" '{mode:$mode}' > "$manifest_file"
+          jq -n \
+            --arg mode "$MODE" \
+            --arg api_image "${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}" \
+            --arg redis_image "${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}" \
+            --arg clickhouse_image "${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}" \
+            '{mode:$mode,images:{api_image:$api_image,redis_image:$redis_image,clickhouse_image:$clickhouse_image}}' \
+            > "$manifest_file"
           scripts/lease.sh set-manifest "$ENV_ID" "$manifest_file" >/dev/null
 
       - name: Terraform plan (AWS)
@@ -263,13 +441,11 @@ jobs:
           REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
           CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
           CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
+          REGISTRY: ${{ steps.registry.outputs.registry }}
         run: |
-          account_id="$(aws sts get-caller-identity --query Account --output text)"
-          echo "::add-mask::${account_id}"
-          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
-          export TF_VAR_api_image="${registry}/${API_REPOSITORY}@${API_DIGEST}"
-          export TF_VAR_redis_image="${registry}/${REDIS_REPOSITORY}@${REDIS_DIGEST}"
-          export TF_VAR_clickhouse_image="${registry}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
+          export TF_VAR_api_image="${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}"
+          export TF_VAR_redis_image="${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}"
+          export TF_VAR_clickhouse_image="${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
           make plan TARGET=aws ENV_ID="$ENV_ID"
 
       - name: Terraform apply (AWS)

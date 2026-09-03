@@ -85,6 +85,11 @@ also conditioned on the `Project` tag (`var.project_tag`, default
 `orbit-infra`), matching the authoritative `var.project_tag` merged into
 `default_tags.Project` by `envs/preview/main.tf`.
 
+The deployer also has read-only access to pull the project's ECR artifacts and
+read the signing key's public half. `session-apply.yml` uses those grants to
+verify selected image signatures and attestations before it opens a lease;
+only the publisher role can sign or push images.
+
 ## After apply
 
 Publish the three role ARNs as GitHub repository secrets (not variables --
@@ -100,8 +105,10 @@ AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw km
 gh workflow run oidc-smoke.yml
 ```
 
-`AWS_KMS_SIGNING_KEY_ARN` is consumed by `.github/workflows/mirror-images.yml` to
-KMS-sign the redis/clickhouse mirror images (`--tlog-upload=false`, ADR 0007).
+`AWS_KMS_SIGNING_KEY_ARN` is consumed by `.github/workflows/mirror-images.yml`
+and `.github/workflows/sign-images.yml` for KMS signing
+(`--tlog-upload=false`, ADR 0007). `session-apply.yml` uses the identifier only
+to export the public key before verifying the selected images.
 
 ## Gates / size
 

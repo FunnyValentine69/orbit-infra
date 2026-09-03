@@ -63,6 +63,7 @@ jobs:
         run: |
           placeholder_repository="$(awk '$1 == "placeholder_repository:" { print $2 }' mirror-images.lock)"
           placeholder_digest="$(awk '$1 == "placeholder_digest:" { print $2 }' mirror-images.lock)"
+          placeholder_source_sha="$(awk '$1 == "placeholder_source_sha:" { print $2 }' mirror-images.lock)"
           redis_source="$(awk '$1 == "redis_source:" { print $2 }' mirror-images.lock)"
           redis_digest="$(awk '$1 == "redis_digest:" { print $2 }' mirror-images.lock)"
           redis_repository="$(awk '$1 == "redis_repository:" { print $2 }' mirror-images.lock)"
@@ -73,6 +74,16 @@ jobs:
           if [[ ! "$redis_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || \
              [[ ! "$clickhouse_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "mirror-images.lock contains an invalid digest" >&2
+            exit 1
+          fi
+          if [[ "$placeholder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            if [[ ! "$placeholder_source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "mirror-images.lock contains an invalid placeholder source commit" >&2
+              exit 1
+            fi
+          elif [[ "$placeholder_digest" != "<pending"* ]] || \
+               [[ "$placeholder_source_sha" != "<pending"* ]]; then
+            echo "mirror-images.lock contains invalid pending placeholder metadata" >&2
             exit 1
           fi
           if [[ "$redis_source" != "redis:7-alpine" ]] || \
@@ -90,6 +101,7 @@ jobs:
           {
             echo "placeholder_repository=${placeholder_repository}"
             echo "placeholder_digest=${placeholder_digest}"
+            echo "placeholder_source_sha=${placeholder_source_sha}"
             echo "redis_source=${redis_source}"
             echo "redis_digest=${redis_digest}"
             echo "redis_repository=${redis_repository}"
@@ -175,6 +187,8 @@ jobs:
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Trivy scan placeholder
+        env:
+          TRIVY_PLATFORM: linux/arm64
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}
@@ -309,6 +323,8 @@ jobs:
             "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}"
 
       - name: Trivy scan redis mirror
+        env:
+          TRIVY_PLATFORM: linux/arm64
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}
@@ -402,6 +418,8 @@ jobs:
             "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}"
 
       - name: Trivy scan clickhouse mirror
+        env:
+          TRIVY_PLATFORM: linux/arm64
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}

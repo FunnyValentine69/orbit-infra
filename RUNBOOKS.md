@@ -69,7 +69,12 @@ Redis digest from `mirror-images.lock`; `public` reads the placeholder, Redis,
 and ClickHouse digests from `mirror-images.lock`. It combines the selected set
 with the current account's private ECR registry. A missing digest, a tag rather
 than a digest, or a repository name that differs from `bootstrap/ecr.tf` fails
-before the lease is opened. The mode is stored in the lease manifest.
+before the lease is opened. Before opening the lease, the workflow also
+verifies every selected signature through the exported KMS public key and
+requires attestations whose predicates match the corresponding lock entries.
+The mode and all three resolved image references are stored in the lease
+manifest; AWS close reuses those exact references for Terraform destroy and
+fails closed if any are missing.
 
 After apply, the workflow runs `aws ecs wait services-stable`, describes every
 enabled service, and requires one completed deployment per service whose task
@@ -101,6 +106,13 @@ persisted under `manifest.verification_runs`. Confirmed-gone tag results are
 also recorded under `manifest.stale_tag_entries`. A `live` or `indeterminate`
 result at the deadline fails stage 1. Stage 1 retains Terraform state and never
 sets `closed`; only the Phase 5 sweeper may prune state versions and do that.
+
+GitHub concurrency serializes running jobs for one `env_id`, but its default
+behavior retains only one pending job: a new pending dispatch replaces an older
+one in the same `preview-<env_id>` group. The lease CAS and generation checks,
+not the workflow queue, protect lifecycle state. After overlapping dispatches,
+inspect the Actions history; if a destroy was cancelled while pending,
+re-dispatch `session-destroy` for that `env_id`.
 
 Check the current state first:
 
@@ -166,7 +178,8 @@ require an explicit localhost `AWS_ENDPOINT_URL`, test credentials,
 `AWS_EC2_METADATA_DISABLED=true`, and an unset `AWS_PROFILE`; prefer the
 Makefile targets, which establish that contract. The shared AWS wrapper adds
 connect/read limits and a 30-second outer process-group timeout to every cleanup
-and lease AWS CLI call.
+and lease AWS CLI call except `ecs wait services-stable`, which gets 660 seconds
+for the AWS CLI's ten-minute service-stability window.
 
 ## Credential rotation
 
