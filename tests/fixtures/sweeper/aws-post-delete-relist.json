@@ -1,0 +1,25 @@
+{
+  "authored": "post-delete S3 re-list still returns a retained state version",
+  "env_id": "aws-relist",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/fixture-task:9",
+  "describe": {
+    "rc": 254,
+    "stdout": "",
+    "stderr": "An error occurred (ClientException) when calling the DescribeTaskDefinition operation: Unable to describe task definition.\n"
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/aws-relist.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ],
+  "post_delete_state_versions": [
+    {
+      "Key": "envs/preview/aws-relist.tfstate",
+      "VersionId": "version-after-delete",
+      "type": "version"
+    }
+  ]
+}

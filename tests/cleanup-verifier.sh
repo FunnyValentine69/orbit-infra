@@ -6,6 +6,7 @@ FIXTURES="$REPO_ROOT/tests/fixtures/cleanup"
 VERIFIER="$REPO_ROOT/scripts/cleanup-verifier.sh"
 AWS_WRAPPER="$REPO_ROOT/scripts/aws-cli.sh"
 LEASE="$REPO_ROOT/scripts/lease.sh"
+CLOSE_ENV="${CLOSE_ENV:-$REPO_ROOT/scripts/close-env.sh}"
 
 tmp_dir="$(mktemp -d)"
 created_backend_hcl=false
@@ -307,7 +308,10 @@ lease_env=(
   "AWS_DEFAULT_REGION=test-region"
   "AWS_EC2_METADATA_DISABLED=true"
   "AWS_CLI_BIN=$tmp_dir/fake-bin/aws"
+  "AWS_CLI_SH=$AWS_WRAPPER"
+  "CLEANUP_VERIFIER_SH=$VERIFIER"
   "FAKE_S3_DIR=$tmp_dir/fake-s3"
+  "LEASE_SH=$LEASE"
   "LEASE_BUCKET=test-state"
   "CLEANUP_RETRY_DELAY_SECONDS=0"
 )
@@ -423,7 +427,7 @@ env "${lease_env[@]}" \
   OPERATOR_CIDR=test-cidr \
   TAG_REQUERY_OFFSETS=0 \
   CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-  "$REPO_ROOT/scripts/close-env.sh" close-case >/dev/null
+  "$CLOSE_ENV" close-case >/dev/null
 closed_lease="$(env "${lease_env[@]}" "$LEASE" get close-case)"
 close_expected="$(jq -c '.expected' "$FIXTURES/close-expected.json")"
 close_actual="$(jq -c '{status,error,cleanup_attempt,live:.manifest.verification_runs[-1].summary.live,indeterminate:.manifest.verification_runs[-1].summary.indeterminate,pending:.manifest.verification_runs[-1].summary.pending}' <<< "$closed_lease")"
@@ -437,6 +441,13 @@ if [ ! -f "$state_marker" ]; then
   echo "FAIL: stage 1 removed retained state evidence" >&2
   exit 1
 fi
+if ! jq -e '
+    .manifest.verification_runs[-1]
+    | .passed == ([.results[] | select(.outcome == "live" or .outcome == "indeterminate")] | length == 0)
+  ' <<< "$closed_lease" >/dev/null; then
+  echo "FAIL: persisted verification passed must equal the recomputed live/indeterminate rule" >&2
+  exit 1
+fi
 pass "end-to-end close retains state and leaves the lease closing, never closed"
 
 # Terraform's explicit no-state result is an empty candidate set; `show -json`
@@ -446,7 +457,7 @@ env "${lease_env[@]}" "$LEASE" open no-state-case >/dev/null
 env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
   FAKE_TF_NO_STATE=1 TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-  "$REPO_ROOT/scripts/close-env.sh" no-state-case >/dev/null
+  "$CLOSE_ENV" no-state-case >/dev/null
 no_state_lease="$(env "${lease_env[@]}" "$LEASE" get no-state-case)"
 if [ "$(jq -r '.status' <<< "$no_state_lease")" != closing ] || \
    grep -Fq 'show -json' "$tmp_dir/terraform-calls.log"; then
@@ -473,7 +484,7 @@ env "${lease_env[@]}" \
   FAKE_ECS_WAITER=1 \
   FAKE_WAITER_TIMEOUT_LOG="$tmp_dir/waiter-timeout.log" FAKE_AWS_CALL_LOG="$tmp_dir/waiter-aws-calls.log" \
   TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-  "$REPO_ROOT/scripts/close-env.sh" waiter-case >/dev/null
+  "$CLOSE_ENV" waiter-case >/dev/null
 if [ "$(cat "$tmp_dir/waiter-timeout.log" 2>/dev/null || true)" != 660 ]; then
   echo "FAIL: services-stable must receive an explicit timeout of at least ten minutes" >&2
   cat "$tmp_dir/terraform-calls.log" >&2
@@ -510,7 +521,7 @@ delete_out="$(env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
   FAKE_TASK_DEFINITION_DELETE_FIXTURE="$delete_fixture" \
   TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-  "$REPO_ROOT/scripts/close-env.sh" "$delete_env_id" 2>&1)"
+  "$CLOSE_ENV" "$delete_env_id" 2>&1)"
 delete_rc=$?
 set -e
 delete_lease="$(env "${lease_env[@]}" "$LEASE" get "$delete_env_id")"
@@ -537,7 +548,10 @@ run_delete_fixture_case "$FIXTURES/delete-task-definitions-malformed.json" \
 aws_lease_env=(
   "TARGET=aws"
   "AWS_CLI_BIN=$tmp_dir/fake-bin/aws"
+  "AWS_CLI_SH=$AWS_WRAPPER"
+  "CLEANUP_VERIFIER_SH=$VERIFIER"
   "FAKE_S3_DIR=$tmp_dir/fake-s3"
+  "LEASE_SH=$LEASE"
   "LEASE_BUCKET=test-state"
   "CLEANUP_RETRY_DELAY_SECONDS=0"
 )
@@ -553,7 +567,7 @@ set +e
 missing_images_out="$(env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
   TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-  "$REPO_ROOT/scripts/close-env.sh" aws-missing-images 2>&1)"
+  "$CLOSE_ENV" aws-missing-images 2>&1)"
 missing_images_rc=$?
 set -e
 if [ "$missing_images_rc" -eq 0 ] || ! grep -Fq 'lease manifest lacks required AWS image reference' <<< "$missing_images_out"; then
@@ -572,7 +586,10 @@ clickhouse_image="$(jq -r '.manifest.images.clickhouse_image' "$aws_images_fixtu
 aws_lease_env=(
   "TARGET=aws"
   "AWS_CLI_BIN=$tmp_dir/fake-bin/aws"
+  "AWS_CLI_SH=$AWS_WRAPPER"
+  "CLEANUP_VERIFIER_SH=$VERIFIER"
   "FAKE_S3_DIR=$tmp_dir/fake-s3"
+  "LEASE_SH=$LEASE"
   "LEASE_BUCKET=test-state"
   "CLEANUP_RETRY_DELAY_SECONDS=0"
 )
@@ -596,7 +613,7 @@ env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
   EXPECTED_CLICKHOUSE_IMAGE="$clickhouse_image" \
   TAG_REQUERY_OFFSETS=0 \
   CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-  "$REPO_ROOT/scripts/close-env.sh" "$aws_images_env_id" >/dev/null
+  "$CLOSE_ENV" "$aws_images_env_id" >/dev/null
 for expected in \
   "api_image=$api_image" \
   "redis_image=$redis_image" \
@@ -625,7 +642,7 @@ run_tag_schema_fixture_case() {
     PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
     FAKE_TAG_RESPONSE_FIXTURE="$tag_schema_fixture" FAKE_TAG_CALLS_FILE="$tag_schema_calls" \
     TAG_REQUERY_OFFSETS="$tag_schema_offsets" CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-    "$REPO_ROOT/scripts/close-env.sh" "$tag_schema_env_id" 2>&1)"
+    "$CLOSE_ENV" "$tag_schema_env_id" 2>&1)"
   tag_schema_rc=$?
   set -e
   tag_schema_lease="$(env "${lease_env[@]}" "$LEASE" get "$tag_schema_env_id")"
@@ -684,7 +701,7 @@ run_verifier_fixture_case() {
     CLEANUP_VERIFIER_SH="$tmp_dir/fake-bin/injected-cleanup-verifier" \
     REAL_CLEANUP_VERIFIER="$VERIFIER" INJECTED_VERIFIER_FIXTURE="$verifier_fixture" \
     TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-    "$REPO_ROOT/scripts/close-env.sh" "$verifier_env_id" 2>&1)"
+    "$CLOSE_ENV" "$verifier_env_id" 2>&1)"
   verifier_rc=$?
   set -e
   verifier_lease="$(env "${lease_env[@]}" "$LEASE" get "$verifier_env_id")"
@@ -719,7 +736,7 @@ tag_out="$(env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
   FAKE_TAG_CALLS_FILE="$tmp_dir/tag-query-count" FAKE_TAG_FAIL_ON_CALL="$tag_fail_call" \
   TAG_REQUERY_OFFSETS="$tag_offsets" CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
-  "$REPO_ROOT/scripts/close-env.sh" "$tag_env_id" 2>&1)"
+  "$CLOSE_ENV" "$tag_env_id" 2>&1)"
 tag_rc=$?
 set -e
 tag_lease="$(env "${lease_env[@]}" "$LEASE" get "$tag_env_id")"
@@ -749,7 +766,7 @@ set +e
 generation_out="$(env "${lease_env[@]}" \
   ENV_ID="$generation_env_id" PATH="$tmp_dir/fake-bin:$PATH" \
   PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
-  "$REPO_ROOT/scripts/close-env.sh" --generation "$supplied_generation" "$generation_env_id" 2>&1)"
+  "$CLOSE_ENV" --generation "$supplied_generation" "$generation_env_id" 2>&1)"
 generation_rc=$?
 set -e
 generation_lease="$(env "${lease_env[@]}" "$LEASE" get "$generation_env_id")"
@@ -777,7 +794,7 @@ set +e
 owner_guard_out="$(env "${lease_env[@]}" \
   ENV_ID="$owner_guard_env_id" PATH="$tmp_dir/fake-bin:$PATH" \
   PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
-  "$REPO_ROOT/scripts/close-env.sh" --generation 1 --owner run-owner-b \
+  "$CLOSE_ENV" --generation 1 --owner run-owner-b \
   "$owner_guard_env_id" 2>&1)"
 owner_guard_rc=$?
 set -e
@@ -812,7 +829,7 @@ pass "a lost compare-and-swap race exits 3 without mutating the lease"
 set +e
 read_err_out="$(env "${lease_env[@]}" FAKE_S3_FAIL=1 \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
-  "$REPO_ROOT/scripts/close-env.sh" read-error-case 2>&1)"
+  "$CLOSE_ENV" read-error-case 2>&1)"
 read_err_rc=$?
 set -e
 if [ "$read_err_rc" -ne 2 ] || ! grep -q 'could not read the lease' <<< "$read_err_out"; then

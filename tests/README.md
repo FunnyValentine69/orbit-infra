@@ -64,11 +64,14 @@ bash tests/sweeper.sh
 The suite reuses the repository AWS wrapper with a fake AWS CLI and a fake
 versioned S3 lease/state store. It covers every discovery class and age
 boundary, invalid inventory IDs, fresh-read Stage 1 selection, retry-budget
-refusal, exact AWS deleted `ClientException`, paginated/batched state-version
-and delete-marker removal,
-`DELETE_IN_PROGRESS`, malformed describe/candidate refusal, the LocalStack
-allowance, partial deletion, a lease change between delete batches,
-closing-to-closed CAS loss, and ETag-conditional prune.
+and manual-intervention refusal, exact AWS deleted `ClientException` versus
+other non-zero describe errors, paginated/batched state-version and
+delete-marker removal, `DELETE_IN_PROGRESS`, malformed describe/candidate
+refusal, target-scoped LocalStack allowances and missing-allowance refusal,
+Stage-1 `passed:false` refusal, zero-exit `delete-objects` errors, post-delete
+re-list refusal, partial deletion, a lease change between delete batches,
+closing-to-closed CAS loss, prune-time If-Match loss, and ETag-conditional
+prune. The suite currently reports 21 cases.
 
 Fixture provenance:
 
@@ -82,6 +85,12 @@ Fixture provenance:
 - `localstack-inactive-allowance.json` — `authored` Stage 2 response paired
   with the Stage 1 allowance recorded from LocalStack 2026.8.1; the
   orchestrator replaces it only from a sanitized in-job recording.
+- `aws-clientexception-mismatch.json`,
+  `aws-inactive-with-localstack-allowance.json`,
+  `localstack-inactive-no-allowance.json`, `aws-verification-failed.json`,
+  `delete-objects-errors.json`, and `aws-post-delete-relist.json` — `authored`
+  fail-closed branch contracts; replace only from sanitized backend recordings
+  that preserve the same condition.
 
 ## Phase 4 live concurrency
 

@@ -122,9 +122,11 @@ gh run list --workflow session-apply.yml --branch main --event workflow_dispatch
    three image references. The owner and initial manifest are part of the same
    CAS PUT that created the generation. Use the ALB URL from the run summary
    for the acceptance commands below. For `TARGET=localstack`, the same job
-   always performs owner-bound Stage 1 followed by in-job Stage 2, so its
-   terminal lease is `closed` with `manifest.stage2_runs[-1].in_job=true` on
-   that job's fresh emulator and is not observable from a later runner.
+   always performs owner-bound Stage 1 followed by in-job Stage 2; when every
+   recorded task definition confirms deletion the terminal lease is `closed`
+   with `manifest.stage2_runs[-1].in_job=true`, and a still-pending definition
+   leaves it `closing`. Either way the lease lives on that job's fresh
+   emulator and is not observable from a later runner.
 
 ```
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
@@ -136,8 +138,10 @@ jq -e '.status == "open" and (.owner | type) == "string"
 ```
 
 Executed: the apply/acceptance/Stage-1 portion is LOCALSTACK-VERIFIED in CI
-2026-09-03 from the recorded Phase 4 run. The new same-job Stage 2 is CODE-ONLY
-until P0-3b; promote it after merge with `gh workflow run session-apply.yml
+2026-09-03 from the recorded Phase 4 run. The same-job Stage 2 is
+LOCALSTACK-VERIFIED locally 2026-09-03 (env sw1 reached `closed` with its state
+versions removed) and CODE-ONLY in CI until the dispatch after merge; promote it
+with `gh workflow run session-apply.yml
 --ref main -f env_id=sw1 -f target=localstack -f mode=public`.
 
 ## End session

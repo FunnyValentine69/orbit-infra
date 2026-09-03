@@ -3,8 +3,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURES="$REPO_ROOT/tests/fixtures/sweeper"
-SWEEPER="$REPO_ROOT/scripts/sweep.sh"
-LEASE="$REPO_ROOT/scripts/lease.sh"
+SWEEPER="${SWEEPER:-$REPO_ROOT/scripts/sweep.sh}"
+LEASE="${LEASE:-$REPO_ROOT/scripts/lease.sh}"
 AWS_WRAPPER="$REPO_ROOT/scripts/aws-cli.sh"
 
 tmp_dir="$(mktemp -d)"
@@ -112,8 +112,14 @@ case "$service $operation" in
       echo 'An error occurred (NoSuchKey) when calling the DeleteObject operation' >&2
       exit 254
     fi
-    if [ -z "$etag_match" ] || [ "$etag_match" != "$current" ]; then
-      echo 'An error occurred (PreconditionFailed) when calling the DeleteObject operation' >&2
+    if [ "${FAKE_PRUNE_CAS_LOSS:-0}" = 1 ]; then
+      jq '.status = "open" | .generation += 1' "$store" > "$store.next"
+      mv "$store.next" "$store"
+      current=$((current + 1))
+      printf '%s\n' "$current" > "$etag_file"
+    fi
+    if [ -n "$etag_match" ] && [ "$etag_match" != "$current" ]; then
+      echo 'An error occurred (PreconditionFailed) when calling the DeleteObject operation: 412' >&2
       exit 254
     fi
     rm -f "$store" "$etag_file"
@@ -122,14 +128,24 @@ case "$service $operation" in
   "s3api list-object-versions")
     state_file="$FAKE_STATE_DIR/${key//\//_}.json"
     [ -f "$state_file" ] || printf '[]\n' > "$state_file"
+    state_entries="$(cat "$state_file")"
+    if [ -n "${FAKE_LIST_VERSIONS_AFTER_DELETE:-}" ] && \
+       [ -s "$FAKE_DELETE_CALLS_FILE" ]; then
+      state_entries="$(jq -ce '
+        .post_delete_state_versions
+        | select(type == "array")
+      ' "$FAKE_LIST_VERSIONS_AFTER_DELETE")"
+    fi
     start=0
     if [ -n "$version_id_marker" ]; then
       start="$(jq -er --arg marker "$version_id_marker" \
-        '([.[].VersionId] | index($marker)) as $index | select($index != null) | $index + 1' "$state_file")"
+        '([.[].VersionId] | index($marker)) as $index | select($index != null) | $index + 1' \
+        <<< "$state_entries")"
     fi
     page_size="${FAKE_PAGE_SIZE:-2}"
-    page="$(jq -c --argjson start "$start" --argjson size "$page_size" '.[$start:($start + $size)]' "$state_file")"
-    total="$(jq 'length' "$state_file")"
+    page="$(jq -c --argjson start "$start" --argjson size "$page_size" \
+      '.[$start:($start + $size)]' <<< "$state_entries")"
+    total="$(jq 'length' <<< "$state_entries")"
     page_count="$(jq 'length' <<< "$page")"
     if [ $((start + page_count)) -lt "$total" ]; then
       truncated=true
@@ -160,6 +176,12 @@ case "$service $operation" in
     if [ "$delete_calls" -eq "${FAKE_DELETE_FAIL_CALL:-0}" ]; then
       echo 'An error occurred (ServiceUnavailable) when calling the DeleteObjects operation' >&2
       exit 254
+    fi
+    if [ -n "${FAKE_DELETE_OBJECTS_ERRORS:-}" ]; then
+      errors="$(jq -ce 'select(type == "array" and length > 0)' \
+        <<< "$FAKE_DELETE_OBJECTS_ERRORS")"
+      jq -cn --argjson errors "$errors" '{Deleted:[],Errors:$errors}'
+      exit 0
     fi
     payload="${delete_arg#file://}"
     deleted="$(jq -c '.Objects' "$payload")"
@@ -220,6 +242,7 @@ common_env=(
   "FAKE_S3_DIR=$fake_s3"
   "FAKE_STATE_DIR=$fake_state"
   "LEASE_BUCKET=test-state"
+  "LEASE_SH=$LEASE"
   "STATE_BUCKET=test-state"
   "SWEEP_NOW_EPOCH=2000000000"
 )
@@ -297,6 +320,14 @@ store_fixture() {
       recorded_at:"2033-05-18T03:30:00Z"
     }]' <<< "$lease")"
   fi
+  if jq -e 'has("manifest_allowances")' "$fixture" >/dev/null; then
+    lease="$(jq -c --argjson allowances "$(jq -c '.manifest_allowances' "$fixture")" \
+      '.manifest.allowances = $allowances' <<< "$lease")"
+  fi
+  if jq -e 'has("verification_passed")' "$fixture" >/dev/null; then
+    lease="$(jq -c --argjson passed "$(jq -c '.verification_passed' "$fixture")" \
+      '.manifest.verification_runs[-1].passed = $passed' <<< "$lease")"
+  fi
   store_lease "$lease"
   state_key="envs_preview_${env_id}.tfstate.json"
   jq -c '.state_versions' "$fixture" > "$fake_state/$state_key"
@@ -367,6 +398,16 @@ grep -Fq 'automatic cleanup retry budget is exhausted' <<< "$budget_output" || f
 pass "sweeper never forces a cleanup_failed lease past the retry budget"
 
 reset_store
+manual_lease="$(jq -c '.leases[] | select(.env_id == "retry-manual")' "$FIXTURES/discover-cases.json")"
+store_lease "$manual_lease"
+manual_output="$(run_aws "$SWEEPER" env retry-manual)"
+manual_after="$(run_aws "$LEASE" get retry-manual)"
+grep -Fq 'manual intervention is required' <<< "$manual_output" || fail "manual-intervention no-op reason missing"
+[ ! -s "$tmp_dir/close-calls.log" ] || fail "manual-intervention lease invoked Stage 1"
+[ "$manual_after" = "$manual_lease" ] || fail "manual-intervention no-op mutated the lease"
+pass "manual-intervention lease is a reasoned no-op through sweep env"
+
+reset_store
 happy_fixture="$FIXTURES/aws-deleted-client-exception.json"
 store_fixture "$happy_fixture"
 FAKE_SCENARIO_FILE="$happy_fixture" SWEEP_DELETE_BATCH_SIZE=2 run_aws "$SWEEPER" env aws-happy >/dev/null
@@ -401,6 +442,24 @@ set -e
 grep -Fq 'indeterminate' <<< "$malformed_output" || fail "malformed describe failure reason missing"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-bad.tfstate.json")" -eq 1 ] || fail "indeterminate Stage 2 touched retained state"
 pass "malformed DescribeTaskDefinition fails closed through a lease transition"
+
+reset_store
+describe_error_fixture="$FIXTURES/aws-clientexception-mismatch.json"
+store_fixture "$describe_error_fixture"
+set +e
+describe_error_output="$(FAKE_SCENARIO_FILE="$describe_error_fixture" \
+  run_aws "$SWEEPER" env aws-denied 2>&1)"
+describe_error_rc=$?
+set -e
+describe_error_lease="$(run_aws "$LEASE" get aws-denied)"
+[ "$describe_error_rc" -eq 1 ] || fail "non-deleted ClientException must exit 1"
+jq -e '.status == "cleanup_failed" and .error == "task-definition describe was indeterminate"' \
+  <<< "$describe_error_lease" >/dev/null || fail "non-deleted ClientException did not record cleanup_failed"
+[ "$(jq 'length' "$fake_state/envs_preview_aws-denied.tfstate.json")" -eq 1 ] || \
+  fail "non-deleted ClientException touched retained state"
+grep -Fq 'task-definition describe was indeterminate' <<< "$describe_error_output" || \
+  fail "non-deleted ClientException failure reason missing"
+pass "non-deleted ClientException fails closed with its error recorded"
 
 reset_store
 store_fixture "$happy_fixture"
@@ -438,6 +497,91 @@ jq -e '
 ' <<< "$local_lease" >/dev/null || fail "LocalStack Stage-2 allowance/in-job evidence missing"
 [ "$(jq 'length' "$fake_state/envs_preview_local-allow.tfstate.json")" -eq 0 ] || fail "LocalStack state versions remain"
 pass "recorded LocalStack allowance permits INACTIVE and records in-job Stage 2 evidence"
+
+reset_store
+aws_allowance_fixture="$FIXTURES/aws-inactive-with-localstack-allowance.json"
+store_fixture "$aws_allowance_fixture"
+aws_allowance_output="$(FAKE_SCENARIO_FILE="$aws_allowance_fixture" \
+  run_aws "$SWEEPER" env aws-allow)"
+aws_allowance_lease="$(run_aws "$LEASE" get aws-allow)"
+jq -e '.status == "closing" and ((.manifest.stage2_allowances // []) | length) == 0' \
+  <<< "$aws_allowance_lease" >/dev/null || fail "AWS target consumed the LocalStack allowance"
+grep -Fq 'status=INACTIVE' <<< "$aws_allowance_output" || fail "AWS INACTIVE task definition was not pending"
+[ "$(jq 'length' "$fake_state/envs_preview_aws-allow.tfstate.json")" -eq 1 ] || \
+  fail "AWS target with LocalStack allowance touched retained state"
+pass "AWS target ignores the LocalStack allowance and retains closing state"
+
+reset_store
+local_no_allowance_fixture="$FIXTURES/localstack-inactive-no-allowance.json"
+store_fixture "$local_no_allowance_fixture"
+local_no_allowance_output="$(FAKE_SCENARIO_FILE="$local_no_allowance_fixture" \
+  run_localstack "$SWEEPER" env local-none)"
+local_no_allowance_lease="$(run_localstack "$LEASE" get local-none)"
+jq -e '.status == "closing"
+  and .manifest.allowances == []
+  and ((.manifest.stage2_allowances // []) | length) == 0' \
+  <<< "$local_no_allowance_lease" >/dev/null || fail "unrecorded LocalStack allowance was synthesized"
+grep -Fq 'status=INACTIVE' <<< "$local_no_allowance_output" || fail "LocalStack INACTIVE task definition was not pending"
+[ "$(jq 'length' "$fake_state/envs_preview_local-none.tfstate.json")" -eq 1 ] || \
+  fail "LocalStack without an allowance touched retained state"
+pass "LocalStack INACTIVE without a recorded allowance remains pending"
+
+reset_store
+verification_failed_fixture="$FIXTURES/aws-verification-failed.json"
+store_fixture "$verification_failed_fixture"
+set +e
+verification_failed_output="$(FAKE_SCENARIO_FILE="$verification_failed_fixture" \
+  run_aws "$SWEEPER" env verify-fail 2>&1)"
+verification_failed_rc=$?
+set -e
+verification_failed_lease="$(run_aws "$LEASE" get verify-fail)"
+[ "$verification_failed_rc" -eq 1 ] || fail "passed:false Stage-1 verification must exit 1"
+jq -e '.status == "cleanup_failed"
+  and .error == "last Stage-1 verification did not pass with zero live and indeterminate results"' \
+  <<< "$verification_failed_lease" >/dev/null || fail "passed:false Stage-1 verification did not fail closed"
+[ "$(jq 'length' "$fake_state/envs_preview_verify-fail.tfstate.json")" -eq 1 ] || \
+  fail "passed:false Stage-1 verification touched retained state"
+grep -Fq 'last Stage-1 verification did not pass' <<< "$verification_failed_output" || \
+  fail "passed:false Stage-1 verification failure reason missing"
+pass "Stage 2 refuses a last verification run with passed false"
+
+reset_store
+store_fixture "$happy_fixture"
+delete_errors_fixture="$FIXTURES/delete-objects-errors.json"
+set +e
+delete_errors_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_DELETE_OBJECTS_ERRORS="$(jq -c '.errors' "$delete_errors_fixture")" \
+  run_aws "$SWEEPER" env aws-happy 2>&1)"
+delete_errors_rc=$?
+set -e
+delete_errors_lease="$(run_aws "$LEASE" get aws-happy)"
+[ "$delete_errors_rc" -eq 1 ] || fail "delete-objects Errors must exit 1"
+jq -e '.status == "cleanup_failed" and ((.manifest.stage2_runs // []) | length) == 0' \
+  <<< "$delete_errors_lease" >/dev/null || fail "delete-objects Errors reached closed"
+[ "$(jq 'length' "$fake_state/envs_preview_aws-happy.tfstate.json")" -eq 3 ] || \
+  fail "delete-objects Errors did not retain remaining versions"
+grep -Fq 'delete-objects reported 1 object-version errors' <<< "$delete_errors_output" || \
+  fail "delete-objects Errors branch did not report the object-version error"
+pass "delete-objects rc zero with Errors fails closed and retains versions"
+
+reset_store
+post_delete_fixture="$FIXTURES/aws-post-delete-relist.json"
+store_fixture "$post_delete_fixture"
+set +e
+post_delete_output="$(FAKE_SCENARIO_FILE="$post_delete_fixture" \
+  FAKE_LIST_VERSIONS_AFTER_DELETE="$post_delete_fixture" \
+  run_aws "$SWEEPER" env aws-relist 2>&1)"
+post_delete_rc=$?
+set -e
+post_delete_lease="$(run_aws "$LEASE" get aws-relist)"
+[ "$post_delete_rc" -eq 1 ] || fail "post-delete retained version must exit 1"
+jq -e '.status == "cleanup_failed"
+  and .error == "state deletion failed: versions remain"
+  and ((.manifest.stage2_runs // []) | length) == 0' \
+  <<< "$post_delete_lease" >/dev/null || fail "post-delete retained version reached closed"
+grep -Fq 'state deletion failed: versions remain' <<< "$post_delete_output" || \
+  fail "post-delete retained version failure reason missing"
+pass "post-delete re-list with a retained version fails closed"
 
 reset_store
 store_fixture "$happy_fixture"
@@ -481,6 +625,22 @@ pass "closing-to-closed CAS race exits 3 without the sweeper mutating the lease"
 
 reset_store
 old_closed="$(jq -c '.leases[] | select(.env_id == "prune-old")' "$FIXTURES/discover-cases.json")"
+store_lease "$old_closed"
+expected_reopened="$(jq -c '.status = "open" | .generation += 1' <<< "$old_closed")"
+set +e
+prune_race_output="$(FAKE_PRUNE_CAS_LOSS=1 run_aws "$SWEEPER" env prune-old 2>&1)"
+prune_race_rc=$?
+set -e
+prune_race_lease="$(run_aws "$LEASE" get prune-old)"
+[ "$prune_race_rc" -eq 3 ] || fail "prune If-Match 412 must exit 3, got $prune_race_rc"
+jq -e --argjson expected "$expected_reopened" '. == $expected' \
+  <<< "$prune_race_lease" >/dev/null || fail "prune loser deleted or otherwise mutated the reopened lease"
+grep -Fq 'lost the CAS race' <<< "$prune_race_output" || fail "prune If-Match 412 reason missing"
+grep -E '^s3api delete-object .*--if-match ' "$tmp_dir/aws-calls.log" >/dev/null || \
+  fail "prune CAS-loss case did not exercise the If-Match request"
+pass "prune If-Match 412 exits 3 without deleting the concurrently changed lease"
+
+reset_store
 fresh_closed="$(jq -c '.leases[] | select(.env_id == "closed-seven")' "$FIXTURES/discover-cases.json")"
 store_lease "$old_closed"
 store_lease "$fresh_closed"

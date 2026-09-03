@@ -1,0 +1,19 @@
+{
+  "authored": "LocalStack INACTIVE task definition without a recorded Stage-1 allowance",
+  "env_id": "local-none",
+  "target": "localstack",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/fixture-task:7",
+  "manifest_allowances": [],
+  "describe": {
+    "rc": 0,
+    "stdout": "{\"taskDefinition\":{\"taskDefinitionArn\":\"arn:aws:ecs:region:account:task-definition/fixture-task:7\",\"status\":\"INACTIVE\"}}\n",
+    "stderr": ""
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/local-none.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}
