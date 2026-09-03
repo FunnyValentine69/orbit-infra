@@ -8,8 +8,8 @@ memory cap, and a `redis-cli ping` health check.
 
 `name` (default `"redis"`), `env_id` (1-12 lowercase alphanumerics and
 hyphens, no leading or trailing hyphen), `enabled`, `cluster_arn`, `image`
-(default `redis:7-alpine`; P3-2 replaces this with the private-ECR
-mirror digest), `subnet_ids`, `security_group_ids`,
+(default `redis:7-alpine`; the preview composition passes the private-ECR
+mirror digest for real-AWS sessions), `subnet_ids`, `security_group_ids`,
 `cloud_map_namespace_id` / `register_service_discovery`, `namespace_name`
 (used only to compute `discovery_dns_name`), `cpu` (default `256`),
 `memory` (default `512`), `tags`.
@@ -18,3 +18,5 @@ mirror digest), `subnet_ids`, `security_group_ids`,
 
 `discovery_dns_name` (`${name}.${namespace_name}`, null if
 `namespace_name` unset), `port` (`6379`), `service_name`.
+
+Input `region` (string, required): AWS region for the awslogs driver, passed explicitly because a data source inside a module that the caller attaches `depends_on` to is deferred to apply time and would replace the task definition on every plan.

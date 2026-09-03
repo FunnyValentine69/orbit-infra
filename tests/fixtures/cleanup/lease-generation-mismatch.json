@@ -1,0 +1,12 @@
+{
+  "authored": "lease generation ownership contract",
+  "name": "close refuses a lease generation acquired by another run",
+  "env_id": "generation-case",
+  "current_generation": 1,
+  "supplied_generation": 2,
+  "expected": {
+    "exit_code": 3,
+    "status": "open",
+    "cleanup_attempt": 0
+  }
+}

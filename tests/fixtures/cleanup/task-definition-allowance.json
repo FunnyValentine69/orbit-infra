@@ -1,0 +1,10 @@
+{
+  "arn": "arn:aws:ecs:test-region:placeholder:task-definition/task-one:1",
+  "status": "INACTIVE",
+  "response": {
+    "rc": 254,
+    "stdout": "",
+    "stderr": "\naws: [ERROR]: An error occurred (InternalFailure) when calling the DeleteTaskDefinitions operation: Sorry, the DeleteTaskDefinitions operation on the ecs service is not currently supported by LocalStack.\n"
+  },
+  "recorded_from": "LocalStack 2026.8.1, aws ecs delete-task-definitions, 2026-09-02"
+}

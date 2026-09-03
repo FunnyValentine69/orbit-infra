@@ -139,6 +139,16 @@ variable "task_role_policy_json" {
   default     = null
 }
 
+variable "region" {
+  description = "AWS region used for the awslogs driver. Passed in explicitly (no data source): a module-level depends_on in the caller would defer a data source to apply time and force the task definition to be replaced on every plan."
+  type        = string
+
+  validation {
+    condition     = length(var.region) > 0
+    error_message = "region must be set."
+  }
+}
+
 variable "tags" {
   description = "Default tags applied to all resources"
   type        = map(string)

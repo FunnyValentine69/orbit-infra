@@ -1,18 +1,30 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr render-localstack-backend placeholder-build check-placeholder-image
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend placeholder-build check-placeholder-image lease-list lease-get close
 
-TARGET ?= aws
+TARGET ?=
 # preflight and terraform must check the same account and region
 AWS_PROFILE ?= orbit
 AWS_REGION ?= us-east-1
 
+ifeq ($(TARGET),localstack)
+PREVIEW_ROOT ?= .preview-runs/$(ENV_ID)
+else
 PREVIEW_ROOT ?= envs/preview
-export TARGET ENV_ID OPERATOR_CIDR AWS_PROFILE AWS_REGION PREVIEW_ROOT
+endif
+PLAN_FILE ?= $(CURDIR)/envs/preview/tfplan.bin
+export TARGET ENV_ID OPERATOR_CIDR AWS_REGION PREVIEW_ROOT PLAN_FILE
+ifneq ($(TARGET),localstack)
+export AWS_PROFILE
+endif
+
+LOCALSTACK_AWS_ENV = env -u AWS_PROFILE -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 AWS_EC2_METADATA_DISABLED=true
 
 check-target:
 	@case "$$TARGET" in \
 		aws|localstack) ;; \
 		*) echo "TARGET must be aws or localstack, got: $$TARGET" >&2; exit 1 ;; \
 	esac
+
+bootstrap-plan bootstrap-apply: check-target
 
 bootstrap-preflight:
 	bootstrap/preflight.sh
@@ -32,14 +44,14 @@ bootstrap-lint:
 ifeq ($(TARGET),localstack)
 bootstrap-plan:
 	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf; \
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var "target=$$TARGET" -var budget_email=unused; \
+	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
+	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var "target=$$TARGET" -var budget_email=unused; \
 	rc=$$?; rm -f bootstrap/backend_override.tf; exit $$rc
 
 bootstrap-apply:
 	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf; \
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var "target=$$TARGET" -var budget_email=unused -auto-approve; \
+	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
+	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var "target=$$TARGET" -var budget_email=unused -auto-approve; \
 	rc=$$?; rm -f bootstrap/backend_override.tf; exit $$rc
 else
 bootstrap-plan:
@@ -100,31 +112,28 @@ check-env-id:
 # across runs sharing an ENV_ID.
 render-localstack-backend:
 	mkdir -p "$$PREVIEW_ROOT"
-	rsync -a --delete --exclude '.terraform*' --exclude 'backend_override.tf' --exclude '*.tfstate*' envs/preview/ "$$PREVIEW_ROOT/"
+	rsync -a --delete --exclude '.terraform/' --exclude '.terraform-localstack*/' --exclude 'backend_override.tf' --exclude '*.tfstate*' envs/preview/ "$$PREVIEW_ROOT/"
 	awk -v id="$$ENV_ID" '{ gsub(/ENV_ID_PLACEHOLDER/, id); print }' envs/preview/localstack.backend_override.tf.example > "$$PREVIEW_ROOT/backend_override.tf"
 
 plan:
 	( \
-		export PREVIEW_ROOT=".preview-runs/$$ENV_ID"; \
 		$(MAKE) render-localstack-backend && \
-		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
-		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION"; \
+		$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
+		$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION"; \
 	)
 
 apply: check-placeholder-image
 	( \
-		export PREVIEW_ROOT=".preview-runs/$$ENV_ID"; \
 		$(MAKE) render-localstack-backend && \
-		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
-		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION" -auto-approve; \
+		$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
+		$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION" -auto-approve; \
 	)
 
 destroy:
 	( \
-		export PREVIEW_ROOT=".preview-runs/$$ENV_ID"; \
 		$(MAKE) render-localstack-backend && \
-		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
-		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION" -auto-approve; \
+		$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
+		$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION" -auto-approve; \
 	)
 else
 plan apply destroy: check-target check-env-id check-operator-cidr
@@ -133,8 +142,8 @@ check-env-id:
 	@if [ -z "$$ENV_ID" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
 	@printf '%s' "$$ENV_ID" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $$ENV_ID" >&2; exit 1; }
 
-# backend.aws.hcl is operator-provided (copied from backend.aws.hcl.example,
-# not committed); it is resolved as an absolute path since terraform
+# backend.aws.hcl is generated by scripts/write-preview-backend.sh and is not
+# committed; it is resolved as an absolute path since terraform
 # -chdir=envs/preview resolves -backend-config paths relative to
 # envs/preview, not to $(CURDIR).
 BACKEND_HCL ?= $(CURDIR)/envs/preview/backend.aws.hcl
@@ -142,7 +151,7 @@ export BACKEND_HCL
 
 check-backend-hcl:
 	@if [ ! -f "$(BACKEND_HCL)" ]; then \
-		echo "copy envs/preview/backend.aws.hcl.example to envs/preview/backend.aws.hcl and fill in the bucket" >&2; \
+		echo "envs/preview/backend.aws.hcl is required; run scripts/write-preview-backend.sh" >&2; \
 		exit 1; \
 	fi
 	@if [ -f envs/preview/backend_override.tf ]; then \
@@ -151,12 +160,15 @@ check-backend-hcl:
 	fi
 
 plan: check-backend-hcl
-	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
-	terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION"
+	terraform -chdir=envs/preview init -reconfigure -input=false -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
+	terraform -chdir=envs/preview plan -input=false -out="$$PLAN_FILE" -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION"
 
-apply: check-backend-hcl
-	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
-	terraform -chdir=envs/preview apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -var "region=$$AWS_REGION"
+check-plan-file:
+	@if [ ! -f "$$PLAN_FILE" ]; then echo "saved Terraform plan is required at $$PLAN_FILE; run make plan first" >&2; exit 1; fi
+
+apply: check-backend-hcl check-plan-file
+	terraform -chdir=envs/preview init -reconfigure -input=false -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
+	terraform -chdir=envs/preview apply -input=false "$$PLAN_FILE"
 
 destroy: check-backend-hcl
 	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
@@ -164,6 +176,8 @@ destroy: check-backend-hcl
 endif
 
 test:
+	@bash tests/cleanup-verifier.sh
+	@bash tests/phase3-contracts.sh
 	@for d in modules/*/; do \
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \
@@ -177,10 +191,11 @@ test:
 			( \
 				run_dir=".preview-runs/tftest-$$(basename "$${d%/}")"; \
 				mkdir -p "$$run_dir"; \
-				rsync -a --delete --exclude '.terraform*' --exclude 'backend_override.tf' --exclude '*.tfstate*' "$$d" "$$run_dir/"; \
+				rsync -a --delete --exclude '.terraform/' --exclude '.terraform-localstack*/' --exclude 'backend_override.tf' --exclude '*.tfstate*' "$$d" "$$run_dir/"; \
+				[ -f "$$run_dir/.terraform.lock.hcl" ] || { echo "missing committed provider lock file in $$run_dir" >&2; exit 1; }; \
 				sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$$run_dir/backend_override.tf"; \
-				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" init -reconfigure -input=false >/dev/null && \
-				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" test; \
+				$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" init -reconfigure -input=false >/dev/null && \
+				$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" test; \
 			) || exit $$?; \
 		fi; \
 	done
@@ -201,3 +216,20 @@ lint:
 	tflint --init --recursive --config "$(CURDIR)/.tflint.hcl"
 	tflint --recursive --config "$(CURDIR)/.tflint.hcl"
 	checkov --config-file .checkov.yaml
+
+# Preview environment leases (ADR 0006). See scripts/lease.sh --help.
+lease-list: check-target
+	$(if $(filter localstack,$(TARGET)),$(LOCALSTACK_AWS_ENV) ,)scripts/lease.sh list
+
+lease-get: check-target check-env-id
+	$(if $(filter localstack,$(TARGET)),$(LOCALSTACK_AWS_ENV) ,)scripts/lease.sh get "$$ENV_ID"
+
+# TARGET is required; localstack routes every cleanup AWS call to the explicit endpoint.
+close: check-target check-env-id
+ifeq ($(TARGET),localstack)
+close: render-localstack-backend
+	$(LOCALSTACK_AWS_ENV) scripts/close-env.sh "$$ENV_ID"
+else
+close:
+	scripts/close-env.sh "$$ENV_ID"
+endif

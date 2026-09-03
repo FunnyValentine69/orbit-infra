@@ -24,6 +24,11 @@ it directly) and the `terraform plan`/`apply` targets (passed as
 `AWS_PROFILE` and `AWS_REGION` consistently; every direct `terraform`
 invocation below is shown with the equivalent env prefix.
 
+Real-AWS preview workflows run `scripts/write-preview-backend.sh` before their
+Make targets. The script derives `envs/preview/backend.aws.hcl` from bootstrap's
+committed `var.name`/`var.region` defaults and the state bucket's
+`${var.name}-tfstate` naming contract, so no additional secret is required.
+
 ## Apply sequence
 
 1. `cp bootstrap/terraform.tfvars.example bootstrap/terraform.tfvars` and edit `budget_email` (`terraform.tfvars` is gitignored; verify with `git check-ignore bootstrap/terraform.tfvars`)
@@ -80,6 +85,11 @@ also conditioned on the `Project` tag (`var.project_tag`, default
 `orbit-infra`), matching the authoritative `var.project_tag` merged into
 `default_tags.Project` by `envs/preview/main.tf`.
 
+The deployer also has read-only access to pull the project's ECR artifacts and
+read the signing key's public half. `session-apply.yml` uses those grants to
+verify selected image signatures and attestations before it opens a lease;
+only the publisher role can sign or push images.
+
 ## After apply
 
 Publish the three role ARNs as GitHub repository secrets (not variables --
@@ -91,8 +101,14 @@ never committed to this repo), then dispatch the smoke test:
 AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw plan_reader_role_arn | gh secret set AWS_ROLE_PLAN_READER
 AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw deployer_role_arn | gh secret set AWS_ROLE_DEPLOYER
 AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw publisher_role_arn | gh secret set AWS_ROLE_PUBLISHER
+AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw kms_signing_key_arn | gh secret set AWS_KMS_SIGNING_KEY_ARN
 gh workflow run oidc-smoke.yml
 ```
+
+`AWS_KMS_SIGNING_KEY_ARN` is consumed by `.github/workflows/mirror-images.yml`
+and `.github/workflows/sign-images.yml` for KMS signing
+(`--tlog-upload=false`, ADR 0007). `session-apply.yml` uses the identifier only
+to export the public key before verifying the selected images.
 
 ## Gates / size
 

@@ -368,8 +368,8 @@ resource "aws_iam_policy" "task_boundary" {
 # (~13,966 stripped chars) exceeded the 10,240 inline-aggregate quota.
 # Grouped by service per PR#2 Tier 2b review F3; bootstrap/
 # policy-size-check.sh enforces both quotas in CI via `scripts/gates.sh
-# policy-size`. Statement content/conditions are unchanged from the
-# prior single deployer document except where F1/F4/F5/F6 edited them.
+# policy-size`. Later review amendments add only the documented narrow grants;
+# the remaining statement content/conditions match the prior split policy.
 
 data "aws_iam_policy_document" "deployer_state" {
   # (a) preview env terraform state + apply leases: read/write/list.
@@ -609,6 +609,18 @@ resource "aws_iam_policy" "deployer_ec2" {
 
 
 data "aws_iam_policy_document" "deployer_elb_ecs" {
+  # Resource Groups Tagging API defines no resource ARN or service-specific
+  # condition keys for GetResources; stage-1 close uses it read-only to
+  # capture and re-query the complete env_id inventory.
+  statement {
+    #checkov:skip=CKV_AWS_111:tag:GetResources supports neither resource-level permissions nor service-specific condition keys
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "TagInventoryStarOnly"
+    effect    = "Allow"
+    actions   = ["tag:GetResources"]
+    resources = ["*"]
+  }
+
   # --- (c) ALB + target group + listener. ---
   statement {
     #checkov:skip=CKV_AWS_111:table-confirmed * only ELBv2 Describe* actions, zero condition keys (iam-condition-keys.md ELBv2 section)
@@ -858,6 +870,23 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
     resources = ["*"]
   }
 
+  # ListTasks supports the ecs:cluster condition key. Stage-1 close always
+  # supplies an environment cluster under the project name prefix.
+  statement {
+    #checkov:skip=CKV_AWS_111:ListTasks is list-only and is restricted to project cluster ARNs through ecs:cluster
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "EcsListDescribeTasksForProjectClusters"
+    effect    = "Allow"
+    actions   = ["ecs:ListTasks", "ecs:DescribeTasks"]
+    resources = ["*"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "ecs:cluster"
+      values   = ["arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:cluster/${var.name}-*"]
+    }
+  }
+
   # --- (e) Cloud Map namespace + service. ---
   # ListTagsForResource is table-confirmed * only with zero condition
   # keys; ListNamespaces/ListServices are not covered by the table.
@@ -1012,6 +1041,40 @@ resource "aws_iam_policy" "deployer_elb_ecs" {
 
 
 data "aws_iam_policy_document" "deployer_data" {
+  # Read-only supply-chain verification performed before session-apply opens
+  # a lease. The auth token action does not support resource-level scoping.
+  statement {
+    #checkov:skip=CKV_AWS_111:ecr:GetAuthorizationToken does not support resource-level scoping
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "EcrVerificationAuth"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcrVerificationPull"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = local.ecr_repo_arns
+  }
+
+  statement {
+    sid       = "SigningPublicKeyRead"
+    effect    = "Allow"
+    actions   = ["kms:GetPublicKey"]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:${var.region}:${data.aws_caller_identity.current.account_id}:key/*"]
+
+    condition {
+      test     = "ForAnyValue:StringEquals"
+      variable = "kms:ResourceAliases"
+      values   = [local.kms_signing_alias]
+    }
+  }
+
   # --- (f) CloudWatch log groups, /orbit/<env_id>/<name>. ---
   statement {
     #checkov:skip=CKV_AWS_111:table-confirmed * only (DescribeLogGroups) (iam-condition-keys.md CloudWatch Logs section, A3)

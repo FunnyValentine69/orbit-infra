@@ -1,0 +1,573 @@
+# session-apply
+#
+# Human-triggered, main-only apply of a preview environment against real
+# AWS (ADR 0006). Assumes AWS_ROLE_DEPLOYER, which trusts only the
+# `ref:refs/heads/main` OIDC subject (bootstrap/roles.tf) -- this
+# workflow cannot run from any other ref, matching that trust policy.
+#
+# Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov
+# (scripts/gates.sh) -> image signature/attestation verification -> lease
+# open (CAS) and manifest record -> plan/apply -> negative ingress test.
+# Gate failures before the CAS never create a lease or resources.
+# Any failure after the lease exists runs scripts/close-env.sh (stage 1
+# of close) so a crashed apply never orphans billable resources.
+#
+# Per ADR 0006 / ARCHITECTURE.md, apply, destroy, and the sweeper share
+# the `preview-<env_id>` concurrency group so they never overlap.
+
+name: session-apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      env_id:
+        description: 'Preview environment id matching Terraform (1-12 chars)'
+        required: true
+        type: string
+      mode:
+        description: 'Deployment image set'
+        required: true
+        default: public
+        type: choice
+        options:
+          - upstream
+          - public
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: preview-${{ inputs.env_id }}
+  cancel-in-progress: false
+  # queue: max keeps every pending dispatch (GitHub changelog 2026-05-07);
+  # it requires cancel-in-progress: false. The lease CAS remains the
+  # correctness barrier (ADR 0006).
+  queue: max
+
+jobs:
+  validate-input:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate env_id
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          if ! printf '%s' "$ENV_ID" | grep -qE '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$'; then
+            echo "env_id '$ENV_ID' does not match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$" >&2
+            exit 1
+          fi
+          case "$MODE" in
+            upstream|public) ;;
+            *) echo "mode must be upstream or public" >&2; exit 1 ;;
+          esac
+
+  runner-cidr-check:
+    needs: validate-input
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject if runner IP is inside the operator CIDR
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+        run: |
+          runner_ip=$(curl -s https://checkip.amazonaws.com | tr -d '[:space:]')
+          if [ -z "$OPERATOR_CIDR" ]; then
+            echo "OPERATOR_CIDR repository secret is unset" >&2
+            exit 1
+          fi
+          python3 - "$runner_ip" "$OPERATOR_CIDR" <<'EOF'
+          import ipaddress
+          import sys
+
+          runner_ip, operator_cidr = sys.argv[1], sys.argv[2]
+          if ipaddress.ip_address(runner_ip) in ipaddress.ip_network(operator_cidr, strict=False):
+              print("runner IP falls inside the operator CIDR; refusing to run", file=sys.stderr)
+              sys.exit(1)
+          EOF
+
+  gates:
+    needs: runner-cidr-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Read tflint version from tools.lock
+        id: tflint-version
+        run: echo "version=$(grep '^tflint ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Read checkov version from tools.lock
+        id: checkov-version
+        run: echo "version=$(grep '^checkov ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@6e1e0642c0289bd619021bf6b34e3c08ed1e005a # v6.3.0
+        with:
+          tflint_version: v${{ steps.tflint-version.outputs.version }}
+
+      - name: Install checkov
+        run: pip install checkov==${{ steps.checkov-version.outputs.version }}
+
+      - name: tflint --init
+        run: tflint --init
+
+      - name: Lint + checkov (validate/lint minus test)
+        run: |
+          make validate
+          make lint
+
+  apply:
+    needs: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (deployer)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_DEPLOYER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Write AWS backend config
+        run: scripts/write-preview-backend.sh
+
+      - name: Read deployable image set
+        id: images
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          lock_scalar() {
+            local key="$1"
+            local file="$2"
+            awk -v key="${key}:" '$1 == key { print $2 }' "$file"
+          }
+          upstream_digest() {
+            local repository="$1"
+            awk -v repository="$repository" '
+              $1 == repository ":" { in_repository = 1; next }
+              in_repository && $1 == "digest:" { print $2; exit }
+            ' upstream.lock
+          }
+
+          upstream_sha="$(lock_scalar upstream_sha upstream.lock)"
+          upstream_archive_sha256="$(lock_scalar upstream_archive_sha256 upstream.lock)"
+          repo_build_inputs_sha256="$(lock_scalar repo_build_inputs_sha256 upstream.lock)"
+          placeholder_source_sha="$(lock_scalar placeholder_source_sha mirror-images.lock)"
+          redis_source="$(lock_scalar redis_source mirror-images.lock)"
+          redis_repository="$(lock_scalar redis_repository mirror-images.lock)"
+          redis_digest="$(lock_scalar redis_digest mirror-images.lock)"
+          clickhouse_source="$(lock_scalar clickhouse_source mirror-images.lock)"
+          case "$MODE" in
+            upstream)
+              expected_api_repository="orbit-infra-79s5rw/orbit-api"
+              expected_clickhouse_repository="orbit-infra-79s5rw/orbit-clickhouse"
+              api_repository="$expected_api_repository"
+              api_digest="$(upstream_digest "$api_repository")"
+              clickhouse_repository="$expected_clickhouse_repository"
+              clickhouse_digest="$(upstream_digest "$clickhouse_repository")"
+              if [[ ! "$upstream_sha" =~ ^[0-9a-f]{40}$ ]] || \
+                 [[ ! "$upstream_archive_sha256" =~ ^[0-9a-f]{64}$ ]] || \
+                 [[ ! "$repo_build_inputs_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+                echo "upstream.lock contains invalid attestation inputs" >&2
+                exit 1
+              fi
+              ;;
+            public)
+              expected_api_repository="orbit-infra-79s5rw/placeholder"
+              expected_clickhouse_repository="orbit-infra-79s5rw/mirror/clickhouse"
+              api_repository="$(lock_scalar placeholder_repository mirror-images.lock)"
+              api_digest="$(lock_scalar placeholder_digest mirror-images.lock)"
+              clickhouse_repository="$(lock_scalar clickhouse_repository mirror-images.lock)"
+              clickhouse_digest="$(lock_scalar clickhouse_digest mirror-images.lock)"
+              if [[ ! "$placeholder_source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "mirror-images.lock contains an invalid placeholder source commit" >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "unsupported deployment mode: $MODE" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "$api_repository" != "$expected_api_repository" ]] || \
+             [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
+             [[ "$clickhouse_repository" != "$expected_clickhouse_repository" ]]; then
+            echo "selected image repositories do not match bootstrap/ecr.tf" >&2
+            exit 1
+          fi
+          if [[ "$redis_source" != "redis:7-alpine" ]] || \
+             [[ "$clickhouse_source" != "clickhouse/clickhouse-server:24.3-alpine" ]]; then
+            echo "mirror-images.lock source names do not match the approved mirrors" >&2
+            exit 1
+          fi
+          for digest in "$api_digest" "$redis_digest" "$clickhouse_digest"; do
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "the $MODE image lock set is incomplete or not digest-pinned" >&2
+              exit 1
+            fi
+          done
+
+          {
+            echo "api_repository=${api_repository}"
+            echo "api_digest=${api_digest}"
+            echo "redis_repository=${redis_repository}"
+            echo "redis_digest=${redis_digest}"
+            echo "clickhouse_repository=${clickhouse_repository}"
+            echo "clickhouse_digest=${clickhouse_digest}"
+            echo "upstream_sha=${upstream_sha}"
+            echo "upstream_archive_sha256=${upstream_archive_sha256}"
+            echo "repo_build_inputs_sha256=${repo_build_inputs_sha256}"
+            echo "placeholder_source_sha=${placeholder_source_sha}"
+            echo "redis_source=${redis_source}"
+            echo "clickhouse_source=${clickhouse_source}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Read cosign version from tools.lock
+        id: cosign-version
+        run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v${{ steps.cosign-version.outputs.version }}
+
+      - name: Verify cosign version matches tools.lock
+        run: |
+          installed="$(cosign version | awk '$1 == "GitVersion:" { print $2 }')"
+          expected="v${{ steps.cosign-version.outputs.version }}"
+          if [[ "$installed" != "$expected" ]]; then
+            echo "cosign version mismatch: installed $installed, expected $expected" >&2
+            exit 1
+          fi
+
+      - name: Export KMS public key
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+        run: |
+          aws kms get-public-key --key-id "$KMS_KEY_ARN" --query PublicKey --output text \
+            | base64 --decode > "$RUNNER_TEMP/kms-public-key.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/kms-public-key.der" \
+            -out "$RUNNER_TEMP/kms-public-key.pem"
+
+      - name: Resolve private ECR registry
+        id: registry
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          echo "::add-mask::${account_id}"
+          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
+          echo "::add-mask::${registry}"
+          echo "registry=${registry}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate cosign to private ECR
+        run: |
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "${{ steps.registry.outputs.registry }}"
+
+      - name: Verify selected image signatures and attestations
+        env:
+          MODE: ${{ inputs.mode }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+          API_REPOSITORY: ${{ steps.images.outputs.api_repository }}
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_REPOSITORY: ${{ steps.images.outputs.redis_repository }}
+          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
+          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
+          UPSTREAM_SHA: ${{ steps.images.outputs.upstream_sha }}
+          UPSTREAM_ARCHIVE_SHA256: ${{ steps.images.outputs.upstream_archive_sha256 }}
+          REPO_BUILD_INPUTS_SHA256: ${{ steps.images.outputs.repo_build_inputs_sha256 }}
+          PLACEHOLDER_SOURCE_SHA: ${{ steps.images.outputs.placeholder_source_sha }}
+          REDIS_SOURCE: ${{ steps.images.outputs.redis_source }}
+          CLICKHOUSE_SOURCE: ${{ steps.images.outputs.clickhouse_source }}
+        run: |
+          verify_signature() {
+            local label="$1"
+            local image="$2"
+            if ! cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog "$image" >/dev/null; then
+              echo "$label has no valid KMS signature" >&2
+              return 1
+            fi
+          }
+          verify_upstream_attestation() {
+            local label="$1"
+            local image="$2"
+            local attestations
+            if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type custom "$image" 2>/dev/null)" || \
+               ! jq -e --arg upstream_sha "$UPSTREAM_SHA" \
+                 --arg upstream_archive_sha256 "$UPSTREAM_ARCHIVE_SHA256" \
+                 --arg repo_build_inputs_sha256 "$REPO_BUILD_INPUTS_SHA256" '
+                   any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                     | $predicate.upstream_sha == $upstream_sha
+                     and $predicate.upstream_archive_sha256 == $upstream_archive_sha256
+                     and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)
+                 ' <<< "$attestations" >/dev/null; then
+              echo "$label has no custom attestation matching upstream.lock" >&2
+              return 1
+            fi
+          }
+          verify_placeholder_attestation() {
+            local image="$1"
+            local attestations
+            if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type custom "$image" 2>/dev/null)" || \
+               ! jq -e --arg source_sha "$PLACEHOLDER_SOURCE_SHA" '
+                   any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
+                 ' <<< "$attestations" >/dev/null; then
+              echo "api_image has no custom attestation matching mirror-images.lock" >&2
+              return 1
+            fi
+          }
+          verify_mirror_attestation() {
+            local label="$1"
+            local image="$2"
+            local source_ref="$3"
+            local source_digest="$4"
+            local attestations
+            if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+              "$image" 2>/dev/null)" || \
+               ! jq -e --arg source_ref "$source_ref" --arg source_digest "$source_digest" '
+                   any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                     | $predicate.source_ref == $source_ref
+                     and $predicate.source_digest == $source_digest) catch false)
+                 ' <<< "$attestations" >/dev/null; then
+              echo "$label has no mirror attestation matching mirror-images.lock" >&2
+              return 1
+            fi
+          }
+
+          api_image="${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}"
+          redis_image="${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}"
+          clickhouse_image="${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
+          verify_signature api_image "$api_image"
+          verify_signature redis_image "$redis_image"
+          verify_signature clickhouse_image "$clickhouse_image"
+          verify_mirror_attestation redis_image "$redis_image" "$REDIS_SOURCE" "$REDIS_DIGEST"
+          case "$MODE" in
+            upstream)
+              verify_upstream_attestation api_image "$api_image"
+              verify_upstream_attestation clickhouse_image "$clickhouse_image"
+              ;;
+            public)
+              verify_placeholder_attestation "$api_image"
+              verify_mirror_attestation clickhouse_image "$clickhouse_image" "$CLICKHOUSE_SOURCE" "$CLICKHOUSE_DIGEST"
+              ;;
+          esac
+
+      - name: Open lease
+        id: lease-open
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          TARGET: aws
+        run: |
+          lease_json="$(scripts/lease.sh open "$ENV_ID")"
+          generation="$(jq -r '.generation' <<< "$lease_json")"
+          if [[ ! "$generation" =~ ^[1-9][0-9]*$ ]]; then
+            echo "lease open returned an invalid generation" >&2
+            exit 1
+          fi
+          {
+            echo "acquired=true"
+            echo "generation=${generation}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record deployment mode and images in lease
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          MODE: ${{ inputs.mode }}
+          TARGET: aws
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+          API_REPOSITORY: ${{ steps.images.outputs.api_repository }}
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_REPOSITORY: ${{ steps.images.outputs.redis_repository }}
+          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
+          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
+        run: |
+          manifest_file="$(mktemp)"
+          trap 'rm -f "$manifest_file"' EXIT
+          jq -n \
+            --arg mode "$MODE" \
+            --arg api_image "${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}" \
+            --arg redis_image "${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}" \
+            --arg clickhouse_image "${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}" \
+            '{mode:$mode,images:{api_image:$api_image,redis_image:$redis_image,clickhouse_image:$clickhouse_image}}' \
+            > "$manifest_file"
+          scripts/lease.sh set-manifest "$ENV_ID" "$manifest_file" >/dev/null
+
+      - name: Terraform plan (AWS)
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          ENV_ID: ${{ inputs.env_id }}
+          API_REPOSITORY: ${{ steps.images.outputs.api_repository }}
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_REPOSITORY: ${{ steps.images.outputs.redis_repository }}
+          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
+          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+        run: |
+          export TF_VAR_api_image="${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}"
+          export TF_VAR_redis_image="${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}"
+          export TF_VAR_clickhouse_image="${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
+          make plan TARGET=aws ENV_ID="$ENV_ID"
+
+      - name: Terraform apply (AWS)
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          ENV_ID: ${{ inputs.env_id }}
+        run: make apply TARGET=aws ENV_ID="$ENV_ID"
+
+      - name: Remove saved plan
+        if: always()
+        run: rm -f envs/preview/tfplan.bin
+
+      - name: Wait for the applied ECS deployments
+        run: |
+          cluster_arn="$(terraform -chdir=envs/preview output -raw ecs_cluster_arn)"
+          services=()
+          task_definitions=()
+          for output_pair in \
+            api_service_name:api_task_definition_arn \
+            redis_service_name:redis_task_definition_arn \
+            clickhouse_service_name:clickhouse_task_definition_arn \
+            worker_service_name:worker_task_definition_arn; do
+            service_output="${output_pair%%:*}"
+            task_definition_output="${output_pair##*:}"
+            service_name="$(terraform -chdir=envs/preview output -raw "$service_output" 2>/dev/null || true)"
+            task_definition_arn="$(terraform -chdir=envs/preview output -raw "$task_definition_output" 2>/dev/null || true)"
+            if [[ -n "$service_name" && "$service_name" != "null" ]]; then
+              if [[ -z "$task_definition_arn" || "$task_definition_arn" == "null" ]]; then
+                echo "$service_name has no applied task definition output" >&2
+                exit 1
+              fi
+              services+=("$service_name")
+              task_definitions+=("$task_definition_arn")
+            fi
+          done
+          if (( ${#services[@]} < 3 )); then
+            echo "fewer than the three required ECS services were present in Terraform outputs" >&2
+            exit 1
+          fi
+
+          aws ecs wait services-stable --cluster "$cluster_arn" --services "${services[@]}"
+          response="$(aws ecs describe-services --cluster "$cluster_arn" --services "${services[@]}")"
+          if ! jq -e '.failures | type == "array" and length == 0' <<< "$response" >/dev/null; then
+            echo "ECS describe-services returned failures or malformed data" >&2
+            exit 1
+          fi
+
+          for index in "${!services[@]}"; do
+            service_name="${services[$index]}"
+            task_definition_arn="${task_definitions[$index]}"
+            if ! jq -e --arg service_name "$service_name" --arg task_definition "$task_definition_arn" '
+              [.services[] | select(.serviceArn | endswith("/" + $service_name))] as $matches
+              | ($matches | length) == 1
+              and $matches[0].taskDefinition == $task_definition
+              and ($matches[0].deployments | type == "array")
+              and ($matches[0].deployments | length) == 1
+              and ($matches[0].deployments[0] as $deployment
+                | $deployment.taskDefinition == $task_definition
+                and (
+                  $deployment.rolloutState == "COMPLETED"
+                  or (
+                    $deployment.status == "PRIMARY"
+                    and $deployment.runningCount == $deployment.desiredCount
+                    and ([
+                      $matches[0].deployments[]
+                      | select(.status == "ACTIVE" and .id != $deployment.id)
+                    ] | length) == 0
+                  )
+                ))' <<< "$response" >/dev/null; then
+              echo "$service_name is not on its single completed applied deployment" >&2
+              exit 1
+            fi
+          done
+          echo "all ${#services[@]} ECS services reached their applied task definitions"
+
+      - name: Negative ingress test (runner must time out or be refused)
+        run: |
+          alb_dns="$(terraform -chdir=envs/preview output -raw alb_dns_name)"
+          set +e
+          http_code="$(curl --silent --show-error --max-time 10 --output /dev/null \
+            --write-out '%{http_code}' "http://${alb_dns}/health")"
+          curl_rc=$?
+          set -e
+
+          case "$curl_rc" in
+            0)
+              echo "runner received HTTP ${http_code}; ingress allowlist is not enforcing OPERATOR_CIDR" >&2
+              exit 1
+              ;;
+            7|28)
+              echo "runner connection was refused or timed out outside OPERATOR_CIDR (curl exit ${curl_rc})"
+              ;;
+            *)
+              echo "negative ingress test failed for an unexpected curl error (exit ${curl_rc})" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Close on failure (stage 1)
+        if: failure() && steps.lease-open.outputs.acquired == 'true'
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          ENV_ID: ${{ inputs.env_id }}
+          LEASE_GENERATION: ${{ steps.lease-open.outputs.generation }}
+          TARGET: aws
+        run: scripts/close-env.sh --generation "$LEASE_GENERATION" "$ENV_ID"
+
+      - name: Masked summary
+        if: always()
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### session-apply"
+            echo ""
+            echo "env_id: $ENV_ID"
+            echo "result: $JOB_STATUS"
+            alb_url="$(terraform -chdir=envs/preview output -raw api_url 2>/dev/null || true)"
+            if [[ -n "$alb_url" ]]; then
+              echo "ALB URL: $alb_url"
+            else
+              echo "ALB URL: unavailable (apply did not leave readable state)"
+            fi
+          } | sed -E 's/[0-9]{12}/************/g' >> "$GITHUB_STEP_SUMMARY"

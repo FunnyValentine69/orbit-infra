@@ -1,0 +1,248 @@
+{
+  "name": "p3fix-24-terminal-inventory",
+  "tag_response": {
+    "ResourceTagMappingList": [
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:vpc/vpc-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:internet-gateway/igw-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:subnet/subnet-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:subnet/subnet-two",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:subnet/subnet-three",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:route-table/rtb-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:route-table/rtb-two",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:security-group/sg-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:security-group/sg-two",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:security-group/sg-three",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:security-group-rule/sgr-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-two",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-three",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-four",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-five",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ecs:test-region:placeholder:cluster/cluster-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-one",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-two",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-three",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ecs:test-region:placeholder:task-definition/task-one:1",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ecs:test-region:placeholder:task-definition/task-two:1",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:ecs:test-region:placeholder:task-definition/task-three:1",
+        "Tags": []
+      },
+      {
+        "ResourceARN": "arn:aws:servicediscovery:test-region:placeholder:namespace/ns-one",
+        "Tags": []
+      }
+    ]
+  },
+  "default_response": {
+    "rc": 254,
+    "stdout": "",
+    "stderr": "An error occurred (ResourceNotFoundException) while calling the exact describe operation"
+  },
+  "responses": {
+    "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-one": {
+      "rc": 0,
+      "stdout": {
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-one",
+            "State": "deleted"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-two": {
+      "rc": 0,
+      "stdout": {
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-two",
+            "State": "deleted"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-three": {
+      "rc": 0,
+      "stdout": {
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-three",
+            "State": "deleted"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-four": {
+      "rc": 0,
+      "stdout": {
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-four",
+            "State": "deleted"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-five": {
+      "rc": 0,
+      "stdout": {
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-five",
+            "State": "deleted"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    "arn:aws:ecs:test-region:placeholder:cluster/cluster-one": {
+      "rc": 0,
+      "stdout": {
+        "clusters": [
+          {
+            "clusterArn": "arn:aws:ecs:test-region:placeholder:cluster/cluster-one",
+            "status": "INACTIVE"
+          }
+        ],
+        "failures": []
+      },
+      "stderr": ""
+    },
+    "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-one": {
+      "rc": 0,
+      "stdout": {
+        "services": [
+          {
+            "serviceArn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-one",
+            "status": "INACTIVE"
+          }
+        ],
+        "failures": []
+      },
+      "stderr": ""
+    },
+    "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-two": {
+      "rc": 0,
+      "stdout": {
+        "services": [
+          {
+            "serviceArn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-two",
+            "status": "INACTIVE"
+          }
+        ],
+        "failures": []
+      },
+      "stderr": ""
+    },
+    "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-three": {
+      "rc": 0,
+      "stdout": {
+        "services": [
+          {
+            "serviceArn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-three",
+            "status": "INACTIVE"
+          }
+        ],
+        "failures": []
+      },
+      "stderr": ""
+    },
+    "arn:aws:ecs:test-region:placeholder:task-definition/task-one:1": {
+      "rc": 0,
+      "stdout": {
+        "taskDefinition": {
+          "taskDefinitionArn": "arn:aws:ecs:test-region:placeholder:task-definition/task-one:1",
+          "status": "INACTIVE"
+        }
+      },
+      "stderr": ""
+    },
+    "arn:aws:ecs:test-region:placeholder:task-definition/task-two:1": {
+      "rc": 0,
+      "stdout": {
+        "taskDefinition": {
+          "taskDefinitionArn": "arn:aws:ecs:test-region:placeholder:task-definition/task-two:1",
+          "status": "DELETE_IN_PROGRESS"
+        }
+      },
+      "stderr": ""
+    },
+    "arn:aws:ecs:test-region:placeholder:task-definition/task-three:1": {
+      "rc": 254,
+      "stdout": "",
+      "stderr": "An error occurred (ClientException): task definition not found"
+    }
+  },
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
+}

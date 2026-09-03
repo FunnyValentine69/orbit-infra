@@ -26,7 +26,6 @@ variable "cluster_arn" {
 }
 
 variable "image" {
-  # P3-2 replaces this with the private-ECR mirror digest of this image.
   description = "Container image (tag or digest form)"
   type        = string
   default     = "redis:7-alpine"
@@ -76,6 +75,11 @@ variable "memory" {
   description = "Task memory (MiB)"
   type        = number
   default     = 512
+}
+
+variable "region" {
+  description = "AWS region passed through to ecs-service for the awslogs driver"
+  type        = string
 }
 
 variable "tags" {

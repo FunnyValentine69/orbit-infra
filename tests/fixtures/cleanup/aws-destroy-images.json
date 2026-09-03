@@ -1,0 +1,13 @@
+{
+  "name": "aws-destroy-reuses-lease-images",
+  "authored": "preview image-variable and lease-manifest contract",
+  "env_id": "aws-images",
+  "manifest": {
+    "mode": "public",
+    "images": {
+      "api_image": "registry.example.invalid/preview/api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "redis_image": "registry.example.invalid/preview/redis@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "clickhouse_image": "registry.example.invalid/preview/clickhouse@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+}

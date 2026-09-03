@@ -1,0 +1,12 @@
+{
+  "name": "later-tag-requery-fails-closed",
+  "authored": "Resource Groups Tagging API retry contract",
+  "env_id": "tag-incomplete",
+  "tag_requery_offsets": "0 0",
+  "fail_on_tag_call": 3,
+  "expected": {
+    "status": "cleanup_failed",
+    "candidate_id": "tag-inventory-incomplete",
+    "indeterminate": 1
+  }
+}

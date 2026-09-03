@@ -1,0 +1,96 @@
+# session-destroy
+#
+# Human-triggered, main-only close of a preview environment against real
+# AWS (ADR 0006). Runs scripts/close-env.sh (stage 1 of close): lease ->
+# closing (CAS), manifest, scale-to-zero, terraform destroy (retries),
+# DeleteTaskDefinitions, full inventory re-query, and an intentional
+# `closing` result for stage 2 (the sweeper). Shares the
+# `preview-<env_id>` concurrency group with session-apply.yml and the
+# sweeper.
+
+name: session-destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      env_id:
+        description: 'Preview environment id matching Terraform (1-12 chars)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: preview-${{ inputs.env_id }}
+  cancel-in-progress: false
+  # queue: max keeps every pending dispatch (GitHub changelog 2026-05-07);
+  # it requires cancel-in-progress: false. The lease CAS remains the
+  # correctness barrier (ADR 0006).
+  queue: max
+
+jobs:
+  validate-input:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate env_id
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+        run: |
+          if ! printf '%s' "$ENV_ID" | grep -qE '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$'; then
+            echo "env_id '$ENV_ID' does not match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$" >&2
+            exit 1
+          fi
+
+  destroy:
+    needs: validate-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (deployer)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_DEPLOYER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Write AWS backend config
+        run: scripts/write-preview-backend.sh
+
+      - name: Close environment (stage 1)
+        env:
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          ENV_ID: ${{ inputs.env_id }}
+          TARGET: aws
+        run: scripts/close-env.sh "$ENV_ID"
+
+      - name: Masked summary
+        if: always()
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### session-destroy"
+            echo ""
+            echo "env_id: $ENV_ID"
+            echo "result: $JOB_STATUS"
+          } | sed -E 's/[0-9]{12}/************/g' >> "$GITHUB_STEP_SUMMARY"

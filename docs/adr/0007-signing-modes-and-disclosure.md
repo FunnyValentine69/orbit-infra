@@ -1,19 +1,52 @@
 # ADR 0007: Signing modes and disclosure
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
-Keyless cosign signing uploads the image reference to the public Rekor transparency log. For the public placeholder that's the point. For the private upstream images, the same upload would publish the AWS account ID, region, and private ECR repository names: the AWS account ID, region, and ECR repository names must never be published; the upstream's repository slug is the one permitted public reference.
+Keyless cosign signing uploads the image reference to the public Rekor
+transparency log. Every image distributed by this platform, including the
+placeholder built from public source, lives in private ECR. A Rekor upload
+would therefore publish the AWS account ID, region, and private ECR repository
+name. Those values must never be published; the upstream repository slug is
+the one permitted public reference.
 
 ## Decision
 
-Two signing modes, matched to what each image can disclose. The **public placeholder** is signed keyless with cosign, uploaded to Rekor, identity and issuer pinned on verify, attested with `actions/attest-build-provenance` since it really is built in CI. The **private upstream images** are signed with an asymmetric AWS KMS key (`awskms://`, the one accepted standing cost, roughly $1/month) using `--tlog-upload=false`, verified with the exported public key instead of Rekor lookup. No predicate for either mode carries a hostname or account identifier; the private images' `local-build/v1` predicate carries only the upstream commit SHA, the build-input hash (sha256 of the `git archive` of that commit — the only input any private build ever reads), and the build date. It does not claim CI build provenance, since it wasn't built in CI. Cosign's version is pinned in `tools.lock` and checked against `cosign version` before every signing step. Signing verifies first, so a re-run is a no-op.
+Every private-ECR image is signed and attested with an asymmetric AWS KMS
+key (`awskms://`, the one accepted standing cost, roughly $1/month), using
+`--tlog-upload=false` and verification through the exported public key rather
+than Rekor. This rule includes the public-source placeholder, the private
+upstream images, and the Redis/ClickHouse mirrors. The placeholder's custom
+CI-build predicate carries only its source commit and build date. The private
+images' `local-build/v1` predicate carries only the upstream commit SHA, the
+upstream archive hash, the repository-owned build-input hash, and the build
+date; it does not claim CI build
+provenance. No predicate carries a hostname or account identifier. Cosign's
+version is pinned in `tools.lock` and checked before signing. Each SBOM, scan,
+signature, and attestation is handled independently on a re-run. Every Trivy
+scan explicitly selects the deployed `linux/arm64` image: the action-based
+mirror scans set `TRIVY_PLATFORM=linux/arm64`, and the direct CLI scan uses
+`--platform linux/arm64`.
+
+Before `session-apply.yml` opens a lease, it exports the KMS public key and
+verifies all three selected image signatures without contacting Rekor. It then
+requires attestations whose predicates match the selected lock-file inputs:
+the upstream commit and build-input hashes for locally built images, the
+placeholder source commit, and the mirrored source reference and digest. A
+missing signature, missing attestation, or predicate mismatch fails before any
+lease or preview resource is created. The deployer role grants only the ECR
+pull operations and alias-scoped KMS public-key read needed by this gate;
+signing remains exclusive to the publisher role.
 
 ## Consequences
 
-- The placeholder gets full, independently-verifiable transparency; the private images get provenance without disclosure.
-- Private images can't be verified via public Rekor lookup — only via the exported KMS public key, distributed with verification instructions.
+- All distributed images get signatures and provenance without disclosing
+  their private-ECR references.
+- Images are verified through the exported KMS public key, not a public Rekor
+  lookup.
+- Deployment accepts only signed, attested images whose provenance matches the
+  lock files, and scans the same `linux/arm64` platform that ECS runs.
 - The KMS key is a real, small, standing cost accepted as the price of not disclosing account/repo details.
 
 ## Alternatives considered
@@ -21,3 +54,26 @@ Two signing modes, matched to what each image can disclose. The **public placeho
 - **Keyless signing for every image, including private ones:** rejected — discloses account ID, region, and repository names to the public Rekor log.
 - **No signing for private images:** rejected — loses the ability to prove an image matches a specific, verified upstream commit.
 - **Self-hosted transparency log instead of Rekor:** rejected — adds a persistent service for a guarantee KMS already provides without the disclosure problem.
+
+## Amendment 2026-09-02 (P3-3)
+
+The private upstream images (`orbit-infra-79s5rw/orbit-api`,
+`orbit-infra-79s5rw/orbit-worker`, `orbit-infra-79s5rw/orbit-clickhouse`)
+are built locally by `scripts/build-upstream.sh`, never in hosted CI: the
+build reads only a `git archive` of the pinned, verified upstream commit
+(`upstream.lock`), never the working tree, after asserting the local
+clone's origin, HEAD, and cleanliness match the lock file. The archive's
+sha256 (`upstream_archive_sha256`) is recorded in `upstream.lock`. A second
+hash, `repo_build_inputs_sha256`, covers exactly, in order,
+`images/clickhouse/Dockerfile`, `scripts/build-upstream.sh`, and the complete
+`clickhouse_digest` line from `mirror-images.lock`; these repository-owned
+files and the archive are all build inputs. Each image's local content id is
+recorded alongside them. Signing is a separate, later step:
+`.github/workflows/sign-images.yml` (`workflow_dispatch` only) signs the
+already-pushed images with the same asymmetric KMS key described above
+(`--tlog-upload=false`, verified via the exported public key), and
+attests a `local-build/v1` custom predicate carrying only the upstream
+commit SHA, `upstream_archive_sha256`, `repo_build_inputs_sha256`, and the
+signing date — no hostname or
+account identifier, and no claim of CI build provenance, since these
+images were never built in CI.

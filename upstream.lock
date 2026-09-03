@@ -2,12 +2,16 @@ upstream_repo: SuperGokou/happyCoding
 upstream_sha: b1f1123f90000df49110b1fe81a8edf80365f28f
 recorded: 2026-09-02
 recorded_by: git -C $UPSTREAM_DIR rev-parse HEAD
-build_input_sha256: <pending P3-3>
+upstream_archive_sha256: 027a8d1624b03933ebf848f4f0ba021f5f4bc8ff5856c073e4a8e9f7e31a9dca
+repo_build_inputs_sha256: c0d6c78fec442a5cec41f1d9ecce24ecde9376739b33724cbbdce907b47c1b79
 
 images:
-  orbit-api:
-    digest: <pending P3-3>
-  orbit-worker:
-    digest: <pending P3-3>
-  orbit-clickhouse:
-    digest: <pending P3-3>
+  orbit-infra-79s5rw/orbit-api:
+    local_id: sha256:a5b462e9cecbdf05d2624b8edebe3308850880c8a1aa587c69807e45e297882f
+    digest: <pending real-AWS push (P0-3b)>
+  orbit-infra-79s5rw/orbit-worker:
+    local_id: sha256:5abbff07d438db6b324c4c273d001b2feb8b7695b3ea3eceb12bcdf1fc232784
+    digest: <pending real-AWS push (P0-3b)>
+  orbit-infra-79s5rw/orbit-clickhouse:
+    local_id: sha256:8a47893f55c6d40d7403b6c8db21685f28cf8e4e35b3fdcc8aa384756d25def6
+    digest: <pending real-AWS push (P0-3b)>

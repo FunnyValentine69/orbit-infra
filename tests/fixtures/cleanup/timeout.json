@@ -1,0 +1,17 @@
+{
+  "name": "outer-timeout-is-indeterminate",
+  "candidate": {
+    "resource_type": "ec2:vpc",
+    "id": "vpc-timeout",
+    "arn": null,
+    "sources": [
+      "manifest"
+    ]
+  },
+  "expected": {
+    "rc": 124,
+    "outcome": "indeterminate",
+    "reason": "aws-timeout"
+  },
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
+}

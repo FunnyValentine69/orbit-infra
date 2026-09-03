@@ -8,7 +8,8 @@
 - [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget (authored; apply deferred with P0-3)
 - [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
-- [ ] P0-3c (with P0-3b): add `redis_image` and `clickhouse_image` passthrough variables to envs/preview so the real-AWS apply can use the private-ECR mirror digests from mirror-images.yml (Tier-2 B5 on PR #2)
+- [x] P0-3c: add `redis_image` and `clickhouse_image` passthrough variables so real-AWS sessions use the locked private-ECR mirror digests
+- [ ] P0-3d: real-AWS promotion gate: apply bootstrap only, OIDC smoke, then per-principal positive/negative API matrix across the ten policy documents including the task boundary as a cap, before any preview apply (CODE-ONLY until then)
 
 ## Phase 1 — Repo docs + save-file
 
@@ -34,15 +35,23 @@
 ## Phase 3 — CI/CD
 
 (expanded when the phase starts)
+- [x] P3-1 terraform-plan.yml: gates + LocalStack plan + sticky PR comment + gated infracost job; no AWS credentials (P2-6's cost line lands from the first CI run)
 - [ ] P3-x: document that fork PRs skip oidc-smoke jobs (green-by-skip) in README/RUNBOOKS
-- [ ] P3-2: digest-pin the placeholder base image and add pip hash pinning (reproducible signed build)
+- [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
+- [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
+- [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock records upstream_archive_sha256, repo_build_inputs_sha256, and local_id per image
+- [x] P3-14: stage-1 close redesign (typed outcomes, bounded tagging re-query, AWS CLI wrapper with timeouts, LocalStack allowances in the manifest, three-attempt retry budget) LOCALSTACK-VERIFIED (see ADR 0006, "Live-proof findings 2026-09-02"); fixture suite tests/cleanup-verifier.sh (23 cases; one recorded backend response, remaining fixtures authored)
+- [ ] P3-3b: push the three images with PUSH=1 after P0-3b, then dispatch sign-images.yml
+- [x] P3-6: AWS `make plan` saves a plan and `make apply` non-interactively consumes that exact plan; session workflows generate the required backend config from bootstrap naming
+- [x] P3-13: terraform-plan.yml reads and removes the LocalStack plan from the per-environment `PREVIEW_ROOT` run directory
+- [x] P3-4: scripts/lease.sh (CAS lease on S3 ETag, ADR 0006) + scripts/close-env.sh (stage 1 of close) + session-apply.yml/session-destroy.yml (main-only, runner-CIDR check, lease open, plan/apply, negative ingress test) + Makefile lease-list/lease-get/close targets; live-verified on LocalStack (open/transition/CAS-race/list, full apply->close cycle)
+- [x] P3-5: SNS alerts topic (optional email subscription via var.alert_email) + UnHealthyHostCount and HTTPCode_Target_5XX_Count CloudWatch alarms on the ALB target group; SLO documented in ARCHITECTURE.md; live-verified on LocalStack (alarms created, not evaluated)
 
 ## Phase 4 — Parallel environments + runbooks
 
 (expanded when the phase starts)
-- [ ] P4-x: ecs-service applies with wait_for_steady_state = false, so an apply exits 0 even if tasks never reach RUNNING; add a post-apply `aws ecs describe-services` steady-state check to the start-session runbook and session-apply.yml (Tier-1 P2 on PR #2)
-- [ ] P4-y: set `hostPort` equal to `containerPort` explicitly in the ecs-service port mapping so a post-apply plan is empty on LocalStack too (the emulator injects hostPort; Fargate requires equality anyway) (Tier-3 follow-up on PR #2)
-- [ ] P4-z: concurrent `terraform init` runs can race on the shared `plugin_cache_dir`; document a per-run `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE`-free workaround (pre-warm the cache or serialize inits) in RUNBOOKS (seen once during the t3e/t3f concurrency proof)
+- [x] P4-x: session-apply waits for every enabled ECS service and requires one completed deployment whose task definition matches the applied Terraform output; operator positive checks and the runner-only negative check are documented in RUNBOOKS.md
+- [x] P4-y: set Fargate `awsvpc` `hostPort` equal to `containerPort`; done because ECS requires equality and the prior plan-drift allowance masked that contract
 
 ## Phase 5 — Drift, sweeper, threat model, polish
 
@@ -54,3 +63,8 @@
 - [ ] P5-8: exclude the bootstrap state key from the plan-reader read grant, or keep the budget email out of state, because sensitive variables are stored in plaintext state (Tier-3 P2 on PR #1)
 - [ ] P5-9: preview secret value is stored in state readable by plan-reader; move to secret_string_wo/ephemeral or split state (Tier-2 P2 on PR #2)
 - [ ] P5-10: data bucket name is globally preclaimable; use bucket_prefix or a persisted random suffix and update the deployer S3 ARN pattern (Tier-2 P2 on PR #2)
+
+## End-of-project decisions (user, low priority)
+- [ ] Rewrite or keep the institutional author email on the first 20 commits of main
+- [ ] Delete the superseded remote branch feat/phase2-modules
+- [ ] Delete the superseded remote branch feat/phase3-ci (PR #3 closed as stale; PR #4 is the real one)

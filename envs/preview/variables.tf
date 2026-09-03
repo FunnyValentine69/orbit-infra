@@ -66,9 +66,36 @@ variable "operator_cidr" {
 }
 
 variable "api_image" {
-  description = "Container image for the api service. Defaults to a placeholder digest; P3-2 replaces this with the private-ECR digest of this repo's placeholder image."
+  description = "Container image for the api service. LocalStack defaults to the locally built placeholder; real-AWS sessions pass a private-ECR digest."
   type        = string
   default     = "placeholder:local"
+
+  validation {
+    condition     = var.target != "aws" || can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[^@\\s]+@sha256:[0-9a-f]{64}$", var.api_image))
+    error_message = "On target=aws, api_image must be a private-ECR image reference pinned by digest (ADR 0007); public registry defaults are LocalStack-only."
+  }
+}
+
+variable "redis_image" {
+  description = "Container image for Redis. LocalStack defaults to the public source tag; real-AWS sessions pass the private-ECR mirror digest."
+  type        = string
+  default     = "redis:7-alpine"
+
+  validation {
+    condition     = var.target != "aws" || can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[^@\\s]+@sha256:[0-9a-f]{64}$", var.redis_image))
+    error_message = "On target=aws, redis_image must be a private-ECR image reference pinned by digest (ADR 0007); public registry defaults are LocalStack-only."
+  }
+}
+
+variable "clickhouse_image" {
+  description = "Container image for ClickHouse. LocalStack defaults to the public source tag; real-AWS sessions pass the private-ECR mirror digest."
+  type        = string
+  default     = "clickhouse/clickhouse-server:24.3-alpine"
+
+  validation {
+    condition     = var.target != "aws" || can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[^@\\s]+@sha256:[0-9a-f]{64}$", var.clickhouse_image))
+    error_message = "On target=aws, clickhouse_image must be a private-ECR image reference pinned by digest (ADR 0007); public registry defaults are LocalStack-only."
+  }
 }
 
 variable "api_command" {
@@ -114,4 +141,16 @@ variable "project_tag" {
   description = "Authoritative Project tag value; must match the bootstrap project_tag variable that the deployer policy conditions on"
   type        = string
   default     = "orbit-infra"
+}
+
+variable "alert_email" {
+  description = "Email address subscribed to the alerts SNS topic. Defaults to null (no subscription created); never committed as a literal value."
+  type        = string
+  default     = null
+  sensitive   = true
+
+  validation {
+    condition     = var.alert_email == null || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.alert_email))
+    error_message = "alert_email must be null or a single email address."
+  }
 }

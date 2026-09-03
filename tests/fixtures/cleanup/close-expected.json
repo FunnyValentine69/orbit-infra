@@ -1,0 +1,12 @@
+{
+  "name": "stage-one-retains-state-and-closing-status",
+  "expected": {
+    "status": "closing",
+    "error": null,
+    "cleanup_attempt": 1,
+    "live": 0,
+    "indeterminate": 0,
+    "pending": 0
+  },
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
+}

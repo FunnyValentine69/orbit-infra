@@ -22,17 +22,21 @@ locals {
 
   container_definition = merge(
     {
-      name         = var.name
-      image        = var.image
-      essential    = true
-      portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
-      environment  = local.env_list
-      secrets      = local.secrets_list
+      name      = var.name
+      image     = var.image
+      essential = true
+      portMappings = [{
+        containerPort = var.container_port
+        hostPort      = var.container_port
+        protocol      = "tcp"
+      }]
+      environment = local.env_list
+      secrets     = local.secrets_list
       logConfiguration = {
         logDriver = "awslogs"
         options = {
           "awslogs-group"         = try(aws_cloudwatch_log_group.this[0].name, "")
-          "awslogs-region"        = try(data.aws_region.current[0].region, "")
+          "awslogs-region"        = var.region
           "awslogs-stream-prefix" = var.name
         }
       }
@@ -48,10 +52,6 @@ locals {
       }
     } : {}
   )
-}
-
-data "aws_region" "current" {
-  count = local.enabled
 }
 
 resource "aws_cloudwatch_log_group" "this" {

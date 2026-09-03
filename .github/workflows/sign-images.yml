@@ -1,0 +1,239 @@
+# sign-images
+#
+# Signs the three private upstream workload images (built locally by
+# scripts/build-upstream.sh, never in hosted CI -- see ARCHITECTURE.md
+# "Image supply chain summary" and ADR 0007) after they have already been
+# pushed to private ECR by a local `PUSH=1` run of build-upstream.sh. This
+# workflow never builds anything; it only resolves the already-pushed
+# digest, signs it with the KMS key (--tlog-upload=false, ADR 0007), and
+# attests a `local-build/v1` predicate carrying the upstream commit SHA
+# and both build-input hashes recorded in upstream.lock. It needs the
+# real-AWS bootstrap (P0-3b) applied and the AWS_ROLE_PUBLISHER /
+# AWS_KMS_SIGNING_KEY_ARN repository secrets set (see bootstrap/README.md,
+# "After apply").
+
+name: sign-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_sha:
+        description: 'Full upstream commit SHA the images were built from'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (publisher)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_PUBLISHER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Resolve registry
+        id: registry
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::${account_id}"
+          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
+          echo "::add-mask::${registry}"
+          echo "registry=${registry}" >> "$GITHUB_OUTPUT"
+
+      - name: ECR login
+        run: |
+          aws ecr get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin "${{ steps.registry.outputs.registry }}"
+
+      - name: Read scanner versions from tools.lock
+        id: tool-versions
+        run: |
+          {
+            echo "cosign=$(awk '$1 == \"cosign\" { print $2 }' tools.lock)"
+            echo "syft=$(awk '$1 == \"syft\" { print $2 }' tools.lock)"
+            echo "trivy=$(awk '$1 == \"trivy\" { print $2 }' tools.lock)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v${{ steps.tool-versions.outputs.cosign }}
+
+      - name: Install syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: v${{ steps.tool-versions.outputs.syft }}
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        with:
+          version: v${{ steps.tool-versions.outputs.trivy }}
+          cache: false
+
+      - name: Verify scanner versions match tools.lock
+        env:
+          SYFT_CMD: ${{ steps.syft.outputs.cmd }}
+        run: |
+          installed="$(cosign version | grep '^GitVersion:' | awk '{print $2}')"
+          expected="v${{ steps.tool-versions.outputs.cosign }}"
+          if [[ "${installed}" != "${expected}" ]]; then
+            echo "cosign version mismatch: installed ${installed}, expected ${expected}" >&2
+            exit 1
+          fi
+
+          installed="$("$SYFT_CMD" version | awk '$1 == "Version:" { print $2 }')"
+          expected="${{ steps.tool-versions.outputs.syft }}"
+          if [[ "${installed}" != "${expected}" ]]; then
+            echo "syft version mismatch: installed ${installed}, expected ${expected}" >&2
+            exit 1
+          fi
+
+          installed="$(trivy --version | awk '$1 == "Version:" { print $2; exit }')"
+          expected="${{ steps.tool-versions.outputs.trivy }}"
+          if [[ "${installed}" != "${expected}" ]]; then
+            echo "trivy version mismatch: installed ${installed}, expected ${expected}" >&2
+            exit 1
+          fi
+
+      - name: Validate dispatch against upstream.lock
+        id: lock
+        env:
+          DISPATCH_SHA: ${{ inputs.upstream_sha }}
+        run: |
+          locked_sha="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
+          upstream_archive_sha256="$(awk '$1 == "upstream_archive_sha256:" { print $2 }' upstream.lock)"
+          repo_build_inputs_sha256="$(awk '$1 == "repo_build_inputs_sha256:" { print $2 }' upstream.lock)"
+          if [[ "$DISPATCH_SHA" != "$locked_sha" ]]; then
+            echo "dispatch upstream_sha does not match upstream.lock" >&2
+            exit 1
+          fi
+          if [[ ! "$locked_sha" =~ ^[0-9a-f]{40}$ ]] || \
+             [[ ! "$upstream_archive_sha256" =~ ^[0-9a-f]{64}$ ]] || \
+             [[ ! "$repo_build_inputs_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "upstream.lock contains an invalid commit or build-input hash" >&2
+            exit 1
+          fi
+          clickhouse_digest_line="$(grep '^clickhouse_digest:' mirror-images.lock)"
+          current_repo_build_inputs_sha256="$({
+            printf 'images/clickhouse/Dockerfile\n'
+            cat images/clickhouse/Dockerfile
+            printf '\nscripts/build-upstream.sh\n'
+            cat scripts/build-upstream.sh
+            printf '\nmirror-images.lock:clickhouse_digest\n%s\n' "$clickhouse_digest_line"
+          } | shasum -a 256 | awk '{print $1}')"
+          if [[ "$current_repo_build_inputs_sha256" != "$repo_build_inputs_sha256" ]]; then
+            echo "repository build inputs do not match upstream.lock" >&2
+            exit 1
+          fi
+          echo "upstream_sha=${locked_sha}" >> "$GITHUB_OUTPUT"
+          echo "upstream_archive_sha256=${upstream_archive_sha256}" >> "$GITHUB_OUTPUT"
+          echo "repo_build_inputs_sha256=${repo_build_inputs_sha256}" >> "$GITHUB_OUTPUT"
+
+      - name: Export KMS public key
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+        run: |
+          aws kms get-public-key --key-id "$KMS_KEY_ARN" --query PublicKey --output text \
+            | base64 --decode > "$RUNNER_TEMP/kms-public-key.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/kms-public-key.der" \
+            -out "$RUNNER_TEMP/kms-public-key.pem"
+
+      - name: Generate SBOMs, scan, sign, and attest upstream images
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+          SYFT_CMD: ${{ steps.syft.outputs.cmd }}
+          UPSTREAM_SHA: ${{ steps.lock.outputs.upstream_sha }}
+          UPSTREAM_ARCHIVE_SHA256: ${{ steps.lock.outputs.upstream_archive_sha256 }}
+          REPO_BUILD_INPUTS_SHA256: ${{ steps.lock.outputs.repo_build_inputs_sha256 }}
+        run: |
+          tag="${UPSTREAM_SHA:0:12}"
+          built_on="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          for repository in \
+            orbit-infra-79s5rw/orbit-api \
+            orbit-infra-79s5rw/orbit-worker \
+            orbit-infra-79s5rw/orbit-clickhouse; do
+            image="${REGISTRY}/${repository}"
+            name="${repository##*/}"
+
+            digest=$(aws ecr describe-images \
+              --repository-name "${repository}" \
+              --image-ids imageTag="${tag}" \
+              --query 'imageDetails[0].imageDigest' --output text)
+
+            locked_digest="$(awk -v repository="$repository" '
+              $1 == repository ":" { in_repository = 1; next }
+              in_repository && $1 == "digest:" { print $2; exit }
+            ' upstream.lock)"
+            if [[ ! "$locked_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || [[ "$digest" != "$locked_digest" ]]; then
+              echo "${repository}: ECR digest does not match upstream.lock" >&2
+              exit 1
+            fi
+
+            "$SYFT_CMD" "${image}@${digest}" -o spdx-json > "${name}-sbom.spdx.json"
+
+            trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1 "${image}@${digest}"
+
+            if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              "${image}@${digest}" >/dev/null 2>&1; then
+              echo "${repository}: signature already exists"
+            else
+              cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+                "${image}@${digest}"
+            fi
+            cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              "${image}@${digest}" >/dev/null
+
+            if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type custom "${image}@${digest}" 2>/dev/null \
+              | jq -e --arg upstream_sha "$UPSTREAM_SHA" \
+                --arg upstream_archive_sha256 "$UPSTREAM_ARCHIVE_SHA256" \
+                --arg repo_build_inputs_sha256 "$REPO_BUILD_INPUTS_SHA256" \
+                'any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                  | $predicate.upstream_sha == $upstream_sha
+                  and $predicate.upstream_archive_sha256 == $upstream_archive_sha256
+                  and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)' >/dev/null; then
+              echo "${repository}: matching attestation already exists"
+            else
+              predicate_file=$(mktemp)
+              printf '{"predicateType":"https://github.com/FunnyValentine69/orbit-infra/local-build/v1","upstream_sha":"%s","upstream_archive_sha256":"%s","repo_build_inputs_sha256":"%s","built_on":"%s"}\n' \
+                "${UPSTREAM_SHA}" "${UPSTREAM_ARCHIVE_SHA256}" "${REPO_BUILD_INPUTS_SHA256}" "${built_on}" > "${predicate_file}"
+
+              cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+                --type custom \
+                --predicate "${predicate_file}" \
+                "${image}@${digest}"
+              rm -f "$predicate_file"
+            fi
+            cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type custom "${image}@${digest}" 2>/dev/null \
+              | jq -e --arg upstream_sha "$UPSTREAM_SHA" \
+                --arg upstream_archive_sha256 "$UPSTREAM_ARCHIVE_SHA256" \
+                --arg repo_build_inputs_sha256 "$REPO_BUILD_INPUTS_SHA256" \
+                'any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                  | $predicate.upstream_sha == $upstream_sha
+                  and $predicate.upstream_archive_sha256 == $upstream_archive_sha256
+                  and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)' >/dev/null
+          done
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: upstream-sboms-${{ inputs.upstream_sha }}
+          path: '*-sbom.spdx.json'
+          if-no-files-found: error

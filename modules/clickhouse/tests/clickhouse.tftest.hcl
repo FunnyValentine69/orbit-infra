@@ -15,6 +15,7 @@ mock_provider "aws" {
 }
 
 variables {
+  region              = "us-east-1"
   env_id              = "test"
   cluster_arn         = "arn:aws:ecs:us-east-1:000000000000:cluster/orbit-test"
   subnet_ids          = ["subnet-aaaaaaaa"]

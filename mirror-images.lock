@@ -1,0 +1,12 @@
+# Private-ECR placeholder digest plus source manifest-list digests copied into
+# the Redis and ClickHouse mirrors. session-apply.yml fails closed unless the
+# selected mode's entries are digest-pinned.
+placeholder_repository: orbit-infra-79s5rw/placeholder
+placeholder_digest: <pending real-AWS push (P0-3b)>
+placeholder_source_sha: <pending real-AWS push (P0-3b)>
+redis_source: redis:7-alpine
+redis_digest: sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+redis_repository: orbit-infra-79s5rw/mirror/redis
+clickhouse_source: clickhouse/clickhouse-server:24.3-alpine
+clickhouse_digest: sha256:c3f166f4a80098480463d897a63f6867d24e3a7661fc1fe72e889788115a25f1
+clickhouse_repository: orbit-infra-79s5rw/mirror/clickhouse

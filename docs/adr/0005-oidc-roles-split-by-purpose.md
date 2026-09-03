@@ -1,6 +1,6 @@
 # ADR 0005: OIDC roles split by purpose
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
@@ -24,6 +24,13 @@ trusts the `pull_request` subject: pull-request-triggered jobs receive no
 AWS credentials at all. Pull-request Terraform plans instead run against
 LocalStack (see ADR 0008); a real plan-reader read against AWS state
 happens only from `main`.
+
+PR CI secrets are limited to the repository owner's own pull requests; a
+compromised owner account is outside the threat model. `terraform-plan.yml`
+requires both same-repository head ownership and repository-owner PR authorship
+before starting a job that reads `LOCALSTACK_AUTH_TOKEN` or
+`INFRACOST_API_KEY`. Its top-level token permission is `contents: read`;
+`pull-requests: write` is granted only to jobs that post comments.
 
 **Local-bootstrap deviation:** the Free Plan blocks IAM Identity Center,
 so bootstrap runs from an IAM user (MFA, keys local-only, deactivated
@@ -64,11 +71,15 @@ bootstrap step; CI never uses static keys.
   resource ARN pattern where AWS supports resource-level permissions and
   to `resources = ["*"]` only where it documents none (EC2 VPC/subnet/
   route-table/IGW/endpoint/SG lifecycle, ELBv2 create/register/tag
-  calls, ECS `RegisterTaskDefinition`/`CreateService`, Cloud Map
-  namespace/service, `tag:GetResources`). An explicit `Deny` statement
-  caps the name-substring-scoped IAM grants so the deployer can never
-  mutate or pass its own role, `plan-reader`, or `publisher` (TODO.md
-  P2-7).
+  calls, ECS `RegisterTaskDefinition`/`CreateService` plus close-time
+  `ListServices`, Cloud Map namespace/service, and the
+  close-time full-inventory read `tag:GetResources`). Close-time
+  `ecs:ListTasks` and `ecs:DescribeTasks` are the exception among the
+  ECS reads: they carry an `ecs:cluster` ARN condition restricting them to
+  project clusters (statement `EcsListDescribeTasksForProjectClusters`). An explicit `Deny`
+  statement caps the name-substring-scoped IAM grants so the deployer can
+  never mutate or pass its own role, `plan-reader`, or `publisher`
+  (TODO.md P2-7).
 
 ## Amendment 2026-09-02 (PR #2 Tier 2)
 
@@ -128,6 +139,12 @@ managed-policy quota — grouped by service, statement content unchanged.
 `bootstrap/policy-size-check.sh` renders a LocalStack plan and checks
 every planned policy document against both quotas; it runs as the
 `policy-size` gate in `scripts/gates.sh`.
+
+Amendment 2026-09-03: the `-data` policy also grants the deployer the minimum
+read-only supply-chain permissions required before apply: private-ECR token and
+pull operations for the project repositories, plus `kms:GetPublicKey` limited
+to the signing-key alias. Image push and KMS signing permissions remain only on
+the publisher role.
 
 Also in this amendment: the F4 `AuthorizeSecurityGroupIngress`/
 `AuthorizeSecurityGroupEgress`/`Revoke*` statements are now allowed via

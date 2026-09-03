@@ -21,7 +21,7 @@ email_re='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 stdin_lines=0
 commits_raw=""
 tip_shas=""
-while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+while IFS=' ' read -r local_ref local_sha _remote_ref remote_sha; do
   [ -z "${local_ref:-}" ] && continue
   stdin_lines=$((stdin_lines + 1))
 
