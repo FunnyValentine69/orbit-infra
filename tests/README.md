@@ -22,6 +22,8 @@ allowance, the 30-second AWS process boundary and 660-second ECS waiter
 boundary, tag-versus-manifest authority, a failed delayed tag observation,
 exact ECS `MISSING`/non-`MISSING`/unconfirmed-empty responses, an absent state
 file, required AWS destroy image references and their Terraform forwarding,
+zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
+their `failures` array,
 the three-attempt lease limit, audited force retry, generation-bound close
 refusal, and end-to-end stage-1 state retention.
 

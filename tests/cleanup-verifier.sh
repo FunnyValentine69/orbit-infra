@@ -268,6 +268,19 @@ if [ "${FAKE_ECS_WAITER:-0}" = 1 ]; then
       ;;
   esac
 fi
+if [ -n "${FAKE_TASK_DEFINITION_DELETE_FIXTURE:-}" ]; then
+  case "$service $operation" in
+    "ecs describe-task-definition")
+      arn="$(jq -r '.task_definition_arn' "$FAKE_TASK_DEFINITION_DELETE_FIXTURE")"
+      jq -cn --arg arn "$arn" '{taskDefinition:{taskDefinitionArn:$arn,status:"INACTIVE"}}'
+      exit 0
+      ;;
+    "ecs delete-task-definitions")
+      jq -c '.response.stdout' "$FAKE_TASK_DEFINITION_DELETE_FIXTURE"
+      exit "$(jq -r '.response.rc' "$FAKE_TASK_DEFINITION_DELETE_FIXTURE")"
+      ;;
+  esac
+fi
 if [ "$service $operation" = "ec2 describe-vpcs" ]; then
   echo "An error occurred (InvalidVpcID.NotFound) while calling DescribeVpcs" >&2
   exit 254
@@ -424,6 +437,45 @@ if [ "$(cat "$tmp_dir/waiter-timeout.log" 2>/dev/null || true)" != 660 ]; then
   exit 1
 fi
 pass "the ECS services-stable waiter receives a 660-second outer timeout"
+
+# DeleteTaskDefinitions can exit zero while reporting per-ARN failures in
+# stdout. The requested ARN must fail stage 1 instead of being treated as a
+# successful deletion request.
+delete_fixture="$FIXTURES/delete-task-definitions-failure.json"
+delete_env_id="$(jq -r '.env_id' "$delete_fixture")"
+delete_task_definition_arn="$(jq -r '.task_definition_arn' "$delete_fixture")"
+env "${lease_env[@]}" "$LEASE" open "$delete_env_id" >/dev/null
+jq -n --arg arn "$delete_task_definition_arn" '
+  {candidates:[{
+    resource_type:"ecs:task-definition",
+    id:$arn,
+    arn:$arn,
+    parent_id:null,
+    sources:["prior-manifest"],
+    tag_entry:null,
+    force_delete:false
+  }]}' > "$tmp_dir/delete-failure-manifest.json"
+env "${lease_env[@]}" "$LEASE" set-manifest \
+  "$delete_env_id" "$tmp_dir/delete-failure-manifest.json" >/dev/null
+set +e
+delete_out="$(env "${lease_env[@]}" \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  FAKE_TASK_DEFINITION_DELETE_FIXTURE="$delete_fixture" \
+  TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+  "$REPO_ROOT/scripts/close-env.sh" "$delete_env_id" 2>&1)"
+delete_rc=$?
+set -e
+delete_lease="$(env "${lease_env[@]}" "$LEASE" get "$delete_env_id")"
+delete_expected="$(jq -c '.expected' "$delete_fixture")"
+delete_actual="$(jq -c '{status,cleanup_attempt}' <<< "$delete_lease")"
+if [ "$delete_rc" -eq 0 ] || [ "$delete_actual" != "$delete_expected" ] || \
+   ! grep -Fq 'DeleteTaskDefinitions reported a failure for the requested ARN' <<< "$delete_out"; then
+  echo "FAIL: a zero-exit DeleteTaskDefinitions response containing the requested ARN in failures must fail closed" >&2
+  echo "actual:   $delete_actual (rc=$delete_rc: $delete_out)" >&2
+  echo "expected: $delete_expected" >&2
+  exit 1
+fi
+pass "DeleteTaskDefinitions stdout failures for the requested ARN fail closed"
 
 # Real-AWS cleanup fails closed before Terraform when an older or malformed
 # lease does not contain the image references required by preview validation.

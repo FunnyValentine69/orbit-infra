@@ -91,6 +91,44 @@ curl -fsS "$ALB_URL/health"
 curl -fsS "$ALB_URL/s3-roundtrip"
 ```
 
+## LocalStack CI mode
+
+Dispatch the owner-only, non-scheduled LocalStack lane from `main`:
+
+```
+gh workflow run session-apply.yml -f env_id=p4ci -f target=localstack -f mode=public
+```
+
+The job starts the pinned LocalStack image, exports the repository's LocalStack
+AWS contract (localhost endpoint, test credentials, `us-east-1`, metadata
+disabled, and no `AWS_PROFILE`), and runs `make bootstrap-apply
+TARGET=localstack` on the fresh runner. It registers QEMU and Buildx because
+the task definitions request ARM64 while GitHub's Linux runner is amd64, then
+runs the unchanged `make placeholder-build`. Public mode uses
+`placeholder:local`, `redis:7-alpine`, and
+`clickhouse/clickhouse-server:24.3-alpine`; the workflow validates the
+applicable lock-file schema but deliberately skips the AWS-only private-ECR
+digest and KMS signature/attestation gate.
+
+After opening a generation-bound lease, the same job runs `make apply`, waits
+for every enabled ECS service, checks that each service reached its applied
+task definition, probes the LocalStack ALB DNS name from the excluded runner
+CIDR, records the ALB URL in the summary, and always runs stage-1 close. The
+ALB probe exercises LocalStack's endpoint routing and records whether it
+returned HTTP or refused/timed out. LocalStack routes ALB DNS through its
+shared edge and does not document source-CIDR enforcement, so this probe does
+not prove the real-AWS security-group boundary; only the AWS path treats an
+HTTP response from the excluded runner as a failure.
+
+This mode proves the workflow's full bootstrap → lease → apply → service
+acceptance → close control flow on one runner. It does not prove GitHub OIDC,
+real-AWS IAM, private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec,
+real security-group packet enforcement, or a cross-job destroy. A
+`session-destroy.yml` dispatch with `target=localstack` is refused because a
+fresh runner cannot recover the prior emulator or local state. LocalStack CI
+uses licensed credits, so this lane is dispatch-only and must never be added to
+a schedule.
+
 ## Stuck-environment force-destroy
 
 Every preview environment has a durable lease at `leases/<env_id>.json`

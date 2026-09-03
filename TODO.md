@@ -9,7 +9,7 @@
 - [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
 - [x] P0-3c: add `redis_image` and `clickhouse_image` passthrough variables so real-AWS sessions use the locked private-ECR mirror digests
-- [ ] P0-3e: Tier 3 overflow from PR #4 (CODE-ONLY until P0-3b): session-apply cleanup step runs on cancelled() as well as failure() once the lease is acquired; mirror-images scans each mirror before signing/attesting; close-env inspects delete-task-definitions response failures for the requested ARN; the runner-CIDR check runs in the same job as the apply
+- [x] P0-3e: Tier 3 overflow from PR #4 — CODE-ONLY until executed: session-apply cleanup runs on cancelled() as well as failure() once the lease is acquired; mirror-images scans each mirror before signing/attesting; close-env inspects delete-task-definitions response failures for the requested ARN; the runner-CIDR check runs in the same job as the apply
 - [ ] P0-3d: real-AWS promotion gate: apply bootstrap only, OIDC smoke, then per-principal positive/negative API matrix across the ten policy documents including the task boundary as a cap, before any preview apply (CODE-ONLY until then)
 
 ## Phase 1 — Repo docs + save-file
@@ -41,7 +41,7 @@
 - [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
 - [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
 - [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock records upstream_archive_sha256, repo_build_inputs_sha256, and local_id per image
-- [x] P3-14: stage-1 close redesign (typed outcomes, bounded tagging re-query, AWS CLI wrapper with timeouts, LocalStack allowances in the manifest, three-attempt retry budget) LOCALSTACK-VERIFIED (see ADR 0006, "Live-proof findings 2026-09-02"); fixture suite tests/cleanup-verifier.sh (23 cases; one recorded backend response, remaining fixtures authored)
+- [x] P3-14: stage-1 close redesign (typed outcomes, bounded tagging re-query, AWS CLI wrapper with timeouts, LocalStack allowances in the manifest, three-attempt retry budget) LOCALSTACK-VERIFIED (see ADR 0006, "Live-proof findings 2026-09-02"); fixture suite tests/cleanup-verifier.sh (24 cases; one recorded backend response, remaining fixtures authored)
 - [ ] P3-3b: push the three images with PUSH=1 after P0-3b, then dispatch sign-images.yml
 - [x] P3-6: AWS `make plan` saves a plan and `make apply` non-interactively consumes that exact plan; session workflows generate the required backend config from bootstrap naming
 - [x] P3-13: terraform-plan.yml reads and removes the LocalStack plan from the per-environment `PREVIEW_ROOT` run directory
@@ -50,8 +50,8 @@
 
 ## Phase 4 — Parallel environments + runbooks (Option A, 2026-09-03)
 
-- [ ] P4-0: land P0-3e overflow fixes (Codex)
-- [ ] P4-4: `target=localstack` mode for session-apply.yml and session-destroy.yml: LocalStack started on the runner (setup-localstack + LOCALSTACK_AUTH_TOKEN, owner-only), bootstrap applied on LocalStack in-job, placeholder built in-job, `public` mode images, no AWS role assumption, same lease/acceptance/close path; makes the session workflows LOCALSTACK-VERIFIED in CI
+- [x] P4-0: land P0-3e overflow fixes — CODE-ONLY until the affected workflows execute; cleanup fixture suite passes locally
+- [x] P4-4: `target=localstack` mode for session-apply.yml and session-destroy.yml: owner-only setup-localstack lane, in-job bootstrap, ARM64 placeholder build, public image defaults, no AWS role assumption, same lease/acceptance path, and same-job stage-1 close; destroy refuses cross-job LocalStack use — the workflow's own gate, probe, and close step bodies are LOCALSTACK-VERIFIED locally (env p4v, 2026-09-03: 3 services on applied task definitions, probe curl exit 7, 59 destroyed, lease closing); the CI lane itself is CODE-ONLY until the first main-only dispatch after PR #5
 - [ ] P4-1: repeatable concurrency script `tests/localstack-concurrency.sh` (two environments apply/close concurrently, independent state and leases) run locally and from the LocalStack CI mode
 - [ ] P4-2: three-dispatch ordering test `tests/dispatch-ordering.sh` (gh CLI: apply running, destroy queued, third dispatch refused on the closing lease) executed against the LocalStack CI mode; PR plan comment gains the exact post-merge dispatch line
 - [ ] P4-3: RUNBOOKS sections: start-session, end-session, stuck-environment force-destroy (ENI orphans, non-empty bucket, cleanup_failed with retained state), re-signing an already-signed digest, operator CIDR change, rotate secrets, image bump; each executed once on the LocalStack mode

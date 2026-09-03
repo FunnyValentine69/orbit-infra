@@ -124,11 +124,19 @@ The lease admits three automatic stage-1 executions per generation, with the
 attempt, next retry time, and manual-intervention flag persisted by ETag CAS.
 After the third failure only an audited force retry can claim stage 1. The
 sweeper shares the `preview-<env_id>` concurrency group with manual
-apply/destroy so running jobs do not overlap. Default GitHub concurrency keeps
-only one pending job; a newly queued job replaces an older pending job in the
-same group. The lease CAS and generation checks are the correctness boundary,
-and an operator re-dispatches any destroy displaced while pending. Closed
-leases prune after 7 days. See ADR 0006.
+apply/destroy so running jobs do not overlap. Both session workflows use the
+documented `queue: max` property with `cancel-in-progress: false`, retaining
+pending dispatches up to GitHub's queue limit. The lease CAS and generation
+checks remain the correctness boundary. Closed leases prune after 7 days.
+
+The dispatch workflows accept `target=aws|localstack`. AWS keeps independent
+apply and destroy jobs. LocalStack cannot preserve its emulator or state
+across hosted runners, so its owner-only `session-apply` path bootstraps,
+applies, runs acceptance, and performs generation-bound stage-1 close in one
+job; `session-destroy target=localstack` refuses. The LocalStack path uses test
+credentials and no AWS role, and is evidence for workflow control flow rather
+than real-AWS OIDC, IAM, KMS/ECR, or packet-level security-group enforcement.
+See ADR 0006.
 
 ## Image supply chain summary
 
@@ -192,10 +200,11 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `/health` and `/s3-roundtrip` checks. `session-destroy` leaves no active
   services or cost-bearing resources and leaves the lease `closing` for the
   stage-2 sweeper.
-- **Phase 4:** two concurrently dispatched environments must destroy
-  independently with no shared state; same-environment dispatch tests must
-  cover pending-job displacement and re-dispatch, while the lease CAS and
-  generation checks refuse stale work.
+- **Phase 4:** the dispatch-only LocalStack CI lane must prove a complete
+  same-job apply → acceptance → close cycle. Two concurrently dispatched
+  environments must destroy independently with no shared state; same-environment
+  ordering tests must confirm queued work while lease CAS and generation checks
+  refuse stale work.
 - **Phase 5:** drift detection reports clean; a modified resource is caught.
 
 ### SLO

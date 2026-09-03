@@ -1,6 +1,6 @@
 # ADR 0006: Preview environment lease lifecycle
 
-Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+Status: Accepted (2026-09-02; amended 2026-09-03). Evidence: local apply/close is LOCALSTACK-VERIFIED; the LocalStack session workflow is CODE-ONLY until its first owner dispatch; every real-AWS behavior is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
@@ -9,6 +9,17 @@ Environments are created/destroyed by independent CI dispatches that can be inte
 ## Decision
 
 Each `env_id` has a durable lease at `leases/<env_id>.json` with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every transition is a compare-and-swap (S3 conditional write on the ETag, asserting prior state/generation) — two writers can never both win. Apply order: runner-CIDR check → lint → checkov → verify every selected image signature and attestation against the lock files → create lease (only if none exists or `closed`, generation N+1) → record the mode and resolved image references → init → plan → apply; static and supply-chain gate failures never create a lease or resources. The apply workflow emits acquisition state and generation only after its CAS open succeeds. Its failure handler runs only for that acquisition and passes the generation to `close-env.sh`, which refuses without a transition if the current lease generation differs. On AWS, close reuses the three resolved image references in the lease manifest so Terraform can load the configuration before destroy; a missing reference fails closed. The LocalStack lane continues to use its local defaults.
+
+The session workflows accept `target=aws|localstack` and record the target in
+the lease manifest. The AWS path retains the independent apply and destroy
+dispatches. LocalStack state and the emulator live only on one hosted runner,
+so `session-apply` performs the complete bootstrap → apply → acceptance →
+stage-1 close cycle in one job and always closes its acquired generation at
+the end. `session-destroy target=localstack` refuses with a clear error because
+a fresh job has neither the emulator nor its state; it cannot prove cross-job
+destroy. The owner-only LocalStack job uses test credentials and never assumes
+or reads an AWS role. This asymmetry is intentional and is not evidence for
+the real-AWS cross-dispatch lifecycle.
 
 Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) re-checks the manifest; once every task definition is deleted, it removes state versions and sets `closed`. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
 

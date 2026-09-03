@@ -1,16 +1,14 @@
 # session-apply
 #
-# Human-triggered, main-only apply of a preview environment against real
-# AWS (ADR 0006). Assumes AWS_ROLE_DEPLOYER, which trusts only the
-# `ref:refs/heads/main` OIDC subject (bootstrap/roles.tf) -- this
-# workflow cannot run from any other ref, matching that trust policy.
+# Human-triggered, main-only apply of a preview environment (ADR 0006).
+# The default AWS path assumes AWS_ROLE_DEPLOYER. The owner-only LocalStack
+# path uses only test credentials and completes apply -> acceptance -> close
+# on one hosted runner because emulator state cannot cross jobs.
 #
-# Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov
-# (scripts/gates.sh) -> image signature/attestation verification -> lease
-# open (CAS) and manifest record -> plan/apply -> negative ingress test.
+# Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov ->
+# target-specific bootstrap/supply-chain checks -> lease open (CAS) and
+# manifest record -> apply -> acceptance -> stage-1 cleanup when required.
 # Gate failures before the CAS never create a lease or resources.
-# Any failure after the lease exists runs scripts/close-env.sh (stage 1
-# of close) so a crashed apply never orphans billable resources.
 #
 # Per ADR 0006 / ARCHITECTURE.md, apply, destroy, and the sweeper share
 # the `preview-<env_id>` concurrency group so they never overlap.
@@ -24,6 +22,14 @@ on:
         description: 'Preview environment id matching Terraform (1-12 chars)'
         required: true
         type: string
+      target:
+        description: 'Execution target'
+        required: true
+        default: aws
+        type: choice
+        options:
+          - aws
+          - localstack
       mode:
         description: 'Deployment image set'
         required: true
@@ -55,6 +61,9 @@ jobs:
         env:
           ENV_ID: ${{ inputs.env_id }}
           MODE: ${{ inputs.mode }}
+          TARGET: ${{ inputs.target }}
+          ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           if ! printf '%s' "$ENV_ID" | grep -qE '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$'; then
             echo "env_id '$ENV_ID' does not match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$" >&2
@@ -64,16 +73,33 @@ jobs:
             upstream|public) ;;
             *) echo "mode must be upstream or public" >&2; exit 1 ;;
           esac
+          case "$TARGET" in
+            aws|localstack) ;;
+            *) echo "target must be aws or localstack" >&2; exit 1 ;;
+          esac
+          if [ "$TARGET" = localstack ] && [ "$MODE" != public ]; then
+            echo "target=localstack requires mode=public" >&2
+            exit 1
+          fi
+          if [ "$TARGET" = localstack ] && [ "$ACTOR" != "$REPOSITORY_OWNER" ]; then
+            echo "target=localstack may be dispatched only by the repository owner" >&2
+            exit 1
+          fi
 
-  runner-cidr-check:
+  apply:
     needs: validate-input
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (inputs.target == 'aws' || github.actor == github.repository_owner)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 90
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Reject if runner IP is inside the operator CIDR
         env:
-          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          OPERATOR_CIDR: ${{ inputs.target == 'localstack' && '10.255.255.255/32' || secrets.OPERATOR_CIDR }}
         run: |
           runner_ip=$(curl -s https://checkip.amazonaws.com | tr -d '[:space:]')
           if [ -z "$OPERATOR_CIDR" ]; then
@@ -89,16 +115,6 @@ jobs:
               print("runner IP falls inside the operator CIDR; refusing to run", file=sys.stderr)
               sys.exit(1)
           EOF
-
-  gates:
-    needs: runner-cidr-check
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
 
       - name: Read terraform version from tools.lock
         id: tf-version
@@ -134,40 +150,77 @@ jobs:
           make validate
           make lint
 
-  apply:
-    needs: gates
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start LocalStack
+        if: inputs.target == 'localstack'
+        uses: LocalStack/setup-localstack@7c8a0cb3405bc58be4c8f763f812aa000bc46303 # v0.3.2
         with:
-          persist-credentials: false
+          image-tag: '2026.8'
+          install-awslocal: 'true'
+          use-pro: 'true'
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+
+      - name: Export LocalStack AWS contract
+        if: inputs.target == 'localstack'
+        run: |
+          if [ -n "${AWS_PROFILE+x}" ]; then
+            echo "AWS_PROFILE must be unset for target=localstack" >&2
+            exit 1
+          fi
+          {
+            echo "TARGET=localstack"
+            echo "AWS_ENDPOINT_URL=http://localhost:4566"
+            echo "AWS_ACCESS_KEY_ID=test"
+            echo "AWS_SECRET_ACCESS_KEY=test"
+            echo "AWS_DEFAULT_REGION=us-east-1"
+            echo "AWS_EC2_METADATA_DISABLED=true"
+          } >> "$GITHUB_ENV"
+
+      - name: Wait for LocalStack health
+        if: inputs.target == 'localstack'
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:4566/_localstack/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "LocalStack did not become healthy in time" >&2
+          exit 1
+
+      - name: Apply bootstrap (LocalStack)
+        if: inputs.target == 'localstack'
+        run: make bootstrap-apply TARGET=localstack
+
+      - name: Set up QEMU (LocalStack ARM64 tasks)
+        if: inputs.target == 'localstack'
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+
+      - name: Set up Buildx (LocalStack ARM64 tasks)
+        if: inputs.target == 'localstack'
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build placeholder image (LocalStack)
+        if: inputs.target == 'localstack'
+        run: make placeholder-build
 
       - name: Configure AWS credentials (deployer)
+        if: inputs.target == 'aws'
         uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_DEPLOYER }}
           aws-region: us-east-1
           mask-aws-account-id: true
 
-      - name: Read terraform version from tools.lock
-        id: tf-version
-        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: ${{ steps.tf-version.outputs.version }}
-          terraform_wrapper: false
-
       - name: Write AWS backend config
+        if: inputs.target == 'aws'
         run: scripts/write-preview-backend.sh
 
       - name: Read deployable image set
         id: images
         env:
           MODE: ${{ inputs.mode }}
+          TARGET: ${{ inputs.target }}
         run: |
           lock_scalar() {
             local key="$1"
@@ -185,11 +238,47 @@ jobs:
           upstream_sha="$(lock_scalar upstream_sha upstream.lock)"
           upstream_archive_sha256="$(lock_scalar upstream_archive_sha256 upstream.lock)"
           repo_build_inputs_sha256="$(lock_scalar repo_build_inputs_sha256 upstream.lock)"
+          placeholder_repository="$(lock_scalar placeholder_repository mirror-images.lock)"
+          placeholder_digest="$(lock_scalar placeholder_digest mirror-images.lock)"
           placeholder_source_sha="$(lock_scalar placeholder_source_sha mirror-images.lock)"
           redis_source="$(lock_scalar redis_source mirror-images.lock)"
           redis_repository="$(lock_scalar redis_repository mirror-images.lock)"
           redis_digest="$(lock_scalar redis_digest mirror-images.lock)"
           clickhouse_source="$(lock_scalar clickhouse_source mirror-images.lock)"
+          clickhouse_repository="$(lock_scalar clickhouse_repository mirror-images.lock)"
+          clickhouse_digest="$(lock_scalar clickhouse_digest mirror-images.lock)"
+
+          if [ "$TARGET" = localstack ]; then
+            if [[ ! "$redis_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || \
+               [[ ! "$clickhouse_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "mirror-images.lock contains an invalid mirror digest" >&2
+              exit 1
+            fi
+            if [[ "$placeholder_repository" != "orbit-infra-79s5rw/placeholder" ]] || \
+               [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
+               [[ "$clickhouse_repository" != "orbit-infra-79s5rw/mirror/clickhouse" ]]; then
+              echo "mirror-images.lock repository names do not match bootstrap/ecr.tf" >&2
+              exit 1
+            fi
+            if [[ "$redis_source" != "redis:7-alpine" ]] || \
+               [[ "$clickhouse_source" != "clickhouse/clickhouse-server:24.3-alpine" ]]; then
+              echo "mirror-images.lock source names do not match the approved public images" >&2
+              exit 1
+            fi
+            if [[ "$placeholder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              if [[ ! "$placeholder_source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "mirror-images.lock contains an invalid placeholder source commit" >&2
+                exit 1
+              fi
+            elif [[ "$placeholder_digest" != "<pending"* ]] || \
+                 [[ "$placeholder_source_sha" != "<pending"* ]]; then
+              echo "mirror-images.lock contains invalid pending placeholder metadata" >&2
+              exit 1
+            fi
+            echo "LocalStack public-image lock schema is valid"
+            exit 0
+          fi
+
           case "$MODE" in
             upstream)
               expected_api_repository="orbit-infra-79s5rw/orbit-api"
@@ -208,10 +297,8 @@ jobs:
             public)
               expected_api_repository="orbit-infra-79s5rw/placeholder"
               expected_clickhouse_repository="orbit-infra-79s5rw/mirror/clickhouse"
-              api_repository="$(lock_scalar placeholder_repository mirror-images.lock)"
-              api_digest="$(lock_scalar placeholder_digest mirror-images.lock)"
-              clickhouse_repository="$(lock_scalar clickhouse_repository mirror-images.lock)"
-              clickhouse_digest="$(lock_scalar clickhouse_digest mirror-images.lock)"
+              api_repository="$placeholder_repository"
+              api_digest="$placeholder_digest"
               if [[ ! "$placeholder_source_sha" =~ ^[0-9a-f]{40}$ ]]; then
                 echo "mirror-images.lock contains an invalid placeholder source commit" >&2
                 exit 1
@@ -257,15 +344,18 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Read cosign version from tools.lock
+        if: inputs.target == 'aws'
         id: cosign-version
         run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
+        if: inputs.target == 'aws'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v${{ steps.cosign-version.outputs.version }}
 
       - name: Verify cosign version matches tools.lock
+        if: inputs.target == 'aws'
         run: |
           installed="$(cosign version | awk '$1 == "GitVersion:" { print $2 }')"
           expected="v${{ steps.cosign-version.outputs.version }}"
@@ -275,6 +365,7 @@ jobs:
           fi
 
       - name: Export KMS public key
+        if: inputs.target == 'aws'
         env:
           KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
         run: |
@@ -284,6 +375,7 @@ jobs:
             -out "$RUNNER_TEMP/kms-public-key.pem"
 
       - name: Resolve private ECR registry
+        if: inputs.target == 'aws'
         id: registry
         run: |
           account_id="$(aws sts get-caller-identity --query Account --output text)"
@@ -293,11 +385,13 @@ jobs:
           echo "registry=${registry}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate cosign to private ECR
+        if: inputs.target == 'aws'
         run: |
           aws ecr get-login-password --region us-east-1 \
             | docker login --username AWS --password-stdin "${{ steps.registry.outputs.registry }}"
 
       - name: Verify selected image signatures and attestations
+        if: inputs.target == 'aws'
         env:
           MODE: ${{ inputs.mode }}
           PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
@@ -394,7 +488,7 @@ jobs:
         id: lease-open
         env:
           ENV_ID: ${{ inputs.env_id }}
-          TARGET: aws
+          TARGET: ${{ inputs.target }}
         run: |
           lease_json="$(scripts/lease.sh open "$ENV_ID")"
           generation="$(jq -r '.generation' <<< "$lease_json")"
@@ -407,11 +501,11 @@ jobs:
             echo "generation=${generation}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Record deployment mode and images in lease
+      - name: Record deployment target, mode, and images in lease
         env:
           ENV_ID: ${{ inputs.env_id }}
           MODE: ${{ inputs.mode }}
-          TARGET: aws
+          TARGET: ${{ inputs.target }}
           REGISTRY: ${{ steps.registry.outputs.registry }}
           API_REPOSITORY: ${{ steps.images.outputs.api_repository }}
           API_DIGEST: ${{ steps.images.outputs.api_digest }}
@@ -420,18 +514,32 @@ jobs:
           CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
           CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
         run: |
+          case "$TARGET" in
+            aws)
+              api_image="${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}"
+              redis_image="${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}"
+              clickhouse_image="${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
+              ;;
+            localstack)
+              api_image=placeholder:local
+              redis_image=redis:7-alpine
+              clickhouse_image=clickhouse/clickhouse-server:24.3-alpine
+              ;;
+          esac
           manifest_file="$(mktemp)"
           trap 'rm -f "$manifest_file"' EXIT
           jq -n \
+            --arg target "$TARGET" \
             --arg mode "$MODE" \
-            --arg api_image "${REGISTRY}/${API_REPOSITORY}@${API_DIGEST}" \
-            --arg redis_image "${REGISTRY}/${REDIS_REPOSITORY}@${REDIS_DIGEST}" \
-            --arg clickhouse_image "${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}" \
-            '{mode:$mode,images:{api_image:$api_image,redis_image:$redis_image,clickhouse_image:$clickhouse_image}}' \
+            --arg api_image "$api_image" \
+            --arg redis_image "$redis_image" \
+            --arg clickhouse_image "$clickhouse_image" \
+            '{target:$target,mode:$mode,images:{api_image:$api_image,redis_image:$redis_image,clickhouse_image:$clickhouse_image}}' \
             > "$manifest_file"
           scripts/lease.sh set-manifest "$ENV_ID" "$manifest_file" >/dev/null
 
       - name: Terraform plan (AWS)
+        if: inputs.target == 'aws'
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
@@ -448,19 +556,33 @@ jobs:
           export TF_VAR_clickhouse_image="${REGISTRY}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
           make plan TARGET=aws ENV_ID="$ENV_ID"
 
-      - name: Terraform apply (AWS)
+      - name: Terraform apply
         env:
-          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          OPERATOR_CIDR: ${{ inputs.target == 'localstack' && '10.255.255.255/32' || secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
-        run: make apply TARGET=aws ENV_ID="$ENV_ID"
+          TARGET: ${{ inputs.target }}
+        run: make apply TARGET="$TARGET" ENV_ID="$ENV_ID" OPERATOR_CIDR="$OPERATOR_CIDR"
 
       - name: Remove saved plan
-        if: always()
+        if: always() && inputs.target == 'aws'
         run: rm -f envs/preview/tfplan.bin
 
       - name: Wait for the applied ECS deployments
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          TARGET: ${{ inputs.target }}
         run: |
-          cluster_arn="$(terraform -chdir=envs/preview output -raw ecs_cluster_arn)"
+          preview_root=envs/preview
+          tf_prefix=()
+          if [ "$TARGET" = localstack ]; then
+            preview_root=".preview-runs/${ENV_ID}"
+            tf_prefix=(env TF_DATA_DIR=.terraform-localstack)
+          fi
+          tf_output() {
+            "${tf_prefix[@]}" terraform -chdir="$preview_root" output -raw "$@"
+          }
+
+          cluster_arn="$(tf_output ecs_cluster_arn)"
           services=()
           task_definitions=()
           for output_pair in \
@@ -470,8 +592,8 @@ jobs:
             worker_service_name:worker_task_definition_arn; do
             service_output="${output_pair%%:*}"
             task_definition_output="${output_pair##*:}"
-            service_name="$(terraform -chdir=envs/preview output -raw "$service_output" 2>/dev/null || true)"
-            task_definition_arn="$(terraform -chdir=envs/preview output -raw "$task_definition_output" 2>/dev/null || true)"
+            service_name="$(tf_output "$service_output" 2>/dev/null || true)"
+            task_definition_arn="$(tf_output "$task_definition_output" 2>/dev/null || true)"
             if [[ -n "$service_name" && "$service_name" != "null" ]]; then
               if [[ -z "$task_definition_arn" || "$task_definition_arn" == "null" ]]; then
                 echo "$service_name has no applied task definition output" >&2
@@ -521,31 +643,49 @@ jobs:
           done
           echo "all ${#services[@]} ECS services reached their applied task definitions"
 
-      - name: Negative ingress test (runner must time out or be refused)
+      - name: Negative ingress probe from the runner
+        id: endpoint
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          TARGET: ${{ inputs.target }}
         run: |
-          alb_dns="$(terraform -chdir=envs/preview output -raw alb_dns_name)"
+          preview_root=envs/preview
+          tf_prefix=()
+          if [ "$TARGET" = localstack ]; then
+            preview_root=".preview-runs/${ENV_ID}"
+            tf_prefix=(env TF_DATA_DIR=.terraform-localstack)
+          fi
+          alb_url="$("${tf_prefix[@]}" terraform -chdir="$preview_root" output -raw api_url)"
+          echo "url=${alb_url}" >> "$GITHUB_OUTPUT"
+
           set +e
           http_code="$(curl --silent --show-error --max-time 10 --output /dev/null \
-            --write-out '%{http_code}' "http://${alb_dns}/health")"
+            --write-out '%{http_code}' "${alb_url}/health")"
           curl_rc=$?
           set -e
 
-          case "$curl_rc" in
-            0)
+          case "$TARGET:$curl_rc" in
+            aws:0)
               echo "runner received HTTP ${http_code}; ingress allowlist is not enforcing OPERATOR_CIDR" >&2
               exit 1
               ;;
-            7|28)
+            aws:7|aws:28)
               echo "runner connection was refused or timed out outside OPERATOR_CIDR (curl exit ${curl_rc})"
               ;;
+            localstack:0)
+              echo "LocalStack ALB edge returned HTTP ${http_code}; endpoint routing ran, but this does not prove source-CIDR enforcement"
+              ;;
+            localstack:7|localstack:28)
+              echo "LocalStack ALB probe was refused or timed out for the excluded runner CIDR (curl exit ${curl_rc})"
+              ;;
             *)
-              echo "negative ingress test failed for an unexpected curl error (exit ${curl_rc})" >&2
+              echo "negative ingress probe failed for an unexpected curl error (exit ${curl_rc})" >&2
               exit 1
               ;;
           esac
 
-      - name: Close on failure (stage 1)
-        if: failure() && steps.lease-open.outputs.acquired == 'true'
+      - name: Close AWS on failure or cancellation (stage 1)
+        if: always() && (failure() || cancelled()) && steps.lease-open.outputs.acquired == 'true' && inputs.target == 'aws'
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
@@ -553,21 +693,34 @@ jobs:
           TARGET: aws
         run: scripts/close-env.sh --generation "$LEASE_GENERATION" "$ENV_ID"
 
+      - name: Close LocalStack after acceptance or failure (stage 1)
+        if: always() && inputs.target == 'localstack' && steps.lease-open.outputs.acquired == 'true'
+        env:
+          OPERATOR_CIDR: 10.255.255.255/32
+          ENV_ID: ${{ inputs.env_id }}
+          LEASE_GENERATION: ${{ steps.lease-open.outputs.generation }}
+          TARGET: localstack
+        run: scripts/close-env.sh --generation "$LEASE_GENERATION" "$ENV_ID"
+
       - name: Masked summary
         if: always()
         env:
+          ALB_URL: ${{ steps.endpoint.outputs.url }}
           ENV_ID: ${{ inputs.env_id }}
           JOB_STATUS: ${{ job.status }}
+          MODE: ${{ inputs.mode }}
+          TARGET: ${{ inputs.target }}
         run: |
           {
             echo "### session-apply"
             echo ""
             echo "env_id: $ENV_ID"
+            echo "target: $TARGET"
+            echo "mode: $MODE"
             echo "result: $JOB_STATUS"
-            alb_url="$(terraform -chdir=envs/preview output -raw api_url 2>/dev/null || true)"
-            if [[ -n "$alb_url" ]]; then
-              echo "ALB URL: $alb_url"
+            if [[ -n "$ALB_URL" ]]; then
+              echo "ALB URL: $ALB_URL"
             else
-              echo "ALB URL: unavailable (apply did not leave readable state)"
+              echo "ALB URL: unavailable (apply did not reach endpoint capture)"
             fi
           } | sed -E 's/[0-9]{12}/************/g' >> "$GITHUB_STEP_SUMMARY"

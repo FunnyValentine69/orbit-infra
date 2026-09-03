@@ -21,6 +21,7 @@ exist anywhere in the pipeline.
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov on every plan | done |
+| Dispatch-only LocalStack CI apply → acceptance → close cycle | implemented, CODE-ONLY until first dispatch |
 | SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |

@@ -1,0 +1,24 @@
+{
+  "name": "delete-task-definitions-success-exit-with-requested-arn-failure",
+  "authored": "sanitized recorded-style AWS ECS DeleteTaskDefinitions response contract; replace with a recorded backend response when available",
+  "env_id": "delete-fail",
+  "task_definition_arn": "arn:aws:ecs:test-region:placeholder:task-definition/delete-fail:1",
+  "response": {
+    "rc": 0,
+    "stdout": {
+      "taskDefinitions": [],
+      "failures": [
+        {
+          "arn": "arn:aws:ecs:test-region:placeholder:task-definition/delete-fail:1",
+          "reason": "CLIENT_ERROR",
+          "detail": "The requested task definition was not deleted."
+        }
+      ]
+    },
+    "stderr": ""
+  },
+  "expected": {
+    "status": "cleanup_failed",
+    "cleanup_attempt": 1
+  }
+}

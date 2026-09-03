@@ -464,7 +464,16 @@ while IFS= read -r arn; do
     aws_cmd ecs delete-task-definitions --task-definitions "$arn" >"$delete_stdout" 2>"$delete_stderr"
     delete_rc=$?
     set -e
-    if [ "$delete_rc" -eq 0 ]; then
+    delete_response_valid=false
+    delete_requested_failure=false
+    if jq -e 'type == "object" and (.failures | type == "array")' "$delete_stdout" >/dev/null 2>&1; then
+      delete_response_valid=true
+      if jq -e --arg arn "$arn" 'any(.failures[]; .arn == $arn)' "$delete_stdout" >/dev/null; then
+        delete_requested_failure=true
+      fi
+    fi
+    if [ "$delete_rc" -eq 0 ] && [ "$delete_response_valid" = true ] && \
+       [ "$delete_requested_failure" = false ]; then
       echo "requested task-definition deletion: $arn"
     else
       allowance_fixture="$tmp_dir/delete-allowance.json"
@@ -480,7 +489,13 @@ while IFS= read -r arn; do
           .allowances = ((.allowances // []) + [$allowance] | unique_by([.id,.arn]))' <<< "$manifest_json")"
         persist_manifest
       else
-        fail "DeleteTaskDefinitions failed for $arn: $(cat "$delete_stderr")"
+        if [ "$delete_requested_failure" = true ]; then
+          fail "DeleteTaskDefinitions reported a failure for the requested ARN: $arn"
+        elif [ "$delete_response_valid" != true ]; then
+          fail "DeleteTaskDefinitions returned malformed JSON for $arn"
+        else
+          fail "DeleteTaskDefinitions failed for $arn: $(cat "$delete_stderr")"
+        fi
       fi
     fi
   fi
