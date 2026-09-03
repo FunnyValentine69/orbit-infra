@@ -66,6 +66,8 @@ jobs:
         run: tflint --init
 
       - name: Run gates
+        env:
+          GATES_POLICY_SIZE: skip
         run: scripts/gates.sh
 
   plan-localstack:
@@ -111,6 +113,15 @@ jobs:
           done
           echo "LocalStack did not become healthy in time" >&2
           exit 1
+
+      - name: Check bootstrap IAM policy sizes
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: bootstrap/policy-size-check.sh
 
       # CI builds this placeholder image for the runner's native arch
       # (amd64); local development on Apple Silicon builds arm64. Both

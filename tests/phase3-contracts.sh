@@ -308,4 +308,6 @@ if "$REPO_ROOT/scripts/tool-version.sh" no-such-tool >/dev/null 2>&1; then
   exit 1
 fi
 
+bash "$REPO_ROOT/tests/policy-size-contracts.sh"
+
 echo "PASS: phase3 shell contracts"

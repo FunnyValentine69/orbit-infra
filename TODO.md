@@ -70,6 +70,7 @@
 - [ ] P5-8: exclude the bootstrap state key from the plan-reader read grant, or keep the budget email out of state, because sensitive variables are stored in plaintext state (Tier-3 P2 on PR #1)
 - [ ] P5-9: preview secret value is stored in state readable by plan-reader; move to secret_string_wo/ephemeral or split state (Tier-2 P2 on PR #2)
 - [ ] P5-10: data bucket name is globally preclaimable; use bucket_prefix or a persisted random suffix and update the deployer S3 ARN pattern (Tier-2 P2 on PR #2)
+- [ ] P5-11: bootstrap hardening follow-up from CKV_AWS_18/CKV2_AWS_64 — add a dedicated access-log bucket for Terraform state and keep the now-explicit signing-key policy synchronized with publisher-role changes
 
 ## End-of-project decisions (user, low priority)
 - [ ] Rewrite or keep the institutional author email on the first 20 commits of main

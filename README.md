@@ -109,10 +109,12 @@ The live concurrency target, its LocalStack-free SIGTERM/process-group test,
 and the nonce-bound post-merge GitHub dispatch-ordering test are documented in
 `tests/README.md`; none starts, stops, or reconfigures LocalStack.
 
-`scripts/gates.sh` also runs the `policy-size` gate: it renders a LocalStack
-plan of `bootstrap/` and requires every planned IAM policy document to be
-plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone
-with `bootstrap/policy-size-check.sh`.
+`scripts/gates.sh` also requires the `policy-size` gate by default: it renders
+a LocalStack plan of `bootstrap/` and requires every planned IAM policy
+document to be plan-time known (see `bootstrap/README.md` § Gates / size). Run
+it standalone with `bootstrap/policy-size-check.sh`. The secret-free PR gates
+set `GATES_POLICY_SIZE=skip`; the owner-only `plan-localstack` job runs the
+check after LocalStack is healthy.
 
 CI: `terraform-plan.yml` runs static gates on every pull request. Its
 LocalStack plan and Infracost comment jobs run only for the repository owner's

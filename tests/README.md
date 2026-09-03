@@ -34,8 +34,11 @@ stage-1 state retention. The suite currently reports 40 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
-signal-path test below. Neither suite starts, stops, or reconfigures
-LocalStack.
+signal-path test below. It also verifies that policy-size remains required by
+default and moves to the owner-only `plan-localstack` job after its health
+wait. Fork PRs receive the secret-free gates with policy-size explicitly
+skipped; owner PRs receive those gates plus the LocalStack-backed policy-size
+check. Neither suite starts, stops, or reconfigures LocalStack.
 
 Run the process-group signal test directly without LocalStack:
 

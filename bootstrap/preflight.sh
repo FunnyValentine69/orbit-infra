@@ -66,7 +66,7 @@ fi
 
 run_aws() {
   # $1 = human label for --dry-run, remaining args = the aws subcommand/args
-  local label="$1"; shift
+  shift
   if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "DRY-RUN: ${AWS_BASE[*]} $*"
     return 0
@@ -164,7 +164,7 @@ check_iam_role() {
 }
 
 check_ecr_repo() {
-  local repo="$1" short="${1#${NAME}/}"
+  local repo="$1" short="${1#"${NAME}"/}"
   local err
   if err=$("${AWS_BASE[@]}" ecr describe-repositories --repository-names "$repo" 2>&1); then
     if in_state "aws_ecr_repository.repos[\"$short\"]"; then

@@ -2,6 +2,14 @@
 
 Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs. Run every procedure from the repository root.
 
+## PR review gates
+
+Every fork and owner PR runs the secret-free `gates` job with policy-size
+explicitly skipped because that check renders a LocalStack plan. Owner PRs
+also run the `plan-localstack` job, which executes policy-size after the
+emulator health wait with the LocalStack environment contract. Local
+`scripts/gates.sh` runs keep policy-size required by default.
+
 ## Local credentials
 
 The AWS Free Plan has no IAM Identity Center, so local bootstrap uses IAM
