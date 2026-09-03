@@ -256,6 +256,7 @@ module "redis" {
   name        = "${var.name}-${var.env_id}-redis"
   env_id      = var.env_id
   cluster_arn = aws_ecs_cluster.this.arn
+  image       = var.redis_image
 
   subnet_ids         = [module.network.private_subnet_id]
   security_group_ids = [aws_security_group.service.id]
@@ -279,6 +280,7 @@ module "clickhouse" {
   name        = "${var.name}-${var.env_id}-clickhouse"
   env_id      = var.env_id
   cluster_arn = aws_ecs_cluster.this.arn
+  image       = var.clickhouse_image
 
   subnet_ids         = [module.network.private_subnet_id]
   security_group_ids = [aws_security_group.service.id]

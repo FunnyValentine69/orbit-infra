@@ -8,7 +8,7 @@
 - [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget (authored; apply deferred with P0-3)
 - [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
-- [ ] P0-3c (with P0-3b): add `redis_image` and `clickhouse_image` passthrough variables to envs/preview so the real-AWS apply can use the private-ECR mirror digests from mirror-images.yml (Tier-2 B5 on PR #2)
+- [x] P0-3c: add `redis_image` and `clickhouse_image` passthrough variables so real-AWS sessions use the locked private-ECR mirror digests
 
 ## Phase 1 — Repo docs + save-file
 
@@ -40,15 +40,14 @@
 - [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
 - [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock filled with build_input_sha256 and local_id per image
 - [ ] P3-3b: push the three images with PUSH=1 after P0-3b, then dispatch sign-images.yml
+- [ ] P3-3c (after rebasing PR #2): make AWS `make apply` non-interactive and consume the exact saved plan; update terraform-plan.yml to use the per-run plan path
 - [x] P3-4: scripts/lease.sh (CAS lease on S3 ETag, ADR 0006) + scripts/close-env.sh (stage 1 of close) + session-apply.yml/session-destroy.yml (main-only, runner-CIDR check, lease open, plan/apply, negative ingress test) + Makefile lease-list/lease-get/close targets; live-verified on LocalStack (open/transition/CAS-race/list, full apply->close cycle)
 - [x] P3-5: SNS alerts topic (optional email subscription via var.alert_email) + UnHealthyHostCount and HTTPCode_Target_5XX_Count CloudWatch alarms on the ALB target group; SLO documented in ARCHITECTURE.md; live-verified on LocalStack (alarms created, not evaluated)
 
 ## Phase 4 — Parallel environments + runbooks
 
 (expanded when the phase starts)
-- [ ] P4-x: ecs-service applies with wait_for_steady_state = false, so an apply exits 0 even if tasks never reach RUNNING; add a post-apply `aws ecs describe-services` steady-state check to the start-session runbook and session-apply.yml (Tier-1 P2 on PR #2)
-- [ ] P4-y: set `hostPort` equal to `containerPort` explicitly in the ecs-service port mapping so a post-apply plan is empty on LocalStack too (the emulator injects hostPort; Fargate requires equality anyway) (Tier-3 follow-up on PR #2)
-- [ ] P4-z: concurrent `terraform init` runs can race on the shared `plugin_cache_dir`; document a per-run `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE`-free workaround (pre-warm the cache or serialize inits) in RUNBOOKS (seen once during the t3e/t3f concurrency proof)
+- [x] P4-x: session-apply discovers every enabled ECS service and fails unless all reach runningCount == desiredCount within ten minutes; operator positive checks and the runner-only negative check are documented in RUNBOOKS.md
 
 ## Phase 5 — Drift, sweeper, threat model, polish
 

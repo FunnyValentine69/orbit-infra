@@ -16,6 +16,9 @@ services, clickhouse, redis, S3 data bucket.
 - `project_tag` — authoritative `Project` tag (default `orbit-infra`),
   matching the bootstrap deployer-policy condition even when callers
   replace `tags` with their own map.
+- `api_image`, `redis_image`, `clickhouse_image` — task images. LocalStack
+  uses local/public defaults; real-AWS session dispatches pass digest-pinned
+  private-ECR references from `upstream.lock` and `mirror-images.lock`.
 
 ## State keys
 
@@ -74,9 +77,11 @@ Every environment has a durable lease at `leases/<ENV_ID>.json` in the
 state bucket (ADR 0006): `open -> closing -> closed | cleanup_failed`,
 CAS'd on the S3 object's ETag so concurrent writers never both win.
 `scripts/lease.sh` reads/writes it directly; `make close` /
-`scripts/close-env.sh` drive it through stage 1 of close (manifest,
-scale-to-zero, destroy with retries, `DeleteTaskDefinitions`, cost-
-bearing-zero check). See `RUNBOOKS.md`, "Stuck-environment
+`scripts/close-env.sh` drive it through stage 1 of close (retry-merged
+manifest, discovery and scale-to-zero for every service, destroy with retries,
+asynchronous `DeleteTaskDefinitions`, and full inventory re-query). Stage 1
+always leaves the lease `closing`; only the sweeper removes state versions and
+sets `closed`. See `RUNBOOKS.md`, "Stuck-environment
 force-destroy", for recovery from `cleanup_failed` or a stalled
 `closing`.
 

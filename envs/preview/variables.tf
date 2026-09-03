@@ -66,9 +66,21 @@ variable "operator_cidr" {
 }
 
 variable "api_image" {
-  description = "Container image for the api service. Defaults to a placeholder digest; P3-2 replaces this with the private-ECR digest of this repo's placeholder image."
+  description = "Container image for the api service. LocalStack defaults to the locally built placeholder; real-AWS sessions pass a private-ECR digest."
   type        = string
   default     = "placeholder:local"
+}
+
+variable "redis_image" {
+  description = "Container image for Redis. LocalStack defaults to the public source tag; real-AWS sessions pass the private-ECR mirror digest."
+  type        = string
+  default     = "redis:7-alpine"
+}
+
+variable "clickhouse_image" {
+  description = "Container image for ClickHouse. LocalStack defaults to the public source tag; real-AWS sessions pass the private-ECR mirror digest."
+  type        = string
+  default     = "clickhouse/clickhouse-server:24.3-alpine"
 }
 
 variable "api_command" {

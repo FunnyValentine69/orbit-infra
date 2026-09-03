@@ -1,16 +1,15 @@
 # mirror-images
 #
-# Publishes the public placeholder image (built, signed keyless, Rekor
-# transparency, attested with CI build provenance -- ADR 0007) and mirrors
-# two third-party base images (redis, clickhouse-server) into private ECR
-# so no-NAT ECS tasks never reach a public registry. Mirrors are signed
-# with the KMS key (--tlog-upload=false) since they live in private ECR
-# and their tag/digest must never appear in the public Rekor log (ADR
-# 0007). This workflow needs the real-AWS bootstrap (P0-3b) applied and
+# Builds the public-source placeholder and mirrors two third-party base
+# images (redis, clickhouse-server) into private ECR so no-NAT ECS tasks
+# never reach a public registry. Every private-ECR image is signed and
+# attested with the KMS key (--tlog-upload=false); their references must
+# never appear in the public Rekor log (ADR 0007). This workflow needs
+# the real-AWS bootstrap (P0-3b) applied and
 # the AWS_ROLE_PUBLISHER / AWS_KMS_SIGNING_KEY_ARN repository secrets set
 # (see bootstrap/README.md, "After apply"). It cannot run against
-# LocalStack: OIDC federation, Rekor, and AWS KMS signing are all
-# real-cloud services with no LocalStack emulation used here.
+# LocalStack: OIDC federation and AWS KMS signing are real-cloud services
+# with no LocalStack emulation used here.
 
 name: mirror-images
 
@@ -22,7 +21,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  attestations: write
 
 concurrency:
   group: mirror-images
@@ -60,6 +58,41 @@ jobs:
           aws ecr get-login-password --region us-east-1 \
             | docker login --username AWS --password-stdin "${{ steps.registry.outputs.registry }}"
 
+      - name: Read and validate mirror lock
+        id: mirror-lock
+        run: |
+          redis_source="$(awk '$1 == "redis_source:" { print $2 }' mirror-images.lock)"
+          redis_digest="$(awk '$1 == "redis_digest:" { print $2 }' mirror-images.lock)"
+          redis_repository="$(awk '$1 == "redis_repository:" { print $2 }' mirror-images.lock)"
+          clickhouse_source="$(awk '$1 == "clickhouse_source:" { print $2 }' mirror-images.lock)"
+          clickhouse_digest="$(awk '$1 == "clickhouse_digest:" { print $2 }' mirror-images.lock)"
+          clickhouse_repository="$(awk '$1 == "clickhouse_repository:" { print $2 }' mirror-images.lock)"
+
+          if [[ ! "$redis_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || \
+             [[ ! "$clickhouse_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "mirror-images.lock contains an invalid digest" >&2
+            exit 1
+          fi
+          if [[ "$redis_source" != "redis:7-alpine" ]] || \
+             [[ "$clickhouse_source" != "clickhouse/clickhouse-server:24.3-alpine" ]]; then
+            echo "mirror-images.lock source names do not match the approved mirrors" >&2
+            exit 1
+          fi
+          if [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
+             [[ "$clickhouse_repository" != "orbit-infra-79s5rw/mirror/clickhouse" ]]; then
+            echo "mirror-images.lock repository names do not match bootstrap/ecr.tf" >&2
+            exit 1
+          fi
+
+          {
+            echo "redis_source=${redis_source}"
+            echo "redis_digest=${redis_digest}"
+            echo "redis_repository=${redis_repository}"
+            echo "clickhouse_source=${clickhouse_source}"
+            echo "clickhouse_digest=${clickhouse_digest}"
+            echo "clickhouse_repository=${clickhouse_repository}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Read cosign version from tools.lock
         id: cosign-version
         run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
@@ -69,13 +102,31 @@ jobs:
         with:
           cosign-release: v${{ steps.cosign-version.outputs.version }}
 
+      - name: Verify cosign version matches tools.lock
+        run: |
+          installed="$(cosign version | awk '$1 == "GitVersion:" { print $2 }')"
+          expected="v${{ steps.cosign-version.outputs.version }}"
+          if [[ "$installed" != "$expected" ]]; then
+            echo "cosign version mismatch: installed $installed, expected $expected" >&2
+            exit 1
+          fi
+
+      - name: Export KMS public key
+        env:
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+        run: |
+          aws kms get-public-key --key-id "$KMS_KEY_ARN" --query PublicKey --output text \
+            | base64 --decode > "$RUNNER_TEMP/kms-public-key.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/kms-public-key.der" \
+            -out "$RUNNER_TEMP/kms-public-key.pem"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      # --- placeholder: public, built in CI, keyless signing + Rekor ---
+      # --- placeholder: private ECR, KMS-signed with no Rekor disclosure ---
 
       - name: Check whether placeholder tag already exists
         id: placeholder-check
@@ -104,10 +155,13 @@ jobs:
           digest=$(docker buildx imagetools inspect \
             "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder:${{ github.sha }}" \
             --format '{{json .Manifest.Digest}}' | tr -d '"')
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "placeholder digest is invalid" >&2
+            exit 1
+          fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Trivy scan placeholder
-        if: steps.placeholder-check.outputs.exists == 'false'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}
@@ -115,82 +169,108 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
-      - name: Cosign sign placeholder (keyless)
-        if: steps.placeholder-check.outputs.exists == 'false'
+      - name: KMS sign and attest placeholder
         env:
-          COSIGN_EXPERIMENTAL: '1'
+          IMAGE: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}
+          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
+          SOURCE_SHA: ${{ github.sha }}
         run: |
-          cosign sign --yes \
-            "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}"
+          if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog "$IMAGE" >/dev/null 2>&1; then
+            echo "placeholder signature already exists"
+          else
+            cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" "$IMAGE"
+          fi
+          cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog "$IMAGE" >/dev/null
 
-      - name: Cosign verify placeholder (keyless, Rekor)
-        run: |
-          cosign verify \
-            --certificate-identity-regexp '^https://github.com/FunnyValentine69/orbit-infra/\.github/workflows/mirror-images\.yml@refs/heads/main$' \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}"
-
-      - name: Attest placeholder build provenance
-        if: steps.placeholder-check.outputs.exists == 'false'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder
-          subject-digest: ${{ steps.placeholder-digest.outputs.digest }}
-          push-to-registry: false
+          if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type custom "$IMAGE" >/dev/null 2>&1; then
+            echo "placeholder attestation already exists"
+          else
+            predicate_file=$(mktemp)
+            printf '{"source_sha":"%s","built_on":"%s"}\n' \
+              "$SOURCE_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$predicate_file"
+            cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              --type custom --predicate "$predicate_file" "$IMAGE"
+            rm -f "$predicate_file"
+          fi
+          cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type custom "$IMAGE" >/dev/null
 
       # --- mirrors: private ECR, KMS-signed with --tlog-upload=false (ADR 0007) ---
 
       - name: Mirror redis:7-alpine
         id: mirror-redis
         env:
-          SOURCE_IMAGE: redis:7-alpine
-          MIRROR_NAME: redis
+          SOURCE_IMAGE: ${{ steps.mirror-lock.outputs.redis_source }}
+          SOURCE_DIGEST: ${{ steps.mirror-lock.outputs.redis_digest }}
+          MIRROR_REPOSITORY: ${{ steps.mirror-lock.outputs.redis_repository }}
           KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
           REGISTRY: ${{ steps.registry.outputs.registry }}
         run: |
-          source_digest=$(docker buildx imagetools inspect "${SOURCE_IMAGE}" --format '{{json .Manifest.Digest}}' | tr -d '"')
-          tag="${source_digest#sha256:}"
+          tag="${SOURCE_DIGEST#sha256:}"
           tag="${tag:0:12}"
-          dest="${REGISTRY}/orbit-infra-79s5rw/mirror/${MIRROR_NAME}"
+          dest="${REGISTRY}/${MIRROR_REPOSITORY}"
 
-          if aws ecr describe-images --repository-name "orbit-infra-79s5rw/mirror/${MIRROR_NAME}" \
+          if aws ecr describe-images --repository-name "${MIRROR_REPOSITORY}" \
             --image-ids imageTag="${tag}" >/dev/null 2>&1; then
             echo "already published"
             status=skipped
           else
-            docker buildx imagetools create --tag "${dest}:${tag}" "${SOURCE_IMAGE}@${source_digest}"
+            docker buildx imagetools create --tag "${dest}:${tag}" "${SOURCE_IMAGE}@${SOURCE_DIGEST}"
             status=published
           fi
 
-          if cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
-            "${dest}@${source_digest}" >/dev/null 2>&1; then
+          destination_digest="$(aws ecr describe-images \
+            --repository-name "${MIRROR_REPOSITORY}" \
+            --image-ids imageTag="${tag}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          if [[ "$destination_digest" != "$SOURCE_DIGEST" ]]; then
+            echo "${MIRROR_REPOSITORY}: destination digest does not match mirror-images.lock" >&2
+            exit 1
+          fi
+
+          if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
             echo "already signed"
           else
             cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
-              "${dest}@${source_digest}"
+              "${dest}@${SOURCE_DIGEST}"
+          fi
+          cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null
 
+          if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
+            echo "mirror attestation already exists"
+          else
             predicate_file=$(mktemp)
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
-              "${SOURCE_IMAGE}" "${source_digest}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
-
+              "${SOURCE_IMAGE}" "${SOURCE_DIGEST}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
             cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
               --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
               --predicate "${predicate_file}" \
-              "${dest}@${source_digest}"
+              "${dest}@${SOURCE_DIGEST}"
+            rm -f "$predicate_file"
           fi
+          cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null
 
-          echo "digest=${source_digest}" >> "$GITHUB_OUTPUT"
+          echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "status=${status}" >> "$GITHUB_OUTPUT"
 
       - name: Verify redis mirror signature
         env:
-          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
         run: |
           # --insecure-ignore-tlog is required here: mirror signatures use
           # --tlog-upload=false (ADR 0007), so no Rekor entry exists to
           # look up -- the KMS public key is the only trust anchor.
-          cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
+          cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}"
 
       - name: Trivy scan redis mirror
@@ -203,54 +283,75 @@ jobs:
       - name: Mirror clickhouse/clickhouse-server:24.3-alpine
         id: mirror-clickhouse
         env:
-          SOURCE_IMAGE: clickhouse/clickhouse-server:24.3-alpine
-          MIRROR_NAME: clickhouse
+          SOURCE_IMAGE: ${{ steps.mirror-lock.outputs.clickhouse_source }}
+          SOURCE_DIGEST: ${{ steps.mirror-lock.outputs.clickhouse_digest }}
+          MIRROR_REPOSITORY: ${{ steps.mirror-lock.outputs.clickhouse_repository }}
           KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
           REGISTRY: ${{ steps.registry.outputs.registry }}
         run: |
-          source_digest=$(docker buildx imagetools inspect "${SOURCE_IMAGE}" --format '{{json .Manifest.Digest}}' | tr -d '"')
-          tag="${source_digest#sha256:}"
+          tag="${SOURCE_DIGEST#sha256:}"
           tag="${tag:0:12}"
-          dest="${REGISTRY}/orbit-infra-79s5rw/mirror/${MIRROR_NAME}"
+          dest="${REGISTRY}/${MIRROR_REPOSITORY}"
 
-          if aws ecr describe-images --repository-name "orbit-infra-79s5rw/mirror/${MIRROR_NAME}" \
+          if aws ecr describe-images --repository-name "${MIRROR_REPOSITORY}" \
             --image-ids imageTag="${tag}" >/dev/null 2>&1; then
             echo "already published"
             status=skipped
           else
-            docker buildx imagetools create --tag "${dest}:${tag}" "${SOURCE_IMAGE}@${source_digest}"
+            docker buildx imagetools create --tag "${dest}:${tag}" "${SOURCE_IMAGE}@${SOURCE_DIGEST}"
             status=published
           fi
 
-          if cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
-            "${dest}@${source_digest}" >/dev/null 2>&1; then
+          destination_digest="$(aws ecr describe-images \
+            --repository-name "${MIRROR_REPOSITORY}" \
+            --image-ids imageTag="${tag}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          if [[ "$destination_digest" != "$SOURCE_DIGEST" ]]; then
+            echo "${MIRROR_REPOSITORY}: destination digest does not match mirror-images.lock" >&2
+            exit 1
+          fi
+
+          if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
             echo "already signed"
           else
             cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
-              "${dest}@${source_digest}"
+              "${dest}@${SOURCE_DIGEST}"
+          fi
+          cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null
 
+          if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
+            echo "mirror attestation already exists"
+          else
             predicate_file=$(mktemp)
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
-              "${SOURCE_IMAGE}" "${source_digest}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
-
+              "${SOURCE_IMAGE}" "${SOURCE_DIGEST}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${predicate_file}"
             cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
               --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
               --predicate "${predicate_file}" \
-              "${dest}@${source_digest}"
+              "${dest}@${SOURCE_DIGEST}"
+            rm -f "$predicate_file"
           fi
+          cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            "${dest}@${SOURCE_DIGEST}" >/dev/null
 
-          echo "digest=${source_digest}" >> "$GITHUB_OUTPUT"
+          echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "status=${status}" >> "$GITHUB_OUTPUT"
 
       - name: Verify clickhouse mirror signature
         env:
-          KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
+          PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
         run: |
           # --insecure-ignore-tlog is required here: mirror signatures use
           # --tlog-upload=false (ADR 0007), so no Rekor entry exists to
           # look up -- the KMS public key is the only trust anchor.
-          cosign verify --key "awskms:///${KMS_KEY_ARN}" --insecure-ignore-tlog \
+          cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}"
 
       - name: Trivy scan clickhouse mirror

@@ -26,7 +26,6 @@ variable "cluster_arn" {
 }
 
 variable "image" {
-  # P3-2 replaces this with the private-ECR mirror digest of this image.
   description = "Container image (tag or digest form)"
   type        = string
   default     = "redis:7-alpine"

@@ -4,16 +4,34 @@ Status: Accepted (2026-09-02)
 
 ## Context
 
-Keyless cosign signing uploads the image reference to the public Rekor transparency log. For the public placeholder that's the point. For the private upstream images, the same upload would publish the AWS account ID, region, and private ECR repository names: the AWS account ID, region, and ECR repository names must never be published; the upstream's repository slug is the one permitted public reference.
+Keyless cosign signing uploads the image reference to the public Rekor
+transparency log. Every image distributed by this platform, including the
+placeholder built from public source, lives in private ECR. A Rekor upload
+would therefore publish the AWS account ID, region, and private ECR repository
+name. Those values must never be published; the upstream repository slug is
+the one permitted public reference.
 
 ## Decision
 
-Two signing modes, matched to what each image can disclose. The **public placeholder** is signed keyless with cosign, uploaded to Rekor, identity and issuer pinned on verify, attested with `actions/attest-build-provenance` since it really is built in CI. The **private upstream images** are signed with an asymmetric AWS KMS key (`awskms://`, the one accepted standing cost, roughly $1/month) using `--tlog-upload=false`, verified with the exported public key instead of Rekor lookup. No predicate for either mode carries a hostname or account identifier; the private images' `local-build/v1` predicate carries only the upstream commit SHA, the build-input hash (sha256 of the `git archive` of that commit — the only input any private build ever reads), and the build date. It does not claim CI build provenance, since it wasn't built in CI. Cosign's version is pinned in `tools.lock` and checked against `cosign version` before every signing step. Signing verifies first, so a re-run is a no-op. Concretely: any image in public scope (the placeholder) uses keyless signing with Rekor upload; every image stored in private ECR -- upstream-built images and the redis/clickhouse mirrors alike -- is signed with the KMS key using `--tlog-upload=false` and verified with the exported public key, never a Rekor lookup.
+Every private-ECR image is signed and attested with an asymmetric AWS KMS
+key (`awskms://`, the one accepted standing cost, roughly $1/month), using
+`--tlog-upload=false` and verification through the exported public key rather
+than Rekor. This rule includes the public-source placeholder, the private
+upstream images, and the Redis/ClickHouse mirrors. The placeholder's custom
+CI-build predicate carries only its source commit and build date. The private
+images' `local-build/v1` predicate carries only the upstream commit SHA, the
+build-input hash (sha256 of the `git archive` of that commit — the only input
+any private build reads), and the build date; it does not claim CI build
+provenance. No predicate carries a hostname or account identifier. Cosign's
+version is pinned in `tools.lock` and checked before signing. Each SBOM, scan,
+signature, and attestation is handled independently on a re-run.
 
 ## Consequences
 
-- The placeholder gets full, independently-verifiable transparency; the private images get provenance without disclosure.
-- Private images can't be verified via public Rekor lookup — only via the exported KMS public key, distributed with verification instructions.
+- All distributed images get signatures and provenance without disclosing
+  their private-ECR references.
+- Images are verified through the exported KMS public key, not a public Rekor
+  lookup.
 - The KMS key is a real, small, standing cost accepted as the price of not disclosing account/repo details.
 
 ## Alternatives considered
@@ -24,7 +42,8 @@ Two signing modes, matched to what each image can disclose. The **public placeho
 
 ## Amendment 2026-09-02 (P3-3)
 
-The private upstream images (`orbit-api`, `orbit-worker`, `orbit-clickhouse`)
+The private upstream images (`orbit-infra-79s5rw/orbit-api`,
+`orbit-infra-79s5rw/orbit-worker`, `orbit-infra-79s5rw/orbit-clickhouse`)
 are built locally by `scripts/build-upstream.sh`, never in hosted CI: the
 build reads only a `git archive` of the pinned, verified upstream commit
 (`upstream.lock`), never the working tree, after asserting the local

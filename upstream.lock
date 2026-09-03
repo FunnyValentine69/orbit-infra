@@ -5,12 +5,12 @@ recorded_by: git -C $UPSTREAM_DIR rev-parse HEAD
 build_input_sha256: 027a8d1624b03933ebf848f4f0ba021f5f4bc8ff5856c073e4a8e9f7e31a9dca
 
 images:
-  orbit-api:
+  orbit-infra-79s5rw/orbit-api:
     local_id: sha256:a5b462e9cecbdf05d2624b8edebe3308850880c8a1aa587c69807e45e297882f
     digest: <pending real-AWS push (P0-3b)>
-  orbit-worker:
+  orbit-infra-79s5rw/orbit-worker:
     local_id: sha256:5abbff07d438db6b324c4c273d001b2feb8b7695b3ea3eceb12bcdf1fc232784
     digest: <pending real-AWS push (P0-3b)>
-  orbit-clickhouse:
+  orbit-infra-79s5rw/orbit-clickhouse:
     local_id: sha256:8a47893f55c6d40d7403b6c8db21685f28cf8e4e35b3fdcc8aa384756d25def6
     digest: <pending real-AWS push (P0-3b)>

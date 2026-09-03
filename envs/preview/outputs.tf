@@ -48,6 +48,16 @@ output "worker_service_name" {
   value       = module.worker.service_name
 }
 
+output "redis_service_name" {
+  description = "Name of the Redis ECS service"
+  value       = module.redis.service_name
+}
+
+output "clickhouse_service_name" {
+  description = "Name of the ClickHouse ECS service"
+  value       = module.clickhouse.service_name
+}
+
 output "data_bucket_name" {
   description = "Name of the environment's S3 data bucket"
   value       = aws_s3_bucket.data.bucket

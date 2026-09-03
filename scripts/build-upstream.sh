@@ -12,14 +12,17 @@
 #   UPSTREAM_DIR    path to a local clone of the upstream repo
 # Optional env:
 #   IMAGE_PREFIX    tag prefix for built images (default: orbit)
+#   ECR_REPOSITORY_PREFIX  bootstrap repository prefix
+#                          (default: orbit-infra-79s5rw)
 #   UPSTREAM_LOCK   path to the lock file (default: upstream.lock, repo root)
-#   PUSH            if "1", tag and push to ECR_REGISTRY after building
+#   PUSH            if "1", tag/push and record ECR digests in UPSTREAM_LOCK
 #   ECR_REGISTRY    required when PUSH=1
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 IMAGE_PREFIX="${IMAGE_PREFIX:-orbit}"
+ECR_REPOSITORY_PREFIX="${ECR_REPOSITORY_PREFIX:-orbit-infra-79s5rw}"
 UPSTREAM_LOCK="${UPSTREAM_LOCK:-${repo_root}/upstream.lock}"
 
 if [[ -z "${UPSTREAM_DIR:-}" ]]; then
@@ -87,6 +90,10 @@ api_image="${IMAGE_PREFIX}-api"
 worker_image="${IMAGE_PREFIX}-worker"
 clickhouse_image="${IMAGE_PREFIX}-clickhouse"
 
+api_repository="${ECR_REPOSITORY_PREFIX}/orbit-api"
+worker_repository="${ECR_REPOSITORY_PREFIX}/orbit-worker"
+clickhouse_repository="${ECR_REPOSITORY_PREFIX}/orbit-clickhouse"
+
 # --- Step 6: build the three images ---
 docker build --platform linux/arm64 \
   -f "${archive_dir}/Dockerfile.api" \
@@ -113,17 +120,47 @@ worker_digest=""
 clickhouse_digest=""
 
 if [[ "${PUSH:-0}" == "1" ]]; then
-  docker tag "${api_image}:${short_sha}" "${ECR_REGISTRY}/${api_image}:${short_sha}"
-  docker push "${ECR_REGISTRY}/${api_image}:${short_sha}"
-  api_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${api_image}:${short_sha}")"
+  docker tag "${api_image}:${short_sha}" "${ECR_REGISTRY}/${api_repository}:${short_sha}"
+  docker push "${ECR_REGISTRY}/${api_repository}:${short_sha}"
+  api_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${api_repository}:${short_sha}")"
+  api_digest="${api_digest_ref##*@}"
 
-  docker tag "${worker_image}:${short_sha}" "${ECR_REGISTRY}/${worker_image}:${short_sha}"
-  docker push "${ECR_REGISTRY}/${worker_image}:${short_sha}"
-  worker_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${worker_image}:${short_sha}")"
+  docker tag "${worker_image}:${short_sha}" "${ECR_REGISTRY}/${worker_repository}:${short_sha}"
+  docker push "${ECR_REGISTRY}/${worker_repository}:${short_sha}"
+  worker_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${worker_repository}:${short_sha}")"
+  worker_digest="${worker_digest_ref##*@}"
 
-  docker tag "${clickhouse_image}:${short_sha}" "${ECR_REGISTRY}/${clickhouse_image}:${short_sha}"
-  docker push "${ECR_REGISTRY}/${clickhouse_image}:${short_sha}"
-  clickhouse_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${clickhouse_image}:${short_sha}")"
+  docker tag "${clickhouse_image}:${short_sha}" "${ECR_REGISTRY}/${clickhouse_repository}:${short_sha}"
+  docker push "${ECR_REGISTRY}/${clickhouse_repository}:${short_sha}"
+  clickhouse_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${clickhouse_repository}:${short_sha}")"
+  clickhouse_digest="${clickhouse_digest_ref##*@}"
+
+  for digest in "$api_digest" "$worker_digest" "$clickhouse_digest"; do
+    if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      echo "build-upstream: push returned an invalid digest" >&2
+      exit 1
+    fi
+  done
+
+  lock_tmp="${tmp_dir}/upstream.lock"
+  awk \
+    -v api_repository="$api_repository" -v api_digest="$api_digest" \
+    -v worker_repository="$worker_repository" -v worker_digest="$worker_digest" \
+    -v clickhouse_repository="$clickhouse_repository" -v clickhouse_digest="$clickhouse_digest" \
+    '
+      $1 == api_repository ":" { section = "api" }
+      $1 == worker_repository ":" { section = "worker" }
+      $1 == clickhouse_repository ":" { section = "clickhouse" }
+      section == "api" && $1 == "digest:" { print "    digest: " api_digest; section = ""; updated++; next }
+      section == "worker" && $1 == "digest:" { print "    digest: " worker_digest; section = ""; updated++; next }
+      section == "clickhouse" && $1 == "digest:" { print "    digest: " clickhouse_digest; section = ""; updated++; next }
+      { print }
+      END { if (updated != 3) exit 4 }
+    ' "$UPSTREAM_LOCK" > "$lock_tmp" || {
+      echo "build-upstream: could not record all three repository digests in $UPSTREAM_LOCK" >&2
+      exit 1
+    }
+  mv "$lock_tmp" "$UPSTREAM_LOCK"
 fi
 
 # --- Step 7/8: JSON summary ---
@@ -132,17 +169,17 @@ cat <<JSON
   "upstream_sha": "${upstream_sha}",
   "build_input_sha256": "${build_input_sha256}",
   "images": {
-    "${api_image}": {
+    "${api_repository}": {
       "tag": "${short_sha}",
       "local_id": "${api_id}",
       "digest": "${api_digest}"
     },
-    "${worker_image}": {
+    "${worker_repository}": {
       "tag": "${short_sha}",
       "local_id": "${worker_id}",
       "digest": "${worker_digest}"
     },
-    "${clickhouse_image}": {
+    "${clickhouse_repository}": {
       "tag": "${short_sha}",
       "local_id": "${clickhouse_id}",
       "digest": "${clickhouse_digest}"

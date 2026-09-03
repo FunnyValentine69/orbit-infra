@@ -9,11 +9,11 @@ orbit-infra is an ephemeral, near-zero-idle AWS platform for running a
 containerized workload on demand. It is a portfolio project: the platform
 itself — OIDC-federated CI/CD, per-environment lease lifecycle, signed
 images, policy gates — is the deliverable, not any particular application.
-It ships a public placeholder image so it applies end to end without
-private code, and separately deploys the upstream workload
+It ships a placeholder image built from public source so it applies end to
+end without private code, and separately deploys the upstream workload
 (`SuperGokou/happyCoding`) for demonstration; upstream source and images
-are never published. It targets two backends: LocalStack for development
-and CI, real AWS as the final promotion step (see ADR 0008).
+are never publicly published. It targets two backends: LocalStack for
+development and CI, real AWS as the final promotion step (see ADR 0008).
 
 ## Topology
 
@@ -108,28 +108,35 @@ lease state, not by the queue. Closed leases prune after 7 days. See ADR
 ## Image supply chain summary
 
 Every image a task pulls will live in private ECR (no-NAT tasks can reach
-nothing else). The public placeholder will be built/pushed by CI, signed
-keyless with cosign (Rekor upload on, since it's already public), and
-attested with build provenance. Private upstream images will be built
-locally, never in hosted CI, from a `git archive` of the pinned, verified
-upstream commit — never a working tree — signed with an asymmetric KMS key
-(`--tlog-upload=false`), since Rekor would otherwise publish account ID,
-region, and repository names. Every image will get an SBOM (syft) and a
-Trivy scan. See ADR 0007.
+nothing else). The public-source placeholder is built/pushed by CI. It and
+the third-party mirrors are signed and attested with the same asymmetric KMS
+key as the private upstream images, always with `--tlog-upload=false` and
+verification through the exported public key; no private-ECR reference is
+sent to Rekor. Private upstream images are built locally, never in hosted CI,
+from a `git archive` of the pinned, verified upstream commit — never a working
+tree. Each private upstream image gets a syft SBOM artifact and a fail-closed
+Trivy scan; the placeholder and mirror images get their separately configured
+Trivy scans. See ADR 0007.
 
 `scripts/build-upstream.sh` implements the local build side: it asserts
 the local upstream clone's origin, HEAD, and working-tree cleanliness
 against `upstream.lock` before doing anything else, `git archive`s the
 locked commit into a temp dir outside the repo, hashes the tar
-(`build_input_sha256`), and builds `orbit-api`/`orbit-worker` from the
-archived `Dockerfile.api`/`Dockerfile.worker` and `orbit-clickhouse` from
+(`build_input_sha256`), and builds
+`orbit-infra-79s5rw/orbit-api`/`orbit-infra-79s5rw/orbit-worker` from the
+archived `Dockerfile.api`/`Dockerfile.worker` and
+`orbit-infra-79s5rw/orbit-clickhouse` from
 this repo's `images/clickhouse/Dockerfile`, which layers the upstream
 workload's ClickHouse init SQL onto the same pinned base image
 `mirror-images.yml` mirrors via a named BuildKit build context
 (`--build-context upstream=<archive dir>`) — the SQL is never committed.
 `.github/workflows/sign-images.yml` (`workflow_dispatch` only) signs and
-attests the already-pushed images with the KMS key, reading
-`build_input_sha256` from `upstream.lock`; it never builds anything.
+attests the already-pushed images with the KMS key, reading and validating
+the commit, build-input hash, repository names, and pushed digests from
+`upstream.lock`; it never builds anything. `mirror-images.lock` pins the
+Redis/ClickHouse source manifest digests copied into their private-ECR
+repositories; `session-apply.yml` reads that lock and the API digest in
+`upstream.lock` at dispatch time.
 
 ## Cost model
 
@@ -144,10 +151,13 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   bucket, KMS alias, ECR repos exist.
 - **Phase 2:** `terraform validate`/`tflint`/`terraform test` pass on every
   module; `terraform plan` succeeds against the placeholder image.
-- **Phase 3:** `session-apply` yields an ALB URL where `/health` and
-  `/s3-roundtrip` succeed from `operator_cidr` and time out from the
-  GitHub runner; ClickHouse readiness is proven via `system.tables`;
-  `session-destroy` leaves no services and no VPC.
+- **Phase 3:** `session-apply` waits up to ten minutes for every ECS service,
+  prints the ALB URL, and proves the GitHub runner gets a network refusal or
+  timeout rather than an HTTP response. Because the runner is outside
+  `operator_cidr`, an operator inside that CIDR performs the positive
+  `/health` and `/s3-roundtrip` checks. `session-destroy` leaves no active
+  services or cost-bearing resources and leaves the lease `closing` for the
+  stage-2 sweeper.
 - **Phase 4:** two concurrently dispatched environments destroy
   independently with no shared state; the three-dispatch ordering test
   preserves the queued destroy and refuses the third.

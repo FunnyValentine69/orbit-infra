@@ -11,13 +11,8 @@
 # Any failure after the lease exists runs scripts/close-env.sh (stage 1
 # of close) so a crashed apply never orphans billable resources.
 #
-# concurrency queue setting: per ADR 0006 / ARCHITECTURE.md, apply,
-# destroy, and the sweeper share the `preview-<env_id>` group so they
-# never overlap; the queue setting below keeps at most one queued run
-# behind the in-flight one. This key is carried over verbatim from those
-# docs -- this session could not confirm the GitHub Actions concurrency
-# schema accepts it against a live workflow run (no network access beyond
-# api.github.com/checkip.amazonaws.com); flagged in the confession.
+# Per ADR 0006 / ARCHITECTURE.md, apply, destroy, and the sweeper share
+# the `preview-<env_id>` concurrency group so they never overlap.
 
 name: session-apply
 
@@ -25,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       env_id:
-        description: 'Preview environment id (lowercase alphanumeric + hyphen, 1-20 chars)'
+        description: 'Preview environment id matching Terraform (1-12 chars)'
         required: true
         type: string
 
@@ -48,8 +43,8 @@ jobs:
         env:
           ENV_ID: ${{ inputs.env_id }}
         run: |
-          if ! echo "$ENV_ID" | grep -qE '^[a-z0-9-]{1,20}$'; then
-            echo "env_id '$ENV_ID' does not match ^[a-z0-9-]{1,20}\$" >&2
+          if ! printf '%s' "$ENV_ID" | grep -qE '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$'; then
+            echo "env_id '$ENV_ID' does not match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$" >&2
             exit 1
           fi
 
@@ -149,6 +144,37 @@ jobs:
           terraform_version: ${{ steps.tf-version.outputs.version }}
           terraform_wrapper: false
 
+      - name: Read deployable image digests
+        id: images
+        run: |
+          api_repository="orbit-infra-79s5rw/orbit-api"
+          api_digest="$(awk -v repository="$api_repository" '
+            $1 == repository ":" { in_repository = 1; next }
+            in_repository && $1 == "digest:" { print $2; exit }
+          ' upstream.lock)"
+          redis_repository="$(awk '$1 == "redis_repository:" { print $2 }' mirror-images.lock)"
+          redis_digest="$(awk '$1 == "redis_digest:" { print $2 }' mirror-images.lock)"
+          clickhouse_repository="$(awk '$1 == "clickhouse_repository:" { print $2 }' mirror-images.lock)"
+          clickhouse_digest="$(awk '$1 == "clickhouse_digest:" { print $2 }' mirror-images.lock)"
+
+          for digest in "$api_digest" "$redis_digest" "$clickhouse_digest"; do
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "an image lock contains a missing or invalid digest" >&2
+              exit 1
+            fi
+          done
+          if [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
+             [[ "$clickhouse_repository" != "orbit-infra-79s5rw/mirror/clickhouse" ]]; then
+            echo "mirror repository names do not match bootstrap/ecr.tf" >&2
+            exit 1
+          fi
+
+          {
+            echo "api_digest=${api_digest}"
+            echo "redis_digest=${redis_digest}"
+            echo "clickhouse_digest=${clickhouse_digest}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Open lease
         env:
           ENV_ID: ${{ inputs.env_id }}
@@ -158,24 +184,102 @@ jobs:
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
-        run: make plan TARGET=aws ENV_ID="$ENV_ID"
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          echo "::add-mask::${account_id}"
+          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
+          export TF_VAR_api_image="${registry}/orbit-infra-79s5rw/orbit-api@${API_DIGEST}"
+          export TF_VAR_redis_image="${registry}/orbit-infra-79s5rw/mirror/redis@${REDIS_DIGEST}"
+          export TF_VAR_clickhouse_image="${registry}/orbit-infra-79s5rw/mirror/clickhouse@${CLICKHOUSE_DIGEST}"
+          make plan TARGET=aws ENV_ID="$ENV_ID"
 
       - name: Terraform apply (AWS)
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
-        run: make apply TARGET=aws ENV_ID="$ENV_ID"
-
-      - name: Negative ingress test (from the runner, expect timeout/refusal)
-        env:
-          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
         run: |
-          alb_dns=$(terraform -chdir=envs/preview output -raw alb_dns_name)
-          if curl -sf --max-time 10 "http://${alb_dns}" >/dev/null 2>&1; then
-            echo "runner unexpectedly reached the ALB; ingress allowlist is not enforcing OPERATOR_CIDR" >&2
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          echo "::add-mask::${account_id}"
+          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
+          export TF_VAR_api_image="${registry}/orbit-infra-79s5rw/orbit-api@${API_DIGEST}"
+          export TF_VAR_redis_image="${registry}/orbit-infra-79s5rw/mirror/redis@${REDIS_DIGEST}"
+          export TF_VAR_clickhouse_image="${registry}/orbit-infra-79s5rw/mirror/clickhouse@${CLICKHOUSE_DIGEST}"
+          make apply TARGET=aws ENV_ID="$ENV_ID"
+
+      - name: Wait up to 10 minutes for every ECS service
+        run: |
+          cluster_arn="$(terraform -chdir=envs/preview output -raw ecs_cluster_arn)"
+          services=()
+          for output_name in api_service_name redis_service_name clickhouse_service_name worker_service_name; do
+            service_name="$(terraform -chdir=envs/preview output -raw "$output_name" 2>/dev/null || true)"
+            if [[ -n "$service_name" && "$service_name" != "null" ]]; then
+              services+=("$service_name")
+            fi
+          done
+          if (( ${#services[@]} < 3 )); then
+            echo "fewer than the three required ECS services were present in Terraform outputs" >&2
             exit 1
           fi
-          echo "runner correctly refused/timed out reaching the ALB (outside OPERATOR_CIDR)"
+
+          listed_services="$(aws ecs list-services --cluster "$cluster_arn" --output json)"
+          for service_name in "${services[@]}"; do
+            if ! jq -e --arg service_name "$service_name" \
+              'any(.serviceArns[]; endswith("/" + $service_name))' <<< "$listed_services" >/dev/null; then
+              echo "enabled ECS service $service_name is absent from list-services" >&2
+              exit 1
+            fi
+          done
+
+          deadline=$((SECONDS + 600))
+          while (( SECONDS < deadline )); do
+            response="$(aws ecs describe-services --cluster "$cluster_arn" --services "${services[@]}")"
+            failures="$(jq -c '.failures // []' <<< "$response")"
+            if [[ "$failures" != "[]" ]]; then
+              echo "ECS describe-services returned failures: $failures" >&2
+              exit 1
+            fi
+            unstable="$(jq -c '[.services[] | select(.runningCount != .desiredCount)]' <<< "$response")"
+            if [[ "$unstable" == "[]" ]]; then
+              echo "all ${#services[@]} ECS services reached runningCount == desiredCount"
+              break
+            fi
+            echo "waiting for ECS services: $unstable"
+            sleep 15
+          done
+
+          if [[ "$unstable" != "[]" ]]; then
+            echo "ECS services did not reach runningCount == desiredCount within 10 minutes: $unstable" >&2
+            exit 1
+          fi
+
+      - name: Negative ingress test (runner must time out or be refused)
+        run: |
+          alb_dns="$(terraform -chdir=envs/preview output -raw alb_dns_name)"
+          set +e
+          http_code="$(curl --silent --show-error --max-time 10 --output /dev/null \
+            --write-out '%{http_code}' "http://${alb_dns}/health")"
+          curl_rc=$?
+          set -e
+
+          case "$curl_rc" in
+            0)
+              echo "runner received HTTP ${http_code}; ingress allowlist is not enforcing OPERATOR_CIDR" >&2
+              exit 1
+              ;;
+            7|28)
+              echo "runner connection was refused or timed out outside OPERATOR_CIDR (curl exit ${curl_rc})"
+              ;;
+            *)
+              echo "negative ingress test failed for an unexpected curl error (exit ${curl_rc})" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Close on failure (stage 1)
         if: failure()
@@ -196,4 +300,10 @@ jobs:
             echo ""
             echo "env_id: $ENV_ID"
             echo "result: $JOB_STATUS"
+            alb_url="$(terraform -chdir=envs/preview output -raw api_url 2>/dev/null || true)"
+            if [[ -n "$alb_url" ]]; then
+              echo "ALB URL: $alb_url"
+            else
+              echo "ALB URL: unavailable (apply did not leave readable state)"
+            fi
           } | sed -E 's/[0-9]{12}/************/g' >> "$GITHUB_STEP_SUMMARY"

@@ -609,6 +609,18 @@ resource "aws_iam_policy" "deployer_ec2" {
 
 
 data "aws_iam_policy_document" "deployer_elb_ecs" {
+  # Resource Groups Tagging API defines no resource ARN or service-specific
+  # condition keys for GetResources; stage-1 close uses it read-only to
+  # capture and re-query the complete env_id inventory.
+  statement {
+    #checkov:skip=CKV_AWS_111:tag:GetResources supports neither resource-level permissions nor service-specific condition keys
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "TagInventoryStarOnly"
+    effect    = "Allow"
+    actions   = ["tag:GetResources"]
+    resources = ["*"]
+  }
+
   # --- (c) ALB + target group + listener. ---
   statement {
     #checkov:skip=CKV_AWS_111:table-confirmed * only ELBv2 Describe* actions, zero condition keys (iam-condition-keys.md ELBv2 section)
@@ -856,6 +868,23 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
       "ecs:ListTaskDefinitions",
     ]
     resources = ["*"]
+  }
+
+  # ListTasks supports the ecs:cluster condition key. Stage-1 close always
+  # supplies an environment cluster under the project name prefix.
+  statement {
+    #checkov:skip=CKV_AWS_111:ListTasks is list-only and is restricted to project cluster ARNs through ecs:cluster
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "EcsListTasksForProjectClusters"
+    effect    = "Allow"
+    actions   = ["ecs:ListTasks"]
+    resources = ["*"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "ecs:cluster"
+      values   = ["arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:cluster/${var.name}-*"]
+    }
   }
 
   # --- (e) Cloud Map namespace + service. ---

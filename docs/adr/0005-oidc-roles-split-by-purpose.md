@@ -64,11 +64,12 @@ bootstrap step; CI never uses static keys.
   resource ARN pattern where AWS supports resource-level permissions and
   to `resources = ["*"]` only where it documents none (EC2 VPC/subnet/
   route-table/IGW/endpoint/SG lifecycle, ELBv2 create/register/tag
-  calls, ECS `RegisterTaskDefinition`/`CreateService`, Cloud Map
-  namespace/service, `tag:GetResources`). An explicit `Deny` statement
-  caps the name-substring-scoped IAM grants so the deployer can never
-  mutate or pass its own role, `plan-reader`, or `publisher` (TODO.md
-  P2-7).
+  calls, ECS `RegisterTaskDefinition`/`CreateService` plus close-time
+  `ListServices`/`ListTasks`, Cloud Map namespace/service, and the
+  close-time full-inventory read `tag:GetResources`). An explicit `Deny`
+  statement caps the name-substring-scoped IAM grants so the deployer can
+  never mutate or pass its own role, `plan-reader`, or `publisher`
+  (TODO.md P2-7).
 
 ## Amendment 2026-09-02 (PR #2 Tier 2)
 

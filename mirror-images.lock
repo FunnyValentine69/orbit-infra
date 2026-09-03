@@ -1,0 +1,9 @@
+# Source manifest-list digests copied into the private ECR mirrors.
+# mirror-images.yml verifies the destination digest equals this lock before
+# signing; session-apply.yml reads the same digest at dispatch time.
+redis_source: redis:7-alpine
+redis_digest: sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+redis_repository: orbit-infra-79s5rw/mirror/redis
+clickhouse_source: clickhouse/clickhouse-server:24.3-alpine
+clickhouse_digest: sha256:c3f166f4a80098480463d897a63f6867d24e3a7661fc1fe72e889788115a25f1
+clickhouse_repository: orbit-infra-79s5rw/mirror/clickhouse

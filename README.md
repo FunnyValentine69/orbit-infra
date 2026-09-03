@@ -19,7 +19,7 @@ exist anywhere in the pipeline.
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov on every plan | done |
-| SBOM (syft) + Trivy scan + cosign keyless signing + GitHub attestations | in progress |
+| SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
@@ -55,22 +55,24 @@ see RUNBOOKS.md to change it.
 ## Upstream
 
 The reference workload is a private repository, `SuperGokou/happyCoding`,
-used with its owner's permission. Its source and images are never
+used with its owner's permission. Its source and images are never publicly
 published; this repository deploys any image that satisfies the workload
-contract (see ARCHITECTURE.md), and ships a public placeholder image so
-the stack can be applied without the private upstream.
+contract (see ARCHITECTURE.md), and ships a public-source placeholder image
+through private ECR so the stack can be applied without the private upstream.
 
 ## Repository layout
 
 ```
 bootstrap/          one-time Terraform: state bucket, OIDC + roles, KMS, ECR, Budget
-placeholder/         public placeholder workload image
+placeholder/         public-source placeholder workload image
 docs/adr/            architecture decision records
 scripts/              repo hooks (pre-push guard, hook installer)
 .github/workflows/    CI (oidc-smoke.yml today; more in later phases)
 modules/              reusable Terraform modules (Phase 2+)
 envs/                 per-environment composition (Phase 2+)
 images/                workload image sources (Phase 2+)
+upstream.lock           private upstream build inputs and pushed ECR digests
+mirror-images.lock      Redis/ClickHouse source and private-mirror digests
 ```
 
 ## Gates

@@ -59,13 +59,37 @@ environment for that ID — only the ALB security-group ingress rule
 actually changes, since it's the only resource that reads
 `var.operator_cidr`.
 
+## Session acceptance
+
+At dispatch time, `session-apply.yml` reads the API digest from
+`upstream.lock` and the Redis/ClickHouse mirror digests from
+`mirror-images.lock`, then combines those digests with the current account's
+private ECR registry. A missing or malformed digest fails before the lease is
+opened. After apply, the workflow discovers every service in the environment's
+ECS cluster and requires `runningCount == desiredCount` within ten minutes.
+
+The hosted runner is deliberately outside `operator_cidr`, so it cannot run a
+positive `/health` or `/s3-roundtrip` request. It instead proves the negative
+case by accepting only connection-refused or timeout curl exit codes; any HTTP
+response fails the job. The job summary prints the ALB URL. From a network
+inside `operator_cidr`, the operator completes the positive checks with:
+
+```
+curl -fsS "$ALB_URL/health"
+curl -fsS "$ALB_URL/s3-roundtrip"
+```
+
 ## Stuck-environment force-destroy
 
 Every preview environment has a durable lease at `leases/<env_id>.json`
 in the state bucket (ADR 0006), states `open -> closing -> closed |
 cleanup_failed`. `scripts/lease.sh` manages it directly;
 `scripts/close-env.sh` (wired into `make close` and `session-destroy.yml`)
-drives it through stage 1 of close.
+drives it through stage 1 of close. Stage 1 discovers and scales every ECS
+service, merges a retry-safe manifest, destroys Terraform resources, requests
+asynchronous task-definition deletion, re-queries both the complete tagged
+inventory and each service-specific manifest list, and always leaves the lease
+`closing`. Only the Phase 5 sweeper may prune state versions and set `closed`.
 
 Check the current state first:
 
@@ -89,18 +113,18 @@ transition to `closed` once every task definition it recorded in the
 manifest is confirmed gone.
 
 **Lease is `open` but no resources exist** (e.g. a plan-only dry run, or
-resources were removed out-of-band): transition it manually so a future
-`open` isn't blocked:
+resources were removed out-of-band): move it into stage 1 so the sweeper can
+verify the manifest and finish it:
 
 ```
 scripts/lease.sh transition <id> open closing
-scripts/lease.sh transition <id> closing closed
 ```
 
 **Manual, targeted recovery** when the automated close can't proceed
 (e.g. a resource type close-env.sh doesn't know how to retry): inspect
 the manifest it already wrote (`state_resources`, `task_definition_arns`,
-`tagging_inventory`) via `scripts/lease.sh get <id> | jq .manifest`, clear
+`tagging_inventory`, and `service_inventory`) via
+`scripts/lease.sh get <id> | jq .manifest`, clear
 the offending resource by hand, then re-run `make close`.
 
 On LocalStack, `DeleteTaskDefinitions` is unsupported
@@ -110,9 +134,11 @@ development and is not itself a stuck-environment condition.
 
 ## Credential rotation
 
-CI reads only `LOCALSTACK_AUTH_TOKEN` and `INFRACOST_API_KEY` (both
-repository secrets, consumed by terraform-plan.yml); no AWS credentials
-are read by any workflow.
+`terraform-plan.yml` reads `LOCALSTACK_AUTH_TOKEN` and `INFRACOST_API_KEY`
+and does not assume an AWS role. `mirror-images.yml` and `sign-images.yml`
+assume the publisher role; `session-apply.yml` and `session-destroy.yml`
+assume the deployer role. These AWS sessions come from GitHub OIDC and use no
+stored static AWS access keys.
 
 The Infracost service-account token expires one year after creation
 (created 2026-09-02), and the LocalStack student license renews yearly
