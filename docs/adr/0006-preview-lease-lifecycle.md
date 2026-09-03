@@ -24,7 +24,9 @@ the real-AWS cross-dispatch lifecycle.
 Every LocalStack CI run starts on a fresh hosted runner with a fresh emulator.
 Therefore the gh-driven dispatch-ordering test can prove only GitHub
 concurrency queueing on the LocalStack target; it cannot observe cross-run
-lease CAS, lifecycle refusals, retained state, or generation increments. Those
+lease CAS, lease-state refusals (`open`/`closing`/`cleanup_failed`; the
+static `target=localstack` input refusal it does observe is not lease state),
+retained state, or generation increments. Those
 lease semantics are proved locally by `tests/localstack-concurrency.sh`, which
 runs both environments against one already-running LocalStack instance.
 

@@ -249,7 +249,8 @@ if ! jq -e --arg digest "$exact_digest" 'all(.images[]; .digest == $digest)' <<<
 fi
 
 # PR #4 overflow contracts (P0-3e): every mirror is scanned before it is
-# signed, and the AWS stage-1 close runs on cancellation once the lease exists.
+# signed, and the AWS stage-1 close runs on failure or cancellation once the
+# lease exists.
 mirror_workflow="$REPO_ROOT/.github/workflows/mirror-images.yml"
 for mirror in redis clickhouse; do
   scan_line="$(grep -n "name: Trivy scan $mirror mirror" "$mirror_workflow" | cut -d: -f1)"
