@@ -109,3 +109,9 @@ variable "tags" {
     ManagedBy = "terraform-preview"
   }
 }
+
+variable "project_tag" {
+  description = "Authoritative Project tag value; must match the bootstrap project_tag variable that the deployer policy conditions on"
+  type        = string
+  default     = "orbit-infra"
+}

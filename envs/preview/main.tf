@@ -27,7 +27,7 @@ provider "aws" {
   }
 
   default_tags {
-    tags = merge(var.tags, { env_id = var.env_id })
+    tags = merge(local.tags, { env_id = var.env_id })
   }
 }
 
@@ -41,7 +41,7 @@ module "network" {
   name                       = var.name
   env_id                     = var.env_id
   enable_interface_endpoints = true
-  tags                       = var.tags
+  tags                       = local.tags
 }
 
 data "aws_caller_identity" "current" {}
@@ -49,7 +49,7 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  tags = merge(var.tags, { env_id = var.env_id })
+  tags = merge(var.tags, { Project = var.project_tag })
 
   # Naming contract with bootstrap/roles.tf: the task-boundary policy is
   # created there as "${var.name}-task-boundary" (see bootstrap/README.md
@@ -264,7 +264,7 @@ module "redis" {
   register_service_discovery = true
   namespace_name             = aws_service_discovery_private_dns_namespace.this.name
 
-  tags = var.tags
+  tags = local.tags
 }
 
 module "clickhouse" {
@@ -289,7 +289,7 @@ module "clickhouse" {
 
   password_secret_arn = aws_secretsmanager_secret.clickhouse_password.arn
 
-  tags = var.tags
+  tags = local.tags
 
   depends_on = [aws_secretsmanager_secret_version.clickhouse_password]
 }
@@ -390,7 +390,7 @@ module "api" {
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true
 
-  tags = var.tags
+  tags = local.tags
 
   depends_on = [aws_lb_listener.http]
 }
@@ -420,5 +420,5 @@ module "worker" {
   cloud_map_namespace_id     = aws_service_discovery_private_dns_namespace.this.id
   register_service_discovery = true
 
-  tags = var.tags
+  tags = local.tags
 }

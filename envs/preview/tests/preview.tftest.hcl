@@ -112,6 +112,21 @@ run "valid_plan" {
   }
 }
 
+run "project_tag_remains_authoritative_when_tags_are_overridden" {
+  command = plan
+
+  variables {
+    tags = {
+      Owner = "team"
+    }
+  }
+
+  assert {
+    condition     = lookup(aws_security_group.alb.tags, "Project", null) == "orbit-infra"
+    error_message = "the preview Project tag must remain orbit-infra when callers supply other tags"
+  }
+}
+
 run "api_env_key_reaches_api_task" {
   command = plan
 

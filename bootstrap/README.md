@@ -77,8 +77,8 @@ it does not read the bootstrap output) and passes it to every
 `ecs-service`/`redis`/`clickhouse` module call as
 `permissions_boundary_arn`. Mutation actions in the deployer policy are
 also conditioned on the `Project` tag (`var.project_tag`, default
-`orbit-infra`), matching `default_tags.Project` set in
-`envs/preview/main.tf`'s provider block via `var.tags`.
+`orbit-infra`), matching the authoritative `var.project_tag` merged into
+`default_tags.Project` by `envs/preview/main.tf`.
 
 ## After apply
 

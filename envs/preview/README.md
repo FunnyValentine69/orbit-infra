@@ -6,11 +6,16 @@ services, clickhouse, redis, S3 data bucket.
 ## Variables
 
 - `target` — `aws` (default) or `localstack`.
+- `region` — AWS provider region (default `us-east-1`); Make targets pass
+  the exported `AWS_REGION` value explicitly.
 - `env_id` — required; suffixes every resource name/tag. Must be 1-12 lowercase alphanumerics and hyphens, with no leading or trailing hyphen.
 - `operator_cidr` — required, no default; CIDR allowed to reach the ALB
   on port 80 (ADR 0004). Never commit a real value — the Makefile
   resolves it via `checkip.amazonaws.com`, or set `OPERATOR_CIDR` in the
   environment.
+- `project_tag` — authoritative `Project` tag (default `orbit-infra`),
+  matching the bootstrap deployer-policy condition even when callers
+  replace `tags` with their own map.
 
 ## State keys
 
@@ -56,7 +61,9 @@ composition under `.preview-runs/<ENV_ID>/`, with
 `localstack.backend_override.tf.example`, and every terraform command
 run with `-chdir` into it and its own `TF_DATA_DIR=.terraform-localstack`
 — separate state and data dir per environment, never touching the AWS
-backend. `PREVIEW_ROOT` (exported by the Makefile, defaulting to
+backend. Each sync deletes stale source files while excluding the data
+directory, rendered override, and `*.tfstate*` files. `PREVIEW_ROOT`
+(exported by the Makefile, defaulting to
 `envs/preview` on the `aws` target) points at the active run directory.
 The `aws` target refuses to run while `envs/preview/backend_override.tf`
 is present.
