@@ -310,4 +310,23 @@ fi
 
 bash "$REPO_ROOT/tests/policy-size-contracts.sh"
 
+# tests/dispatch-ordering.sh derives run order from job timestamps only:
+# GitHub stamps run_started_at at dispatch acceptance, before the concurrency
+# group releases a held run (observed live 2026-09-03).
+ordering_script="$REPO_ROOT/tests/dispatch-ordering.sh"
+if grep -nE "jq -r '\.(run_started_at|updated_at)'" "$ordering_script" >/dev/null; then
+  echo "dispatch-ordering.sh must compare job timestamps (jobs_started_at/jobs_completed_at), never run_started_at or updated_at" >&2
+  exit 1
+fi
+for field in jobs_started_at jobs_completed_at; do
+  if ! grep -Fq "$field" "$ordering_script"; then
+    echo "dispatch-ordering.sh must derive ordering from $field" >&2
+    exit 1
+  fi
+done
+if ! grep -Fq 'pending|queued)' "$ordering_script"; then
+  echo "dispatch-ordering.sh must treat GitHub's pending status as a held run" >&2
+  exit 1
+fi
+
 echo "PASS: phase3 shell contracts"

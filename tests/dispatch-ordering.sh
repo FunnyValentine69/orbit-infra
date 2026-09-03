@@ -277,13 +277,34 @@ read_run_metadata() {
   # carried run_started_at 13:05:17 while its first job started 13:14:29), so
   # ordering is derived from job timestamps: the earliest job start and the
   # latest job completion.
-  local run_json jobs_json
+  local run_json jobs_json attempt
   run_json="$(gh api "repos/$REPO/actions/runs/$run_id" \
     --jq '{id:.id,workflow:.name,event:.event,head_branch:.head_branch,display_title:.display_title,conclusion:.conclusion,run_started_at:.run_started_at,updated_at:.updated_at}')" \
     || fail "could not read run metadata for $label run $run_id"
-  jobs_json="$(gh api "repos/$REPO/actions/runs/$run_id/jobs" \
-    --jq '{jobs_started_at: ([.jobs[].started_at | select(type == "string")] | min), jobs_completed_at: ([.jobs[].completed_at | select(type == "string")] | max)}')" \
-    || fail "could not read job metadata for $label run $run_id"
+  [ -n "$run_json" ] || fail "run metadata for $label run $run_id was empty"
+  # Skipped jobs (for example the destroy job behind a refused validate-input)
+  # carry timestamps that do not describe work, so only jobs that ran count.
+  # The jobs sub-resource can lag the run's terminal status; retry briefly
+  # before treating missing timestamps as a failure.
+  jobs_json=""
+  for attempt in 1 2 3; do
+    jobs_json="$(gh api "repos/$REPO/actions/runs/$run_id/jobs" \
+      --jq '[.jobs[] | select(.conclusion != "skipped")]
+        | {jobs_started_at: ([.[].started_at | select(type == "string")] | min),
+           jobs_completed_at: ([.[].completed_at | select(type == "string")] | max)}')" \
+      || fail "could not read job metadata for $label run $run_id"
+    if jq -e '(.jobs_started_at | type == "string") and (.jobs_completed_at | type == "string")' \
+        <<< "$jobs_json" >/dev/null 2>&1; then
+      break
+    fi
+    if [ "$attempt" -eq 3 ]; then
+      fail "$label run $run_id reported no started and completed job timestamps after 3 reads: $jobs_json"
+    fi
+    sleep 10
+  done
+  jq -e -s 'length == 2 and all(.[]; type == "object")' \
+    <(printf '%s\n' "$run_json") <(printf '%s\n' "$jobs_json") >/dev/null \
+    || fail "run and job metadata for $label run $run_id are not both objects"
   jq -s '.[0] + .[1]' <(printf '%s\n' "$run_json") <(printf '%s\n' "$jobs_json") > "$output_file" \
     || fail "could not merge run and job metadata for $label run $run_id"
   jq -e --argjson run_id "$run_id" \
@@ -297,7 +318,7 @@ read_run_metadata() {
      and (.jobs_started_at | type == "string")
      and (.jobs_completed_at | type == "string")' \
     "$output_file" >/dev/null \
-    || fail "$label run $run_id returned incomplete terminal metadata"
+    || fail "$label run $run_id returned incomplete terminal metadata: $(jq -c 'with_entries(.value |= type)' "$output_file")"
 }
 
 assert_terminal_before_start() {
