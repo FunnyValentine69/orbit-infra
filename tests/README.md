@@ -95,7 +95,8 @@ Each invocation generates a nonce, passes a distinct nonce-bearing
 `dispatch_note` to all three workflows, and captures exactly one new run whose
 display title contains that note, event is `workflow_dispatch`, and head branch
 equals `REF`. Both targets require three queue polls with the first apply
-in-progress and the second queued, then observe the destroy queued behind it.
+in-progress and the second held (`pending`, GitHub's status for a run blocked
+by its concurrency group, or `queued`), then observe the destroy held behind it.
 After all runs are terminal, the test requires first-apply `updated_at` <=
 second-apply `run_started_at` and second-apply `updated_at` <= destroy
 `run_started_at`.

@@ -195,9 +195,14 @@ assert_three_queued_polls() {
     second_status="$(run_status session-apply.yml "$second_id")"
     [ "$first_status" = in_progress ] \
       || fail "queue poll $poll: first apply is '$first_status', expected in_progress"
-    [ "$second_status" = queued ] \
-      || fail "queue poll $poll: second apply is '$second_status', expected queued"
-    echo "dispatch-ordering.sh: queue poll $poll/$QUEUE_POLLS first=in_progress second=queued"
+    # GitHub reports a run held by the concurrency group as `pending`
+    # (observed live 2026-09-03); `queued` is the runner-assignment state.
+    # Either proves the run has not started; `in_progress`/`completed` fail.
+    case "$second_status" in
+      pending|queued) ;;
+      *) fail "queue poll $poll: second apply is '$second_status', expected pending or queued" ;;
+    esac
+    echo "dispatch-ordering.sh: queue poll $poll/$QUEUE_POLLS first=in_progress second=$second_status"
   done
 }
 
@@ -210,12 +215,12 @@ assert_run_queued() {
   while [ "$(date +%s)" -le "$deadline" ]; do
     status="$(run_status "$workflow" "$run_id")"
     case "$status" in
-      queued)
-        echo "dispatch-ordering.sh: $label is queued"
+      pending|queued)
+        echo "dispatch-ordering.sh: $label is held ($status)"
         return
         ;;
-      requested|waiting|pending|"") ;;
-      *) fail "$label is '$status', expected queued" ;;
+      requested|waiting|"") ;;
+      *) fail "$label is '$status', expected pending or queued" ;;
     esac
     sleep 2
   done

@@ -1,6 +1,6 @@
 # ADR 0006: Preview environment lease lifecycle
 
-Status: Accepted (2026-09-02; amended 2026-09-03). Evidence: local apply/close is LOCALSTACK-VERIFIED; the LocalStack session workflow is CODE-ONLY until its first owner dispatch; every real-AWS behavior is CODE-ONLY until the promotion gate P0-3d runs.
+Status: Accepted (2026-09-02; amended 2026-09-03). Evidence: local apply/close is LOCALSTACK-VERIFIED; the LocalStack session workflow is LOCALSTACK-VERIFIED in CI (first owner dispatch from main, 2026-09-03); every real-AWS behavior is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 

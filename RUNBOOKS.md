@@ -135,7 +135,7 @@ jq -e '.status == "open" and (.owner | type) == "string"
     type == "string" and length > 0)' <<< "$LEASE_JSON"
 ```
 
-Executed: CODE-ONLY — promote with `gh workflow run session-apply.yml --ref main -f env_id=p4ci -f target=localstack -f mode=public` after this change reaches `main`.
+Executed: LOCALSTACK-VERIFIED in CI 2026-09-03 — `gh workflow run session-apply.yml --ref main -f env_id=p4ci -f target=localstack -f mode=public` (run 33757937265): bootstrap applied on the runner, lease opened with owner and manifest, 59 resources applied, all three services reached their applied task definitions, the runner probe was refused (curl exit 7), and the same-job stage-1 close destroyed all 59 and left the lease `closing`.
 
 ## End session
 
