@@ -82,3 +82,9 @@ variable "tags" {
     ManagedBy = "terraform-bootstrap"
   }
 }
+
+variable "project_tag" {
+  description = "Value of the Project tag that envs/preview sets through provider default_tags; deployer mutation grants are conditioned on it"
+  type        = string
+  default     = "orbit-infra"
+}

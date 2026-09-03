@@ -17,8 +17,8 @@ exist anywhere in the pipeline.
 |---|---|
 | OIDC-federated Actions, no static AWS keys | in progress |
 | Remote state, S3 native locking, bootstrapped once | in progress |
-| Reusable modules + `terraform test` | planned |
-| Policy gates: tflint + checkov on every plan | planned |
+| Reusable modules + `terraform test` | in progress |
+| Policy gates: tflint + checkov on every plan | in progress |
 | SBOM (syft) + Trivy scan + cosign keyless signing + GitHub attestations | planned |
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
@@ -28,17 +28,16 @@ exist anywhere in the pipeline.
 
 ## Two targets
 
-Development and CI run against LocalStack, using the GitHub Student
+Development runs against LocalStack, using the GitHub Student
 Developer Pack's LocalStack Student plan (Ultimate-tier service coverage),
-so the stack can be built and tested without AWS spend. Pull-request CI
-runs Terraform plans on LocalStack and never holds AWS credentials. Real
+so the stack can be built and tested without AWS spend. The terraform-plan
+CI workflow (running Terraform plans on LocalStack, never holding AWS
+credentials) lands with Phase 3; until then, gates run locally. Real
 AWS is the promotion target once the platform is proven. Three things are
 verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact
 OIDC trust-condition semantics. See ADR 0008.
 
 ## Quickstart (LocalStack)
-
-Arrives in Phase 2. Planned commands:
 
 ```
 make localstack-up
@@ -73,6 +72,22 @@ modules/              reusable Terraform modules (Phase 2+)
 envs/                 per-environment composition (Phase 2+)
 images/                workload image sources (Phase 2+)
 ```
+
+## Gates
+
+Local, pre-CI policy gates (`.tflint.hcl`, `.checkov.yaml` at repo root):
+
+```
+make validate     # terraform init -backend=false + validate, every module/env
+make lint         # terraform fmt -check, tflint --recursive, checkov
+make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
+scripts/gates.sh  # runs all four above (validate, lint, test, no-nat-gateway), PASS/FAIL summary; CI calls this from Phase 3 onward
+```
+
+`scripts/gates.sh` also runs the `policy-size` gate: it renders a LocalStack
+plan of `bootstrap/` and requires every planned IAM policy document to be
+plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone
+with `bootstrap/policy-size-check.sh`.
 
 ## Toolchain
 

@@ -1,0 +1,13 @@
+directory:
+  - bootstrap
+  - modules
+  - envs
+framework:
+  - terraform
+quiet: true
+compact: true
+skip-path:
+  - .terraform
+  - .terraform-localstack
+  - __goblin_review__
+skip-check: []

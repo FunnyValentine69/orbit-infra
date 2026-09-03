@@ -1,0 +1,16 @@
+# Copy this file to backend_override.tf when running the LocalStack target.
+#
+# Terraform loads any *_override.tf file after the primary configuration
+# and merges it into the same block, with override semantics: the backend
+# block below replaces the (absent, default-local) backend configuration
+# for this root, keeping LocalStack state completely separate from real
+# AWS state, in its own file and its own TF_DATA_DIR.
+#
+# The Makefile renders this file to backend_override.tf, substituting
+# ENV_ID_PLACEHOLDER with the real ENV_ID so concurrent preview
+# environments each get their own local state file.
+terraform {
+  backend "local" {
+    path = "terraform.localstack.ENV_ID_PLACEHOLDER.tfstate"
+  }
+}

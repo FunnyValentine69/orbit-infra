@@ -13,11 +13,19 @@ a reviewer with no access to the private upstream workload, while the
 
 The `envs/preview` composition takes `api_image`, `api_command` (optional
 override), `worker_image` (nullable — `null` disables the worker service),
-`worker_command`, and env maps as Terraform variables. The default
-`api_image` is a private-ECR digest of this repo's own placeholder (a
-minimal FastAPI app with `/health` and an S3 round-trip endpoint),
-published by CI before the first apply, so `terraform apply` works with no
-private code. For the upstream workload, `worker_image` stays `null`
+`worker_command`, and env maps as Terraform variables; `modules/redis` and
+`modules/clickhouse` each take their own `image` variable, not exposed as
+an `envs/preview` variable. On LocalStack, the defaults apply as-is:
+`api_image` defaults to `placeholder:local`, the locally built placeholder
+image, and the redis/clickhouse modules' `image` variables default to
+their public Docker Hub images (`redis:7-alpine`,
+`clickhouse/clickhouse-server:24.3-alpine`) — so `terraform apply` works
+end to end with no private code and no CI dependency. The real-AWS path
+instead requires the private-ECR digests that Phase 3's `mirror-images.yml`
+and `sign-images.yml` workflows produce, passed in via `api_image` (and,
+once wired through, the redis/clickhouse module `image` variables); that
+path does not work until those workflows exist. For the upstream workload,
+`worker_image` stays `null`
 because its shipped entrypoint module is absent upstream; shipping a guess
 would misrepresent functionality. The upstream's S3 integration is out of
 scope here because its client passes static credentials rather than

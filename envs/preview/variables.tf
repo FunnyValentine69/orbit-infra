@@ -1,0 +1,117 @@
+variable "target" {
+  description = "Apply target: real aws or a local localstack instance"
+  type        = string
+  default     = "aws"
+
+  validation {
+    condition     = contains(["aws", "localstack"], var.target)
+    error_message = "target must be one of: aws, localstack."
+  }
+}
+
+variable "localstack_endpoint" {
+  description = "LocalStack endpoint URL, used only when target = \"localstack\""
+  type        = string
+  default     = "http://localhost:4566"
+}
+
+variable "localstack_container_endpoint" {
+  description = "LocalStack endpoint URL as reached from inside an ECS task container (not the host); used only when target = \"localstack\" to wire AWS_ENDPOINT_URL into the api task"
+  type        = string
+  default     = "http://host.docker.internal:4566"
+}
+
+variable "localstack_use_ambient_creds" {
+  description = "When target = \"localstack\", use the ambient AWS credentials (e.g. an assumed deployer-role session) instead of the hardcoded \"test\"/\"test\" static keys. Used to prove the deployer IAM policy against LocalStack (TODO.md P2-7)."
+  type        = bool
+  default     = false
+}
+
+variable "region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "name" {
+  description = "Project/resource name prefix"
+  type        = string
+  default     = "orbit-infra-79s5rw"
+
+  validation {
+    condition     = length(var.name) <= 18
+    error_message = "name must be at most 18 characters so that name and a 12-character env_id fit the 32-character IAM role prefix the deployer policy matches on"
+  }
+}
+
+variable "env_id" {
+  description = "Ephemeral environment identifier"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$", var.env_id))
+    error_message = "env_id must be 1-12 lowercase letters, digits, or hyphens, starting alphanumeric, no leading or trailing hyphen: it is embedded in S3 bucket names, Cloud Map DNS names, and the 32-character IAM role prefix that the deployer policy matches on."
+  }
+}
+
+# Validated and required now so `make plan` fails fast.
+variable "operator_cidr" {
+  description = "CIDR allowed to reach the ALB"
+  type        = string
+
+  validation {
+    condition     = can(cidrhost(var.operator_cidr, 0)) && !strcontains(var.operator_cidr, ":") && can(tonumber(split("/", var.operator_cidr)[1])) && tonumber(split("/", var.operator_cidr)[1]) > 8
+    error_message = "operator_cidr must be a valid IPv4 CIDR narrower than /8; the ALB listener is IPv4-only and is never open to the world (ADR 0004)."
+  }
+}
+
+variable "api_image" {
+  description = "Container image for the api service. Defaults to a placeholder digest; P3-2 replaces this with the private-ECR digest of this repo's placeholder image."
+  type        = string
+  default     = "placeholder:local"
+}
+
+variable "api_command" {
+  description = "Container command override for the api service"
+  type        = list(string)
+  default     = null
+}
+
+variable "worker_image" {
+  description = "Container image for the optional worker service. null disables the worker service."
+  type        = string
+  default     = null
+}
+
+variable "worker_command" {
+  description = "Container command override for the worker service"
+  type        = list(string)
+  default     = null
+}
+
+variable "api_env" {
+  description = "Extra plaintext environment variables merged into the api service's environment. The fixed keys this root computes (CLICKHOUSE_HOST, CLICKHOUSE_PORT, REDIS_HOST, REDIS_PORT, PLACEHOLDER_BUCKET, AWS_REGION, and the LocalStack AWS_* overrides) always win on conflict; user-supplied keys never override them."
+  type        = map(string)
+  default     = {}
+}
+
+variable "worker_env" {
+  description = "Plaintext environment variables merged into the worker service's environment. The worker has no fixed keys of its own, so every key here is passed through as-is."
+  type        = map(string)
+  default     = {}
+}
+
+variable "tags" {
+  description = "Default tags applied to all resources"
+  type        = map(string)
+  default = {
+    Project   = "orbit-infra"
+    ManagedBy = "terraform-preview"
+  }
+}
+
+variable "project_tag" {
+  description = "Authoritative Project tag value; must match the bootstrap project_tag variable that the deployer policy conditions on"
+  type        = string
+  default     = "orbit-infra"
+}
