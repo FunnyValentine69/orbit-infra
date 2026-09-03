@@ -80,20 +80,32 @@ check-env-id:
 render-localstack-backend:
 	awk -v id="$$ENV_ID" '{ gsub(/ENV_ID_PLACEHOLDER/, id); print }' envs/preview/localstack.backend_override.tf.example > envs/preview/backend_override.tf
 
+# Per-ENV_ID TF_DATA_DIR keeps concurrent LocalStack environments'
+# plugin/provider caches isolated; backend_override.tf is rendered and
+# removed within the same subshell so it never persists past this command.
 plan:
-	$(MAKE) render-localstack-backend
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
+	( \
+		trap 'rm -f envs/preview/backend_override.tf' EXIT; \
+		$(MAKE) render-localstack-backend; \
+		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview init -reconfigure -input=false && \
+		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"; \
+	)
 
 apply:
-	$(MAKE) render-localstack-backend
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve
+	( \
+		trap 'rm -f envs/preview/backend_override.tf' EXIT; \
+		$(MAKE) render-localstack-backend; \
+		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview init -reconfigure -input=false && \
+		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve; \
+	)
 
 destroy:
-	$(MAKE) render-localstack-backend
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview init -reconfigure -input=false
-	TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve
+	( \
+		trap 'rm -f envs/preview/backend_override.tf' EXIT; \
+		$(MAKE) render-localstack-backend; \
+		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview init -reconfigure -input=false && \
+		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve; \
+	)
 else
 plan apply destroy: check-target check-env-id check-operator-cidr
 
@@ -102,23 +114,31 @@ check-env-id:
 	@printf '%s' "$$ENV_ID" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $$ENV_ID" >&2; exit 1; }
 
 # backend.aws.hcl is operator-provided (copied from backend.aws.hcl.example,
-# not committed); fall back to the example when it's absent, since the
-# example carries no secrets.
-BACKEND_HCL := $(if $(wildcard envs/preview/backend.aws.hcl),envs/preview/backend.aws.hcl,envs/preview/backend.aws.hcl.example)
+# not committed); it is resolved as an absolute path since terraform
+# -chdir=envs/preview resolves -backend-config paths relative to
+# envs/preview, not to $(CURDIR).
+BACKEND_HCL ?= $(CURDIR)/envs/preview/backend.aws.hcl
 export BACKEND_HCL
 
-plan:
-	rm -f envs/preview/backend_override.tf
+check-backend-hcl:
+	@if [ ! -f "$(BACKEND_HCL)" ]; then \
+		echo "copy envs/preview/backend.aws.hcl.example to envs/preview/backend.aws.hcl and fill in the bucket" >&2; \
+		exit 1; \
+	fi
+	@if [ -f envs/preview/backend_override.tf ]; then \
+		echo "LocalStack override present; remove envs/preview/backend_override.tf before targeting aws" >&2; \
+		exit 1; \
+	fi
+
+plan: check-backend-hcl
 	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
 	terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
 
-apply:
-	rm -f envs/preview/backend_override.tf
+apply: check-backend-hcl
 	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
 	terraform -chdir=envs/preview apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
 
-destroy:
-	rm -f envs/preview/backend_override.tf
+destroy: check-backend-hcl
 	terraform -chdir=envs/preview init -reconfigure -backend-config="$$BACKEND_HCL" -backend-config="key=envs/preview/$$ENV_ID.tfstate"
 	terraform -chdir=envs/preview destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"
 endif
@@ -137,8 +157,8 @@ test:
 			( \
 				trap 'rm -f "$${d}backend_override.tf"' EXIT; \
 				sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$${d}backend_override.tf"; \
-				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" init -reconfigure -input=false >/dev/null && \
-				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$d" test; \
+				TF_DATA_DIR=.terraform-localstack-tftest terraform -chdir="$$d" init -reconfigure -input=false >/dev/null && \
+				TF_DATA_DIR=.terraform-localstack-tftest terraform -chdir="$$d" test; \
 			) || exit $$?; \
 		fi; \
 	done
@@ -148,7 +168,7 @@ validate:
 	terraform -chdir=bootstrap validate
 	@for d in modules/*/; do \
 		echo "== terraform validate: $$d =="; \
-		terraform -chdir="$$d" init -backend=false -input=false >/dev/null; \
+		terraform -chdir="$$d" init -backend=false -input=false >/dev/null && \
 		terraform -chdir="$$d" validate || exit 1; \
 	done
 	terraform -chdir=envs/preview init -backend=false -input=false >/dev/null

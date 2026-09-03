@@ -850,6 +850,36 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
     actions   = ["servicediscovery:UntagResource"]
     resources = ["*"]
   }
+
+  # Private DNS namespace create/delete provisions a Route 53 hosted zone
+  # under the hood (cloud-map-api-permissions-ref.html); CreateHostedZone
+  # and ListHostedZonesByName accept no resource-level ARN and stay on "*".
+  statement {
+    #checkov:skip=CKV_AWS_111:route53:CreateHostedZone/ListHostedZonesByName accept no resource ARN (cloud-map-api-permissions-ref.html)
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "Route53HostedZoneStarOnly"
+    effect = "Allow"
+    actions = [
+      "route53:CreateHostedZone",
+      "route53:ListHostedZonesByName",
+    ]
+    resources = ["*"]
+  }
+
+  # DeleteNamespace deletes the backing hosted zone; scope to the
+  # hosted-zone resource type.
+  statement {
+    #checkov:skip=CKV_AWS_111:no documented ResourceTag/RequestTag condition key for these route53 hosted-zone actions
+    #checkov:skip=CKV_AWS_356:same as above
+    sid    = "Route53HostedZoneManage"
+    effect = "Allow"
+    actions = [
+      "route53:GetHostedZone",
+      "route53:DeleteHostedZone",
+      "route53:ChangeTagsForResource",
+    ]
+    resources = ["arn:aws:route53:::hostedzone/*"]
+  }
 }
 
 

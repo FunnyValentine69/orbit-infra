@@ -42,6 +42,10 @@ make apply   TARGET=localstack ENV_ID=<id>
 ```
 
 LocalStack runs use a local backend keyed by `ENV_ID`
-(`terraform.localstack.<ENV_ID>.tfstate`), rendered from
-`localstack.backend_override.tf.example` — separate state per
-environment, never touching the AWS backend.
+(`terraform.localstack.<ENV_ID>.tfstate`). `backend_override.tf` is
+rendered from `localstack.backend_override.tf.example` and removed again
+within the same command (subshell + `trap ... EXIT`), and
+`TF_DATA_DIR=.terraform-localstack-<ENV_ID>` gives each environment its
+own provider cache — separate state and data dir per environment, never
+touching the AWS backend. The `aws` target refuses to run while
+`backend_override.tf` is present.
