@@ -61,9 +61,9 @@ jobs:
         id: tool-versions
         run: |
           {
-            echo "cosign=$(awk '$1 == \"cosign\" { print $2 }' tools.lock)"
-            echo "syft=$(awk '$1 == \"syft\" { print $2 }' tools.lock)"
-            echo "trivy=$(awk '$1 == \"trivy\" { print $2 }' tools.lock)"
+            echo "cosign=$(scripts/tool-version.sh cosign)"
+            echo "syft=$(scripts/tool-version.sh syft)"
+            echo "trivy=$(scripts/tool-version.sh trivy)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Install cosign

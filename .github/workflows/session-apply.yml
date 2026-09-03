@@ -136,15 +136,15 @@ jobs:
 
       - name: Read terraform version from tools.lock
         id: tf-version
-        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh terraform)" >> "$GITHUB_OUTPUT"
 
       - name: Read tflint version from tools.lock
         id: tflint-version
-        run: echo "version=$(grep '^tflint ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh tflint)" >> "$GITHUB_OUTPUT"
 
       - name: Read checkov version from tools.lock
         id: checkov-version
-        run: echo "version=$(grep '^checkov ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh checkov)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -364,7 +364,7 @@ jobs:
       - name: Read cosign version from tools.lock
         if: inputs.target == 'aws'
         id: cosign-version
-        run: echo "version=$(grep '^cosign ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh cosign)" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         if: inputs.target == 'aws'
@@ -686,7 +686,11 @@ jobs:
               echo "runner connection was refused or timed out outside OPERATOR_CIDR (curl exit ${curl_rc})"
               ;;
             localstack:0)
-              echo "LocalStack ALB edge returned HTTP ${http_code}; endpoint routing ran, but this does not prove source-CIDR enforcement"
+              if [ "$http_code" != 200 ]; then
+                echo "LocalStack ALB /health returned HTTP ${http_code}; expected HTTP 200" >&2
+                exit 1
+              fi
+              echo "LocalStack ALB /health returned HTTP 200; endpoint routing ran, but this does not prove source-CIDR enforcement"
               ;;
             localstack:7|localstack:28)
               echo "LocalStack ALB probe was refused or timed out for the excluded runner CIDR (curl exit ${curl_rc})"

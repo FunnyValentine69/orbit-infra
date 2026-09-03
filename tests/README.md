@@ -43,9 +43,10 @@ Run the process-group signal test directly without LocalStack:
 bash tests/localstack-concurrency-signal.sh
 ```
 
-It replaces apply with a fake long-running pipeline, sends SIGTERM to the
-concurrency script, and requires both the worker and its descendant to be
-gone after the exit trap terminates and reaps the worker process group.
+It starts a fake worker whose process-group leader exits while a descendant
+keeps running, sends SIGTERM to the concurrency script, and requires the
+descendant to be gone after the exit trap targets the recorded process group
+and reaps the recorded worker.
 
 ## Phase 4 live concurrency
 
@@ -61,7 +62,10 @@ pair unless `ENV_A` and `ENV_B` are supplied. On that one emulator it proves
 lease open/closing refusals and generation stability, overlaps both applies
 and both generation-bound closes, checks the isolated `.preview-runs/<id>`
 states and ECS cluster names, and queries the module `env_id` tag through
-`scripts/aws-cli.sh`. Every record the post-close inventory still lists
+`scripts/aws-cli.sh`. The two filtered ARN sets must be disjoint, and every
+returned record must carry exactly one `env_id` tag matching the requested
+environment; the ARN text cross-reference check remains an additional guard.
+Every record the post-close inventory still lists
 (the tagging API is eventually consistent, and LocalStack retains entries for
 deleted resources) is evaluated by `scripts/cleanup-verifier.sh` exact probes,
 which must report zero live, indeterminate, or pending; the test does not
@@ -100,9 +104,11 @@ apply must conclude `failure`: per ADR 0006 the first apply leaves its lease
 `open`, so the queued second apply is refused at lease open before any
 resource is created. The AWS path always
 reads the final lease through `TARGET=aws scripts/lease.sh` and requires
-`closing` or `closed`; if destroy did not run last, the lease is `open`, or
-final cleanup cannot be verified, it dispatches one recovery
-`session-destroy` and fails with the reason. Neither target is a cross-run
+the destroy conclusion to be `success` before treating `closing` or `closed`
+as safe. Any non-success destroy conclusion, an `open` or `cleanup_failed` lease, an
+unreadable status, or invalid ordering leaves cleanup unchecked so the EXIT
+trap dispatches one recovery `session-destroy`; the failure names the destroy
+run id and observed lease status. Neither target is a cross-run
 lease test (each LocalStack run is a fresh emulator). Neither target cancels a
 run unless `CANCEL_ON_EXIT=1` is explicitly set.
 

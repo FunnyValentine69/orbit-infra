@@ -288,4 +288,24 @@ done
 
 bash "$REPO_ROOT/tests/localstack-concurrency-signal.sh"
 
+# tools.lock lists each tool twice (version and checksum sections); every
+# workflow version read must go through scripts/tool-version.sh, which prints
+# exactly one semantic version (a multi-line value is an invalid GITHUB_OUTPUT
+# record and broke the PR plan lane on PR #5).
+if grep -rnE "(grep|awk)[^\n]*tools\.lock" "$REPO_ROOT/.github/workflows" >/dev/null; then
+  echo "workflows must read tool versions through scripts/tool-version.sh, never grep or awk on tools.lock" >&2
+  exit 1
+fi
+for tool in terraform tflint checkov cosign syft trivy; do
+  version_lines="$("$REPO_ROOT/scripts/tool-version.sh" "$tool" | wc -l | tr -d ' ')"
+  if [ "$version_lines" != 1 ]; then
+    echo "scripts/tool-version.sh $tool must print exactly one line, printed $version_lines" >&2
+    exit 1
+  fi
+done
+if "$REPO_ROOT/scripts/tool-version.sh" no-such-tool >/dev/null 2>&1; then
+  echo "scripts/tool-version.sh must fail for an unknown tool" >&2
+  exit 1
+fi
+
 echo "PASS: phase3 shell contracts"

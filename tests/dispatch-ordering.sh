@@ -305,47 +305,43 @@ assert_conclusion() {
     || fail "$label conclusion was '$actual', expected '$expected'"
 }
 
-dispatch_aws_recovery_and_fail() {
-  local reason="$1"
-  recovery_cleanup_dispatched=true
-  aws_final_cleanup_checked=true
-  if ! gh workflow run session-destroy.yml --repo "$REPO" --ref "$REF" \
-      -f env_id="$ENV_ID" -f target=aws -f dispatch_note="$cleanup_dispatch_note"; then
-    fail "$reason; the required recovery session-destroy dispatch also failed"
-  fi
-  fail "$reason; dispatched one recovery session-destroy"
-}
-
 verify_aws_final_cleanup() {
   local second_file="$1"
   local destroy_file="$2"
-  local second_terminal destroy_started lease_json lease_rc lease_status
+  local second_terminal destroy_started destroy_run_id destroy_conclusion
+  local lease_json lease_rc lease_status
   second_terminal="$(jq -r '.updated_at' "$second_file")"
   destroy_started="$(jq -r '.run_started_at' "$destroy_file")"
-  if ! jq -en --arg terminal "$second_terminal" --arg started "$destroy_started" \
-      '$terminal <= $started' >/dev/null; then
-    dispatch_aws_recovery_and_fail \
-      "AWS destroy did not run last: second apply terminal=$second_terminal destroy start=$destroy_started"
-  fi
+  destroy_run_id="$(jq -r '.id' "$destroy_file")"
+  destroy_conclusion="$(jq -r '.conclusion' "$destroy_file")"
 
+  lease_status=unreadable
   set +e
   lease_json="$(env TARGET=aws "$REPO_ROOT/scripts/lease.sh" get "$ENV_ID" 2>/dev/null)"
   lease_rc=$?
   set -e
-  if [ "$lease_rc" -ne 0 ]; then
-    dispatch_aws_recovery_and_fail \
-      "AWS final cleanup verification could not read the lease with scripts/lease.sh (rc=$lease_rc)"
+  if [ "$lease_rc" -eq 0 ]; then
+    if ! lease_status="$(jq -er '.status | select(type == "string" and length > 0)' \
+        <<< "$lease_json" 2>/dev/null)"; then
+      lease_status=unreadable
+    fi
   fi
-  lease_status="$(jq -r '.status // empty' <<< "$lease_json")"
+
+  if ! jq -en --arg terminal "$second_terminal" --arg started "$destroy_started" \
+      '$terminal <= $started' >/dev/null; then
+    fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': second apply terminal=$second_terminal is after destroy start=$destroy_started"
+  fi
+  if [ "$lease_rc" -ne 0 ]; then
+    fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': scripts/lease.sh get failed with rc=$lease_rc"
+  fi
+  if [ "$destroy_conclusion" != success ]; then
+    fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': conclusion was '$destroy_conclusion', expected 'success'"
+  fi
+
   case "$lease_status" in
     closing|closed) aws_final_cleanup_checked=true ;;
-    open)
-      dispatch_aws_recovery_and_fail \
-        "AWS final lease remained open after the terminal destroy run"
-      ;;
     *)
-      dispatch_aws_recovery_and_fail \
-        "AWS final lease status was '${lease_status:-missing}', expected closing or closed"
+      fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': expected closing or closed after a successful destroy"
       ;;
   esac
 }

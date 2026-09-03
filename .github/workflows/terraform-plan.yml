@@ -38,15 +38,15 @@ jobs:
 
       - name: Read terraform version from tools.lock
         id: tf-version
-        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh terraform)" >> "$GITHUB_OUTPUT"
 
       - name: Read tflint version from tools.lock
         id: tflint-version
-        run: echo "version=$(grep '^tflint ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh tflint)" >> "$GITHUB_OUTPUT"
 
       - name: Read checkov version from tools.lock
         id: checkov-version
-        run: echo "version=$(grep '^checkov ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh checkov)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -84,7 +84,7 @@ jobs:
 
       - name: Read terraform version from tools.lock
         id: tf-version
-        run: echo "version=$(grep '^terraform ' tools.lock | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(scripts/tool-version.sh terraform)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1

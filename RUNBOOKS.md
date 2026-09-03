@@ -212,15 +212,16 @@ applicable lock-file schema but deliberately skips the AWS-only private-ECR
 digest and KMS signature/attestation gate.
 
 After atomically opening an owner- and generation-bound lease with its initial
-manifest, the same job runs `make apply`, waits
-for every enabled ECS service, checks that each service reached its applied
-task definition, probes the Terraform `api_url` output (the LocalStack ALB) from the excluded runner
-CIDR, records the ALB URL in the summary, and always runs stage-1 close. The
-ALB probe exercises LocalStack's endpoint routing and records whether it
-returned HTTP or refused/timed out. LocalStack routes ALB DNS through its
-shared edge and does not document source-CIDR enforcement, so this probe does
-not prove the real-AWS security-group boundary; only the AWS path treats an
-HTTP response from the excluded runner as a failure.
+manifest, the same job runs `make apply`, waits for every enabled ECS service,
+checks that each service reached its applied task definition, probes the
+Terraform `api_url` output (the LocalStack ALB) from the excluded runner CIDR,
+records the ALB URL in the summary, and always runs stage-1 close. A refused or
+timed-out probe (curl exit 7 or 28) records the negative-CIDR outcome. If the
+LocalStack edge responds, `/health` must return HTTP 200; any other HTTP status
+or curl error fails the step. LocalStack routes ALB DNS through its shared edge
+and does not document source-CIDR enforcement, so an HTTP 200 proves endpoint
+routing but not the real-AWS security-group boundary. On AWS, any HTTP response
+from the excluded runner remains a failure.
 
 This mode proves the workflow's full bootstrap → lease → apply → service
 acceptance → close control flow on one runner. It does not prove GitHub OIDC,

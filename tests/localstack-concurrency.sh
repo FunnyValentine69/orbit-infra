@@ -71,14 +71,14 @@ PY
 
 terminate_and_reap_workers() {
   local index pgid pid
-  if [ "${#worker_pgids[@]}" -gt 0 ]; then
-    for index in "${!worker_pgids[@]}"; do
-      pgid="${worker_pgids[$index]}"
+  if [ "${#worker_pids[@]}" -gt 0 ]; then
+    for index in "${!worker_pids[@]}"; do
       pid="${worker_pids[$index]}"
-      if kill -0 "$pid" 2>/dev/null; then
-        kill -TERM -- "-$pgid" 2>/dev/null \
-          || kill -TERM "$pid" 2>/dev/null \
-          || true
+      pgid="${worker_pgids[$index]:-}"
+      if [[ "$pgid" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM -- "-$pgid" 2>/dev/null || true
+      else
+        kill -TERM "$pid" 2>/dev/null || true
       fi
     done
     for pid in "${worker_pids[@]}"; do
@@ -138,19 +138,15 @@ set -euo pipefail
 sleep 300 &
 descendant_pid=$!
 printf '%s\n' "$descendant_pid" > "$1"
-wait "$descendant_pid"
 EOF
   chmod +x "$fake_worker"
-  # Positional parameters expand in the child shell.
-  # shellcheck disable=SC2016
-  start_grouped_worker bash -c '
-    set -o pipefail
-    "$1" "$2" 2>&1 | sed "s/^/fake-apply: /" > "$3"
-  ' _ "$fake_worker" "$descendant_pid_file" "$tmp_dir/fake-apply.log"
+  start_grouped_worker "$fake_worker" "$descendant_pid_file"
   signal_worker_pid="$STARTED_WORKER_PID"
   printf '%s\n' "$signal_worker_pid" > "$worker_pid_file"
   wait "$signal_worker_pid"
-  exit $?
+  while :; do
+    sleep 1
+  done
 fi
 
 [ "$TARGET" = localstack ] || usage_fail "TARGET must be localstack"
@@ -234,6 +230,38 @@ assert_no_cross_reference() {
   if grep -Fq -- "$other_env" <<< "$observed"; then
     fail "$label mentions the other environment id '$other_env'"
   fi
+}
+
+assert_inventory_env_tag() {
+  local inventory="$1"
+  local env_id="$2"
+  local offending_arn
+  offending_arn="$(jq -r --arg tag_key "$TAG_KEY" --arg env_id "$env_id" '
+    [
+      .ResourceTagMappingList[]
+      | ([try (.Tags[] | select(.Key == $tag_key)) catch empty]) as $env_tags
+      | select(($env_tags | length) != 1 or $env_tags[0].Value != $env_id)
+      | if (.ResourceARN | type) == "string" then .ResourceARN else "<missing ResourceARN>" end
+    ]
+    | first // empty
+  ' <<< "$inventory")"
+  [ -z "$offending_arn" ] \
+    || fail "$env_id tagging inventory entry '$offending_arn' must carry exactly one '$TAG_KEY' tag with value '$env_id'"
+}
+
+assert_disjoint_inventory_arns() {
+  local inventory_a="$1"
+  local inventory_b="$2"
+  local overlap
+  overlap="$(jq -nr --argjson inventory_a "$inventory_a" --argjson inventory_b "$inventory_b" '
+    [$inventory_a.ResourceTagMappingList[].ResourceARN] as $arns_a
+    | [$inventory_b.ResourceTagMappingList[].ResourceARN] as $arns_b
+    | [$arns_a[] as $arn | select($arns_b | index($arn)) | $arn]
+    | unique
+    | join(", ")
+  ')"
+  [ -z "$overlap" ] \
+    || fail "tagging inventories share resource ARN(s): $overlap"
 }
 
 assert_post_close_inventory() {
@@ -354,6 +382,9 @@ tag_count_a="$(jq '.ResourceTagMappingList | length' <<< "$inventory_a")"
 tag_count_b="$(jq '.ResourceTagMappingList | length' <<< "$inventory_b")"
 [ "$tag_count_a" -gt 0 ] || fail "$ENV_A tagging inventory is empty after apply"
 [ "$tag_count_b" -gt 0 ] || fail "$ENV_B tagging inventory is empty after apply"
+assert_inventory_env_tag "$inventory_a" "$ENV_A"
+assert_inventory_env_tag "$inventory_b" "$ENV_B"
+assert_disjoint_inventory_arns "$inventory_a" "$inventory_b"
 assert_no_cross_reference "$(jq -r '.ResourceTagMappingList[].ResourceARN' <<< "$inventory_a")" \
   "$ENV_B" "$ENV_A tagging inventory"
 assert_no_cross_reference "$(jq -r '.ResourceTagMappingList[].ResourceARN' <<< "$inventory_b")" \

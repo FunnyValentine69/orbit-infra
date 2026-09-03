@@ -57,6 +57,19 @@ descendant_pid="$(cat "$tmp_dir/descendant.pid")"
   exit 1
 }
 
+deadline=$((SECONDS + 10))
+while [ "$SECONDS" -le "$deadline" ] && kill -0 "$worker_pid" 2>/dev/null; do
+  sleep 1
+done
+if kill -0 "$worker_pid" 2>/dev/null; then
+  echo "FAIL: fake worker group leader $worker_pid did not exit before the trap test" >&2
+  exit 1
+fi
+if ! kill -0 "$descendant_pid" 2>/dev/null; then
+  echo "FAIL: fake worker descendant $descendant_pid exited with its group leader" >&2
+  exit 1
+fi
+
 kill -TERM "$runner_pid"
 set +e
 wait "$runner_pid"
@@ -81,4 +94,4 @@ for process_record in "worker|$worker_pid" "descendant|$descendant_pid"; do
   fi
 done
 
-echo "PASS: LocalStack concurrency SIGTERM trap reaps the fake worker process group"
+echo "PASS: LocalStack concurrency SIGTERM trap terminates the group after its leader exits"
