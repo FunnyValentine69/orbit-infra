@@ -1,6 +1,6 @@
 # Architecture
 
-Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ## Purpose
 
@@ -116,9 +116,10 @@ requires the persisted Stage 1 verification to have passed with zero live or
 indeterminate results, and probes only the recorded task-definition candidates.
 The exact deleted `ClientException` is gone; `DELETE_IN_PROGRESS` remains
 pending. LocalStack may additionally accept exact `INACTIVE` only for the same
-ARN's recorded Stage 1 allowance. Once all candidates are gone, Stage 2 deletes
-every version and delete marker for `envs/preview/<env_id>.tfstate`, verifies
-none remain, records the run, and CAS-transitions to `closed`.
+ARN's recorded Stage 1 allowance. Once all candidates are gone, Stage 2 holds an exclusive generation-bound
+claim, deletes every version and delete marker for
+`envs/preview/<env_id>.tfstate`, verifies none remain, and atomically records
+the proof, transitions to `closed`, and consumes the claim.
 
 Cleanup execution is bound to an explicit `TARGET`. The LocalStack branch
 requires a localhost endpoint, test credentials, disabled metadata lookup, and

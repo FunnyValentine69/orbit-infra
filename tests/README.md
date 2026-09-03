@@ -1,5 +1,7 @@
 # Shell contract tests
 
+Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
+
 Run the cleanup regression suite without AWS or LocalStack:
 
 ```
@@ -29,13 +31,19 @@ consistent `passed:false` live result before deadline failure, exact ECS
 required AWS destroy image references and their Terraform forwarding,
 zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
 their `failures` array, atomic owner-plus-manifest lease open with one PUT,
-same-environment second-open refusal, owner- and generation-bound close
-refusals, the three-attempt lease limit, audited force retry, and end-to-end
-stage-1 state retention. The suite currently reports 41 cases.
+same-environment second-open refusal, generation/status-bound Stage 1,
+exclusive Stage 2 claims, claim-bound manifest writes, generic-transition
+refusal of `closed`, atomic proof-plus-close, force-cleared claim audit,
+owner- and generation-bound close refusals, the three-attempt lease limit,
+audited force retry, and end-to-end stage-1 state retention. The suite currently
+reports 43 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
-signal-path test below. It runs `tests/dispatch-ordering-contracts.sh`, whose
+signal-path test below. It also executes the LocalStack close-and-sweep workflow
+block against controlled lease/close/sweep scripts and verifies the observed
+generation, status, and owner arguments. It runs
+`tests/dispatch-ordering-contracts.sh`, whose
 jq-level probes extract the live jobs aggregation and timestamp-comparison
 filters from `tests/dispatch-ordering.sh`. It also verifies that policy-size
 remains required by default and moves to the owner-only `plan-localstack` job
@@ -71,8 +79,10 @@ delete-marker removal, `DELETE_IN_PROGRESS`, malformed describe/candidate
 refusal, target-scoped LocalStack allowances and missing-allowance refusal,
 Stage-1 `passed:false` refusal, zero-exit `delete-objects` errors, post-delete
 re-list refusal, partial deletion, a lease change between delete batches,
-closing-to-closed CAS loss, prune-time If-Match loss, and ETag-conditional
-prune. The suite currently reports 21 cases.
+stale-open generation replacement before Stage 1, exclusive Stage 2 claim and
+proof recording, an atomic-completion race that adds a new state version,
+prune-time If-Match loss, and ETag-conditional prune. The suite currently
+reports 22 cases.
 
 Fixture provenance:
 

@@ -1,6 +1,6 @@
 # ADR 0006: Preview environment lease lifecycle
 
-Status: Accepted (2026-09-02; amended 2026-09-03). Evidence: local apply/close is LOCALSTACK-VERIFIED; the LocalStack session workflow is LOCALSTACK-VERIFIED in CI (first owner dispatch from main, 2026-09-03); every real-AWS behavior is CODE-ONLY until the promotion gate P0-3d runs.
+Status: Accepted (2026-09-02; amended 2026-09-03). Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ## Context
 
@@ -8,7 +8,7 @@ Environments are created/destroyed by independent CI dispatches that can be inte
 
 ## Decision
 
-Each `env_id` has a durable lease at `leases/<env_id>.json` with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every transition is a compare-and-swap (S3 conditional write on the ETag, asserting prior state/generation) — two writers can never both win. Apply order: runner-CIDR check → lint → checkov → verify every selected image signature and attestation against the lock files → create the lease only if absent or `closed` (generation N+1), with the workflow-run owner and initial target/mode/resolved-image manifest in that same CAS PUT → init → plan → apply; static and supply-chain gate failures never create a lease or resources, and there is no post-open manifest race. The apply workflow emits acquisition state and generation only after its CAS open succeeds, for summary reporting only. Its failure/cancellation handler does not depend on those step outputs: it reads the lease and invokes `close-env.sh` only when the lease is `open` or `closing` and its owner matches the current GitHub run ID and attempt. `close-env.sh --owner` independently refuses a mismatched owner with exit 4 before any transition; the generation guard remains independent. On AWS, close reuses the three resolved image references in the lease manifest so Terraform can load the configuration before destroy; a missing reference fails closed. The LocalStack lane continues to use its local defaults.
+Each `env_id` has a durable lease at `leases/<env_id>.json` with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every lease mutation is a compare-and-swap (S3 conditional write on one fresh-read ETag while asserting the operation's status, generation, and claim preconditions) — two writers can never both win. Apply order: runner-CIDR check → lint → checkov → verify every selected image signature and attestation against the lock files → create the lease only if absent or `closed` (generation N+1), with the workflow-run owner and initial target/mode/resolved-image manifest in that same CAS PUT → init → plan → apply; static and supply-chain gate failures never create a lease or resources, and there is no post-open manifest race. The apply workflow emits acquisition state and generation only after its CAS open succeeds, for summary reporting only. Its failure/cancellation handler does not depend on those step outputs: it reads the lease and invokes `close-env.sh` only when the lease is `open` or `closing` and its owner matches the current GitHub run ID and attempt. `close-env.sh --owner` independently refuses a mismatched owner with exit 4 before any transition; the generation guard remains independent. On AWS, close reuses the three resolved image references in the lease manifest so Terraform can load the configuration before destroy; a missing reference fails closed. The LocalStack lane continues to use its local defaults.
 
 The session workflows accept `target=aws|localstack` and record the target in
 the lease manifest. The AWS path retains the independent apply and destroy
@@ -30,7 +30,7 @@ retained state, or generation increments. Those
 lease semantics are proved locally by `tests/localstack-concurrency.sh`, which
 runs both environments against one already-running LocalStack instance.
 
-Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) re-checks the manifest; once every task definition is deleted, it removes state versions and sets `closed`. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
+Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) first claims the exact `closing` generation; once every task definition is deleted, it removes state versions and atomically appends its proof while setting `closed` and consuming the claim. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
 
 ### Stage 2 sweeper amendment (2026-09-03)
 
@@ -39,7 +39,9 @@ classifies open leases older than 24 hours for Stage 1, due non-manual
 `cleanup_failed` leases below the three-attempt budget for Stage 1 retry,
 `closing` leases for Stage 2, and `closed` leases older than seven days for
 prune. `sweep.sh env` always re-reads the lease and acts on that current state,
-never on a discovery result. It never supplies `--force-retry`.
+never on a discovery result. For Stage 1 it passes the generation and status it
+classified to `close-env.sh`; `begin-cleanup` checks both again in its own fresh
+read and CAS. The sweeper never supplies `--force-retry`.
 
 For every `manifest.candidates[]` entry whose `resource_type` is
 `ecs:task-definition`, Stage 2 calls `DescribeTaskDefinition` through the
@@ -65,14 +67,21 @@ must return that exact ARN in `INACTIVE`, and `TARGET` must be `localstack`.
 The sweeper records the allowance ID, ARN, and timestamp under
 `manifest.stage2_allowances`; AWS never honors it.
 
-After every task definition is deleted or deleted-by-allowance, Stage 2
-re-reads the lease and requires the last Stage 1 verification run to record
-`passed:true`, `live:0`, and `indeterminate:0`. It does not repeat Stage 1's
-destroy-time probes. It then re-reads `closing`, paginates every version and
-delete marker for the exact `envs/preview/<env_id>.tfstate` key, deletes them
-in batches of at most 1,000, and performs a final empty-version read. A partial
-or indeterminate deletion transitions to `cleanup_failed`; `closed` is
-forbidden while any version remains. The final transition is lease CAS.
+Stage 2 first obtains one exclusive `stage2_claim = {token, claimed_at}`
+for the exact `closing` generation. Every Stage 2 manifest write requires that
+generation and token. A pending task definition releases only that matching
+claim by CAS so a later sweep can retry; successful completion has no separate
+release. After every task definition is deleted or deleted-by-allowance, Stage
+2 requires the last Stage 1 verification run to record `passed:true`, `live:0`,
+and `indeterminate:0`. It does not repeat Stage 1's destroy-time probes. It
+paginates every version and delete marker for the exact
+`envs/preview/<env_id>.tfstate` key, deletes them in batches of at most 1,000,
+and performs a final empty-version read. A partial or indeterminate deletion
+transitions to `cleanup_failed` and clears the matching claim. `closed` is
+forbidden while any version remains. `complete-stage2` makes one fresh read and
+one CAS that requires the status, generation, and claim, appends proof containing
+`in_job`, `state_key`, deleted task-definition ARNs, and the verified-empty
+timestamp to `manifest.stage2_runs`, sets `closed`, and consumes the claim.
 
 Prune re-reads a `closed` lease older than seven days with its ETag and deletes
 the current lease object with an `If-Match` precondition through `lease.sh`.
@@ -82,8 +91,10 @@ creating a matrix larger than 20; per-environment jobs use the shared
 not cancel sibling failures. LocalStack proves Stage 2 only in the same
 `session-apply` job, using the emulator's versioned state bucket and identical
 state-key layout; a second sweep over its new `closed` lease is a retention
-no-op. Both the nightly AWS path and in-job LocalStack path are CODE-ONLY until
-P0-3b promotion.
+no-op. LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the
+Phase 4 run. In-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and
+CODE-ONLY in CI until the post-merge `session-apply` dispatch. The nightly AWS
+sweeper is CODE-ONLY until P0-3b.
 
 ### Cleanup verifier amendment (2026-09-02)
 
@@ -102,7 +113,16 @@ All cleanup and lease AWS CLI calls pass through `scripts/aws-cli.sh`, with five
 
 The only stage-1 emulator allowance is `localstack-delete-task-definitions-inactive`: `TARGET=localstack`, the exact unsupported `DeleteTaskDefinitions` signature, and an already-`INACTIVE` task definition are all required. Its ID, ARN, error code, and timestamp are persisted. The same response under `TARGET=aws` fails. Stale tags, retained cluster list entries, and endpoints in `deleted` are normal typed outcomes, not allowances. The former host-port plan-drift allowance is withdrawn because Fargate `awsvpc` port mappings now set equal host and container ports.
 
-Each lease generation stores `cleanup_attempt`, `next_retry_at`, and `manual_intervention_required` through the same ETag compare-and-swap as status and manifest updates. Three automatic stage-1 executions are permitted. The third failure retains `cleanup_failed`, retains state, and requires manual intervention; a fourth automatic claim is refused. An operator may use the explicit `--force-retry` path after review, which appends a lease audit entry.
+Each lease generation stores `cleanup_attempt`, `next_retry_at`, and `manual_intervention_required` through the same ETag compare-and-swap as status and manifest updates. Three automatic stage-1 executions are permitted. The third failure retains `cleanup_failed`, retains state, and requires manual intervention; a fourth automatic claim is refused. An operator may use the explicit `--force-retry` path after review, which clears any active Stage 2 claim and appends that cleared claim to the lease audit entry.
+
+The mutation interface is generation-bound. `begin-cleanup` requires
+`--generation` and `--from open|closing|cleanup_failed`; `claim-stage2` acquires
+the exclusive token, and `release-stage2` relinquishes only a matching pending
+claim. `set-manifest` always requires `--generation` and also `--claim` whenever
+the lease carries an active Stage 2 claim. Generic `transition` accepts only
+`cleanup_failed` and clears its matching claim. Only `complete-stage2` may
+produce `closed`, in the same CAS that appends the Stage 2 proof and clears the
+claim.
 
 This amendment corrects three prior assumptions:
 

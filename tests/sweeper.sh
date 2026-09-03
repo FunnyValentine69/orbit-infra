@@ -100,6 +100,20 @@ case "$service $operation" in
       echo 'An error occurred (PreconditionFailed) when calling the PutObject operation' >&2
       exit 254
     fi
+    if [ "${FAKE_STAGE2_COMPLETION_RACE:-0}" = 1 ] && \
+       [ "$(jq -r '.status // empty' "$body")" = closed ]; then
+      env_id="$(jq -r '.env_id' "$store")"
+      jq '.manifest.concurrent_stage2_write = true' "$store" > "$store.next"
+      mv "$store.next" "$store"
+      current=$((current + 1))
+      printf '%s\n' "$current" > "$etag_file"
+      state_file="$FAKE_STATE_DIR/envs_preview_${env_id}.tfstate.json"
+      jq '. + [{Key:("envs/preview/" + $env_id + ".tfstate"),VersionId:"late-version",type:"version"}]' \
+        --arg env_id "$env_id" "$state_file" > "$state_file.next"
+      mv "$state_file.next" "$state_file"
+      echo 'An error occurred (PreconditionFailed) when calling the PutObject operation' >&2
+      exit 254
+    fi
     next=$(( ${current:-0} + 1 ))
     cp "$body" "$store"
     printf '%s\n' "$next" > "$etag_file"
@@ -228,6 +242,22 @@ printf '%s\n' "$*" >> "$FAKE_CLOSE_LOG"
 if [[ "$*" == *--force-retry* ]]; then
   echo "sweeper must never force stage 1" >&2
   exit 90
+fi
+if [ "${FAKE_REOPEN_BEFORE_CLOSE:-0}" = 1 ]; then
+  env_id="${*: -1}"
+  lease_store="$FAKE_S3_DIR/leases_${env_id}.json.body"
+  lease_etag="$FAKE_S3_DIR/leases_${env_id}.json.etag"
+  jq '
+    .generation += 1
+    | .status = "open"
+    | .cleanup_attempt = 0
+    | .next_retry_at = null
+    | .manual_intervention_required = false
+    | .stage2_claim = null
+  ' "$lease_store" > "$lease_store.next"
+  mv "$lease_store.next" "$lease_store"
+  printf '%s\n' "$(( $(cat "$lease_etag") + 1 ))" > "$lease_etag"
+  exec "$REAL_CLOSE_ENV_SH" "$@"
 fi
 EOF
 chmod +x "$tmp_dir/bin/close-env"
@@ -377,17 +407,42 @@ pass "discover rejects environment IDs outside the preview contract"
 run_stage1_case() {
   local env_id="$1"
   local expected_fragment="$2"
-  local lease
+  local lease generation status
   lease="$(jq -c --arg env_id "$env_id" '.leases[] | select(.env_id == $env_id)' "$FIXTURES/discover-cases.json")"
+  generation="$(jq -r '.generation' <<< "$lease")"
+  status="$(jq -r '.status' <<< "$lease")"
   reset_store
   store_lease "$lease"
   output="$(run_aws "$SWEEPER" env "$env_id")"
   grep -Fq "$expected_fragment" <<< "$output" || fail "missing Stage-1 action output for $env_id"
-  [ "$(cat "$tmp_dir/close-calls.log")" = "$env_id" ] || fail "Stage 1 must call close-env.sh once without --force-retry"
+  [ "$(cat "$tmp_dir/close-calls.log")" = "--generation $generation --from $status $env_id" ] || \
+    fail "Stage 1 must pass its classified generation and status without --force-retry"
 }
 run_stage1_case stale-open "stage 1"
 run_stage1_case retry-due "stage 1"
 pass "stale-open and due-retry leases invoke unforced Stage 1 from a fresh read"
+
+reset_store
+stale_replaced="$(jq -c '.leases[] | select(.env_id == "stale-open")' "$FIXTURES/discover-cases.json")"
+store_lease "$stale_replaced"
+printf '[{"sentinel":"untouched"}]\n' > "$fake_state/envs_preview_stale-open.tfstate.json"
+set +e
+stale_replaced_output="$(FAKE_REOPEN_BEFORE_CLOSE=1 REAL_CLOSE_ENV_SH="$REPO_ROOT/scripts/close-env.sh" \
+  OPERATOR_CIDR=test-cidr run_aws "$SWEEPER" env stale-open 2>&1)"
+stale_replaced_rc=$?
+set -e
+stale_replaced_lease="$(run_aws "$LEASE" get stale-open)"
+[ "$stale_replaced_rc" -eq 3 ] || fail "generation-replaced stale-open must exit 3"
+jq -e '.generation == 2 and .status == "open" and .cleanup_attempt == 0' \
+  <<< "$stale_replaced_lease" >/dev/null || fail "Stage 1 claimed the replacement generation"
+jq -e '. == [{sentinel:"untouched"}]' "$fake_state/envs_preview_stale-open.tfstate.json" >/dev/null || \
+  fail "generation-replaced Stage 1 touched retained resources"
+if grep -Eq '^s3api put-object |^ecs |^resourcegroupstaggingapi ' "$tmp_dir/aws-calls.log"; then
+  fail "generation-replaced Stage 1 reached a lease mutation or resource API"
+fi
+grep -Eq 'lease (generation|status) mismatch' <<< "$stale_replaced_output" || \
+  fail "generation-replaced Stage 1 refusal reason missing"
+pass "stale-open generation replacement is refused before Stage 1 touches resources"
 
 reset_store
 exhausted="$(jq -c '.leases[] | select(.env_id == "retry-max")' "$FIXTURES/discover-cases.json")"
@@ -414,8 +469,14 @@ FAKE_SCENARIO_FILE="$happy_fixture" SWEEP_DELETE_BATCH_SIZE=2 run_aws "$SWEEPER"
 [ "$(lease_status aws aws-happy)" = closed ] || fail "AWS deleted task definition did not close the lease"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-happy.tfstate.json")" -eq 0 ] || fail "state versions/delete markers remain after Stage 2"
 happy_lease="$(run_aws "$LEASE" get aws-happy)"
-jq -e '.manifest.stage2_runs[-1].in_job == false and .manifest.stage2_runs[-1].target == "aws"' \
-  <<< "$happy_lease" >/dev/null || fail "completed AWS Stage 2 run was not recorded"
+happy_arn="$(jq -r '.task_definition_arn' "$happy_fixture")"
+jq -e --arg arn "$happy_arn" '
+  .manifest.stage2_runs[-1].in_job == false
+  and .manifest.stage2_runs[-1].target == "aws"
+  and .manifest.stage2_runs[-1].state_key == "envs/preview/aws-happy.tfstate"
+  and .manifest.stage2_runs[-1].deleted_task_definition_arns == [$arn]
+  and (.manifest.stage2_runs[-1].verified_empty_at | type == "string" and length > 0)
+' <<< "$happy_lease" >/dev/null || fail "completed AWS Stage 2 proof was not recorded"
 if [ "$(grep -c '^s3api delete-objects ' "$tmp_dir/aws-calls.log")" -ne 2 ]; then
   fail "paginated state inventory must delete versions and markers in bounded batches"
 fi
@@ -425,7 +486,9 @@ reset_store
 pending_fixture="$FIXTURES/aws-delete-in-progress.json"
 store_fixture "$pending_fixture"
 pending_output="$(FAKE_SCENARIO_FILE="$pending_fixture" run_aws "$SWEEPER" env aws-pending)"
-[ "$(lease_status aws aws-pending)" = closing ] || fail "DELETE_IN_PROGRESS must keep closing"
+pending_lease="$(run_aws "$LEASE" get aws-pending)"
+jq -e '.status == "closing" and .stage2_claim == null' <<< "$pending_lease" >/dev/null || \
+  fail "DELETE_IN_PROGRESS must keep closing without stranding a Stage 2 claim"
 grep -Fq 'DELETE_IN_PROGRESS' <<< "$pending_output" || fail "pending task definition ARN/status was not printed"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-pending.tfstate.json")" -eq 1 ] || fail "pending Stage 2 touched retained state"
 pass "DELETE_IN_PROGRESS remains pending with state retained"
@@ -616,14 +679,21 @@ pass "Stage 2 re-reads the lease before every state deletion batch"
 reset_store
 store_fixture "$happy_fixture"
 set +e
-cas_output="$(FAKE_SCENARIO_FILE="$happy_fixture" FAKE_PUT_RACE_ON_STATUS=closed \
+cas_output="$(FAKE_SCENARIO_FILE="$happy_fixture" FAKE_STAGE2_COMPLETION_RACE=1 \
   run_aws "$SWEEPER" env aws-happy 2>&1)"
 cas_rc=$?
 set -e
+cas_lease="$(run_aws "$LEASE" get aws-happy)"
 [ "$cas_rc" -eq 3 ] || fail "closing-to-closed CAS race must exit 3, got $cas_rc"
-[ "$(lease_status aws aws-happy)" = closing ] || fail "losing closing-to-closed writer mutated lease status"
+jq -e '.status == "closing"
+  and .manifest.concurrent_stage2_write == true
+  and ((.manifest.stage2_runs // []) | length) == 0' \
+  <<< "$cas_lease" >/dev/null || fail "losing atomic completion mutated the lease or its proof"
+jq -e 'any(.[]; .VersionId == "late-version")' \
+  "$fake_state/envs_preview_aws-happy.tfstate.json" >/dev/null || \
+  fail "atomic completion race deleted the concurrently added state version"
 grep -Fq 'lost the CAS race' <<< "$cas_output" || fail "CAS race did not report the lease refusal"
-pass "closing-to-closed CAS race exits 3 without the sweeper mutating the lease"
+pass "atomic Stage 2 completion refuses an ETag race and leaves the new state version untouched"
 
 reset_store
 old_closed="$(jq -c '.leases[] | select(.env_id == "prune-old")' "$FIXTURES/discover-cases.json")"

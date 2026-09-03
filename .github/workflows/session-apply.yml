@@ -746,7 +746,7 @@ jobs:
             echo "no owner-bound close: lease for $ENV_ID has no valid generation"
             exit 0
           fi
-          scripts/close-env.sh --generation "$generation" --owner "$owner" "$ENV_ID"
+          scripts/close-env.sh --generation "$generation" --from "$status" --owner "$owner" "$ENV_ID"
 
       - name: Close and sweep LocalStack after acceptance or failure
         if: always() && inputs.target == 'localstack'
@@ -793,7 +793,7 @@ jobs:
             echo "no owner-bound close: lease for $ENV_ID has no valid generation"
             exit 0
           fi
-          scripts/close-env.sh --generation "$generation" --owner "$owner" "$ENV_ID"
+          scripts/close-env.sh --generation "$generation" --from "$lease_status" --owner "$owner" "$ENV_ID"
           SWEEP_IN_JOB=true scripts/sweep.sh env "$ENV_ID"
 
       - name: Masked summary

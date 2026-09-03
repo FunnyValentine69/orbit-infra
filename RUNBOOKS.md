@@ -1,6 +1,6 @@
 # Runbooks
 
-Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs. Run every procedure from the repository root.
+Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b. Run every procedure from the repository root.
 
 ## PR review gates
 
@@ -244,13 +244,13 @@ and does not document source-CIDR enforcement, so an HTTP 200 proves endpoint
 routing but not the real-AWS security-group boundary. On AWS, any HTTP response
 from the excluded runner remains a failure.
 
-After P0-3b promotion, this mode proves the workflow's full bootstrap → lease →
-apply → service acceptance → Stage 1 → Stage 2 control flow on one runner. It
-does not prove GitHub OIDC, real-AWS IAM, private ECR/KMS supply-chain
-verification, AWS Budgets, ECS Exec, real security-group packet enforcement,
-or a cross-job destroy. The scheduled sweeper is AWS-only and refuses
-`target=localstack` because emulator state is job-local. Until that promotion,
-the new Stage 2 path is CODE-ONLY. Every
+After the post-merge `session-apply` dispatch, this mode proves the
+workflow's full bootstrap → lease → apply → service acceptance → Stage 1 →
+Stage 2 control flow on one runner. It does not prove GitHub OIDC, real-AWS IAM,
+private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec, real
+security-group packet enforcement, or a cross-job destroy. The scheduled
+sweeper is AWS-only and refuses `target=localstack` because emulator state is
+job-local. Until that dispatch, in-job Stage 2 remains CODE-ONLY in CI. Every
 LocalStack CI run uses a fresh runner and fresh emulator, so the gh-driven
 dispatch test proves only GitHub concurrency queueing on this target. Lease CAS,
 refusal on `open`/`closing`/`cleanup_failed`, and generation increments are
@@ -265,8 +265,11 @@ a schedule.
 The workflow runs nightly at 03:17 UTC; the odd minute avoids common
 top-of-hour scheduling congestion. It runs only on `main` and only against
 AWS. A manual LocalStack target is intentionally refused because the emulator
-and its state do not survive the `session-apply` job. Dispatch an extra AWS run
-with a correlation note when needed:
+and its state do not survive the `session-apply` job. LocalStack apply and
+Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack
+Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until the post-merge
+dispatch below; this nightly AWS path is CODE-ONLY until P0-3b. Dispatch an
+extra AWS run with a correlation note when needed:
 
 ```
 gh workflow run sweeper.yml --ref main -f target=aws -f dispatch_note=manual
@@ -287,16 +290,18 @@ task-definition candidates, Stage 1 verification, and Stage 2 allowances:
 ```
 ENV_ID=demo1
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
-jq '{status,generation,task_definitions:[.manifest.candidates[] | select(.resource_type == "ecs:task-definition") | .arn],last_verification:.manifest.verification_runs[-1],stage2_allowances:.manifest.stage2_allowances}' <<< "$LEASE_JSON"
+jq '{status,generation,stage2_claim,task_definitions:[.manifest.candidates[] | select(.resource_type == "ecs:task-definition") | .arn],last_verification:.manifest.verification_runs[-1],stage2_allowances:.manifest.stage2_allowances,last_stage2_run:.manifest.stage2_runs[-1]}' <<< "$LEASE_JSON"
 TARGET=aws scripts/sweep.sh env "$ENV_ID"
 ```
 
-A printed `DELETE_IN_PROGRESS` ARN is pending, not an error; leave the lease
-`closing` for the next nightly run. An indeterminate describe or state delete
-sets `cleanup_failed` with state retained wherever deletion stopped. Resolve
-that exact failure and use the normal due Stage 1 retry only when Stage 1 must
-be repeated; the sweeper never forces the three-attempt budget. A Stage 2 CAS
-loss exits 3 and is safe to rerun against the new lease state.
+A printed `DELETE_IN_PROGRESS` ARN is pending, not an error; the sweeper
+releases its matching claim and leaves the lease `closing` for the next nightly
+run. An indeterminate describe or state delete sets `cleanup_failed`, clears
+the matching claim, and retains state wherever deletion stopped. Resolve that
+exact failure and use the normal due Stage 1 retry only when Stage 1 must be
+repeated; the sweeper never forces the three-attempt budget. A Stage 2 CAS loss
+exits 3 without closing the lease or deleting a concurrently added state
+version. Re-read the lease; do not rerun while it carries an active claim.
 
 After Stage 2 records zero state versions, `closed` leases remain readable for
 seven days. The first later sweep prunes the current lease object with its ETag
@@ -324,7 +329,20 @@ CODE-ONLY until P0-3b.
 ```
 ENV_ID=demo1
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
-jq '{status,generation,owner,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
+jq '{status,generation,owner,stage2_claim,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
+```
+
+If `status` is `closing` and `stage2_claim` is present after an interrupted or
+CAS-refused sweep, first confirm that the recorded claimant is no longer
+running. Release only that token and generation, then re-read before rerunning
+the sweeper. The release itself is one fresh-read CAS and refuses changed state
+with exit 3:
+
+```
+GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"
+CLAIM="$(jq -er '.stage2_claim.token | select(type == "string" and length > 0)' <<< "$LEASE_JSON")"
+TARGET=aws scripts/lease.sh release-stage2 "$ENV_ID" --generation "$GENERATION" --claim "$CLAIM"
+LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
 ```
 
 2. If the verifier reports VPC deletion blocked by orphaned ENIs, derive the
@@ -366,8 +384,9 @@ make close TARGET=aws ENV_ID="$ENV_ID" OPERATOR_CIDR="$OPERATOR_CIDR"
 ```
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
 GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"
+STATUS="$(jq -er '.status | select(. == "open" or . == "closing" or . == "cleanup_failed")' <<< "$LEASE_JSON")"
 OWNER="$(jq -er '.owner | select(type == "string" and length > 0)' <<< "$LEASE_JSON")"
-TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" --owner "$OWNER" "$ENV_ID"
+TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" --from "$STATUS" --owner "$OWNER" "$ENV_ID"
 ```
 
 6. Confirm `cleanup_attempt` incremented, `cleanup_retry_audit` gained the
@@ -389,7 +408,7 @@ its ID, ARN, error code, and timestamp are persisted. Stale tags, retained
 cluster-list entries, VPC endpoints in `deleted`, ENI ownership, and S3
 emptiness are never generalized allowances.
 
-Executed: LOCALSTACK-VERIFIED 2026-09-03 — an applied `rbstuck` environment whose lease was driven to `cleanup_failed` with cleanup_attempt 3 and manual_intervention_required refused `close-env.sh` with exit 3; the audited step 5 run destroyed all 59 resources and left `closing`, cleanup_attempt 4, one `cleanup_retry_audit` entry (steps 2 and 3 remain CODE-ONLY: no ENI orphan or non-empty bucket occurred). Command used: `TARGET=localstack AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 AWS_EC2_METADATA_DISABLED=true OPERATOR_CIDR=10.255.255.255/32 scripts/close-env.sh --force-retry rbstuck`.
+Executed: LOCALSTACK-VERIFIED 2026-09-03 — an applied `rbstuck` environment whose lease was driven to `cleanup_failed` with cleanup_attempt 3 and manual_intervention_required refused the automatic close with exit 3; the audited force retry destroyed all 59 resources and left `closing`, cleanup_attempt 4, and one `cleanup_retry_audit` entry (steps 2 and 3 remain CODE-ONLY: no ENI orphan or non-empty bucket occurred). That recorded run predates the current generation/status-bound interface; repeat it only with the step 5 command above.
 
 ## Rotate secrets
 

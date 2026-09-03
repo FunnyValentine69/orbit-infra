@@ -108,7 +108,19 @@ jobs:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
           TARGET: aws
-        run: scripts/close-env.sh "$ENV_ID"
+        run: |
+          set +e
+          lease_json="$(scripts/lease.sh get "$ENV_ID" 2>/dev/null)"
+          lease_rc=$?
+          set -e
+          if [ "$lease_rc" -eq 1 ]; then
+            echo "no lease for $ENV_ID; nothing to close"
+            exit 0
+          fi
+          [ "$lease_rc" -eq 0 ] || exit "$lease_rc"
+          status="$(jq -er '.status | select(. == "open" or . == "closing" or . == "cleanup_failed" or . == "closed")' <<< "$lease_json")"
+          generation="$(jq -er '.generation | select(type == "number" and . >= 1 and floor == .)' <<< "$lease_json")"
+          scripts/close-env.sh --generation "$generation" --from "$status" "$ENV_ID"
 
       - name: Masked summary
         if: always()

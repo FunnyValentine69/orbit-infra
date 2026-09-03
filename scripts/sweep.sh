@@ -165,11 +165,15 @@ get_lease() {
   printf '%s\n' "$output"
 }
 
-require_closing_generation() {
+require_closing_generation_claim() {
   local lease="$1"
   local generation="$2"
-  if ! jq -e --argjson generation "$generation" '
-      .status == "closing" and .generation == $generation
+  local claim="$3"
+  if ! jq -e --argjson generation "$generation" --arg claim "$claim" '
+      .status == "closing"
+      and .generation == $generation
+      and (.stage2_claim | type) == "object"
+      and .stage2_claim.token == $claim
     ' <<< "$lease" >/dev/null 2>&1; then
     err "lease changed while Stage 2 was running"
     return 3
@@ -179,15 +183,13 @@ require_closing_generation() {
 transition_stage2_failure() {
   local env_id="$1"
   local generation="$2"
-  local message="$3"
-  local lease rc
+  local claim="$3"
+  local message="$4"
+  local rc
   err "$message"
-  if ! lease="$(get_lease "$env_id")"; then
-    exit 3
-  fi
-  require_closing_generation "$lease" "$generation" || exit 3
   set +e
-  "$LEASE_SH" transition "$env_id" closing cleanup_failed --error "$message" >/dev/null
+  "$LEASE_SH" transition "$env_id" closing cleanup_failed \
+    --generation "$generation" --claim "$claim" --error "$message" >/dev/null
   rc=$?
   set -e
   [ "$rc" -eq 0 ] || exit "$rc"
@@ -197,16 +199,14 @@ transition_stage2_failure() {
 set_manifest() {
   local env_id="$1"
   local generation="$2"
-  local manifest="$3"
-  local lease manifest_file rc
-  if ! lease="$(get_lease "$env_id")"; then
-    return 3
-  fi
-  require_closing_generation "$lease" "$generation" || return 3
+  local claim="$3"
+  local manifest="$4"
+  local manifest_file rc
   manifest_file="$(mktemp)"
   printf '%s\n' "$manifest" > "$manifest_file"
   set +e
-  "$LEASE_SH" set-manifest "$env_id" "$manifest_file" >/dev/null
+  "$LEASE_SH" set-manifest "$env_id" "$manifest_file" \
+    --generation "$generation" --claim "$claim" >/dev/null
   rc=$?
   set -e
   rm -f "$manifest_file"
@@ -216,10 +216,11 @@ set_manifest() {
 record_stage2_allowance() {
   local env_id="$1"
   local generation="$2"
-  local arn="$3"
+  local claim="$3"
+  local arn="$4"
   local lease manifest
   lease="$(get_lease "$env_id")" || return $?
-  require_closing_generation "$lease" "$generation" || return $?
+  require_closing_generation_claim "$lease" "$generation" "$claim" || return $?
   manifest="$(jq -c --arg arn "$arn" --arg at "$(now_iso)" '
     .manifest
     | .stage2_allowances = ((.stage2_allowances // []) + [{
@@ -228,30 +229,7 @@ record_stage2_allowance() {
         recorded_at:$at
       }] | unique_by([.id,.arn]))
   ' <<< "$lease")" || return 2
-  set_manifest "$env_id" "$generation" "$manifest"
-}
-
-record_stage2_completion() {
-  local env_id="$1"
-  local generation="$2"
-  local state_key="$3"
-  local lease manifest
-  lease="$(get_lease "$env_id")" || return $?
-  require_closing_generation "$lease" "$generation" || return $?
-  manifest="$(jq -c \
-    --arg target "$TARGET" \
-    --arg state_key "$state_key" \
-    --arg completed_at "$(now_iso)" \
-    --argjson in_job "$SWEEP_IN_JOB" '
-      .manifest
-      | .stage2_runs = ((.stage2_runs // []) + [{
-          target:$target,
-          state_key:$state_key,
-          in_job:$in_job,
-          completed_at:$completed_at
-        }])
-    ' <<< "$lease")" || return 2
-  set_manifest "$env_id" "$generation" "$manifest"
+  set_manifest "$env_id" "$generation" "$claim" "$manifest"
 }
 
 list_state_versions() {
@@ -311,13 +289,14 @@ list_state_versions() {
 delete_state_versions() {
   local env_id="$1"
   local generation="$2"
-  local entries="$3"
+  local claim="$3"
+  local entries="$4"
   local remaining batch payload response error_count lease
   remaining="$entries"
   while [ "$(jq 'length' <<< "$remaining")" -gt 0 ]; do
     batch="$(jq -c --argjson size "$SWEEP_DELETE_BATCH_SIZE" '.[:$size]' <<< "$remaining")"
     lease="$(get_lease "$env_id")" || return $?
-    require_closing_generation "$lease" "$generation" || return $?
+    require_closing_generation_claim "$lease" "$generation" "$claim" || return $?
     payload="$(mktemp)"
     jq -n --argjson objects "$batch" '{Objects:$objects,Quiet:false}' > "$payload"
     if ! response="$(aws_cmd s3api delete-objects \
@@ -347,12 +326,16 @@ delete_state_versions() {
 stage2() {
   local env_id="$1"
   local initial_lease="$2"
-  local generation manifest_target arns arn describe_out describe_rc status
+  local generation claim manifest_target arns arn describe_out describe_rc status
   local pending=false allowance_recorded=false lease latest_run state_key entries remaining rc
+  local deleted_arns='[]' verified_empty_at proof_file
   generation="$(jq -r '.generation' <<< "$initial_lease")"
+  claim="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
+  initial_lease="$("$LEASE_SH" claim-stage2 "$env_id" \
+    --generation "$generation" --claim "$claim")"
   manifest_target="$(jq -r '.manifest.target // empty' <<< "$initial_lease")"
   if [ "$manifest_target" != "$TARGET" ]; then
-    transition_stage2_failure "$env_id" "$generation" "Stage 2 target does not match the lease manifest"
+    transition_stage2_failure "$env_id" "$generation" "$claim" "Stage 2 target does not match the lease manifest"
   fi
   if ! arns="$(jq -r '
       (.manifest.candidates // [])
@@ -367,7 +350,7 @@ stage2() {
         else error("task-definition candidate must have matching id and arn")
         end
     ' <<< "$initial_lease" | sort -u)"; then
-    transition_stage2_failure "$env_id" "$generation" "Stage 2 task-definition candidates are malformed"
+    transition_stage2_failure "$env_id" "$generation" "$claim" "Stage 2 task-definition candidates are malformed"
   fi
 
   while IFS= read -r arn; do
@@ -378,10 +361,11 @@ stage2() {
     set -e
     if [ "$describe_rc" -ne 0 ]; then
       if [ "$describe_out" = "$DELETED_TASK_DEFINITION_ERROR" ]; then
+        deleted_arns="$(jq -c --arg arn "$arn" '. + [$arn] | unique' <<< "$deleted_arns")"
         echo "deleted task definition: $arn"
         continue
       fi
-      transition_stage2_failure "$env_id" "$generation" "task-definition describe was indeterminate"
+      transition_stage2_failure "$env_id" "$generation" "$claim" "task-definition describe was indeterminate"
     fi
     if ! jq -e --arg arn "$arn" '
         type == "object"
@@ -389,7 +373,7 @@ stage2() {
         and .taskDefinition.taskDefinitionArn == $arn
         and (.taskDefinition.status | type == "string")
       ' <<< "$describe_out" >/dev/null 2>&1; then
-      transition_stage2_failure "$env_id" "$generation" "task-definition describe was indeterminate"
+      transition_stage2_failure "$env_id" "$generation" "$claim" "task-definition describe was indeterminate"
     fi
     status="$(jq -r '.taskDefinition.status' <<< "$describe_out")"
     if [ "$TARGET" = localstack ] && [ "$status" = INACTIVE ] && \
@@ -400,7 +384,7 @@ stage2() {
            and (.recorded_at | type == "string" and length > 0))
        ' <<< "$initial_lease" >/dev/null; then
       set +e
-      record_stage2_allowance "$env_id" "$generation" "$arn"
+      record_stage2_allowance "$env_id" "$generation" "$claim" "$arn"
       rc=$?
       set -e
       [ "$rc" -eq 0 ] || exit "$rc"
@@ -414,22 +398,24 @@ stage2() {
         pending=true
         ;;
       *)
-        transition_stage2_failure "$env_id" "$generation" "task-definition describe was indeterminate"
+        transition_stage2_failure "$env_id" "$generation" "$claim" "task-definition describe was indeterminate"
         ;;
     esac
   done <<< "$arns"
 
   if [ "$pending" = true ]; then
+    "$LEASE_SH" release-stage2 "$env_id" \
+      --generation "$generation" --claim "$claim" >/dev/null
     echo "sweep.sh: $env_id remains closing while task-definition deletion is pending"
     return 0
   fi
   if [ "$allowance_recorded" = true ]; then
     initial_lease="$(get_lease "$env_id")" || exit $?
-    require_closing_generation "$initial_lease" "$generation" || exit $?
+    require_closing_generation_claim "$initial_lease" "$generation" "$claim" || exit $?
   fi
 
   lease="$(get_lease "$env_id")" || exit $?
-  require_closing_generation "$lease" "$generation" || exit $?
+  require_closing_generation_claim "$lease" "$generation" "$claim" || exit $?
   if ! latest_run="$(jq -ce '.manifest.verification_runs[-1]' <<< "$lease" 2>/dev/null)" || \
      ! jq -e '
        type == "object"
@@ -438,44 +424,54 @@ stage2() {
        and .summary.live == 0
        and .summary.indeterminate == 0
      ' <<< "$latest_run" >/dev/null 2>&1; then
-    transition_stage2_failure "$env_id" "$generation" "last Stage-1 verification did not pass with zero live and indeterminate results"
+    transition_stage2_failure "$env_id" "$generation" "$claim" "last Stage-1 verification did not pass with zero live and indeterminate results"
   fi
 
   state_key="envs/preview/${env_id}.tfstate"
   lease="$(get_lease "$env_id")" || exit $?
-  require_closing_generation "$lease" "$generation" || exit $?
+  require_closing_generation_claim "$lease" "$generation" "$claim" || exit $?
   if ! entries="$(list_state_versions "$state_key")"; then
-    transition_stage2_failure "$env_id" "$generation" "state deletion failed while listing retained versions"
+    transition_stage2_failure "$env_id" "$generation" "$claim" "state deletion failed while listing retained versions"
   fi
   set +e
-  delete_state_versions "$env_id" "$generation" "$entries"
+  delete_state_versions "$env_id" "$generation" "$claim" "$entries"
   rc=$?
   set -e
   if [ "$rc" -eq 3 ]; then
     exit 3
   fi
   if [ "$rc" -ne 0 ]; then
-    transition_stage2_failure "$env_id" "$generation" "state deletion failed before all versions were removed"
+    transition_stage2_failure "$env_id" "$generation" "$claim" "state deletion failed before all versions were removed"
   fi
   if ! remaining="$(list_state_versions "$state_key")"; then
-    transition_stage2_failure "$env_id" "$generation" "state deletion failed during final verification"
+    transition_stage2_failure "$env_id" "$generation" "$claim" "state deletion failed during final verification"
   fi
   if [ "$(jq 'length' <<< "$remaining")" -ne 0 ]; then
-    transition_stage2_failure "$env_id" "$generation" "state deletion failed: versions remain"
+    transition_stage2_failure "$env_id" "$generation" "$claim" "state deletion failed: versions remain"
   fi
+  verified_empty_at="$(now_iso)"
 
+  proof_file="$(mktemp)"
+  jq -n \
+    --arg target "$TARGET" \
+    --argjson in_job "$SWEEP_IN_JOB" \
+    --arg state_key "$state_key" \
+    --argjson deleted_arns "$deleted_arns" \
+    --arg verified_empty_at "$verified_empty_at" '
+      {
+        target:$target,
+        in_job:$in_job,
+        state_key:$state_key,
+        deleted_task_definition_arns:$deleted_arns,
+        verified_empty_at:$verified_empty_at
+      }
+    ' > "$proof_file"
   set +e
-  record_stage2_completion "$env_id" "$generation" "$state_key"
+  "$LEASE_SH" complete-stage2 "$env_id" \
+    --generation "$generation" --claim "$claim" --proof "$proof_file" >/dev/null
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || exit "$rc"
-
-  lease="$(get_lease "$env_id")" || exit $?
-  require_closing_generation "$lease" "$generation" || exit $?
-  set +e
-  "$LEASE_SH" transition "$env_id" closing closed >/dev/null
-  rc=$?
-  set -e
+  rm -f "$proof_file"
   [ "$rc" -eq 0 ] || exit "$rc"
   echo "sweep.sh: $env_id Stage 2 complete; lease is closed"
 }
@@ -544,7 +540,7 @@ cmd_discover() {
 
 cmd_env() {
   local env_id="$1"
-  local lease rc
+  local lease rc generation status
   validate_env_id "$env_id"
   set +e
   lease="$(get_lease "$env_id")"
@@ -559,8 +555,10 @@ cmd_env() {
   classify_lease "$lease" || return $?
   case "$CLASSIFICATION" in
     stage1-stale-open|stage1-retry)
+      generation="$(jq -r '.generation' <<< "$lease")"
+      status="$(jq -r '.status' <<< "$lease")"
       echo "sweep.sh: running stage 1 for $env_id ($CLASSIFICATION)"
-      "$CLOSE_ENV_SH" "$env_id"
+      "$CLOSE_ENV_SH" --generation "$generation" --from "$status" "$env_id"
       ;;
     stage2)
       stage2 "$env_id" "$lease"

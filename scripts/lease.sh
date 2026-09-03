@@ -15,17 +15,22 @@ Subcommands:
   get <env_id>
   get-with-etag <env_id>
   open <env_id> [--owner <token>] [--manifest <file>]
-  transition <env_id> <from> <to> [--error <text>]
-  begin-cleanup <env_id> [--force-retry]
-  set-manifest <env_id> <file>
+  transition <env_id> <from> cleanup_failed --generation <n> [--claim <token>] [--error <text>]
+  begin-cleanup <env_id> --generation <n> --from <open|closing|cleanup_failed> [--force-retry]
+  claim-stage2 <env_id> --generation <n> --claim <token>
+  release-stage2 <env_id> --generation <n> --claim <token>
+  set-manifest <env_id> <file> --generation <n> [--claim <token>]
+  complete-stage2 <env_id> --generation <n> --claim <token> --proof <file>
   delete-closed <env_id> <expected-etag>
   list
 
 open creates generation N+1 only for an absent or closed lease. Its optional
 owner and initial manifest are written by that same compare-and-swap PUT. Every
-mutation uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_attempt and
-allows at most three automatic stage-1 executions per generation; --force-retry
-is required after exhaustion and appends an audit entry.
+mutation uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_attempt,
+requires the generation and source status observed by its caller, and allows at
+most three automatic stage-1 executions per generation. --force-retry is
+required after exhaustion; it clears an active Stage-2 claim and audits it.
+Only complete-stage2 can produce closed, atomically with its Stage-2 proof.
 
 Env: TARGET (aws|localstack, required), LEASE_BUCKET.
 Exit: 0 ok, 1 get-not-found, 2 bad args/AWS error, 3 CAS or state refusal.
@@ -189,7 +194,8 @@ cmd_open() {
         cleanup_attempt: 0,
         next_retry_at: null,
         manual_intervention_required: false,
-        cleanup_retry_audit: []
+        cleanup_retry_audit: [],
+        stage2_claim: null
       }' > "$body_file"
   put_lease open "$env_id" "$body_file" "${precondition_flag[@]}"
 }
@@ -200,12 +206,38 @@ cmd_transition() {
   local to="${3:?to status required}"
   shift 3
   local error_text=""
-  if [ "${1:-}" = --error ]; then
-    error_text="${2:?--error requires text}"
-    shift 2
-  fi
-  [ "$#" -eq 0 ] || { err "unexpected transition arguments"; exit 2; }
-  case "$to" in closed|cleanup_failed) ;; *) err "invalid target status '$to' (closing is entered only through begin-cleanup)"; exit 2 ;; esac
+  local expected_generation=""
+  local claim=""
+  local claim_set=false
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --error)
+        [ "$#" -ge 2 ] || { err "--error requires text"; exit 2; }
+        error_text="$2"
+        shift 2
+        ;;
+      --generation)
+        [ "$#" -ge 2 ] || { err "--generation requires a value"; exit 2; }
+        expected_generation="$2"
+        shift 2
+        ;;
+      --claim)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--claim requires a nonempty token"; exit 2; }
+        claim="$2"
+        claim_set=true
+        shift 2
+        ;;
+      *) err "unexpected transition argument '$1'"; exit 2 ;;
+    esac
+  done
+  [ "$to" = cleanup_failed ] || {
+    err "invalid target status '$to' (only complete-stage2 may produce closed)"
+    exit 2
+  }
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]] || {
+    err "transition requires --generation <positive integer>"
+    exit 2
+  }
 
   read_lease "$env_id"
   if [ "$LEASE_FOUND" != 1 ]; then
@@ -213,55 +245,85 @@ cmd_transition() {
     err "no lease for $env_id"
     exit 3
   fi
-  local lease_json status etag ts next_retry_at body_file attempt
+  local lease_json status generation etag ts next_retry_at body_file attempt has_claim
   lease_json="$(cat "$LEASE_BODY_FILE")"
   status="$(jq -r '.status' <<< "$lease_json")"
+  generation="$(jq -r '.generation // empty' <<< "$lease_json")"
   etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
-  if [ "$status" != "$from" ]; then
-    err "transition $env_id: current status is '$status', expected '$from'"
+  if [ "$status" != "$from" ] || [ "$generation" != "$expected_generation" ]; then
+    err "transition $env_id: lease generation or status changed"
+    exit 3
+  fi
+  has_claim="$(jq -r 'if .stage2_claim == null then "false" else "true" end' <<< "$lease_json")"
+  if [ "$has_claim" = true ]; then
+    if [ "$claim_set" != true ] || ! jq -e --arg claim "$claim" '
+        (.stage2_claim | type) == "object"
+        and .stage2_claim.token == $claim
+      ' <<< "$lease_json" >/dev/null; then
+      err "transition $env_id: active Stage-2 claim does not match"
+      exit 3
+    fi
+  elif [ "$claim_set" = true ]; then
+    err "transition $env_id: no active Stage-2 claim matches"
     exit 3
   fi
 
   ts="$(now_iso)"
   next_retry_at=""
   attempt="$(jq -r '.cleanup_attempt // 0' <<< "$lease_json")"
-  if [ "$to" = cleanup_failed ] && [ "$attempt" -lt 3 ]; then
+  if [ "$attempt" -lt 3 ]; then
     next_retry_at="$(epoch_to_iso "$(( $(now_epoch) + CLEANUP_RETRY_DELAY_SECONDS ))")"
   fi
   body_file="$(mktemp)"
   jq \
-    --arg status "$to" \
     --arg updated_at "$ts" \
     --arg error_text "$error_text" \
     --arg next_retry_at "$next_retry_at" '
-      .status = $status
+      .status = "cleanup_failed"
       | .updated_at = $updated_at
       | .error = (if $error_text == "" then null else $error_text end)
-      | if $status == "cleanup_failed" then
-          if (.cleanup_attempt // 0) >= 3 then
-            .manual_intervention_required = true
-            | .next_retry_at = null
-          else
-            .manual_intervention_required = false
-            | .next_retry_at = $next_retry_at
-          end
-        elif $status == "closed" then
-          .manual_intervention_required = false
+      | .stage2_claim = null
+      | if (.cleanup_attempt // 0) >= 3 then
+          .manual_intervention_required = true
           | .next_retry_at = null
-        else . end' <<< "$lease_json" > "$body_file"
+        else
+          .manual_intervention_required = false
+          | .next_retry_at = $next_retry_at
+        end' <<< "$lease_json" > "$body_file"
   put_lease transition "$env_id" "$body_file" --if-match "$etag"
 }
 
 cmd_begin_cleanup() {
   local env_id="${1:?env_id required}"
+  shift
   local force_retry=false
-  if [ "${2:-}" = --force-retry ]; then
-    force_retry=true
-  elif [ -n "${2:-}" ]; then
-    err "begin-cleanup accepts only --force-retry"
+  local expected_generation=""
+  local expected_status=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --force-retry) force_retry=true; shift ;;
+      --generation)
+        [ "$#" -ge 2 ] || { err "--generation requires a value"; exit 2; }
+        expected_generation="$2"
+        shift 2
+        ;;
+      --from)
+        [ "$#" -ge 2 ] || { err "--from requires a status"; exit 2; }
+        expected_status="$2"
+        shift 2
+        ;;
+      *) err "unexpected begin-cleanup argument '$1'"; exit 2 ;;
+    esac
+  done
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]] || {
+    err "begin-cleanup requires --generation <positive integer>"
     exit 2
-  fi
+  }
+  case "$expected_status" in
+    open|closing|cleanup_failed) ;;
+    *) err "begin-cleanup requires --from <open|closing|cleanup_failed>"; exit 2 ;;
+  esac
 
   read_lease "$env_id"
   if [ "$LEASE_FOUND" != 1 ]; then
@@ -269,15 +331,26 @@ cmd_begin_cleanup() {
     err "no lease for $env_id"
     exit 3
   fi
-  local lease_json status attempt next_retry_at etag ts body_file retry_epoch
+  local lease_json status generation attempt next_retry_at etag ts body_file retry_epoch
+  local has_claim cleared_claim
   lease_json="$(cat "$LEASE_BODY_FILE")"
   status="$(jq -r '.status' <<< "$lease_json")"
+  generation="$(jq -r '.generation // empty' <<< "$lease_json")"
   attempt="$(jq -r '.cleanup_attempt // 0' <<< "$lease_json")"
   next_retry_at="$(jq -r '.next_retry_at // empty' <<< "$lease_json")"
+  has_claim="$(jq -r 'if .stage2_claim == null then "false" else "true" end' <<< "$lease_json")"
+  cleared_claim="$(jq -c '.stage2_claim // null' <<< "$lease_json")"
   etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
 
-  case "$status" in open|closing|cleanup_failed) ;; *) err "begin-cleanup $env_id: status '$status' cannot start stage 1"; exit 3 ;; esac
+  if [ "$generation" != "$expected_generation" ] || [ "$status" != "$expected_status" ]; then
+    err "begin-cleanup $env_id: lease generation or status changed"
+    exit 3
+  fi
+  if [ "$has_claim" = true ] && [ "$force_retry" != true ]; then
+    err "begin-cleanup $env_id: Stage 2 has an active claim"
+    exit 3
+  fi
   if [ "$force_retry" != true ] && { [ "$attempt" -ge 3 ] || jq -e '.manual_intervention_required == true' <<< "$lease_json" >/dev/null; }; then
     err "begin-cleanup $env_id: automatic retry budget exhausted; use --force-retry after manual review"
     exit 3
@@ -296,27 +369,53 @@ cmd_begin_cleanup() {
   jq \
     --arg updated_at "$ts" \
     --argjson attempt "$attempt" \
-    --argjson forced "$force_retry" '
+    --argjson forced "$force_retry" \
+    --argjson cleared_claim "$cleared_claim" '
       .status = "closing"
       | .updated_at = $updated_at
       | .error = null
       | .cleanup_attempt = $attempt
       | .next_retry_at = null
       | .manual_intervention_required = false
+      | .stage2_claim = null
       | .cleanup_retry_audit = (.cleanup_retry_audit // [])
       | if $forced then
-          .cleanup_retry_audit += [{attempt: $attempt, forced_at: $updated_at}]
+          .cleanup_retry_audit += [
+            ({attempt: $attempt, forced_at: $updated_at}
+              + if $cleared_claim == null then {}
+                else {cleared_stage2_claim: $cleared_claim}
+                end)
+          ]
         else . end' <<< "$lease_json" > "$body_file"
   put_lease begin-cleanup "$env_id" "$body_file" --if-match "$etag"
 }
 
-cmd_set_manifest() {
+cmd_claim_stage2() {
   local env_id="${1:?env_id required}"
-  local file="${2:?manifest file required}"
-  if ! jq -e . "$file" >/dev/null 2>&1; then
-    err "$file is not valid JSON"
+  shift
+  local expected_generation=""
+  local claim=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --generation)
+        [ "$#" -ge 2 ] || { err "--generation requires a value"; exit 2; }
+        expected_generation="$2"
+        shift 2
+        ;;
+      --claim)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--claim requires a nonempty token"; exit 2; }
+        claim="$2"
+        shift 2
+        ;;
+      *) err "unexpected claim-stage2 argument '$1'"; exit 2 ;;
+    esac
+  done
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]] || {
+    err "claim-stage2 requires --generation <positive integer>"
     exit 2
-  fi
+  }
+  [ -n "$claim" ] || { err "claim-stage2 requires --claim <token>"; exit 2; }
+
   read_lease "$env_id"
   if [ "$LEASE_FOUND" != 1 ]; then
     rm -f "$LEASE_BODY_FILE"
@@ -327,6 +426,134 @@ cmd_set_manifest() {
   lease_json="$(cat "$LEASE_BODY_FILE")"
   etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
+  if ! jq -e --argjson generation "$expected_generation" '
+      .status == "closing"
+      and .generation == $generation
+      and .stage2_claim == null
+    ' <<< "$lease_json" >/dev/null; then
+    err "claim-stage2 $env_id: lease is not unclaimed closing generation $expected_generation"
+    exit 3
+  fi
+  body_file="$(mktemp)"
+  jq --arg token "$claim" --arg claimed_at "$(now_iso)" '
+    .updated_at = $claimed_at
+    | .stage2_claim = {token: $token, claimed_at: $claimed_at}
+  ' <<< "$lease_json" > "$body_file"
+  put_lease claim-stage2 "$env_id" "$body_file" --if-match "$etag"
+}
+
+cmd_release_stage2() {
+  local env_id="${1:?env_id required}"
+  shift
+  local expected_generation=""
+  local claim=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --generation)
+        [ "$#" -ge 2 ] || { err "--generation requires a value"; exit 2; }
+        expected_generation="$2"
+        shift 2
+        ;;
+      --claim)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--claim requires a nonempty token"; exit 2; }
+        claim="$2"
+        shift 2
+        ;;
+      *) err "unexpected release-stage2 argument '$1'"; exit 2 ;;
+    esac
+  done
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]] || {
+    err "release-stage2 requires --generation <positive integer>"
+    exit 2
+  }
+  [ -n "$claim" ] || { err "release-stage2 requires --claim <token>"; exit 2; }
+
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "no lease for $env_id"
+    exit 3
+  fi
+  local lease_json etag body_file
+  lease_json="$(cat "$LEASE_BODY_FILE")"
+  etag="$LEASE_ETAG"
+  rm -f "$LEASE_BODY_FILE"
+  if ! jq -e --argjson generation "$expected_generation" --arg claim "$claim" '
+      .status == "closing"
+      and .generation == $generation
+      and (.stage2_claim | type) == "object"
+      and .stage2_claim.token == $claim
+    ' <<< "$lease_json" >/dev/null; then
+    err "release-stage2 $env_id: lease generation, status, or claim changed"
+    exit 3
+  fi
+  body_file="$(mktemp)"
+  jq --arg updated_at "$(now_iso)" '
+    .updated_at = $updated_at
+    | .stage2_claim = null
+  ' <<< "$lease_json" > "$body_file"
+  put_lease release-stage2 "$env_id" "$body_file" --if-match "$etag"
+}
+
+cmd_set_manifest() {
+  local env_id="${1:?env_id required}"
+  local file="${2:?manifest file required}"
+  shift 2
+  local expected_generation=""
+  local claim=""
+  local claim_set=false
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --generation)
+        [ "$#" -ge 2 ] || { err "--generation requires a value"; exit 2; }
+        expected_generation="$2"
+        shift 2
+        ;;
+      --claim)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--claim requires a nonempty token"; exit 2; }
+        claim="$2"
+        claim_set=true
+        shift 2
+        ;;
+      *) err "unexpected set-manifest argument '$1'"; exit 2 ;;
+    esac
+  done
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]] || {
+    err "set-manifest requires --generation <positive integer>"
+    exit 2
+  }
+  if ! jq -e . "$file" >/dev/null 2>&1; then
+    err "$file is not valid JSON"
+    exit 2
+  fi
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "no lease for $env_id"
+    exit 3
+  fi
+  local lease_json etag body_file has_claim
+  lease_json="$(cat "$LEASE_BODY_FILE")"
+  etag="$LEASE_ETAG"
+  rm -f "$LEASE_BODY_FILE"
+  if ! jq -e --argjson generation "$expected_generation" '.generation == $generation' \
+      <<< "$lease_json" >/dev/null; then
+    err "set-manifest $env_id: lease generation changed"
+    exit 3
+  fi
+  has_claim="$(jq -r 'if .stage2_claim == null then "false" else "true" end' <<< "$lease_json")"
+  if [ "$has_claim" = true ]; then
+    if [ "$claim_set" != true ] || ! jq -e --arg claim "$claim" '
+        (.stage2_claim | type) == "object"
+        and .stage2_claim.token == $claim
+      ' <<< "$lease_json" >/dev/null; then
+      err "set-manifest $env_id: active Stage-2 claim does not match"
+      exit 3
+    fi
+  elif [ "$claim_set" = true ]; then
+    err "set-manifest $env_id: no active Stage-2 claim matches"
+    exit 3
+  fi
   body_file="$(mktemp)"
   jq \
     --arg updated_at "$(now_iso)" \
@@ -334,6 +561,86 @@ cmd_set_manifest() {
       .updated_at = $updated_at
       | .manifest = $manifest' <<< "$lease_json" > "$body_file"
   put_lease set-manifest "$env_id" "$body_file" --if-match "$etag"
+}
+
+cmd_complete_stage2() {
+  local env_id="${1:?env_id required}"
+  shift
+  local expected_generation=""
+  local claim=""
+  local proof_file=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --generation)
+        [ "$#" -ge 2 ] || { err "--generation requires a value"; exit 2; }
+        expected_generation="$2"
+        shift 2
+        ;;
+      --claim)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--claim requires a nonempty token"; exit 2; }
+        claim="$2"
+        shift 2
+        ;;
+      --proof)
+        [ "$#" -ge 2 ] || { err "--proof requires a file"; exit 2; }
+        proof_file="$2"
+        shift 2
+        ;;
+      *) err "unexpected complete-stage2 argument '$1'"; exit 2 ;;
+    esac
+  done
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]] || {
+    err "complete-stage2 requires --generation <positive integer>"
+    exit 2
+  }
+  [ -n "$claim" ] || { err "complete-stage2 requires --claim <token>"; exit 2; }
+  [ -n "$proof_file" ] || { err "complete-stage2 requires --proof <file>"; exit 2; }
+  if ! jq -e --arg env_id "$env_id" '
+      type == "object"
+      and (.target == "aws" or .target == "localstack")
+      and (.in_job | type) == "boolean"
+      and .state_key == ("envs/preview/" + $env_id + ".tfstate")
+      and (.deleted_task_definition_arns | type) == "array"
+      and all(.deleted_task_definition_arns[];
+        type == "string" and length > 0)
+      and (.verified_empty_at | type) == "string"
+      and (.verified_empty_at | length) > 0
+    ' "$proof_file" >/dev/null 2>&1; then
+    err "$proof_file is not a valid Stage-2 proof"
+    exit 2
+  fi
+
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "no lease for $env_id"
+    exit 3
+  fi
+  local lease_json etag body_file
+  lease_json="$(cat "$LEASE_BODY_FILE")"
+  etag="$LEASE_ETAG"
+  rm -f "$LEASE_BODY_FILE"
+  if ! jq -e --argjson generation "$expected_generation" --arg claim "$claim" '
+      .status == "closing"
+      and .generation == $generation
+      and (.manifest | type) == "object"
+      and (.stage2_claim | type) == "object"
+      and .stage2_claim.token == $claim
+    ' <<< "$lease_json" >/dev/null; then
+    err "complete-stage2 $env_id: lease generation, status, or claim changed"
+    exit 3
+  fi
+  body_file="$(mktemp)"
+  jq --arg updated_at "$(now_iso)" --argjson proof "$(cat "$proof_file")" '
+    .status = "closed"
+    | .updated_at = $updated_at
+    | .error = null
+    | .manual_intervention_required = false
+    | .next_retry_at = null
+    | .stage2_claim = null
+    | .manifest.stage2_runs = ((.manifest.stage2_runs // []) + [$proof])
+  ' <<< "$lease_json" > "$body_file"
+  put_lease complete-stage2 "$env_id" "$body_file" --if-match "$etag"
 }
 
 cmd_delete_closed() {
@@ -409,7 +716,10 @@ main() {
     open) shift; cmd_open "$@" ;;
     transition) shift; cmd_transition "$@" ;;
     begin-cleanup) shift; cmd_begin_cleanup "$@" ;;
+    claim-stage2) shift; cmd_claim_stage2 "$@" ;;
+    release-stage2) shift; cmd_release_stage2 "$@" ;;
     set-manifest) shift; cmd_set_manifest "$@" ;;
+    complete-stage2) shift; cmd_complete_stage2 "$@" ;;
     delete-closed) shift; cmd_delete_closed "$@" ;;
     list) shift; cmd_list "$@" ;;
     --help|-h) usage ;;

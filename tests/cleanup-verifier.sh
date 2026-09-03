@@ -352,14 +352,122 @@ if [ "$second_open_rc" -ne 3 ] || \
 fi
 pass "a second open on the same environment is refused without another PUT"
 
+# Stage 1 and Stage 2 lease mutations are generation-bound. Stage 2 additionally
+# requires one exclusive claim, and only complete-stage2 may produce closed.
+contract_env_id=stage2-contract
+contract_claim=stage2-contract-claim
+contract_manifest="$tmp_dir/stage2-contract-manifest.json"
+contract_proof="$tmp_dir/stage2-contract-proof.json"
+env "${lease_env[@]}" "$LEASE" open "$contract_env_id" >/dev/null
+contract_before="$(env "${lease_env[@]}" "$LEASE" get "$contract_env_id")"
+set +e
+contract_bad_generation_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$contract_env_id" \
+  --generation 2 --from open 2>&1)"
+contract_bad_generation_rc=$?
+set -e
+contract_after_bad_generation="$(env "${lease_env[@]}" "$LEASE" get "$contract_env_id")"
+if [ "$contract_bad_generation_rc" -ne 3 ] || \
+   [ "$contract_after_bad_generation" != "$contract_before" ]; then
+  echo "FAIL: begin-cleanup must refuse a mismatched generation without mutation" >&2
+  echo "rc=$contract_bad_generation_rc output=$contract_bad_generation_out" >&2
+  exit 1
+fi
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$contract_env_id" \
+  --generation 1 --from open >/dev/null
+set +e
+generic_closed_out="$(env "${lease_env[@]}" "$LEASE" transition "$contract_env_id" \
+  closing closed --generation 1 2>&1)"
+generic_closed_rc=$?
+set -e
+if [ "$generic_closed_rc" -ne 2 ]; then
+  echo "FAIL: generic closing-to-closed transition must exit 2 (rc=$generic_closed_rc: $generic_closed_out)" >&2
+  exit 1
+fi
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$contract_env_id" \
+  --generation 1 --claim "$contract_claim" >/dev/null
+set +e
+second_claim_out="$(env "${lease_env[@]}" "$LEASE" claim-stage2 "$contract_env_id" \
+  --generation 1 --claim another-claim 2>&1)"
+second_claim_rc=$?
+set -e
+[ "$second_claim_rc" -eq 3 ] || {
+  echo "FAIL: a second Stage 2 claim must be refused (rc=$second_claim_rc: $second_claim_out)" >&2
+  exit 1
+}
+jq -n '{target:"localstack",stage2_write:true}' > "$contract_manifest"
+set +e
+missing_claim_out="$(env "${lease_env[@]}" "$LEASE" set-manifest "$contract_env_id" \
+  "$contract_manifest" --generation 1 2>&1)"
+missing_claim_rc=$?
+set -e
+[ "$missing_claim_rc" -eq 3 ] || {
+  echo "FAIL: set-manifest must require the active Stage 2 claim (rc=$missing_claim_rc: $missing_claim_out)" >&2
+  exit 1
+}
+env "${lease_env[@]}" "$LEASE" set-manifest "$contract_env_id" "$contract_manifest" \
+  --generation 1 --claim "$contract_claim" >/dev/null
+jq -n '{
+  target:"localstack",
+  in_job:true,
+  state_key:"envs/preview/stage2-contract.tfstate",
+  deleted_task_definition_arns:[],
+  verified_empty_at:"2033-05-18T03:32:20Z"
+}' > "$contract_proof"
+env "${lease_env[@]}" "$LEASE" complete-stage2 "$contract_env_id" \
+  --generation 1 --claim "$contract_claim" --proof "$contract_proof" >/dev/null
+contract_closed="$(env "${lease_env[@]}" "$LEASE" get "$contract_env_id")"
+jq -e --argjson proof "$(cat "$contract_proof")" '
+  .status == "closed"
+  and .stage2_claim == null
+  and .manifest.stage2_runs == [$proof]
+' <<< "$contract_closed" >/dev/null || {
+  echo "FAIL: complete-stage2 did not atomically persist proof, close, and consume its claim" >&2
+  exit 1
+}
+pass "generation-bound Stage 1 and claimed atomic Stage 2 enforce the lease interface"
+
+force_claim_env=force-claim
+force_claim_token=force-claim-token
+env "${lease_env[@]}" "$LEASE" open "$force_claim_env" >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" \
+  --generation 1 --from open >/dev/null
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$force_claim_env" \
+  --generation 1 --claim "$force_claim_token" >/dev/null
+set +e
+active_claim_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" \
+  --generation 1 --from closing 2>&1)"
+active_claim_rc=$?
+set -e
+[ "$active_claim_rc" -eq 3 ] || {
+  echo "FAIL: unforced Stage 1 must refuse an active Stage 2 claim (rc=$active_claim_rc: $active_claim_out)" >&2
+  exit 1
+}
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" \
+  --generation 1 --from closing --force-retry >/dev/null
+force_claim_lease="$(env "${lease_env[@]}" "$LEASE" get "$force_claim_env")"
+jq -e --arg token "$force_claim_token" '
+  .status == "closing"
+  and .stage2_claim == null
+  and .cleanup_retry_audit[-1].cleared_stage2_claim.token == $token
+' <<< "$force_claim_lease" >/dev/null || {
+  echo "FAIL: forced Stage 1 did not clear and audit the Stage 2 claim" >&2
+  exit 1
+}
+pass "force retry clears an active Stage 2 claim and records it in the audit"
+
 env "${lease_env[@]}" "$LEASE" open retry-case >/dev/null
 retry_failures="$(jq -r '.failures' "$FIXTURES/retry-exhaustion.json")"
+retry_from=open
 for _ in $(seq 1 "$retry_failures"); do
-  env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case >/dev/null
-  env "${lease_env[@]}" "$LEASE" transition retry-case closing cleanup_failed --error "verification failed" >/dev/null
+  env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case \
+    --generation 1 --from "$retry_from" >/dev/null
+  env "${lease_env[@]}" "$LEASE" transition retry-case closing cleanup_failed \
+    --generation 1 --error "verification failed" >/dev/null
+  retry_from=cleanup_failed
 done
 set +e
-env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case >"$tmp_dir/fourth.out" 2>"$tmp_dir/fourth.err"
+env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case \
+  --generation 1 --from cleanup_failed >"$tmp_dir/fourth.out" 2>"$tmp_dir/fourth.err"
 fourth_rc=$?
 set -e
 retry_lease="$(env "${lease_env[@]}" "$LEASE" get retry-case)"
@@ -377,7 +485,8 @@ if [ "$fourth_rc" -eq 0 ]; then
 fi
 pass "three failed stage-1 executions exhaust the CAS-persisted automatic retry budget"
 
-env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case --force-retry >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case \
+  --generation 1 --from cleanup_failed --force-retry >/dev/null
 forced_lease="$(env "${lease_env[@]}" "$LEASE" get retry-case)"
 assert_jq "$forced_lease" '.status == "closing" and .cleanup_attempt == 4 and (.cleanup_retry_audit | length) == 1' \
   "force retry must be explicit and audited"
@@ -478,7 +587,8 @@ jq -n '{candidates:[{
   tag_entry:null,
   force_delete:false
 }]}' > "$tmp_dir/waiter-manifest.json"
-env "${lease_env[@]}" "$LEASE" set-manifest waiter-case "$tmp_dir/waiter-manifest.json" >/dev/null
+env "${lease_env[@]}" "$LEASE" set-manifest waiter-case "$tmp_dir/waiter-manifest.json" \
+  --generation 1 >/dev/null
 env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
   FAKE_ECS_WAITER=1 \
@@ -515,7 +625,7 @@ jq -n --arg arn "$delete_task_definition_arn" '
     force_delete:false
   }]}' > "$tmp_dir/delete-failure-manifest.json"
 env "${lease_env[@]}" "$LEASE" set-manifest \
-  "$delete_env_id" "$tmp_dir/delete-failure-manifest.json" >/dev/null
+  "$delete_env_id" "$tmp_dir/delete-failure-manifest.json" --generation 1 >/dev/null
 set +e
 delete_out="$(env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
@@ -562,7 +672,8 @@ fi
 printf '{"mode":"public"}\n' > "$tmp_dir/missing-images-manifest.json"
 env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open aws-missing-images >/dev/null
 env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
-  "$LEASE" set-manifest aws-missing-images "$tmp_dir/missing-images-manifest.json" >/dev/null
+  "$LEASE" set-manifest aws-missing-images "$tmp_dir/missing-images-manifest.json" \
+  --generation 1 >/dev/null
 set +e
 missing_images_out="$(env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
@@ -596,7 +707,8 @@ aws_lease_env=(
 env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open "$aws_images_env_id" >/dev/null
 jq -c '.manifest' "$aws_images_fixture" > "$tmp_dir/aws-images-manifest.json"
 env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
-  "$LEASE" set-manifest "$aws_images_env_id" "$tmp_dir/aws-images-manifest.json" >/dev/null
+  "$LEASE" set-manifest "$aws_images_env_id" "$tmp_dir/aws-images-manifest.json" \
+  --generation 1 >/dev/null
 
 if [ ! -e "$REPO_ROOT/envs/preview/backend.aws.hcl" ]; then
   printf 'bucket = "test-state"\n' > "$REPO_ROOT/envs/preview/backend.aws.hcl"
@@ -849,7 +961,8 @@ pass "owner mismatch exits 4 without claiming or transitioning cleanup"
 # the stale writer must lose loudly (exit 3), never overwrite.
 env "${lease_env[@]}" "$LEASE" open cas-race >/dev/null
 set +e
-race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup cas-race 2>&1)"
+race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup cas-race \
+  --generation 1 --from open 2>&1)"
 race_rc=$?
 set -e
 if [ "$race_rc" -ne 3 ] || ! grep -q 'lost the CAS race' <<< "$race_out"; then
