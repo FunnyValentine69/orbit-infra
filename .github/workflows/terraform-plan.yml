@@ -130,8 +130,11 @@ jobs:
           make plan TARGET=localstack ENV_ID=pr${{ github.event.pull_request.number || 'dispatch' }} | tee /tmp/plan-stdout.txt
 
       - name: Redacted plan summary
+        env:
+          ENV_ID: pr${{ github.event.pull_request.number || 'dispatch' }}
         run: |
-          TF_DATA_DIR=.terraform-localstack terraform -chdir=envs/preview show -json tfplan.bin > /tmp/plan.json
+          preview_root=".preview-runs/${ENV_ID}"
+          TF_DATA_DIR=.terraform-localstack terraform -chdir="$preview_root" show -json tfplan.bin > /tmp/plan.json
           {
             echo "### Terraform plan (LocalStack)"
             echo ""
@@ -145,7 +148,9 @@ jobs:
 
       - name: Remove local plan file
         if: always()
-        run: rm -f envs/preview/tfplan.bin
+        env:
+          ENV_ID: pr${{ github.event.pull_request.number || 'dispatch' }}
+        run: rm -f ".preview-runs/${ENV_ID}/tfplan.bin"
 
       - name: Post or update PR plan comment
         if: github.event_name == 'pull_request'

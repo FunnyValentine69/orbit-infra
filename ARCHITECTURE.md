@@ -97,13 +97,30 @@ the static gates (runner-CIDR rejection, lint, checkov) pass, so a
 rejected config never produces AWS resources. Close is two-stage because
 ECS task definitions delete asynchronously (up to 24 hours) while a hosted
 job caps at 6: stage 1 tears down and calls `DeleteTaskDefinitions`,
-leaving the lease `closing`; stage 2 (the nightly sweeper) confirms
-deletion and sets `closed`, also re-running stage 1 for stale `open` and
-`cleanup_failed` leases, sharing the `preview-<env_id>` concurrency group
-with manual apply/destroy (`queue: max`) so they never overlap: a queued
-destroy is preserved by `queue: max`; a third dispatch is refused by the
-lease state, not by the queue. Closed leases prune after 7 days. See ADR
-0006.
+then verifies a pre-destroy candidate union from the prior manifest, Terraform
+state identifiers, ECS discovery, and eventually consistent tag discovery.
+One exact-service predicate layer records `gone`, `pending`, `live`, or
+`indeterminate` for every candidate and persists partial iterations. Tag
+presence alone is never liveness. Stage 1 retries for five minutes and leaves
+the lease `closing` with state retained; only deadline-expired `live` or
+`indeterminate` results set `cleanup_failed`. Stage 2 (the nightly sweeper)
+confirms deletion and sets `closed`.
+
+Cleanup execution is bound to an explicit `TARGET`. The LocalStack branch
+requires a localhost endpoint, test credentials, disabled metadata lookup, and
+no profile; the AWS branch rejects that endpoint. Every cleanup and lease AWS
+CLI call shares connect/read limits and a 30-second outer timeout. Emulator
+allowances are narrow manifest records, not predicate changes: only an exact
+unsupported task-definition delete for an already-inactive definition is
+accepted. Host-port injection remains a separate plan-drift allowance.
+
+The lease admits three automatic stage-1 executions per generation, with the
+attempt, next retry time, and manual-intervention flag persisted by ETag CAS.
+After the third failure only an audited force retry can claim stage 1. The
+sweeper shares the `preview-<env_id>` concurrency group with manual
+apply/destroy (`queue: max`) so they never overlap: a queued destroy is
+preserved by `queue: max`; a third dispatch is refused by the lease state, not
+by the queue. Closed leases prune after 7 days. See ADR 0006.
 
 ## Image supply chain summary
 

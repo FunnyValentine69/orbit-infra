@@ -50,7 +50,9 @@ make destroy TARGET=localstack ENV_ID=dev
 
 See `bootstrap/README.md` for the one-time bootstrap apply sequence. The
 ALB ingress allowlist is read from the `OPERATOR_CIDR` repository secret;
-see RUNBOOKS.md to change it.
+see RUNBOOKS.md to change it. Preview workflows generate the required AWS
+backend config from bootstrap naming, save the plan, and apply that exact plan
+non-interactively.
 
 ## Upstream
 
@@ -67,6 +69,7 @@ bootstrap/          one-time Terraform: state bucket, OIDC + roles, KMS, ECR, Bu
 placeholder/         public-source placeholder workload image
 docs/adr/            architecture decision records
 scripts/              repo hooks (pre-push guard, hook installer)
+tests/                shell-level lifecycle and CI contracts
 .github/workflows/    CI (oidc-smoke.yml today; more in later phases)
 modules/              reusable Terraform modules (Phase 2+)
 envs/                 per-environment composition (Phase 2+)

@@ -1,27 +1,11 @@
 #!/usr/bin/env bash
 # lease.sh — CAS-backed lease object for preview environments (ADR 0006).
-#
-# The lease for <env_id> lives at s3://$LEASE_BUCKET/leases/<env_id>.json.
-# Every write is a compare-and-swap on the object's S3 ETag (open: creates
-# generation N+1 via --if-match on the current object, or --if-none-match
-# '*' when no lease exists / the current lease is closed; transition/
-# set-manifest: --if-match on the ETag read just before the write). Two
-# concurrent writers can never both win: the loser's put-object fails with
-# PreconditionFailed and this script exits 3.
-#
-# Env:
-#   LEASE_BUCKET     — state bucket holding leases/ (default orbit-infra-79s5rw-tfstate)
-#   AWS_ENDPOINT_URL — unset for real AWS; LocalStack sets this to
-#                      http://localhost:4566 (read natively by the AWS CLI)
-#
-# Exit codes:
-#   0  ok
-#   1  lease not found (get only)
-#   2  other error (bad args, S3 error other than a failed precondition)
-#   3  precondition failed — CAS lost the race, or `from`/state mismatch
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+AWS_CLI_SH="${AWS_CLI_SH:-$SCRIPT_DIR/aws-cli.sh}"
 LEASE_BUCKET="${LEASE_BUCKET:-orbit-infra-79s5rw-tfstate}"
+CLEANUP_RETRY_DELAY_SECONDS="${CLEANUP_RETRY_DELAY_SECONDS:-30}"
 
 usage() {
   cat <<'EOF'
@@ -29,74 +13,88 @@ Usage: lease.sh <subcommand> [args]
 
 Subcommands:
   get <env_id>
-      Print the lease JSON for env_id to stdout. Exit 1 if no lease exists.
-
   open <env_id>
-      Open (or re-open) a lease. Allowed only when no lease exists, or the
-      current lease's status is "closed". Creates generation N+1: N=0 (so
-      generation=1) when no lease exists, or current_generation+1 when
-      re-opening a closed lease. Exit 3 if a lease exists and its status
-      is not "closed", or if the CAS write loses the race.
-
   transition <env_id> <from> <to> [--error <text>]
-      Compare-and-swap the lease's status from `from` to `to`. `to` must
-      be one of: closing, closed, cleanup_failed. Exit 3 if the current
-      status is not `from`, or if the CAS write loses the race.
-      --error <text> is stored in the lease's `error` field (to record
-      why a transition to cleanup_failed happened); omitted otherwise,
-      cleared to null on any other transition.
-
+  begin-cleanup <env_id> [--force-retry]
   set-manifest <env_id> <file>
-      Compare-and-swap the lease, storing the JSON in <file> under the
-      lease's `manifest` field. <file> must contain valid JSON. Exit 3 if
-      the CAS write loses the race.
-
   list
-      Print every lease under leases/ as a JSON array of
-      {env_id, status, generation, opened_at, updated_at, age_seconds}.
 
-Env:
-  LEASE_BUCKET      state bucket holding leases/ (default orbit-infra-79s5rw-tfstate)
-  AWS_ENDPOINT_URL  unset for real AWS; LocalStack sets this
+open creates generation N+1 only for an absent or closed lease. Every mutation
+uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_attempt and
+allows at most three automatic stage-1 executions per generation; --force-retry
+is required after exhaustion and appends an audit entry.
 
-Exit codes: 0 ok, 1 lease not found (get only), 2 other error,
-3 precondition failed (CAS lost the race, or from/state mismatch).
+Env: TARGET (aws|localstack, required), LEASE_BUCKET.
+Exit: 0 ok, 1 get-not-found, 2 bad args/AWS error, 3 CAS or state refusal.
 EOF
 }
 
 err() { echo "lease.sh: $*" >&2; }
-
 lease_key() { echo "leases/$1.json"; }
-
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+now_epoch() { date -u +%s; }
 
-# Reads the current lease for env_id into $LEASE_BODY_FILE / sets
-# LEASE_FOUND=1 and LEASE_ETAG, or LEASE_FOUND=0 when absent (NoSuchKey).
-# Any other S3 error is fatal (exit 2).
+epoch_to_iso() {
+  local epoch="$1"
+  date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ
+}
+
+iso_to_epoch() {
+  local timestamp="$1"
+  date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$timestamp" +%s 2>/dev/null \
+    || date -u -d "$timestamp" +%s
+}
+
+aws_cmd() { "$AWS_CLI_SH" "$@"; }
+
+# Sets LEASE_FOUND, LEASE_BODY_FILE, and LEASE_ETAG.
 read_lease() {
   local env_id="$1"
-  LEASE_BODY_FILE="$(mktemp)"
   local get_out
-  if get_out=$(aws s3api get-object \
+  LEASE_BODY_FILE="$(mktemp)"
+  if get_out=$(aws_cmd s3api get-object \
       --bucket "$LEASE_BUCKET" --key "$(lease_key "$env_id")" \
       "$LEASE_BODY_FILE" 2>&1); then
     LEASE_FOUND=1
-    LEASE_ETAG=$(echo "$get_out" | jq -r '.ETag')
+    LEASE_ETAG="$(jq -r '.ETag' <<< "$get_out")"
+  elif grep -qE 'NoSuchKey|Not Found|404' <<< "$get_out"; then
+    LEASE_FOUND=0
+    LEASE_ETAG=""
   else
-    if echo "$get_out" | grep -qE 'NoSuchKey|Not Found|404'; then
-      LEASE_FOUND=0
-      LEASE_ETAG=""
-    else
-      err "get-object failed: $get_out"
-      exit 2
-    fi
+    rm -f "$LEASE_BODY_FILE"
+    err "get-object failed: $get_out"
+    exit 2
   fi
+}
+
+put_lease() {
+  local operation="$1"
+  local env_id="$2"
+  local body_file="$3"
+  shift 3
+  local put_out
+  if put_out=$(aws_cmd s3api put-object \
+      --bucket "$LEASE_BUCKET" --key "$(lease_key "$env_id")" \
+      --body "$body_file" --content-type application/json "$@" 2>&1); then
+    cat "$body_file"
+    rm -f "$body_file"
+    return 0
+  fi
+  rm -f "$body_file"
+  if grep -qE 'PreconditionFailed|At least one of the pre-conditions|412' <<< "$put_out"; then
+    err "$operation $env_id: lost the CAS race"
+    return 3
+  fi
+  err "put-object failed: $put_out"
+  return 2
 }
 
 cmd_get() {
   local env_id="${1:?env_id required}"
   read_lease "$env_id"
-  if [ "$LEASE_FOUND" != "1" ]; then
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
     err "no lease for $env_id"
     exit 1
   fi
@@ -106,55 +104,43 @@ cmd_get() {
 
 cmd_open() {
   local env_id="${1:?env_id required}"
-  read_lease "$env_id"
-
   local generation=1
   local precondition_flag=(--if-none-match '*')
-
-  if [ "$LEASE_FOUND" = "1" ]; then
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" = 1 ]; then
     local status
-    status=$(jq -r '.status' "$LEASE_BODY_FILE")
-    if [ "$status" != "closed" ]; then
-      err "cannot open $env_id: current status is '$status', not 'closed' or absent"
+    status="$(jq -r '.status' "$LEASE_BODY_FILE")"
+    if [ "$status" != closed ]; then
       rm -f "$LEASE_BODY_FILE"
+      err "cannot open $env_id: current status is '$status', not 'closed' or absent"
       exit 3
     fi
-    local cur_gen
-    cur_gen=$(jq -r '.generation' "$LEASE_BODY_FILE")
-    generation=$((cur_gen + 1))
+    generation=$(( $(jq -r '.generation' "$LEASE_BODY_FILE") + 1 ))
     precondition_flag=(--if-match "$LEASE_ETAG")
   fi
   rm -f "$LEASE_BODY_FILE"
 
   local ts body_file
-  ts=$(now_iso)
-  body_file=$(mktemp)
+  ts="$(now_iso)"
+  body_file="$(mktemp)"
   jq -n \
     --arg env_id "$env_id" \
-    --arg status "open" \
     --argjson generation "$generation" \
-    --arg opened_at "$ts" \
-    --arg updated_at "$ts" \
-    '{env_id: $env_id, status: $status, generation: $generation, opened_at: $opened_at, updated_at: $updated_at, error: null, manifest: null}' \
-    > "$body_file"
-
-  local put_out
-  if put_out=$(aws s3api put-object \
-      --bucket "$LEASE_BUCKET" --key "$(lease_key "$env_id")" \
-      --body "$body_file" --content-type application/json \
-      "${precondition_flag[@]}" 2>&1); then
-    cat "$body_file"
-    rm -f "$body_file"
-    exit 0
-  else
-    rm -f "$body_file"
-    if echo "$put_out" | grep -qE 'PreconditionFailed|At least one of the pre-conditions|412'; then
-      err "open $env_id: lost the CAS race"
-      exit 3
-    fi
-    err "put-object failed: $put_out"
-    exit 2
-  fi
+    --arg ts "$ts" '
+      {
+        env_id: $env_id,
+        status: "open",
+        generation: $generation,
+        opened_at: $ts,
+        updated_at: $ts,
+        error: null,
+        manifest: null,
+        cleanup_attempt: 0,
+        next_retry_at: null,
+        manual_intervention_required: false,
+        cleanup_retry_audit: []
+      }' > "$body_file"
+  put_lease open "$env_id" "$body_file" "${precondition_flag[@]}"
 }
 
 cmd_transition() {
@@ -163,67 +149,114 @@ cmd_transition() {
   local to="${3:?to status required}"
   shift 3
   local error_text=""
-  if [ "${1:-}" = "--error" ]; then
+  if [ "${1:-}" = --error ]; then
     error_text="${2:?--error requires text}"
+    shift 2
   fi
-
-  case "$to" in
-    closing|closed|cleanup_failed) ;;
-    *)
-      err "invalid target status '$to' (must be closing, closed, or cleanup_failed)"
-      exit 2
-      ;;
-  esac
+  [ "$#" -eq 0 ] || { err "unexpected transition arguments"; exit 2; }
+  case "$to" in closing|closed|cleanup_failed) ;; *) err "invalid target status '$to'"; exit 2 ;; esac
 
   read_lease "$env_id"
-  if [ "$LEASE_FOUND" != "1" ]; then
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
     err "no lease for $env_id"
     exit 3
   fi
-  local status generation opened_at manifest
-  status=$(jq -r '.status' "$LEASE_BODY_FILE")
+  local lease_json status etag ts next_retry_at body_file attempt
+  lease_json="$(cat "$LEASE_BODY_FILE")"
+  status="$(jq -r '.status' <<< "$lease_json")"
+  etag="$LEASE_ETAG"
+  rm -f "$LEASE_BODY_FILE"
   if [ "$status" != "$from" ]; then
     err "transition $env_id: current status is '$status', expected '$from'"
-    rm -f "$LEASE_BODY_FILE"
     exit 3
   fi
-  generation=$(jq -r '.generation' "$LEASE_BODY_FILE")
-  opened_at=$(jq -r '.opened_at' "$LEASE_BODY_FILE")
-  manifest=$(jq -c '.manifest' "$LEASE_BODY_FILE")
-  local etag="$LEASE_ETAG"
-  rm -f "$LEASE_BODY_FILE"
 
-  local ts body_file
-  ts=$(now_iso)
-  body_file=$(mktemp)
-  jq -n \
-    --arg env_id "$env_id" \
+  ts="$(now_iso)"
+  next_retry_at=""
+  attempt="$(jq -r '.cleanup_attempt // 0' <<< "$lease_json")"
+  if [ "$to" = cleanup_failed ] && [ "$attempt" -lt 3 ]; then
+    next_retry_at="$(epoch_to_iso "$(( $(now_epoch) + CLEANUP_RETRY_DELAY_SECONDS ))")"
+  fi
+  body_file="$(mktemp)"
+  jq \
     --arg status "$to" \
-    --argjson generation "$generation" \
-    --arg opened_at "$opened_at" \
     --arg updated_at "$ts" \
     --arg error_text "$error_text" \
-    --argjson manifest "$manifest" \
-    '{env_id: $env_id, status: $status, generation: $generation, opened_at: $opened_at, updated_at: $updated_at, error: (if $error_text == "" then null else $error_text end), manifest: $manifest}' \
-    > "$body_file"
+    --arg next_retry_at "$next_retry_at" '
+      .status = $status
+      | .updated_at = $updated_at
+      | .error = (if $error_text == "" then null else $error_text end)
+      | if $status == "cleanup_failed" then
+          if (.cleanup_attempt // 0) >= 3 then
+            .manual_intervention_required = true
+            | .next_retry_at = null
+          else
+            .manual_intervention_required = false
+            | .next_retry_at = $next_retry_at
+          end
+        elif $status == "closed" then
+          .manual_intervention_required = false
+          | .next_retry_at = null
+        else . end' <<< "$lease_json" > "$body_file"
+  put_lease transition "$env_id" "$body_file" --if-match "$etag"
+}
 
-  local put_out
-  if put_out=$(aws s3api put-object \
-      --bucket "$LEASE_BUCKET" --key "$(lease_key "$env_id")" \
-      --body "$body_file" --content-type application/json \
-      --if-match "$etag" 2>&1); then
-    cat "$body_file"
-    rm -f "$body_file"
-    exit 0
-  else
-    rm -f "$body_file"
-    if echo "$put_out" | grep -qE 'PreconditionFailed|At least one of the pre-conditions|412'; then
-      err "transition $env_id: lost the CAS race"
-      exit 3
-    fi
-    err "put-object failed: $put_out"
+cmd_begin_cleanup() {
+  local env_id="${1:?env_id required}"
+  local force_retry=false
+  if [ "${2:-}" = --force-retry ]; then
+    force_retry=true
+  elif [ -n "${2:-}" ]; then
+    err "begin-cleanup accepts only --force-retry"
     exit 2
   fi
+
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "no lease for $env_id"
+    exit 3
+  fi
+  local lease_json status attempt next_retry_at etag ts body_file retry_epoch
+  lease_json="$(cat "$LEASE_BODY_FILE")"
+  status="$(jq -r '.status' <<< "$lease_json")"
+  attempt="$(jq -r '.cleanup_attempt // 0' <<< "$lease_json")"
+  next_retry_at="$(jq -r '.next_retry_at // empty' <<< "$lease_json")"
+  etag="$LEASE_ETAG"
+  rm -f "$LEASE_BODY_FILE"
+
+  case "$status" in open|closing|cleanup_failed) ;; *) err "begin-cleanup $env_id: status '$status' cannot start stage 1"; exit 3 ;; esac
+  if [ "$force_retry" != true ] && { [ "$attempt" -ge 3 ] || jq -e '.manual_intervention_required == true' <<< "$lease_json" >/dev/null; }; then
+    err "begin-cleanup $env_id: automatic retry budget exhausted; use --force-retry after manual review"
+    exit 3
+  fi
+  if [ "$force_retry" != true ] && [ "$status" = cleanup_failed ] && [ -n "$next_retry_at" ]; then
+    retry_epoch="$(iso_to_epoch "$next_retry_at")"
+    if [ "$(now_epoch)" -lt "$retry_epoch" ]; then
+      err "begin-cleanup $env_id: retry is not due until $next_retry_at"
+      exit 3
+    fi
+  fi
+
+  attempt=$((attempt + 1))
+  ts="$(now_iso)"
+  body_file="$(mktemp)"
+  jq \
+    --arg updated_at "$ts" \
+    --argjson attempt "$attempt" \
+    --argjson forced "$force_retry" '
+      .status = "closing"
+      | .updated_at = $updated_at
+      | .error = null
+      | .cleanup_attempt = $attempt
+      | .next_retry_at = null
+      | .manual_intervention_required = false
+      | .cleanup_retry_audit = (.cleanup_retry_audit // [])
+      | if $forced then
+          .cleanup_retry_audit += [{attempt: $attempt, forced_at: $updated_at}]
+        else . end' <<< "$lease_json" > "$body_file"
+  put_lease begin-cleanup "$env_id" "$body_file" --if-match "$etag"
 }
 
 cmd_set_manifest() {
@@ -233,78 +266,43 @@ cmd_set_manifest() {
     err "$file is not valid JSON"
     exit 2
   fi
-
   read_lease "$env_id"
-  if [ "$LEASE_FOUND" != "1" ]; then
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
     err "no lease for $env_id"
     exit 3
   fi
-  local status generation opened_at
-  status=$(jq -r '.status' "$LEASE_BODY_FILE")
-  generation=$(jq -r '.generation' "$LEASE_BODY_FILE")
-  opened_at=$(jq -r '.opened_at' "$LEASE_BODY_FILE")
-  local etag="$LEASE_ETAG"
-  local error_val
-  error_val=$(jq -c '.error' "$LEASE_BODY_FILE")
+  local lease_json etag body_file
+  lease_json="$(cat "$LEASE_BODY_FILE")"
+  etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
-
-  local ts body_file manifest_json
-  ts=$(now_iso)
-  manifest_json=$(cat "$file")
-  body_file=$(mktemp)
-  jq -n \
-    --arg env_id "$env_id" \
-    --arg status "$status" \
-    --argjson generation "$generation" \
-    --arg opened_at "$opened_at" \
-    --arg updated_at "$ts" \
-    --argjson error "$error_val" \
-    --argjson manifest "$manifest_json" \
-    '{env_id: $env_id, status: $status, generation: $generation, opened_at: $opened_at, updated_at: $updated_at, error: $error, manifest: $manifest}' \
-    > "$body_file"
-
-  local put_out
-  if put_out=$(aws s3api put-object \
-      --bucket "$LEASE_BUCKET" --key "$(lease_key "$env_id")" \
-      --body "$body_file" --content-type application/json \
-      --if-match "$etag" 2>&1); then
-    cat "$body_file"
-    rm -f "$body_file"
-    exit 0
-  else
-    rm -f "$body_file"
-    if echo "$put_out" | grep -qE 'PreconditionFailed|At least one of the pre-conditions|412'; then
-      err "set-manifest $env_id: lost the CAS race"
-      exit 3
-    fi
-    err "put-object failed: $put_out"
-    exit 2
-  fi
+  body_file="$(mktemp)"
+  jq \
+    --arg updated_at "$(now_iso)" \
+    --argjson manifest "$(cat "$file")" '
+      .updated_at = $updated_at
+      | .manifest = $manifest' <<< "$lease_json" > "$body_file"
+  put_lease set-manifest "$env_id" "$body_file" --if-match "$etag"
 }
 
 cmd_list() {
-  local out
-  out=$(aws s3api list-objects-v2 --bucket "$LEASE_BUCKET" --prefix "leases/" --output json)
-  local keys
-  keys=$(echo "$out" | jq -r '.Contents // [] | .[].Key')
-  local now_epoch
-  now_epoch=$(date -u +%s)
-  local results="[]"
-  local key env_id body_file lease age
+  local out keys now results key env_id body_file lease updated_epoch age
+  out="$(aws_cmd s3api list-objects-v2 --bucket "$LEASE_BUCKET" --prefix leases/ --output json)"
+  keys="$(jq -r '.Contents // [] | .[].Key' <<< "$out")"
+  now="$(now_epoch)"
+  results='[]'
   while IFS= read -r key; do
-    [ -z "$key" ] && continue
-    env_id=$(basename "$key" .json)
-    body_file=$(mktemp)
-    aws s3api get-object --bucket "$LEASE_BUCKET" --key "$key" "$body_file" >/dev/null
-    lease=$(cat "$body_file")
+    [ -n "$key" ] || continue
+    env_id="$(basename "$key" .json)"
+    body_file="$(mktemp)"
+    aws_cmd s3api get-object --bucket "$LEASE_BUCKET" --key "$key" "$body_file" >/dev/null
+    lease="$(cat "$body_file")"
     rm -f "$body_file"
-    local updated_epoch
-    updated_epoch=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$(echo "$lease" | jq -r '.updated_at')" +%s 2>/dev/null \
-      || date -u -d "$(echo "$lease" | jq -r '.updated_at')" +%s)
-    age=$((now_epoch - updated_epoch))
-    results=$(echo "$results" | jq --argjson entry "$(echo "$lease" | jq --argjson age "$age" '{env_id, status, generation, opened_at, updated_at, age_seconds: $age}')" '. + [$entry]')
+    updated_epoch="$(iso_to_epoch "$(jq -r '.updated_at' <<< "$lease")")"
+    age=$((now - updated_epoch))
+    results="$(jq -c --argjson entry "$(jq --argjson age "$age" '{env_id,status,generation,opened_at,updated_at,cleanup_attempt,manual_intervention_required,age_seconds:$age}' <<< "$lease")" '. + [$entry]' <<< "$results")"
   done <<< "$keys"
-  echo "$results" | jq -c '.[]'
+  jq -c '.[]' <<< "$results"
 }
 
 main() {
@@ -313,9 +311,11 @@ main() {
     get) shift; cmd_get "$@" ;;
     open) shift; cmd_open "$@" ;;
     transition) shift; cmd_transition "$@" ;;
+    begin-cleanup) shift; cmd_begin_cleanup "$@" ;;
     set-manifest) shift; cmd_set_manifest "$@" ;;
     list) shift; cmd_list "$@" ;;
-    --help|-h|"") usage; [ "$sub" = "" ] && exit 2 || exit 0 ;;
+    --help|-h) usage ;;
+    "") usage; exit 2 ;;
     *) err "unknown subcommand '$sub'"; usage; exit 2 ;;
   esac
 }

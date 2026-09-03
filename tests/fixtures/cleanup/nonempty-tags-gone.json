@@ -1,0 +1,18 @@
+{
+  "name": "nonempty-tag-inventory-all-gone",
+  "records": [
+    {
+      "candidate": {
+        "resource_type": "ec2:vpc",
+        "id": "vpc-stale",
+        "arn": "arn:aws:ec2:test-region:placeholder:vpc/vpc-stale",
+        "sources": ["tag"]
+      },
+      "response": {
+        "rc": 254,
+        "stdout": "",
+        "stderr": "An error occurred (InvalidVpcID.NotFound) while calling DescribeVpcs"
+      }
+    }
+  ]
+}

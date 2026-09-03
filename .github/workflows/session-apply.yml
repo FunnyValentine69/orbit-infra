@@ -144,6 +144,9 @@ jobs:
           terraform_version: ${{ steps.tf-version.outputs.version }}
           terraform_wrapper: false
 
+      - name: Write AWS backend config
+        run: scripts/write-preview-backend.sh
+
       - name: Read deployable image digests
         id: images
         run: |
@@ -178,6 +181,7 @@ jobs:
       - name: Open lease
         env:
           ENV_ID: ${{ inputs.env_id }}
+          TARGET: aws
         run: scripts/lease.sh open "$ENV_ID"
 
       - name: Terraform plan (AWS)
@@ -200,17 +204,11 @@ jobs:
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
-          API_DIGEST: ${{ steps.images.outputs.api_digest }}
-          REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
-          CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
-        run: |
-          account_id="$(aws sts get-caller-identity --query Account --output text)"
-          echo "::add-mask::${account_id}"
-          registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
-          export TF_VAR_api_image="${registry}/orbit-infra-79s5rw/orbit-api@${API_DIGEST}"
-          export TF_VAR_redis_image="${registry}/orbit-infra-79s5rw/mirror/redis@${REDIS_DIGEST}"
-          export TF_VAR_clickhouse_image="${registry}/orbit-infra-79s5rw/mirror/clickhouse@${CLICKHOUSE_DIGEST}"
-          make apply TARGET=aws ENV_ID="$ENV_ID"
+        run: make apply TARGET=aws ENV_ID="$ENV_ID"
+
+      - name: Remove saved plan
+        if: always()
+        run: rm -f envs/preview/tfplan.bin
 
       - name: Wait up to 10 minutes for every ECS service
         run: |

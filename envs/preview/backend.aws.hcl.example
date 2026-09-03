@@ -1,6 +1,6 @@
-# Copy this file to backend.aws.hcl (or let the Makefile fall back to this
-# example when backend.aws.hcl is absent). No secrets here; the per-env
-# `key` is injected separately by the Makefile, not set in this file.
+# Reference shape only. Generate the required backend.aws.hcl with
+# scripts/write-preview-backend.sh; there is no example-file fallback.
+# The per-env `key` is injected separately by the Makefile.
 bucket       = "orbit-infra-79s5rw-tfstate"
 region       = "us-east-1"
 use_lockfile = true

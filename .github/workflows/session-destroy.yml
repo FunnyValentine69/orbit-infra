@@ -69,6 +69,9 @@ jobs:
           terraform_version: ${{ steps.tf-version.outputs.version }}
           terraform_wrapper: false
 
+      - name: Write AWS backend config
+        run: scripts/write-preview-backend.sh
+
       - name: Close environment (stage 1)
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}

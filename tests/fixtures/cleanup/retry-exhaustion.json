@@ -1,0 +1,10 @@
+{
+  "name": "three-automatic-attempt-limit",
+  "failures": 3,
+  "expected": {
+    "status": "cleanup_failed",
+    "cleanup_attempt": 3,
+    "manual_intervention_required": true,
+    "next_retry_at": null
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "empty-tag-inventory-live-manifest-candidate",
+  "tag_response": { "ResourceTagMappingList": [] },
+  "records": [
+    {
+      "candidate": {
+        "resource_type": "ec2:vpc",
+        "id": "vpc-manifest-live",
+        "arn": null,
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": { "Vpcs": [{ "VpcId": "vpc-manifest-live" }] },
+        "stderr": ""
+      }
+    }
+  ]
+}

@@ -9,6 +9,7 @@
 - [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
 - [x] P0-3c: add `redis_image` and `clickhouse_image` passthrough variables so real-AWS sessions use the locked private-ECR mirror digests
+- [ ] P0-3d: real-AWS promotion gate: apply bootstrap only, OIDC smoke, then per-principal positive/negative API matrix across the ten policy documents including the task boundary as a cap, before any preview apply (CODE-ONLY until then)
 
 ## Phase 1 — Repo docs + save-file
 
@@ -39,8 +40,10 @@
 - [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
 - [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
 - [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock filled with build_input_sha256 and local_id per image
+- [x] P3-14: stage-1 close redesign (typed outcomes, bounded tagging re-query, AWS CLI wrapper with timeouts, LocalStack allowances in the manifest, three-attempt retry budget) LOCALSTACK-VERIFIED on p3v3 (fresh) and p3v2 (retry); recorded-fixture suite tests/cleanup-verifier.sh
 - [ ] P3-3b: push the three images with PUSH=1 after P0-3b, then dispatch sign-images.yml
-- [ ] P3-3c (after rebasing PR #2): make AWS `make apply` non-interactive and consume the exact saved plan; update terraform-plan.yml to use the per-run plan path
+- [x] P3-6: AWS `make plan` saves a plan and `make apply` non-interactively consumes that exact plan; session workflows generate the required backend config from bootstrap naming
+- [x] P3-13: terraform-plan.yml reads and removes the LocalStack plan from the per-environment `PREVIEW_ROOT` run directory
 - [x] P3-4: scripts/lease.sh (CAS lease on S3 ETag, ADR 0006) + scripts/close-env.sh (stage 1 of close) + session-apply.yml/session-destroy.yml (main-only, runner-CIDR check, lease open, plan/apply, negative ingress test) + Makefile lease-list/lease-get/close targets; live-verified on LocalStack (open/transition/CAS-race/list, full apply->close cycle)
 - [x] P3-5: SNS alerts topic (optional email subscription via var.alert_email) + UnHealthyHostCount and HTTPCode_Target_5XX_Count CloudWatch alarms on the ALB target group; SLO documented in ARCHITECTURE.md; live-verified on LocalStack (alarms created, not evaluated)
 
@@ -59,3 +62,7 @@
 - [ ] P5-8: exclude the bootstrap state key from the plan-reader read grant, or keep the budget email out of state, because sensitive variables are stored in plaintext state (Tier-3 P2 on PR #1)
 - [ ] P5-9: preview secret value is stored in state readable by plan-reader; move to secret_string_wo/ephemeral or split state (Tier-2 P2 on PR #2)
 - [ ] P5-10: data bucket name is globally preclaimable; use bucket_prefix or a persisted random suffix and update the deployer S3 ARN pattern (Tier-2 P2 on PR #2)
+
+## End-of-project decisions (user, low priority)
+- [ ] Rewrite or keep the institutional author email on the first 20 commits of main
+- [ ] Delete the superseded remote branch feat/phase2-modules

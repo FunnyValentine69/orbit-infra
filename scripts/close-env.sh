@@ -1,287 +1,371 @@
 #!/usr/bin/env bash
-# close-env.sh <env_id> — Stage 1 of the two-stage close (ADR 0006).
-#
-# lease -> closing (CAS) -> persist/merge manifest -> discover and scale every
-# ECS service to 0 -> terraform destroy (up to 3 retries) -> wait for task
-# definitions to become INACTIVE, request deletion -> re-query the tag and
-# service-specific inventories -> leave the lease `closing` with state intact.
-# Stage 2 (the sweeper) confirms task-definition deletion, removes state
-# versions, and transitions the lease to `closed`. Any stage-1 failure sets
-# cleanup_failed and preserves the manifest/state for retry.
-#
-# Env: TARGET (aws|localstack, required), ENV_ID or $1, LEASE_BUCKET
-# (passed through to lease.sh), AWS_ENDPOINT_URL (LocalStack only).
+# close-env.sh — stage 1 of ADR 0006's two-stage preview close.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-LEASE_SH="$SCRIPT_DIR/lease.sh"
+LEASE_SH="${LEASE_SH:-$SCRIPT_DIR/lease.sh}"
+AWS_CLI_SH="${AWS_CLI_SH:-$SCRIPT_DIR/aws-cli.sh}"
+CLEANUP_VERIFIER_SH="${CLEANUP_VERIFIER_SH:-$SCRIPT_DIR/cleanup-verifier.sh}"
 
+FORCE_RETRY=false
+if [ "${1:-}" = --force-retry ]; then
+  FORCE_RETRY=true
+  shift
+fi
 ENV_ID="${1:-${ENV_ID:-}}"
-TARGET="${TARGET:-aws}"
+TARGET="${TARGET:-}"
 LEASE_BUCKET="${LEASE_BUCKET:-orbit-infra-79s5rw-tfstate}"
-export LEASE_BUCKET
+AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+TAG_REQUERY_OFFSETS="${TAG_REQUERY_OFFSETS:-0 2 4 8 16 30}"
+CLEANUP_VERIFY_DEADLINE_SECONDS="${CLEANUP_VERIFY_DEADLINE_SECONDS:-300}"
+CLEANUP_VERIFY_BACKOFF="${CLEANUP_VERIFY_BACKOFF:-2 4 8 16 30}"
+export LEASE_BUCKET TARGET
 
+case "$TARGET" in
+  localstack|aws) ;;
+  *) echo "close-env.sh: TARGET is required and must be aws or localstack" >&2; exit 2 ;;
+esac
 if [ -z "$ENV_ID" ]; then
-  echo "close-env.sh: env_id required (arg 1 or \$ENV_ID)" >&2
+  echo "close-env.sh: env_id required (arg 1 or ENV_ID)" >&2
+  exit 2
+fi
+if ! [[ "$CLEANUP_VERIFY_DEADLINE_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "close-env.sh: CLEANUP_VERIFY_DEADLINE_SECONDS must be a nonnegative integer" >&2
   exit 2
 fi
 
-cd "$REPO_ROOT"
-
-# shellcheck disable=SC2329  # Invoked indirectly by the EXIT trap.
-cleanup() {
-  if [ "$TARGET" = "localstack" ]; then
-    rm -f envs/preview/backend_override.tf
+if [ -z "${PREVIEW_ROOT:-}" ]; then
+  if [ "$TARGET" = localstack ]; then
+    PREVIEW_ROOT=".preview-runs/$ENV_ID"
+  else
+    PREVIEW_ROOT=envs/preview
   fi
-}
-trap cleanup EXIT
+fi
+export PREVIEW_ROOT
 
-OPERATOR_CIDR="${OPERATOR_CIDR:-$(curl -s https://checkip.amazonaws.com | awk '{print $1"/32"}')}"
+cd "$REPO_ROOT"
+OPERATOR_CIDR="${OPERATOR_CIDR:-$(curl -sf --max-time 5 https://checkip.amazonaws.com | awk '{print $1"/32"}')}"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
 
-# --- terraform plumbing, mirroring the current Makefile targets ---
+aws_cmd() { "$AWS_CLI_SH" "$@"; }
+now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+now_epoch() { date -u +%s; }
 
 tf_init() {
-  if [ "$TARGET" = "localstack" ]; then
-    sed "s/ENV_ID_PLACEHOLDER/$ENV_ID/" envs/preview/localstack.backend_override.tf.example > envs/preview/backend_override.tf
-    TF_DATA_DIR=".terraform-localstack-$ENV_ID" terraform -chdir=envs/preview init -reconfigure -input=false >&2
+  if [ "$TARGET" = localstack ]; then
+    mkdir -p "$PREVIEW_ROOT"
+    sed "s/ENV_ID_PLACEHOLDER/$ENV_ID/" envs/preview/localstack.backend_override.tf.example > "$PREVIEW_ROOT/backend_override.tf"
+    TF_DATA_DIR=.terraform-localstack terraform -chdir="$PREVIEW_ROOT" init -reconfigure -input=false >&2
   else
-    rm -f envs/preview/backend_override.tf
     local backend_hcl="$REPO_ROOT/envs/preview/backend.aws.hcl"
-    [ -f "$backend_hcl" ] || backend_hcl="$REPO_ROOT/envs/preview/backend.aws.hcl.example"
-    terraform -chdir=envs/preview init -reconfigure -backend-config="$backend_hcl" -backend-config="key=envs/preview/${ENV_ID}.tfstate" >&2
+    if [ ! -f "$backend_hcl" ]; then
+      echo "close-env.sh: envs/preview/backend.aws.hcl is required; run scripts/write-preview-backend.sh" >&2
+      return 1
+    fi
+    terraform -chdir="$PREVIEW_ROOT" init -reconfigure -input=false \
+      -backend-config="$backend_hcl" \
+      -backend-config="key=envs/preview/${ENV_ID}.tfstate" >&2
   fi
 }
 
-# tf_raw: for subcommands that take no -var flags (state, output, show).
 tf_raw() {
-  if [ "$TARGET" = "localstack" ]; then
-    TF_DATA_DIR=".terraform-localstack-$ENV_ID" terraform -chdir=envs/preview "$@"
+  if [ "$TARGET" = localstack ]; then
+    TF_DATA_DIR=.terraform-localstack terraform -chdir="$PREVIEW_ROOT" "$@"
   else
-    terraform -chdir=envs/preview "$@"
+    terraform -chdir="$PREVIEW_ROOT" "$@"
   fi
 }
 
-# tf: for subcommands that take -var flags (destroy).
-tf() {
-  if [ "$TARGET" = "localstack" ]; then
-    TF_DATA_DIR=".terraform-localstack-$ENV_ID" terraform -chdir=envs/preview "$@" -var target="$TARGET" -var env_id="$ENV_ID" -var operator_cidr="$OPERATOR_CIDR"
+tf_destroy() {
+  if [ "$TARGET" = localstack ]; then
+    TF_DATA_DIR=.terraform-localstack terraform -chdir="$PREVIEW_ROOT" destroy \
+      -auto-approve -var target="$TARGET" -var env_id="$ENV_ID" -var operator_cidr="$OPERATOR_CIDR" -var region="$AWS_REGION"
   else
-    terraform -chdir=envs/preview "$@" -var target="$TARGET" -var env_id="$ENV_ID" -var operator_cidr="$OPERATOR_CIDR"
+    terraform -chdir="$PREVIEW_ROOT" destroy \
+      -auto-approve -var target="$TARGET" -var env_id="$ENV_ID" -var operator_cidr="$OPERATOR_CIDR" -var region="$AWS_REGION"
   fi
 }
-
-aws_cmd() { aws "$@"; }
 
 fail() {
-  local msg="$1"
-  echo "close-env.sh: $msg" >&2
-  "$LEASE_SH" transition "$ENV_ID" closing cleanup_failed --error "$msg" || true
+  local message="$1"
+  echo "close-env.sh: $message" >&2
+  "$LEASE_SH" transition "$ENV_ID" closing cleanup_failed --error "$message" >/dev/null || true
   exit 1
 }
 
-resource_ids() {
-  local resource_type="$1"
-  local field="$2"
-  jq -c --arg resource_type "$resource_type" --arg field "$field" \
-    '[.[] | select(.type == $resource_type) | .values[$field] | select(type == "string" and length > 0)] | unique' \
-    <<< "$resource_values_json"
+persist_manifest() {
+  local manifest_file="$tmp_dir/manifest.json"
+  printf '%s\n' "$manifest_json" > "$manifest_file"
+  "$LEASE_SH" set-manifest "$ENV_ID" "$manifest_file" >/dev/null \
+    || fail "could not persist cleanup manifest"
+}
+
+merge_candidate_files() {
+  "$CLEANUP_VERIFIER_SH" merge-candidates "$@"
+}
+
+normalize_tag_entries() {
+  local entries="$1"
+  printf '%s\n' "$entries" | "$CLEANUP_VERIFIER_SH" normalize-tags
+}
+
+state_candidates() {
+  jq -c '
+    def c($type; $id; $arn; $parent; $force):
+      if ($id | type) == "string" and ($id | length) > 0 then
+        {
+          resource_type: $type,
+          id: $id,
+          arn: (if ($arn | type) == "string" and ($arn | length) > 0 then $arn else null end),
+          parent_id: (if ($parent | type) == "string" and ($parent | length) > 0 then $parent else null end),
+          sources: ["terraform-state"],
+          tag_entry: null,
+          force_delete: $force
+        }
+      else empty end;
+    [
+      .[]
+      | .type as $type
+      | .values as $v
+      | if $type == "aws_vpc" then c("ec2:vpc"; $v.id; null; null; false)
+        elif $type == "aws_subnet" then c("ec2:subnet"; $v.id; null; null; false)
+        elif $type == "aws_security_group" then c("ec2:security-group"; $v.id; null; null; false)
+        elif $type == "aws_vpc_security_group_ingress_rule" or $type == "aws_vpc_security_group_egress_rule" then c("ec2:security-group-rule"; $v.id; null; null; false)
+        elif $type == "aws_internet_gateway" then c("ec2:internet-gateway"; $v.id; null; null; false)
+        elif $type == "aws_route_table" then c("ec2:route-table"; $v.id; null; null; false)
+        elif $type == "aws_vpc_endpoint" then c("ec2:vpc-endpoint"; $v.id; null; null; false)
+        elif $type == "aws_lb" then c("elbv2:load-balancer"; $v.arn; $v.arn; null; false)
+        elif $type == "aws_lb_target_group" then c("elbv2:target-group"; $v.arn; $v.arn; null; false)
+        elif $type == "aws_lb_listener" then c("elbv2:listener"; $v.arn; $v.arn; null; false)
+        elif $type == "aws_lb_listener_rule" then c("elbv2:listener-rule"; $v.arn; $v.arn; null; false)
+        elif $type == "aws_ecs_cluster" then c("ecs:cluster"; $v.arn; $v.arn; null; false)
+        elif $type == "aws_ecs_service" then c("ecs:service"; ($v.arn // $v.id); ($v.arn // $v.id); $v.cluster; false)
+        elif $type == "aws_ecs_task_definition" then c("ecs:task-definition"; $v.arn; $v.arn; null; false)
+        elif $type == "aws_service_discovery_private_dns_namespace" then c("servicediscovery:namespace"; $v.id; $v.arn; null; false)
+        elif $type == "aws_service_discovery_service" then c("servicediscovery:service"; $v.id; $v.arn; null; false)
+        elif $type == "aws_cloudwatch_log_group" then c("logs:log-group"; $v.name; $v.arn; null; false)
+        elif $type == "aws_secretsmanager_secret" then c("secretsmanager:secret"; $v.arn; $v.arn; null; true)
+        elif $type == "aws_s3_bucket" then c("s3:bucket"; $v.bucket; $v.arn; null; false)
+        elif $type == "aws_sns_topic" then c("sns:topic"; $v.arn; $v.arn; null; false)
+        elif $type == "aws_cloudwatch_metric_alarm" then c("cloudwatch:alarm"; $v.alarm_name; $v.arn; null; false)
+        elif $type == "aws_iam_role" then c("iam:role"; $v.name; $v.arn; null; false)
+        else empty end
+    ]' <<< "$resource_values_json"
+}
+
+legacy_manifest_candidates() {
+  jq -c '
+    def c($type; $id; $arn; $parent; $force):
+      if ($id | type) == "string" and ($id | length) > 0 then
+        {resource_type:$type,id:$id,arn:$arn,parent_id:$parent,sources:["prior-manifest"],tag_entry:null,force_delete:$force}
+      else empty end;
+    [
+      (.task_definition_arns[]? | c("ecs:task-definition"; .; .; null; false)),
+      (.service_inventory.ecs_clusters[]? as $cluster
+        | c("ecs:cluster"; $cluster.cluster_arn; $cluster.cluster_arn; null; false)),
+      (.service_inventory.ecs_clusters[]? as $cluster
+        | $cluster.service_arns[]? | c("ecs:service"; .; .; $cluster.cluster_arn; false)),
+      (.service_inventory.ecs_clusters[]? as $cluster
+        | $cluster.task_arns[]? | c("ecs:task"; .; .; $cluster.cluster_arn; false)),
+      (.service_inventory.vpc_ids[]? | c("ec2:vpc"; .; null; null; false)),
+      (.service_inventory.subnet_ids[]? | c("ec2:subnet"; .; null; null; false)),
+      (.service_inventory.security_group_ids[]? | c("ec2:security-group"; .; null; null; false)),
+      (.service_inventory.security_group_rule_ids[]? | c("ec2:security-group-rule"; .; null; null; false)),
+      (.service_inventory.internet_gateway_ids[]? | c("ec2:internet-gateway"; .; null; null; false)),
+      (.service_inventory.route_table_ids[]? | c("ec2:route-table"; .; null; null; false)),
+      (.service_inventory.vpc_endpoint_ids[]? | c("ec2:vpc-endpoint"; .; null; null; false)),
+      (.service_inventory.load_balancer_arns[]? | c("elbv2:load-balancer"; .; .; null; false)),
+      (.service_inventory.target_group_arns[]? | c("elbv2:target-group"; .; .; null; false)),
+      (.service_inventory.listener_arns[]? | c("elbv2:listener"; .; .; null; false)),
+      (.service_inventory.listener_rule_arns[]? | c("elbv2:listener-rule"; .; .; null; false)),
+      (.service_inventory.s3_bucket_names[]? | c("s3:bucket"; .; null; null; false)),
+      (.service_inventory.secret_arns[]? | c("secretsmanager:secret"; .; .; null; true)),
+      (.service_inventory.log_group_names[]? | c("logs:log-group"; .; null; null; false)),
+      (.service_inventory.cloud_map_namespace_ids[]? | c("servicediscovery:namespace"; .; null; null; false)),
+      (.service_inventory.cloud_map_service_ids[]? | c("servicediscovery:service"; .; null; null; false)),
+      (.service_inventory.sns_topic_arns[]? | c("sns:topic"; .; .; null; false)),
+      (.service_inventory.alarm_names[]? | c("cloudwatch:alarm"; .; null; null; false)),
+      (.service_inventory.iam_role_names[]? | c("iam:role"; .; null; null; false))
+    ]' <<< "$existing_manifest"
+}
+
+discover_ecs_candidates() {
+  local base_candidates="$1"
+  local discovered='[]' cluster service_out running_out pending_out services tasks service task
+  while IFS= read -r cluster; do
+    [ -n "$cluster" ] || continue
+    if ! service_out="$(aws_cmd ecs list-services --cluster "$cluster" --output json 2>&1)"; then
+      if grep -qiE 'ClusterNotFound|not found|does not exist' <<< "$service_out"; then
+        continue
+      fi
+      fail "could not discover ECS services for $cluster: $service_out"
+    fi
+    if ! running_out="$(aws_cmd ecs list-tasks --cluster "$cluster" --desired-status RUNNING --output json 2>&1)"; then
+      fail "could not discover running ECS tasks for $cluster: $running_out"
+    fi
+    if ! pending_out="$(aws_cmd ecs list-tasks --cluster "$cluster" --desired-status PENDING --output json 2>&1)"; then
+      fail "could not discover pending ECS tasks for $cluster: $pending_out"
+    fi
+    services="$(jq -c '.serviceArns // []' <<< "$service_out")"
+    tasks="$(jq -cn --argjson running "$(jq -c '.taskArns // []' <<< "$running_out")" --argjson pending "$(jq -c '.taskArns // []' <<< "$pending_out")" '$running + $pending | unique')"
+    while IFS= read -r service; do
+      [ -n "$service" ] || continue
+      discovered="$(jq -c --arg id "$service" --arg parent "$cluster" '. + [{resource_type:"ecs:service",id:$id,arn:$id,parent_id:$parent,sources:["ecs-discovery"],tag_entry:null,force_delete:false}]' <<< "$discovered")"
+    done < <(jq -r '.[]' <<< "$services")
+    while IFS= read -r task; do
+      [ -n "$task" ] || continue
+      discovered="$(jq -c --arg id "$task" --arg parent "$cluster" '. + [{resource_type:"ecs:task",id:$id,arn:$id,parent_id:$parent,sources:["ecs-discovery"],tag_entry:null,force_delete:false}]' <<< "$discovered")"
+    done < <(jq -r '.[]' <<< "$tasks")
+  done < <(jq -r '.[] | select(.resource_type == "ecs:cluster") | .id' <<< "$base_candidates")
+  printf '%s\n' "$discovered"
+}
+
+collect_tag_inventory() {
+  local start offset target delay out entries candidates observation
+  local all_entries='[]' all_candidates='[]' observations='[]'
+  start=$SECONDS
+  for offset in $TAG_REQUERY_OFFSETS; do
+    if ! [[ "$offset" =~ ^[0-9]+$ ]]; then
+      fail "TAG_REQUERY_OFFSETS contains a non-integer value"
+    fi
+    target=$((start + offset))
+    delay=$((target - SECONDS))
+    [ "$delay" -le 0 ] || sleep "$delay"
+    if out="$(aws_cmd resourcegroupstaggingapi get-resources --tag-filters "Key=env_id,Values=$ENV_ID" --output json 2>&1)"; then
+      if ! entries="$(jq -c '.ResourceTagMappingList // []' <<< "$out")"; then
+        entries='[]'
+        observation="$(jq -cn --arg at "$(now_iso)" --arg error malformed-response '{observed_at:$at,status:"indeterminate",error:$error}')"
+      else
+        candidates="$(normalize_tag_entries "$entries")"
+        printf '%s\n' "$candidates" > "$tmp_dir/tag-candidates-$offset.json"
+        all_candidates="$(jq -c --argjson more "$candidates" '. + $more' <<< "$all_candidates")"
+        all_entries="$(jq -c --argjson more "$entries" '. + $more | unique_by(.ResourceARN)' <<< "$all_entries")"
+        observation="$(jq -cn --arg at "$(now_iso)" --argjson count "$(jq 'length' <<< "$entries")" '{observed_at:$at,status:"ok",count:$count}')"
+      fi
+    else
+      observation="$(jq -cn --arg at "$(now_iso)" --arg error "$out" '{observed_at:$at,status:"indeterminate",error:$error}')"
+    fi
+    observations="$(jq -c --argjson observation "$observation" '. + [$observation]' <<< "$observations")"
+  done
+  printf '%s\n' "$all_entries" > "$tmp_dir/tag-entries.json"
+  printf '%s\n' "$all_candidates" > "$tmp_dir/tag-candidates.json"
+  printf '%s\n' "$observations" > "$tmp_dir/tag-observations.json"
 }
 
 echo "== close-env.sh: env_id=$ENV_ID target=$TARGET =="
-
-# --- lease -> closing (CAS); retain any prior manifest on a resumed close ---
 current_status=""
-existing_manifest="{}"
-if get_out=$("$LEASE_SH" get "$ENV_ID" 2>/dev/null); then
-  current_status=$(jq -r '.status' <<< "$get_out")
-  existing_manifest=$(jq -c '.manifest // {}' <<< "$get_out")
+existing_manifest='{}'
+if lease_json="$("$LEASE_SH" get "$ENV_ID" 2>/dev/null)"; then
+  current_status="$(jq -r '.status' <<< "$lease_json")"
+  existing_manifest="$(jq -c '.manifest // {}' <<< "$lease_json")"
 fi
-
 case "$current_status" in
-  closing)
-    echo "lease already closing; resuming stage 1"
-    ;;
-  closed)
-    echo "lease already closed; nothing to do"
-    exit 0
-    ;;
-  open|cleanup_failed)
-    "$LEASE_SH" transition "$ENV_ID" "$current_status" closing >/dev/null
-    ;;
-  "")
-    echo "close-env.sh: no lease for $ENV_ID; nothing to close" >&2
-    exit 0
-    ;;
-  *)
-    echo "close-env.sh: unexpected lease status '$current_status' for $ENV_ID" >&2
-    exit 2
-    ;;
+  closed) echo "lease already closed; nothing to do"; exit 0 ;;
+  open|closing|cleanup_failed) ;;
+  "") echo "close-env.sh: no lease for $ENV_ID; nothing to close" >&2; exit 0 ;;
+  *) echo "close-env.sh: unexpected lease status '$current_status'" >&2; exit 2 ;;
 esac
 
-tf_init
+claim_args=(begin-cleanup "$ENV_ID")
+[ "$FORCE_RETRY" != true ] || claim_args+=(--force-retry)
+"$LEASE_SH" "${claim_args[@]}" >/dev/null
 
-# --- manifest: Terraform state plus service-specific inventories ---
-state_list=$(tf_raw state list 2>/dev/null || true)
-if state_json=$(tf_raw show -json 2>/dev/null); then
-  resource_values_json=$(jq -c '[(.values.root_module? // {}) | recurse(.child_modules[]?) | .resources[]?]' <<< "$state_json")
+tf_init || fail "terraform init failed"
+state_list="$(tf_raw state list 2>/dev/null || true)"
+if state_json="$(tf_raw show -json 2>/dev/null)"; then
+  resource_values_json="$(jq -c '[(.values.root_module? // {}) | recurse(.child_modules[]?) | .resources[]?]' <<< "$state_json")"
 else
-  resource_values_json="[]"
+  resource_values_json='[]'
 fi
+state_candidates > "$tmp_dir/state-candidates.json"
+legacy_manifest_candidates > "$tmp_dir/legacy-candidates.json"
+printf '%s\n' "$(jq -c '.candidates // []' <<< "$existing_manifest")" > "$tmp_dir/prior-candidates.json"
+prior_tag_entries="$(jq -c '.tagging_inventory // []' <<< "$existing_manifest")"
+normalize_tag_entries "$prior_tag_entries" > "$tmp_dir/prior-tag-candidates.json"
 
-task_definition_arns=$(resource_ids aws_ecs_task_definition arn)
-cluster_arns=$(resource_ids aws_ecs_cluster arn)
-vpc_ids=$(resource_ids aws_vpc id)
-subnet_ids=$(resource_ids aws_subnet id)
-security_group_ids=$(resource_ids aws_security_group id)
-vpc_endpoint_ids=$(resource_ids aws_vpc_endpoint id)
-load_balancer_arns=$(resource_ids aws_lb arn)
-target_group_arns=$(resource_ids aws_lb_target_group arn)
-s3_bucket_names=$(resource_ids aws_s3_bucket bucket)
-secret_arns=$(resource_ids aws_secretsmanager_secret arn)
-log_group_names=$(resource_ids aws_cloudwatch_log_group name)
-cloud_map_namespace_ids=$(resource_ids aws_service_discovery_private_dns_namespace id)
-cloud_map_service_ids=$(resource_ids aws_service_discovery_service id)
-sns_topic_arns=$(resource_ids aws_sns_topic arn)
-alarm_names=$(resource_ids aws_cloudwatch_metric_alarm alarm_name)
-iam_role_names=$(resource_ids aws_iam_role name)
-
-tag_inventory_status="ok"
-tag_inventory_json="[]"
-if tag_out=$(aws_cmd resourcegroupstaggingapi get-resources --tag-filters "Key=env_id,Values=$ENV_ID" --output json 2>&1); then
-  tag_inventory_json=$(jq -c '.ResourceTagMappingList // []' <<< "$tag_out")
+if pre_tag_out="$(aws_cmd resourcegroupstaggingapi get-resources --tag-filters "Key=env_id,Values=$ENV_ID" --output json 2>&1)"; then
+  pre_tag_entries="$(jq -c '.ResourceTagMappingList // []' <<< "$pre_tag_out")" \
+    || fail "pre-destroy tag inventory returned malformed JSON"
+  pre_tag_status=ok
 else
-  tag_inventory_status="unsupported"
-  echo "close-env.sh: resourcegroupstaggingapi unavailable: $tag_out" >&2
+  pre_tag_entries='[]'
+  pre_tag_status=indeterminate
 fi
+normalize_tag_entries "$pre_tag_entries" > "$tmp_dir/pre-tag-candidates.json"
 
-prior_cluster_arns=$(jq -c '[.service_inventory.ecs_clusters[]?.cluster_arn] | unique' <<< "$existing_manifest")
-tagged_cluster_arns=$(jq -c '[.[]?.ResourceARN | select(test(":cluster/"))] | unique' <<< "$tag_inventory_json")
-cluster_arns=$(jq -cn \
-  --argjson state "$cluster_arns" \
-  --argjson prior "$prior_cluster_arns" \
-  --argjson tagged "$tagged_cluster_arns" \
-  '$state + $prior + $tagged | unique')
+base_candidates="$(merge_candidate_files \
+  "$tmp_dir/prior-candidates.json" \
+  "$tmp_dir/legacy-candidates.json" \
+  "$tmp_dir/prior-tag-candidates.json" \
+  "$tmp_dir/state-candidates.json" \
+  "$tmp_dir/pre-tag-candidates.json")"
+discover_ecs_candidates "$base_candidates" > "$tmp_dir/ecs-candidates.json"
+printf '%s\n' "$base_candidates" > "$tmp_dir/base-candidates.json"
+candidates="$(merge_candidate_files "$tmp_dir/base-candidates.json" "$tmp_dir/ecs-candidates.json")"
 
-ecs_clusters="[]"
-while IFS= read -r cluster_arn; do
-  [ -z "$cluster_arn" ] && continue
-  if ! services_out=$(aws_cmd ecs list-services --cluster "$cluster_arn" --output json 2>&1); then
-    fail "could not list ECS services for $cluster_arn: $services_out"
-  fi
-  if ! running_tasks_out=$(aws_cmd ecs list-tasks --cluster "$cluster_arn" --desired-status RUNNING --output json 2>&1); then
-    fail "could not list running ECS tasks for $cluster_arn: $running_tasks_out"
-  fi
-  if ! pending_tasks_out=$(aws_cmd ecs list-tasks --cluster "$cluster_arn" --desired-status PENDING --output json 2>&1); then
-    fail "could not list pending ECS tasks for $cluster_arn: $pending_tasks_out"
-  fi
-  service_arns=$(jq -c '.serviceArns // []' <<< "$services_out")
-  task_arns=$(jq -cn --argjson running "$(jq -c '.taskArns // []' <<< "$running_tasks_out")" \
-    --argjson pending "$(jq -c '.taskArns // []' <<< "$pending_tasks_out")" '$running + $pending | unique')
-  ecs_clusters=$(jq -c --arg cluster_arn "$cluster_arn" --argjson service_arns "$service_arns" --argjson task_arns "$task_arns" \
-    '. + [{cluster_arn: $cluster_arn, service_arns: $service_arns, task_arns: $task_arns}]' <<< "$ecs_clusters")
-done < <(jq -r '.[]' <<< "$cluster_arns")
-
-manifest_json=$(jq -cn \
+manifest_json="$(jq -cn \
   --argjson old "$existing_manifest" \
   --arg env_id "$ENV_ID" \
   --arg target "$TARGET" \
-  --argjson state_resources "$(jq -R -s -c 'split("\n") | map(select(length > 0))' <<< "$state_list")" \
-  --argjson task_definition_arns "$task_definition_arns" \
-  --arg tagging_inventory_status "$tag_inventory_status" \
-  --argjson tagging_inventory "$tag_inventory_json" \
-  --argjson ecs_clusters "$ecs_clusters" \
-  --argjson vpc_ids "$vpc_ids" \
-  --argjson subnet_ids "$subnet_ids" \
-  --argjson security_group_ids "$security_group_ids" \
-  --argjson vpc_endpoint_ids "$vpc_endpoint_ids" \
-  --argjson load_balancer_arns "$load_balancer_arns" \
-  --argjson target_group_arns "$target_group_arns" \
-  --argjson s3_bucket_names "$s3_bucket_names" \
-  --argjson secret_arns "$secret_arns" \
-  --argjson log_group_names "$log_group_names" \
-  --argjson cloud_map_namespace_ids "$cloud_map_namespace_ids" \
-  --argjson cloud_map_service_ids "$cloud_map_service_ids" \
-  --argjson sns_topic_arns "$sns_topic_arns" \
-  --argjson alarm_names "$alarm_names" \
-  --argjson iam_role_names "$iam_role_names" '
-  def union(old; new): ((old // []) + new | unique);
-  def merge_clusters(old; new):
-    ((old // []) + new
-      | group_by(.cluster_arn)
-      | map({
-          cluster_arn: .[0].cluster_arn,
-          service_arns: ([.[].service_arns[]?] | unique),
-          task_arns: ([.[].task_arns[]?] | unique)
-        }));
-  {
-    env_id: $env_id,
-    target: $target,
-    state_resources: union($old.state_resources; $state_resources),
-    task_definition_arns: union($old.task_definition_arns; $task_definition_arns),
-    tagging_inventory_status: (
-      if $old.tagging_inventory_status == "ok" or $tagging_inventory_status == "ok"
-      then "ok"
-      else "unsupported"
-      end
-    ),
-    tagging_inventory: (($old.tagging_inventory // []) + $tagging_inventory | unique_by(.ResourceARN)),
-    service_inventory: {
-      ecs_clusters: merge_clusters($old.service_inventory.ecs_clusters; $ecs_clusters),
-      vpc_ids: union($old.service_inventory.vpc_ids; $vpc_ids),
-      subnet_ids: union($old.service_inventory.subnet_ids; $subnet_ids),
-      security_group_ids: union($old.service_inventory.security_group_ids; $security_group_ids),
-      vpc_endpoint_ids: union($old.service_inventory.vpc_endpoint_ids; $vpc_endpoint_ids),
-      load_balancer_arns: union($old.service_inventory.load_balancer_arns; $load_balancer_arns),
-      target_group_arns: union($old.service_inventory.target_group_arns; $target_group_arns),
-      s3_bucket_names: union($old.service_inventory.s3_bucket_names; $s3_bucket_names),
-      secret_arns: union($old.service_inventory.secret_arns; $secret_arns),
-      log_group_names: union($old.service_inventory.log_group_names; $log_group_names),
-      cloud_map_namespace_ids: union($old.service_inventory.cloud_map_namespace_ids; $cloud_map_namespace_ids),
-      cloud_map_service_ids: union($old.service_inventory.cloud_map_service_ids; $cloud_map_service_ids),
-      sns_topic_arns: union($old.service_inventory.sns_topic_arns; $sns_topic_arns),
-      alarm_names: union($old.service_inventory.alarm_names; $alarm_names),
-      iam_role_names: union($old.service_inventory.iam_role_names; $iam_role_names)
-    }
-  }') || fail "could not build cleanup manifest"
+  --arg pre_tag_status "$pre_tag_status" \
+  --argjson candidates "$candidates" \
+  --argjson pre_tag_entries "$pre_tag_entries" \
+  --argjson state_resources "$(jq -R -s -c 'split("\n") | map(select(length > 0))' <<< "$state_list")" '
+    def union($left; $right): (($left // []) + $right | unique);
+    $old + {
+      env_id: $env_id,
+      target: $target,
+      state_resources: union($old.state_resources; $state_resources),
+      candidates: $candidates,
+      task_definition_arns: [$candidates[] | select(.resource_type == "ecs:task-definition") | .id] | unique,
+      tagging_inventory_status: $pre_tag_status,
+      tagging_inventory: (($old.tagging_inventory // []) + $pre_tag_entries | unique_by(.ResourceARN)),
+      stale_tag_entries: ($old.stale_tag_entries // {count:0,entries:[]}),
+      allowances: ($old.allowances // []),
+      verification_runs: ($old.verification_runs // [])
+    }')" || fail "could not build cleanup manifest"
+persist_manifest
 
-manifest_file=$(mktemp)
-printf '%s\n' "$manifest_json" > "$manifest_file"
-"$LEASE_SH" set-manifest "$ENV_ID" "$manifest_file" >/dev/null \
-  || fail "set-manifest failed for $ENV_ID"
-rm -f "$manifest_file"
+while IFS=$'\t' read -r cluster service; do
+  [ -n "$service" ] || continue
+  # A retry after a successful destroy finds no service; only ACTIVE or
+  # DRAINING services are scaled, anything else is already gone.
+  svc_status="$(aws_cmd ecs describe-services --cluster "$cluster" --services "$service" \
+    --query 'services[0].status' --output text 2>/dev/null || echo MISSING)"
+  case "$svc_status" in
+    ACTIVE|DRAINING)
+      echo "scaling $service to 0"
+      aws_cmd ecs update-service --cluster "$cluster" --service "$service" --desired-count 0 >/dev/null \
+        || fail "failed to scale $service to 0"
+      aws_cmd ecs wait services-stable --cluster "$cluster" --services "$service" \
+        || fail "$service did not reach stable at 0"
+      ;;
+    *)
+      echo "skip scaling $service: status=${svc_status:-MISSING}"
+      ;;
+  esac
+done < <(jq -r '.[] | select(.resource_type == "ecs:service" and ((.sources // []) | index("ecs-discovery"))) | [.parent_id,.id] | @tsv' <<< "$candidates")
 
-# --- scale every service discovered from the environment cluster to 0 ---
-while IFS=$'\t' read -r cluster_arn service_arn; do
-  [ -z "$service_arn" ] && continue
-  echo "scaling $service_arn to 0"
-  aws_cmd ecs update-service --cluster "$cluster_arn" --service "$service_arn" --desired-count 0 >/dev/null \
-    || fail "failed to scale $service_arn to 0"
-  aws_cmd ecs wait services-stable --cluster "$cluster_arn" --services "$service_arn" \
-    || fail "$service_arn did not reach stable at 0"
-done < <(jq -r '.service_inventory.ecs_clusters[] | .cluster_arn as $cluster | .service_arns[]? | [$cluster, .] | @tsv' <<< "$manifest_json")
-
-# --- terraform destroy, up to 3 retries ---
-destroy_ok=0
+destroy_ok=false
 for attempt in 1 2 3; do
   echo "terraform destroy attempt $attempt/3"
-  if tf destroy -auto-approve; then
-    destroy_ok=1
+  if tf_destroy; then
+    destroy_ok=true
     break
   fi
-  echo "destroy attempt $attempt failed" >&2
 done
-[ "$destroy_ok" = "1" ] || fail "terraform destroy failed after 3 attempts"
+[ "$destroy_ok" = true ] || fail "terraform destroy failed after 3 attempts"
 
-# --- task definitions: wait for deregistration, request async deletion ---
 while IFS= read -r arn; do
-  [ -z "$arn" ] && continue
-  status="ACTIVE"
+  [ -n "$arn" ] || continue
+  status=ACTIVE
   for _ in $(seq 1 20); do
-    if describe_out=$(aws_cmd ecs describe-task-definition --task-definition "$arn" --output json 2>&1); then
-      status=$(jq -r '.taskDefinition.status // "UNKNOWN"' <<< "$describe_out")
-    elif grep -qiE 'ClientException|not found|does not exist' <<< "$describe_out"; then
-      status="DELETED"
+    if describe_out="$(aws_cmd ecs describe-task-definition --task-definition "$arn" --output json 2>&1)"; then
+      status="$(jq -r '.taskDefinition.status // "UNKNOWN"' <<< "$describe_out")"
+    elif grep -qiE 'ClientException.*not found|not found|does not exist' <<< "$describe_out"; then
+      status=DELETED
     else
       fail "DescribeTaskDefinition failed for $arn: $describe_out"
     fi
@@ -291,192 +375,92 @@ while IFS= read -r arn; do
       *) fail "unexpected task-definition status '$status' for $arn" ;;
     esac
   done
-  [ "$status" != "ACTIVE" ] || fail "task definition did not become INACTIVE: $arn"
-
-  if [ "$status" = "INACTIVE" ]; then
-    if delete_out=$(aws_cmd ecs delete-task-definitions --task-definitions "$arn" 2>&1); then
+  [ "$status" != ACTIVE ] || fail "task definition did not become INACTIVE: $arn"
+  if [ "$status" = INACTIVE ]; then
+    delete_stdout="$tmp_dir/delete.stdout"
+    delete_stderr="$tmp_dir/delete.stderr"
+    set +e
+    aws_cmd ecs delete-task-definitions --task-definitions "$arn" >"$delete_stdout" 2>"$delete_stderr"
+    delete_rc=$?
+    set -e
+    if [ "$delete_rc" -eq 0 ]; then
       echo "requested task-definition deletion: $arn"
-    elif grep -qi "not currently supported by LocalStack" <<< "$delete_out"; then
-      echo "close-env.sh: DeleteTaskDefinitions unsupported on LocalStack; task definition remains INACTIVE" >&2
     else
-      fail "DeleteTaskDefinitions failed for $arn: $delete_out"
+      allowance_fixture="$tmp_dir/delete-allowance.json"
+      jq -n \
+        --arg arn "$arn" \
+        --arg status "$status" \
+        --argjson rc "$delete_rc" \
+        --rawfile stdout "$delete_stdout" \
+        --rawfile stderr "$delete_stderr" \
+        '{arn:$arn,status:$status,response:{rc:$rc,stdout:$stdout,stderr:$stderr}}' > "$allowance_fixture"
+      if allowance="$("$CLEANUP_VERIFIER_SH" task-definition-delete-allowance "$TARGET" "$allowance_fixture")"; then
+        manifest_json="$(jq -c --argjson allowance "$(jq -c '.allowance' <<< "$allowance")" '
+          .allowances = ((.allowances // []) + [$allowance] | unique_by([.id,.arn]))' <<< "$manifest_json")"
+        persist_manifest
+      else
+        fail "DeleteTaskDefinitions failed for $arn: $(cat "$delete_stderr")"
+      fi
     fi
   fi
+done < <(jq -r '.task_definition_arns[]?' <<< "$manifest_json")
 
-  if describe_out=$(aws_cmd ecs describe-task-definition --task-definition "$arn" --output json 2>&1); then
-    status=$(jq -r '.taskDefinition.status // "UNKNOWN"' <<< "$describe_out")
-    case "$status" in
-      INACTIVE|DELETE_IN_PROGRESS) ;;
-      *) fail "task definition returned to unexpected status '$status': $arn" ;;
-    esac
-  elif ! grep -qiE 'ClientException|not found|does not exist' <<< "$describe_out"; then
-    fail "post-delete DescribeTaskDefinition failed for $arn: $describe_out"
-  fi
-done < <(jq -r '.task_definition_arns[]' <<< "$manifest_json")
-
-# --- re-query the full tag inventory ---
-if tag_out=$(aws_cmd resourcegroupstaggingapi get-resources --tag-filters "Key=env_id,Values=$ENV_ID" --output json 2>&1); then
-  remaining_tagged=$(jq -c '.ResourceTagMappingList // []' <<< "$tag_out")
-  [ "$remaining_tagged" = "[]" ] \
-    || fail "tag inventory still contains resources for env_id=$ENV_ID: $remaining_tagged"
-elif [ "$(jq -r '.tagging_inventory_status' <<< "$manifest_json")" = "ok" ]; then
-  fail "could not re-query resourcegroupstaggingapi: $tag_out"
-else
-  echo "close-env.sh: resourcegroupstaggingapi remains unavailable; using service-specific inventory checks" >&2
+collect_tag_inventory
+discovery_candidates='[]'
+if [ "$pre_tag_status" != ok ] && \
+   ! jq -e 'any(.[]; .status == "ok")' "$tmp_dir/tag-observations.json" >/dev/null; then
+  discovery_candidates='[{"resource_type":"unsupported","id":"tag-inventory-discovery","arn":null,"parent_id":null,"sources":["tag-discovery"],"tag_entry":null,"force_delete":false}]'
 fi
+printf '%s\n' "$candidates" > "$tmp_dir/pre-final-candidates.json"
+printf '%s\n' "$discovery_candidates" > "$tmp_dir/discovery-candidates.json"
+candidates="$(merge_candidate_files \
+  "$tmp_dir/pre-final-candidates.json" \
+  "$tmp_dir/tag-candidates.json" \
+  "$tmp_dir/discovery-candidates.json")"
+manifest_json="$(jq -c \
+  --argjson candidates "$candidates" \
+  --argjson entries "$(cat "$tmp_dir/tag-entries.json")" \
+  --argjson observations "$(cat "$tmp_dir/tag-observations.json")" '
+    .candidates = $candidates
+    | .tagging_inventory = ((.tagging_inventory // []) + $entries | unique_by(.ResourceARN))
+    | .tag_inventory_observations = ((.tag_inventory_observations // []) + $observations)
+    | .tagging_inventory_status = (if any($observations[]; .status == "ok") then "ok" else .tagging_inventory_status end)' <<< "$manifest_json")"
+persist_manifest
 
-# --- tag-filter checks catch resources not present in a partial state ---
-remaining=$(aws_cmd ec2 describe-vpcs --filters "Name=tag:env_id,Values=$ENV_ID" --output json | jq -c '.Vpcs // []')
-[ "$remaining" = "[]" ] || fail "VPCs remain tagged env_id=$ENV_ID: $remaining"
-remaining=$(aws_cmd ec2 describe-subnets --filters "Name=tag:env_id,Values=$ENV_ID" --output json | jq -c '.Subnets // []')
-[ "$remaining" = "[]" ] || fail "subnets remain tagged env_id=$ENV_ID: $remaining"
-remaining=$(aws_cmd ec2 describe-security-groups --filters "Name=tag:env_id,Values=$ENV_ID" --output json | jq -c '.SecurityGroups // []')
-[ "$remaining" = "[]" ] || fail "security groups remain tagged env_id=$ENV_ID: $remaining"
-remaining=$(aws_cmd ec2 describe-vpc-endpoints --filters "Name=tag:env_id,Values=$ENV_ID" --output json | jq -c '.VpcEndpoints // []')
-[ "$remaining" = "[]" ] || fail "VPC endpoints remain tagged env_id=$ENV_ID: $remaining"
+printf '%s\n' "$candidates" > "$tmp_dir/final-candidates.json"
+verification_start="$(now_epoch)"
+verification_deadline=$((verification_start + CLEANUP_VERIFY_DEADLINE_SECONDS))
+backoff_index=0
+read -r -a verification_backoff <<< "$CLEANUP_VERIFY_BACKOFF"
+while :; do
+  verification="$("$CLEANUP_VERIFIER_SH" verify-live "$tmp_dir/final-candidates.json")"
+  run="$(jq -c --arg started_at "$(date -u -r "$verification_start" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$verification_start" +%Y-%m-%dT%H:%M:%SZ)" --arg completed_at "$(now_iso)" '
+    {started_at:$started_at,completed_at:$completed_at,results:.results,summary:.summary}' <<< "$verification")"
+  stale_entries="$(jq -c '.stale_tag_entries' <<< "$verification")"
+  manifest_json="$(jq -c --argjson run "$run" --argjson stale "$stale_entries" '
+    ((.stale_tag_entries.entries // []) + $stale | unique_by(.ResourceARN)) as $entries
+    | .stale_tag_entries = {count:($entries|length),entries:$entries}
+    | .verification_runs = ((.verification_runs // []) + [$run])' <<< "$manifest_json")"
+  persist_manifest
 
-# Re-query the exact EC2 identifiers too, so a removed env_id tag cannot hide
-# a resource captured before destroy.
-check_ec2_inventory_absent() {
-  local label="$1"
-  local manifest_key="$2"
-  local response_key="$3"
-  local subcommand="$4"
-  local id_flag="$5"
-  local id
-  local out
-  local found
-
-  while IFS= read -r id; do
-    [ -z "$id" ] && continue
-    if out=$(aws_cmd ec2 "$subcommand" "$id_flag" "$id" --output json 2>&1); then
-      found=$(jq -c --arg response_key "$response_key" '.[$response_key] // []' <<< "$out")
-      [ "$found" = "[]" ] || fail "$label remains: $id"
-    elif ! grep -qiE 'Invalid.*NotFound|not found|does not exist' <<< "$out"; then
-      fail "could not prove $label absent ($id): $out"
+  live_count="$(jq -r '.summary.live' <<< "$verification")"
+  pending_count="$(jq -r '.summary.pending' <<< "$verification")"
+  indeterminate_count="$(jq -r '.summary.indeterminate' <<< "$verification")"
+  if [ "$live_count" -eq 0 ] && [ "$pending_count" -eq 0 ] && [ "$indeterminate_count" -eq 0 ]; then
+    break
+  fi
+  if [ "$(now_epoch)" -ge "$verification_deadline" ]; then
+    if [ "$live_count" -gt 0 ] || [ "$indeterminate_count" -gt 0 ]; then
+      fail "cleanup verification deadline reached: live=$live_count indeterminate=$indeterminate_count pending=$pending_count"
     fi
-  done < <(jq -r --arg manifest_key "$manifest_key" '.service_inventory[$manifest_key][]' <<< "$manifest_json")
-}
-
-check_ec2_inventory_absent "VPC" vpc_ids Vpcs describe-vpcs --vpc-ids
-check_ec2_inventory_absent "subnet" subnet_ids Subnets describe-subnets --subnet-ids
-check_ec2_inventory_absent "security group" security_group_ids SecurityGroups describe-security-groups --group-ids
-check_ec2_inventory_absent "VPC endpoint" vpc_endpoint_ids VpcEndpoints describe-vpc-endpoints --vpc-endpoint-ids
-
-# --- re-query every service-specific inventory captured in the manifest ---
-while IFS= read -r cluster_arn; do
-  [ -z "$cluster_arn" ] && continue
-  if cluster_out=$(aws_cmd ecs describe-clusters --clusters "$cluster_arn" --output json 2>&1); then
-    active_clusters=$(jq -c '[.clusters[]? | select(.status != "INACTIVE")]' <<< "$cluster_out")
-    [ "$active_clusters" = "[]" ] || fail "ECS cluster remains active: $active_clusters"
-  elif ! grep -qiE 'ClusterNotFound|not found' <<< "$cluster_out"; then
-    fail "could not re-query ECS cluster $cluster_arn: $cluster_out"
+    break
   fi
-
-  if services_out=$(aws_cmd ecs list-services --cluster "$cluster_arn" --output json 2>&1); then
-    remaining=$(jq -c '.serviceArns // []' <<< "$services_out")
-    [ "$remaining" = "[]" ] || fail "ECS services remain in $cluster_arn: $remaining"
-  elif ! grep -qiE 'ClusterNotFound|not found' <<< "$services_out"; then
-    fail "could not re-query ECS services for $cluster_arn: $services_out"
-  fi
-
-  if tasks_out=$(aws_cmd ecs list-tasks --cluster "$cluster_arn" --output json 2>&1); then
-    remaining=$(jq -c '.taskArns // []' <<< "$tasks_out")
-    [ "$remaining" = "[]" ] || fail "ECS tasks remain in $cluster_arn: $remaining"
-  elif ! grep -qiE 'ClusterNotFound|not found' <<< "$tasks_out"; then
-    fail "could not re-query ECS tasks for $cluster_arn: $tasks_out"
-  fi
-done < <(jq -r '.service_inventory.ecs_clusters[].cluster_arn' <<< "$manifest_json")
-
-while IFS= read -r arn; do
-  [ -z "$arn" ] && continue
-  if out=$(aws_cmd elbv2 describe-load-balancers --load-balancer-arns "$arn" --output json 2>&1); then
-    remaining=$(jq -c '.LoadBalancers // []' <<< "$out")
-    [ "$remaining" = "[]" ] || fail "load balancer remains: $arn"
-  elif ! grep -qiE 'LoadBalancerNotFound|not found' <<< "$out"; then
-    fail "could not re-query load balancer $arn: $out"
-  fi
-done < <(jq -r '.service_inventory.load_balancer_arns[]' <<< "$manifest_json")
-
-while IFS= read -r arn; do
-  [ -z "$arn" ] && continue
-  if out=$(aws_cmd elbv2 describe-target-groups --target-group-arns "$arn" --output json 2>&1); then
-    remaining=$(jq -c '.TargetGroups // []' <<< "$out")
-    [ "$remaining" = "[]" ] || fail "target group remains: $arn"
-  elif ! grep -qiE 'TargetGroupNotFound|not found' <<< "$out"; then
-    fail "could not re-query target group $arn: $out"
-  fi
-done < <(jq -r '.service_inventory.target_group_arns[]' <<< "$manifest_json")
-
-while IFS= read -r bucket; do
-  [ -z "$bucket" ] && continue
-  if out=$(aws_cmd s3api head-bucket --bucket "$bucket" 2>&1); then
-    fail "S3 bucket remains: $bucket"
-  elif ! grep -qiE 'NoSuchBucket|Not Found|404' <<< "$out"; then
-    fail "could not prove S3 bucket absent ($bucket): $out"
-  fi
-done < <(jq -r '.service_inventory.s3_bucket_names[]' <<< "$manifest_json")
-
-while IFS= read -r arn; do
-  [ -z "$arn" ] && continue
-  if out=$(aws_cmd secretsmanager describe-secret --secret-id "$arn" --output json 2>&1); then
-    fail "Secrets Manager secret remains: $arn"
-  elif ! grep -qiE 'ResourceNotFound|not found' <<< "$out"; then
-    fail "could not prove secret absent ($arn): $out"
-  fi
-done < <(jq -r '.service_inventory.secret_arns[]' <<< "$manifest_json")
-
-while IFS= read -r name; do
-  [ -z "$name" ] && continue
-  out=$(aws_cmd logs describe-log-groups --log-group-name-prefix "$name" --output json) \
-    || fail "could not re-query log group $name"
-  remaining=$(jq -c --arg name "$name" '[.logGroups[]? | select(.logGroupName == $name)]' <<< "$out")
-  [ "$remaining" = "[]" ] || fail "CloudWatch log group remains: $name"
-done < <(jq -r '.service_inventory.log_group_names[]' <<< "$manifest_json")
-
-while IFS= read -r id; do
-  [ -z "$id" ] && continue
-  if out=$(aws_cmd servicediscovery get-namespace --id "$id" --output json 2>&1); then
-    fail "Cloud Map namespace remains: $id"
-  elif ! grep -qiE 'NamespaceNotFound|not found' <<< "$out"; then
-    fail "could not prove Cloud Map namespace absent ($id): $out"
-  fi
-done < <(jq -r '.service_inventory.cloud_map_namespace_ids[]' <<< "$manifest_json")
-
-while IFS= read -r id; do
-  [ -z "$id" ] && continue
-  if out=$(aws_cmd servicediscovery get-service --id "$id" --output json 2>&1); then
-    fail "Cloud Map service remains: $id"
-  elif ! grep -qiE 'ServiceNotFound|not found' <<< "$out"; then
-    fail "could not prove Cloud Map service absent ($id): $out"
-  fi
-done < <(jq -r '.service_inventory.cloud_map_service_ids[]' <<< "$manifest_json")
-
-while IFS= read -r arn; do
-  [ -z "$arn" ] && continue
-  if out=$(aws_cmd sns get-topic-attributes --topic-arn "$arn" --output json 2>&1); then
-    fail "SNS topic remains: $arn"
-  elif ! grep -qiE 'NotFound|not found' <<< "$out"; then
-    fail "could not prove SNS topic absent ($arn): $out"
-  fi
-done < <(jq -r '.service_inventory.sns_topic_arns[]' <<< "$manifest_json")
-
-while IFS= read -r name; do
-  [ -z "$name" ] && continue
-  out=$(aws_cmd cloudwatch describe-alarms --alarm-names "$name" --output json) \
-    || fail "could not re-query CloudWatch alarm $name"
-  remaining=$(jq -c '.MetricAlarms // []' <<< "$out")
-  [ "$remaining" = "[]" ] || fail "CloudWatch alarm remains: $name"
-done < <(jq -r '.service_inventory.alarm_names[]' <<< "$manifest_json")
-
-while IFS= read -r name; do
-  [ -z "$name" ] && continue
-  if out=$(aws_cmd iam get-role --role-name "$name" --output json 2>&1); then
-    fail "IAM role remains: $name"
-  elif ! grep -qiE 'NoSuchEntity|not found' <<< "$out"; then
-    fail "could not prove IAM role absent ($name): $out"
-  fi
-done < <(jq -r '.service_inventory.iam_role_names[]' <<< "$manifest_json")
+  sleep_seconds="${verification_backoff[$backoff_index]:-30}"
+  [ "$sleep_seconds" -le 30 ] || sleep_seconds=30
+  remaining=$((verification_deadline - $(now_epoch)))
+  [ "$sleep_seconds" -le "$remaining" ] || sleep_seconds="$remaining"
+  [ "$sleep_seconds" -le 0 ] || sleep "$sleep_seconds"
+  backoff_index=$((backoff_index + 1))
+done
 
 echo "close-env.sh: $ENV_ID stage 1 complete; lease remains 'closing' for the sweeper"
-exit 0

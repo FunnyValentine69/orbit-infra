@@ -24,6 +24,11 @@ it directly) and the `terraform plan`/`apply` targets (passed as
 `AWS_PROFILE` and `AWS_REGION` consistently; every direct `terraform`
 invocation below is shown with the equivalent env prefix.
 
+Real-AWS preview workflows run `scripts/write-preview-backend.sh` before their
+Make targets. The script derives `envs/preview/backend.aws.hcl` from bootstrap's
+committed `var.name`/`var.region` defaults and the state bucket's
+`${var.name}-tfstate` naming contract, so no additional secret is required.
+
 ## Apply sequence
 
 1. `cp bootstrap/terraform.tfvars.example bootstrap/terraform.tfvars` and edit `budget_email` (`terraform.tfvars` is gitignored; verify with `git check-ignore bootstrap/terraform.tfvars`)

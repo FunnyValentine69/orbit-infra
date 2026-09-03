@@ -87,23 +87,42 @@ cleanup_failed`. `scripts/lease.sh` manages it directly;
 `scripts/close-env.sh` (wired into `make close` and `session-destroy.yml`)
 drives it through stage 1 of close. Stage 1 discovers and scales every ECS
 service, merges a retry-safe manifest, destroys Terraform resources, requests
-asynchronous task-definition deletion, re-queries both the complete tagged
-inventory and each service-specific manifest list, and always leaves the lease
-`closing`. Only the Phase 5 sweeper may prune state versions and set `closed`.
+asynchronous task-definition deletion, unions state/manifest/ECS/tag candidates,
+and verifies each candidate through its exact service API. Results are `gone`,
+`pending`, `live`, or `indeterminate`; each five-minute retry iteration is
+persisted under `manifest.verification_runs`. Confirmed-gone tag results are
+also recorded under `manifest.stale_tag_entries`. A `live` or `indeterminate`
+result at the deadline fails stage 1. Stage 1 retains Terraform state and never
+sets `closed`; only the Phase 5 sweeper may prune state versions and do that.
 
 Check the current state first:
 
 ```
-make lease-get ENV_ID=<id>
-# or: scripts/lease.sh get <id>
+make lease-get TARGET=aws ENV_ID=<id>
+# or: TARGET=aws scripts/lease.sh get <id>
 ```
 
-**Lease is `cleanup_failed`** (a destroy step failed and state was kept
-for retry): re-run close, which resumes from `closing`:
+**Lease is `cleanup_failed`** (a destroy or verification step failed and state
+was kept): inspect `cleanup_attempt`, `next_retry_at`,
+`manual_intervention_required`, and the last verification summary. Before the
+three-attempt limit, re-run close no earlier than `next_retry_at`:
 
 ```
 make close TARGET=aws ENV_ID=<id>
 ```
+
+The third failed stage-1 execution leaves `cleanup_failed`, clears
+`next_retry_at`, and sets `manual_intervention_required=true`. A fourth
+automatic execution is refused. After reviewing and addressing the persisted
+`live`/`indeterminate` results, explicitly claim an audited retry:
+
+```
+TARGET=aws scripts/close-env.sh --force-retry <id>
+```
+
+`--force-retry` increments `cleanup_attempt` and appends to
+`cleanup_retry_audit`; it does not delete the retained state or weaken any
+resource predicate.
 
 **Lease is `closing`** but stalled (task definitions still pending
 deletion, or the job was interrupted mid-close): re-run `make close`
@@ -117,20 +136,30 @@ resources were removed out-of-band): move it into stage 1 so the sweeper can
 verify the manifest and finish it:
 
 ```
-scripts/lease.sh transition <id> open closing
+TARGET=aws scripts/lease.sh transition <id> open closing
 ```
 
-**Manual, targeted recovery** when the automated close can't proceed
-(e.g. a resource type close-env.sh doesn't know how to retry): inspect
-the manifest it already wrote (`state_resources`, `task_definition_arns`,
-`tagging_inventory`, and `service_inventory`) via
-`scripts/lease.sh get <id> | jq .manifest`, clear
-the offending resource by hand, then re-run `make close`.
+**Manual, targeted recovery** when the verifier reports `live` or
+`indeterminate`: inspect `manifest.candidates`, `manifest.verification_runs`,
+`manifest.tag_inventory_observations`, `manifest.stale_tag_entries`, and
+`manifest.allowances` via `TARGET=aws scripts/lease.sh get <id> | jq
+.manifest`. Resolve only the named resource or access failure, then use the
+normal retry or audited force retry above. An unsupported future ARN is one
+indeterminate result; it does not discard earlier results.
 
-On LocalStack, `DeleteTaskDefinitions` is unsupported
-(`scripts/close-env.sh` detects this, notes it in the summary, and leaves
-the lease `closing` rather than failing) -- this is expected in local
-development and is not itself a stuck-environment condition.
+On LocalStack, the known `DeleteTaskDefinitions` gap is accepted only when the
+task definition is already `INACTIVE` and the exact unsupported-operation
+signature matches. The allowance ID, ARN, error code, and timestamp are stored
+under `manifest.allowances`. The same error on the AWS target fails closed.
+Stale tag entries, stale `list-clusters` output, and a VPC endpoint in
+`deleted` use normal exact-state predicates and are not allowances.
+
+Every direct lease or close command requires `TARGET`. LocalStack calls also
+require an explicit localhost `AWS_ENDPOINT_URL`, test credentials,
+`AWS_EC2_METADATA_DISABLED=true`, and an unset `AWS_PROFILE`; prefer the
+Makefile targets, which establish that contract. The shared AWS wrapper adds
+connect/read limits and a 30-second outer process-group timeout to every cleanup
+and lease AWS CLI call.
 
 ## Credential rotation
 

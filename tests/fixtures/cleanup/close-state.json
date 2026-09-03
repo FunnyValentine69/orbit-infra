@@ -1,0 +1,14 @@
+{
+  "format_version": "1.0",
+  "values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "module.network.aws_vpc.this",
+          "type": "aws_vpc",
+          "values": { "id": "vpc-close" }
+        }
+      ]
+    }
+  }
+}
