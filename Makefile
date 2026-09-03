@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr render-localstack-backend
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test lint validate check-target check-env-id check-operator-cidr render-localstack-backend placeholder-build check-placeholder-image
 
 TARGET ?= aws
 # preflight and terraform must check the same account and region
@@ -60,6 +60,12 @@ localstack-down:
 localstack-status:
 	localstack status services
 
+placeholder-build:
+	docker build --platform linux/arm64 -t placeholder:local placeholder/
+
+check-placeholder-image:
+	@docker image inspect placeholder:local >/dev/null 2>&1 || { echo "placeholder:local image not found; run make placeholder-build first" >&2; exit 1; }
+
 # Intentionally no bootstrap-destroy target: every bootstrap resource has
 # prevent_destroy = true and this state must never be torn down via make.
 
@@ -91,7 +97,7 @@ plan:
 		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"; \
 	)
 
-apply:
+apply: check-placeholder-image
 	( \
 		trap 'rm -f envs/preview/backend_override.tf' EXIT; \
 		$(MAKE) render-localstack-backend; \

@@ -34,12 +34,18 @@ denied unless this ARN is set as the boundary.
 ## Commands
 
 ```
+make placeholder-build
+
 make plan    TARGET=aws        ENV_ID=<id>
 make apply   TARGET=aws        ENV_ID=<id>
 make destroy TARGET=aws        ENV_ID=<id>
 
 make apply   TARGET=localstack ENV_ID=<id>
 ```
+
+`api_image` defaults to `placeholder:local`, which nothing builds
+automatically; run `make placeholder-build` first, or `make apply
+TARGET=localstack ...` fails fast with a reminder.
 
 LocalStack runs use a local backend keyed by `ENV_ID`
 (`terraform.localstack.<ENV_ID>.tfstate`). `backend_override.tf` is

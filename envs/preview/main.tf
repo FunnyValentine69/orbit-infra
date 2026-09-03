@@ -88,24 +88,25 @@ resource "aws_security_group" "alb" {
     cidr_blocks = [var.operator_cidr]
   }
 
+  # CIDR-scoped, not security_groups = [aws_security_group.service.id]:
+  # a security_groups reference here would create a dependency cycle with
+  # aws_security_group.service's inline ingress referencing this group's
+  # id. module.network has no private-subnet-only CIDR output, so this
+  # uses the VPC CIDR (the same scope already used by the service SG's own
+  # inline rules below).
+  egress {
+    description = "api"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [module.network.vpc_cidr]
+  }
+
   tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-alb-sg" })
 
   lifecycle {
     create_before_destroy = true
   }
-}
-
-# Separate rule resources (not inline blocks) to avoid a dependency cycle
-# between the ALB SG and the service SG, which reference each other.
-resource "aws_vpc_security_group_egress_rule" "alb_to_service" {
-  security_group_id            = aws_security_group.alb.id
-  description                  = "api"
-  from_port                    = 8000
-  to_port                      = 8000
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.service.id
-
-  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-alb-to-service" })
 }
 
 resource "aws_lb" "this" {
@@ -167,6 +168,14 @@ resource "aws_security_group" "service" {
   }
 
   ingress {
+    description     = "api from ALB"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
     description = "clickhouse"
     from_port   = 8123
     to_port     = 8123
@@ -213,16 +222,6 @@ resource "aws_security_group" "service" {
   }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "service_from_alb" {
-  security_group_id            = aws_security_group.service.id
-  description                  = "api from ALB"
-  from_port                    = 8000
-  to_port                      = 8000
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.alb.id
-
-  tags = merge(local.tags, { Name = "${var.name}-${var.env_id}-service-from-alb" })
-}
 
 resource "random_password" "clickhouse" {
   length  = 24
@@ -335,7 +334,7 @@ locals {
     AWS_SECRET_ACCESS_KEY = "test"
   } : {}
 
-  api_env = merge(
+  fixed_api_env = merge(
     {
       CLICKHOUSE_HOST    = module.clickhouse.discovery_dns_name
       CLICKHOUSE_PORT    = tostring(module.clickhouse.port)
@@ -346,6 +345,10 @@ locals {
     },
     local.api_localstack_env,
   )
+
+  # var.api_env is merged first so the fixed keys above always win on
+  # conflict; the S3 bucket/Redis/ClickHouse wiring must stay authoritative.
+  api_env = merge(var.api_env, local.fixed_api_env)
 }
 
 module "api" {
@@ -395,6 +398,8 @@ module "worker" {
   container_port     = 8000
   subnet_ids         = [module.network.private_subnet_id]
   security_group_ids = [aws_security_group.service.id]
+
+  env = var.worker_env
 
   permissions_boundary_arn = local.task_boundary_arn
 

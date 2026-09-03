@@ -84,6 +84,18 @@ variable "worker_command" {
   default     = null
 }
 
+variable "api_env" {
+  description = "Extra plaintext environment variables merged into the api service's environment. The fixed keys this root computes (CLICKHOUSE_HOST, CLICKHOUSE_PORT, REDIS_HOST, REDIS_PORT, PLACEHOLDER_BUCKET, AWS_REGION, and the LocalStack AWS_* overrides) always win on conflict; user-supplied keys never override them."
+  type        = map(string)
+  default     = {}
+}
+
+variable "worker_env" {
+  description = "Plaintext environment variables merged into the worker service's environment. The worker has no fixed keys of its own, so every key here is passed through as-is."
+  type        = map(string)
+  default     = {}
+}
+
 variable "tags" {
   description = "Default tags applied to all resources"
   type        = map(string)

@@ -17,7 +17,7 @@ tmp_dir="$(mktemp -d)"
 cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
 trap 'rm -f bootstrap/backend_override.tf; rm -rf "$tmp_dir"' EXIT
 
-export TF_DATA_DIR=.terraform-localstack
+export TF_DATA_DIR="${POLICY_SIZE_TF_DATA_DIR:-.terraform-localstack}"
 terraform -chdir=bootstrap init -reconfigure -input=false >"$tmp_dir/init.log" 2>&1
 terraform -chdir=bootstrap plan -var target=localstack -var budget_email=unused \
   -out="$tmp_dir/plan.out" >"$tmp_dir/plan.log" 2>&1
@@ -44,7 +44,7 @@ managed_checked=0
 while IFS=$'\t' read -r address policy_json; do
   [ -z "$address" ] && continue
   if [ -z "$policy_json" ] || [ "$policy_json" = "null" ]; then
-    echo "FAIL: $address has a null/unknown policy document (plan-time value not computable)"
+    echo "FAIL: $address policy document is not known at plan time; reference ARNs deterministically (see bootstrap/README.md)"
     status=1
     continue
   fi
@@ -80,7 +80,7 @@ inline_checked=0
 while IFS=$'\t' read -r address role policy_json; do
   [ -z "$address" ] && continue
   if [ -z "$role" ] || [ "$role" = "null" ] || [ -z "$policy_json" ] || [ "$policy_json" = "null" ]; then
-    echo "FAIL: $address has a null/unknown role or policy document (plan-time value not computable)"
+    echo "FAIL: $address policy document is not known at plan time; reference ARNs deterministically (see bootstrap/README.md)"
     status=1
     continue
   fi

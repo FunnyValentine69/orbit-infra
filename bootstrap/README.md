@@ -93,3 +93,15 @@ AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw de
 AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw publisher_role_arn | gh secret set AWS_ROLE_PUBLISHER
 gh workflow run oidc-smoke.yml
 ```
+
+## Gates / size
+
+`bootstrap/policy-size-check.sh` (invoked by `scripts/gates.sh` as the
+`policy-size` gate) renders a LocalStack plan of `bootstrap/` and checks
+every planned `aws_iam_policy`/`aws_iam_role_policy` document against AWS's
+size quotas. Every policy document must be plan-time known: reference other
+bootstrap resources' ARNs deterministically (e.g. via `data` sources or
+computed strings), not via `.arn` attributes of resources that only become
+known after apply. Run it directly with `bootstrap/policy-size-check.sh` (it always renders
+against the LocalStack target, no AWS credentials needed), or via
+`scripts/gates.sh` alongside the other gates.

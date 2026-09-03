@@ -1,3 +1,51 @@
+# --- Deterministic ARN locals (PR#2 Tier 3: plan-time-known policy
+# documents) ---
+#
+# Every data.aws_iam_policy_document below must resolve to a fully known
+# string on a fresh state so bootstrap/policy-size-check.sh can measure it
+# before any apply. References to created-resource attributes (bucket arn,
+# repo arn, policy arn, role arn) are replaced with strings built from
+# these data sources plus the deterministic names each resource is given
+# elsewhere in bootstrap/*.tf.
+data "aws_partition" "current" {}
+
+locals {
+  # Matches aws_s3_bucket.state (state.tf: bucket = "${var.name}-tfstate").
+  state_bucket_arn = "arn:${data.aws_partition.current.partition}:s3:::${var.name}-tfstate"
+
+  # Matches aws_ecr_repository.repos' for_each set (ecr.tf). Must stay in
+  # sync with that toset() if repos are added/removed there.
+  ecr_repo_names = toset([
+    "placeholder",
+    "orbit-api",
+    "orbit-worker",
+    "orbit-clickhouse",
+    "mirror/clickhouse",
+    "mirror/redis",
+  ])
+  ecr_repo_arns = [
+    for r in local.ecr_repo_names :
+    "arn:${data.aws_partition.current.partition}:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/${var.name}/${r}"
+  ]
+
+  # Matches aws_iam_policy.task_boundary (name = "${var.name}-task-boundary").
+  task_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name}-task-boundary"
+
+  # Matches aws_iam_role.{plan_reader,deployer,publisher} names below.
+  plan_reader_role_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.name}-plan-reader"
+  deployer_role_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.name}-deployer"
+  publisher_role_arn   = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.name}-publisher"
+
+  # Matches aws_kms_alias.signing (kms.tf: name = "alias/${var.name}-signing").
+  # The KMS key's own ARN is not deterministic (contains a generated key
+  # id), so the publisher's signing grant below is instead scoped to
+  # arn:<partition>:kms:<region>:<account>:key/* and narrowed with the
+  # kms:ResourceAliases condition key, which AWS documents as a supported
+  # condition key on KMS key resources
+  # (docs.aws.amazon.com/kms/latest/developerguide/policy-conditions.html).
+  kms_signing_alias = "alias/${var.name}-signing"
+}
+
 # --- Trust policies (WebIdentity from the GitHub OIDC provider) ---
 
 data "aws_iam_policy_document" "plan_reader_trust" {
@@ -126,8 +174,8 @@ data "aws_iam_policy_document" "plan_reader_deny" {
     effect  = "Deny"
     actions = ["s3:GetObject", "s3:GetObjectVersion"]
     not_resources = [
-      "${aws_s3_bucket.state.arn}/envs/preview/*",
-      "${aws_s3_bucket.state.arn}/bootstrap/*",
+      "${local.state_bucket_arn}/envs/preview/*",
+      "${local.state_bucket_arn}/bootstrap/*",
     ]
   }
 
@@ -135,7 +183,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
     sid           = "DenyListBucketOutsideScope"
     effect        = "Deny"
     actions       = ["s3:ListBucket"]
-    not_resources = [aws_s3_bucket.state.arn]
+    not_resources = [local.state_bucket_arn]
   }
 
   # ReadOnlyAccess's broad s3:ListBucket would otherwise let plan-reader
@@ -146,7 +194,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
     sid       = "DenyListBucketOutsideScopePrefix"
     effect    = "Deny"
     actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
-    resources = [aws_s3_bucket.state.arn]
+    resources = [local.state_bucket_arn]
 
     condition {
       test     = "StringNotLike"
@@ -159,7 +207,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
     sid       = "DenyListBucketMissingPrefix"
     effect    = "Deny"
     actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
-    resources = [aws_s3_bucket.state.arn]
+    resources = [local.state_bucket_arn]
 
     condition {
       test     = "Null"
@@ -204,7 +252,7 @@ data "aws_iam_policy_document" "plan_reader_state" {
     sid       = "ListStatePrefixes"
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.state.arn]
+    resources = [local.state_bucket_arn]
 
     condition {
       test     = "StringLike"
@@ -218,8 +266,8 @@ data "aws_iam_policy_document" "plan_reader_state" {
     effect  = "Allow"
     actions = ["s3:GetObject"]
     resources = [
-      "${aws_s3_bucket.state.arn}/envs/preview/*",
-      "${aws_s3_bucket.state.arn}/bootstrap/*",
+      "${local.state_bucket_arn}/envs/preview/*",
+      "${local.state_bucket_arn}/bootstrap/*",
     ]
   }
 }
@@ -258,7 +306,7 @@ data "aws_iam_policy_document" "task_boundary" {
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchCheckLayerAvailability",
     ]
-    resources = [for r in aws_ecr_repository.repos : r.arn]
+    resources = local.ecr_repo_arns
   }
 
   statement {
@@ -330,8 +378,8 @@ data "aws_iam_policy_document" "deployer_state" {
     effect  = "Allow"
     actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
     resources = [
-      "${aws_s3_bucket.state.arn}/envs/preview/*",
-      "${aws_s3_bucket.state.arn}/leases/*",
+      "${local.state_bucket_arn}/envs/preview/*",
+      "${local.state_bucket_arn}/leases/*",
     ]
   }
 
@@ -339,7 +387,7 @@ data "aws_iam_policy_document" "deployer_state" {
     sid       = "ListStateBucket"
     effect    = "Allow"
     actions   = ["s3:ListBucketVersions", "s3:ListBucket"]
-    resources = [aws_s3_bucket.state.arn]
+    resources = [local.state_bucket_arn]
 
     condition {
       test     = "StringLike"
@@ -528,6 +576,24 @@ data "aws_iam_policy_document" "deployer_ec2" {
       values   = [var.project_tag]
     }
   }
+
+  # T3: post-create tag updates (e.g. re-tagging an already-created
+  # resource, not tagging at create time), scoped by ec2:ResourceTag
+  # instead of the ec2:CreateAction condition on Ec2CreateTagsForCreateActions.
+  statement {
+    sid    = "Ec2CreateTagsForResourceTag"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateTags",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
 }
 
 
@@ -635,6 +701,21 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
     sid       = "ElbRemoveTags"
     effect    = "Allow"
     actions   = ["elasticloadbalancing:RemoveTags"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "elasticloadbalancing:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # T3: post-create tag updates, scoped by ResourceTag instead of the
+  # CreateAction condition on ElbAddTags.
+  statement {
+    sid       = "ElbAddTagsForResourceTag"
+    effect    = "Allow"
+    actions   = ["elasticloadbalancing:AddTags"]
     resources = ["*"]
 
     condition {
@@ -773,6 +854,10 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
       "servicediscovery:ListTagsForResource",
       "servicediscovery:ListNamespaces",
       "servicediscovery:ListServices",
+      # T2: GetOperation polls an operation ID, which is not taggable, so
+      # it cannot carry the aws:ResourceTag/Project condition the other
+      # actions below use; kept unconditioned here instead.
+      "servicediscovery:GetOperation",
     ]
     resources = ["*"]
   }
@@ -816,7 +901,6 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
       "servicediscovery:DeleteService",
       "servicediscovery:GetService",
       "servicediscovery:UpdateService",
-      "servicediscovery:GetOperation",
     ]
     resources = ["*"]
 
@@ -1120,6 +1204,10 @@ data "aws_iam_policy_document" "deployer_data" {
       "s3:DeleteObjectVersion",
       "s3:ListBucket",
       "s3:ListBucketVersions",
+      # T4: force_destroy on the data bucket needs to abort/enumerate any
+      # in-flight multipart uploads to complete.
+      "s3:ListBucketMultipartUploads",
+      "s3:AbortMultipartUpload",
     ]
     resources = [
       "arn:aws:s3:::${var.name}-*-data",
@@ -1153,7 +1241,7 @@ data "aws_iam_policy_document" "deployer_iam" {
     condition {
       test     = "StringEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.task_boundary.arn]
+      values   = [local.task_boundary_arn]
     }
   }
 
@@ -1170,7 +1258,7 @@ data "aws_iam_policy_document" "deployer_iam" {
     condition {
       test     = "StringEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.task_boundary.arn]
+      values   = [local.task_boundary_arn]
     }
 
     condition {
@@ -1189,7 +1277,7 @@ data "aws_iam_policy_document" "deployer_iam" {
     condition {
       test     = "StringEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.task_boundary.arn]
+      values   = [local.task_boundary_arn]
     }
   }
 
@@ -1202,7 +1290,7 @@ data "aws_iam_policy_document" "deployer_iam" {
     condition {
       test     = "StringEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.task_boundary.arn]
+      values   = [local.task_boundary_arn]
     }
   }
 
@@ -1293,7 +1381,7 @@ data "aws_iam_policy_document" "deployer_iam" {
     condition {
       test     = "StringNotEquals"
       variable = "iam:PermissionsBoundary"
-      values   = [aws_iam_policy.task_boundary.arn]
+      values   = [local.task_boundary_arn]
     }
   }
 
@@ -1350,9 +1438,9 @@ data "aws_iam_policy_document" "deployer_guard" {
       "iam:DeleteRolePermissionsBoundary",
     ]
     resources = [
-      aws_iam_role.deployer.arn,
-      aws_iam_role.plan_reader.arn,
-      aws_iam_role.publisher.arn,
+      local.deployer_role_arn,
+      local.plan_reader_role_arn,
+      local.publisher_role_arn,
     ]
   }
 }
@@ -1454,14 +1542,22 @@ data "aws_iam_policy_document" "publisher" {
       "ecr:DescribeRepositories",
       "ecr:ListImages",
     ]
-    resources = [for r in aws_ecr_repository.repos : r.arn]
+    resources = local.ecr_repo_arns
   }
 
   statement {
     sid       = "SigningKey"
     effect    = "Allow"
     actions   = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"]
-    resources = [aws_kms_key.signing.arn]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:${var.region}:${data.aws_caller_identity.current.account_id}:key/*"]
+
+    # kms:ResourceAliases is multivalued: AWS requires a ForAnyValue or
+    # ForAllValues set operator (KMS developer guide, conditions-kms).
+    condition {
+      test     = "ForAnyValue:StringEquals"
+      variable = "kms:ResourceAliases"
+      values   = [local.kms_signing_alias]
+    }
   }
 }
 

@@ -101,3 +101,18 @@ run "valid_plan" {
     error_message = "ALB ingress must be on port 80"
   }
 }
+
+run "api_env_key_reaches_api_task" {
+  command = plan
+
+  variables {
+    api_env = {
+      ORBIT_DEMO = "1"
+    }
+  }
+
+  assert {
+    condition     = contains(output.api_environment_keys, "ORBIT_DEMO")
+    error_message = "a supplied api_env key must appear in the merged api environment"
+  }
+}

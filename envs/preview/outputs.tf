@@ -72,3 +72,8 @@ output "api_url" {
   description = "HTTP URL for reaching the api service through the ALB"
   value       = "http://${aws_lb.this.dns_name}"
 }
+
+output "api_environment_keys" {
+  description = "Keys of the merged api service environment (var.api_env plus the fixed keys this root computes); used to assert that user-supplied api_env keys reach the api task"
+  value       = keys(local.api_env)
+}

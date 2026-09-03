@@ -84,6 +84,11 @@ make test         # terraform test, every module with a tests/ dir (also runs en
 scripts/gates.sh  # runs all four above (validate, lint, test, no-nat-gateway), PASS/FAIL summary; CI calls this from Phase 3 onward
 ```
 
+`scripts/gates.sh` also runs the `policy-size` gate: it renders a LocalStack
+plan of `bootstrap/` and requires every planned IAM policy document to be
+plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone
+with `bootstrap/policy-size-check.sh`.
+
 ## Toolchain
 
 Pinned tool versions and checksums: `tools.lock`.

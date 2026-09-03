@@ -41,6 +41,7 @@
 
 (expanded when the phase starts)
 - [ ] P4-x: ecs-service applies with wait_for_steady_state = false, so an apply exits 0 even if tasks never reach RUNNING; add a post-apply `aws ecs describe-services` steady-state check to the start-session runbook and session-apply.yml (Tier-1 P2 on PR #2)
+- [ ] P4-y: set `hostPort` equal to `containerPort` explicitly in the ecs-service port mapping so a post-apply plan is empty on LocalStack too (the emulator injects hostPort; Fargate requires equality anyway) (Tier-3 follow-up on PR #2)
 
 ## Phase 5 — Drift, sweeper, threat model, polish
 

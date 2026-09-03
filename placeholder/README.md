@@ -23,3 +23,13 @@ The client's resolved region is logged at startup as
 ```
 docker build --platform linux/arm64 -t placeholder:dev placeholder/
 ```
+
+For a LocalStack apply, build it under the tag `envs/preview`'s
+`api_image` default expects instead:
+
+```
+make placeholder-build
+```
+
+`make apply TARGET=localstack ...` refuses to run until `placeholder:local`
+exists.
