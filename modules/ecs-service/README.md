@@ -35,3 +35,5 @@ trailing hyphen), `cluster_arn`, `image`, `command` (default `null`),
 unknown until apply, and count/for_each need a plan-time-known value),
 `alb_target_group_arn` (optional), `log_retention_days` (default `7`),
 `health_check` (optional), `task_role_policy_json` (optional), `tags`.
+
+Input `region` (string, required): AWS region for the awslogs driver, passed explicitly because a data source inside a module that the caller attaches `depends_on` to is deferred to apply time and would replace the task definition on every plan.

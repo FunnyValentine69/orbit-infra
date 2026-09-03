@@ -77,6 +77,11 @@ variable "memory" {
   default     = 512
 }
 
+variable "region" {
+  description = "AWS region passed through to ecs-service for the awslogs driver"
+  type        = string
+}
+
 variable "tags" {
   description = "Default tags applied to all resources"
   type        = map(string)

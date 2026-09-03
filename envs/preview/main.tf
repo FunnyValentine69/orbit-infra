@@ -248,6 +248,7 @@ resource "aws_secretsmanager_secret_version" "clickhouse_password" {
 
 module "redis" {
   source = "../../modules/redis"
+  region = var.region
 
   providers = {
     aws = aws
@@ -272,6 +273,7 @@ module "redis" {
 
 module "clickhouse" {
   source = "../../modules/clickhouse"
+  region = var.region
 
   providers = {
     aws = aws
@@ -370,6 +372,7 @@ locals {
 
 module "api" {
   source = "../../modules/ecs-service"
+  region = var.region
 
   providers = {
     aws = aws
@@ -401,6 +404,7 @@ module "api" {
 
 module "worker" {
   source = "../../modules/ecs-service"
+  region = var.region
 
   providers = {
     aws = aws

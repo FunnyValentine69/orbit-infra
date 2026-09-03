@@ -1,5 +1,6 @@
 module "service" {
   source = "../ecs-service"
+  region = var.region
 
   providers = {
     aws = aws

@@ -18,3 +18,5 @@ mirror digest for real-AWS sessions), `subnet_ids`, `security_group_ids`,
 
 `discovery_dns_name` (`${name}.${namespace_name}`, null if
 `namespace_name` unset), `port` (`6379`), `service_name`.
+
+Input `region` (string, required): AWS region for the awslogs driver, passed explicitly because a data source inside a module that the caller attaches `depends_on` to is deferred to apply time and would replace the task definition on every plan.
