@@ -9,6 +9,7 @@
 - [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
 - [x] P0-3c: add `redis_image` and `clickhouse_image` passthrough variables so real-AWS sessions use the locked private-ECR mirror digests
+- [ ] P0-3e: Tier 3 overflow from PR #4 (CODE-ONLY until P0-3b): session-apply cleanup step runs on cancelled() as well as failure() once the lease is acquired; mirror-images scans each mirror before signing/attesting; close-env inspects delete-task-definitions response failures for the requested ARN; the runner-CIDR check runs in the same job as the apply
 - [ ] P0-3d: real-AWS promotion gate: apply bootstrap only, OIDC smoke, then per-principal positive/negative API matrix across the ten policy documents including the task boundary as a cap, before any preview apply (CODE-ONLY until then)
 
 ## Phase 1 — Repo docs + save-file
@@ -47,9 +48,13 @@
 - [x] P3-4: scripts/lease.sh (CAS lease on S3 ETag, ADR 0006) + scripts/close-env.sh (stage 1 of close) + session-apply.yml/session-destroy.yml (main-only, runner-CIDR check, lease open, plan/apply, negative ingress test) + Makefile lease-list/lease-get/close targets; live-verified on LocalStack (open/transition/CAS-race/list, full apply->close cycle)
 - [x] P3-5: SNS alerts topic (optional email subscription via var.alert_email) + UnHealthyHostCount and HTTPCode_Target_5XX_Count CloudWatch alarms on the ALB target group; SLO documented in ARCHITECTURE.md; live-verified on LocalStack (alarms created, not evaluated)
 
-## Phase 4 — Parallel environments + runbooks
+## Phase 4 — Parallel environments + runbooks (Option A, 2026-09-03)
 
-(expanded when the phase starts)
+- [ ] P4-0: land P0-3e overflow fixes (Codex)
+- [ ] P4-4: `target=localstack` mode for session-apply.yml and session-destroy.yml: LocalStack started on the runner (setup-localstack + LOCALSTACK_AUTH_TOKEN, owner-only), bootstrap applied on LocalStack in-job, placeholder built in-job, `public` mode images, no AWS role assumption, same lease/acceptance/close path; makes the session workflows LOCALSTACK-VERIFIED in CI
+- [ ] P4-1: repeatable concurrency script `tests/localstack-concurrency.sh` (two environments apply/close concurrently, independent state and leases) run locally and from the LocalStack CI mode
+- [ ] P4-2: three-dispatch ordering test `tests/dispatch-ordering.sh` (gh CLI: apply running, destroy queued, third dispatch refused on the closing lease) executed against the LocalStack CI mode; PR plan comment gains the exact post-merge dispatch line
+- [ ] P4-3: RUNBOOKS sections: start-session, end-session, stuck-environment force-destroy (ENI orphans, non-empty bucket, cleanup_failed with retained state), re-signing an already-signed digest, operator CIDR change, rotate secrets, image bump; each executed once on the LocalStack mode
 - [x] P4-x: session-apply waits for every enabled ECS service and requires one completed deployment whose task definition matches the applied Terraform output; operator positive checks and the runner-only negative check are documented in RUNBOOKS.md
 - [x] P4-y: set Fargate `awsvpc` `hostPort` equal to `containerPort`; done because ECS requires equality and the prior plan-drift allowance masked that contract
 
