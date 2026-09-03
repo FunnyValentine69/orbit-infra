@@ -132,8 +132,9 @@ verification through the exported public key; no private-ECR reference is
 sent to Rekor. Private upstream images are built locally, never in hosted CI,
 from a `git archive` of the pinned, verified upstream commit — never a working
 tree. Each private upstream image gets a syft SBOM artifact and a fail-closed
-Trivy scan; the placeholder and mirror images get their separately configured
-Trivy scans. See ADR 0007.
+Trivy scan; the placeholder and mirror images get their own Trivy scans in
+mirror-images.yml, and every scan blocks on CRITICAL/HIGH findings
+(`exit-code: 1`); they differ only in severity set and ignore-unfixed. See ADR 0007.
 
 `scripts/build-upstream.sh` implements the local build side: it asserts
 the local upstream clone's origin, HEAD, and working-tree cleanliness

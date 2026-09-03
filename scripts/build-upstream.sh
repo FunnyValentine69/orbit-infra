@@ -8,6 +8,10 @@
 # in hosted CI: the archive step needs a private, pre-authenticated local
 # clone of the upstream repo.
 #
+# The archive's sha256 is the build-input hash; when upstream.lock already
+# records one, a mismatch refuses the build (the lock and the archive must
+# describe the same input).
+#
 # Required env:
 #   UPSTREAM_DIR    path to a local clone of the upstream repo
 # Optional env:

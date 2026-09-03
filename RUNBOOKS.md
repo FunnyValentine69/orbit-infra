@@ -136,7 +136,7 @@ resources were removed out-of-band): move it into stage 1 so the sweeper can
 verify the manifest and finish it:
 
 ```
-TARGET=aws scripts/lease.sh transition <id> open closing
+TARGET=aws scripts/lease.sh begin-cleanup <id>   # the only entry into closing; counts against the three-attempt budget
 ```
 
 **Manual, targeted recovery** when the verifier reports `live` or

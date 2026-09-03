@@ -6,6 +6,13 @@ Run the cleanup regression suite without AWS or LocalStack:
 bash tests/cleanup-verifier.sh
 ```
 
+Fixture provenance: a fixture with `recorded_from` was captured from a real
+backend (currently LocalStack 2026.8.1 for the task-definition allowance); a
+fixture marked `authored` was hand-written from AWS API documentation and must
+be replaced by a recorded response once that backend is available. Never
+adjust an `authored` fixture to make a predicate pass; record the real
+response instead.
+
 Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
 and exact API `rc`/`stdout`/`stderr` responses. The production predicate layer
 consumes the same response shape for recorded and live probes. The suite covers

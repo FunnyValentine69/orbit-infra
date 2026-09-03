@@ -65,8 +65,11 @@ bootstrap step; CI never uses static keys.
   to `resources = ["*"]` only where it documents none (EC2 VPC/subnet/
   route-table/IGW/endpoint/SG lifecycle, ELBv2 create/register/tag
   calls, ECS `RegisterTaskDefinition`/`CreateService` plus close-time
-  `ListServices`/`ListTasks`, Cloud Map namespace/service, and the
-  close-time full-inventory read `tag:GetResources`). An explicit `Deny`
+  `ListServices`, Cloud Map namespace/service, and the
+  close-time full-inventory read `tag:GetResources`). Close-time
+  `ecs:ListTasks` and `ecs:DescribeTasks` are the exception among the
+  ECS reads: they carry an `ecs:cluster` ARN condition restricting them to
+  project clusters (statement `EcsListDescribeTasksForProjectClusters`). An explicit `Deny`
   statement caps the name-substring-scoped IAM grants so the deployer can
   never mutate or pass its own role, `plan-reader`, or `publisher`
   (TODO.md P2-7).

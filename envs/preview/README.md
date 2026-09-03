@@ -13,6 +13,7 @@ services, clickhouse, redis, S3 data bucket.
   on port 80 (ADR 0004). Never commit a real value — the Makefile
   resolves it via `checkip.amazonaws.com`, or set `OPERATOR_CIDR` in the
   environment.
+- `alert_email` — optional, sensitive; when set (must be a single valid address) it subscribes to the alerts SNS topic. Never commit a literal value.
 - `project_tag` — authoritative `Project` tag (default `orbit-infra`),
   matching the bootstrap deployer-policy condition even when callers
   replace `tags` with their own map.

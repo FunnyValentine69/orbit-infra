@@ -66,7 +66,11 @@ if [ -n "${AWS_PROFILE+x}" ]; then
 else
   echo "profile-unset" > "$AWS_TIMEOUT_ENV_LOG"
 fi
-sleep 60
+# A grandchild that outlives a single-pid kill; the wrapper must reap the
+# whole process group.
+sleep 60 &
+echo $! > "$AWS_TIMEOUT_CHILD_PID_FILE"
+wait
 EOF
 chmod +x "$tmp_dir/timeout-bin/aws"
 timeout_stdout="$tmp_dir/timeout.stdout"
@@ -76,6 +80,7 @@ set +e
 AWS_PROFILE=must-not-propagate \
 AWS_TIMEOUT_ENV_LOG="$apply_log" \
 AWS_TIMEOUT_ARGS_LOG="$args_log" \
+AWS_TIMEOUT_CHILD_PID_FILE="$tmp_dir/timeout-child.pid" \
 AWS_CLI_BIN="$tmp_dir/timeout-bin/aws" \
 AWS_OUTER_TIMEOUT_SECONDS=1 \
 TARGET=localstack \
@@ -98,6 +103,14 @@ printf '%s\n' "$timeout_record" > "$tmp_dir/timeout-record.json"
 timeout_result="$($VERIFIER verify-recorded "$tmp_dir/timeout-record.json")"
 assert_jq "$timeout_result" '.results[0].outcome == "indeterminate" and .results[0].reason == "aws-timeout"' \
   "a timed-out exact probe must be indeterminate"
+sleep 1
+grandchild_pid="$(cat "$tmp_dir/timeout-child.pid")"
+if kill -0 "$grandchild_pid" 2>/dev/null; then
+  kill "$grandchild_pid" 2>/dev/null || true
+  echo "FAIL: the outer timeout must kill the whole process group (grandchild $grandchild_pid survived)" >&2
+  exit 1
+fi
+pass "the outer timeout reaps the CLI's process group, not just its pid"
 if [ "$timeout_rc" -ne 124 ] || [ "$elapsed" -ge 30 ] || [ "$(cat "$apply_log")" != "profile-unset" ] || \
    ! grep -Fq -- '--endpoint-url http://localhost:4566' "$args_log" || \
    ! grep -Fq -- '--cli-connect-timeout 5' "$args_log" || \
@@ -148,6 +161,10 @@ done
 store="$FAKE_S3_DIR/${key//\//_}"
 etag_file="$store.etag"
 if [ "$service $operation" = "s3api get-object" ]; then
+  if [ "${FAKE_S3_FAIL:-0}" = 1 ]; then
+    echo "An error occurred (ServiceUnavailable) when calling the GetObject operation: simulated outage" >&2
+    exit 254
+  fi
   if [ ! -f "$store" ]; then
     echo "An error occurred (NoSuchKey)" >&2
     exit 254
@@ -285,5 +302,18 @@ if [ "$(env "${lease_env[@]}" "$LEASE" get cas-race | jq -r '.status')" != open 
   exit 1
 fi
 pass "a lost compare-and-swap race exits 3 without mutating the lease"
+
+# A lease READ error must abort the close (never "no lease; nothing to close").
+set +e
+read_err_out="$(env "${lease_env[@]}" FAKE_S3_FAIL=1 \
+  PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  "$REPO_ROOT/scripts/close-env.sh" read-error-case 2>&1)"
+read_err_rc=$?
+set -e
+if [ "$read_err_rc" -eq 0 ] || ! grep -q 'could not read the lease' <<< "$read_err_out"; then
+  echo "FAIL: a lease read error must abort the close with a non-zero exit (rc=$read_err_rc: $read_err_out)" >&2
+  exit 1
+fi
+pass "a lease read error aborts the close instead of reporting nothing to close"
 
 echo "PASS: cleanup verifier suite ($pass_count cases)"

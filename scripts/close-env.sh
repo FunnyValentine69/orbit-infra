@@ -257,9 +257,21 @@ collect_tag_inventory() {
 echo "== close-env.sh: env_id=$ENV_ID target=$TARGET =="
 current_status=""
 existing_manifest='{}'
-if lease_json="$("$LEASE_SH" get "$ENV_ID" 2>/dev/null)"; then
+lease_get_err="$tmp_dir/lease-get.err"
+set +e
+lease_json="$("$LEASE_SH" get "$ENV_ID" 2>"$lease_get_err")"
+lease_get_rc=$?
+set -e
+if [ "$lease_get_rc" -eq 0 ]; then
   current_status="$(jq -r '.status' <<< "$lease_json")"
   existing_manifest="$(jq -c '.manifest // {}' <<< "$lease_json")"
+elif [ "$lease_get_rc" -eq 1 ] && grep -q 'no lease for' "$lease_get_err"; then
+  current_status=""
+else
+  # A read error (network, throttling, IAM) must never look like "nothing to
+  # close": exit non-zero without touching the lease.
+  echo "close-env.sh: could not read the lease for $ENV_ID (rc=$lease_get_rc): $(cat "$lease_get_err")" >&2
+  exit 2
 fi
 case "$current_status" in
   closed) echo "lease already closed; nothing to do"; exit 0 ;;
