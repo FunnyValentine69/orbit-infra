@@ -97,9 +97,11 @@ display title contains that note, event is `workflow_dispatch`, and head branch
 equals `REF`. Both targets require three queue polls with the first apply
 in-progress and the second held (`pending`, GitHub's status for a run blocked
 by its concurrency group, or `queued`), then observe the destroy held behind it.
-After all runs are terminal, the test requires first-apply `updated_at` <=
-second-apply `run_started_at` and second-apply `updated_at` <= destroy
-`run_started_at`.
+After all runs are terminal, the test requires the first apply's latest job
+`completed_at` <= the second apply's earliest job `started_at`, and the second
+apply's latest job `completed_at` <= the destroy's earliest job `started_at`.
+Job timestamps are used because GitHub stamps a run's `run_started_at` when
+it accepts the dispatch, before the concurrency group releases the run.
 
 For LocalStack, both applies must conclude `success`; destroy must conclude
 `failure` in `validate-input` with the exact `target=localstack` refusal. For

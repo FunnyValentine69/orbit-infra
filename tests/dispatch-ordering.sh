@@ -272,10 +272,20 @@ read_run_metadata() {
   local run_id="$1"
   local label="$2"
   local output_file="$3"
-  gh api "repos/$REPO/actions/runs/$run_id" \
-    --jq '{id:.id,workflow:.name,event:.event,head_branch:.head_branch,display_title:.display_title,conclusion:.conclusion,run_started_at:.run_started_at,updated_at:.updated_at}' \
-    > "$output_file" \
+  # run_started_at is stamped when GitHub accepts the dispatch, before the
+  # concurrency group releases the run (observed live 2026-09-03: a held run
+  # carried run_started_at 13:05:17 while its first job started 13:14:29), so
+  # ordering is derived from job timestamps: the earliest job start and the
+  # latest job completion.
+  local run_json jobs_json
+  run_json="$(gh api "repos/$REPO/actions/runs/$run_id" \
+    --jq '{id:.id,workflow:.name,event:.event,head_branch:.head_branch,display_title:.display_title,conclusion:.conclusion,run_started_at:.run_started_at,updated_at:.updated_at}')" \
     || fail "could not read run metadata for $label run $run_id"
+  jobs_json="$(gh api "repos/$REPO/actions/runs/$run_id/jobs" \
+    --jq '{jobs_started_at: ([.jobs[].started_at | select(type == "string")] | min), jobs_completed_at: ([.jobs[].completed_at | select(type == "string")] | max)}')" \
+    || fail "could not read job metadata for $label run $run_id"
+  jq -s '.[0] + .[1]' <(printf '%s\n' "$run_json") <(printf '%s\n' "$jobs_json") > "$output_file" \
+    || fail "could not merge run and job metadata for $label run $run_id"
   jq -e --argjson run_id "$run_id" \
     '.id == $run_id
      and .event == "workflow_dispatch"
@@ -283,7 +293,9 @@ read_run_metadata() {
      and (.display_title | type == "string")
      and (.conclusion | type == "string")
      and (.run_started_at | type == "string")
-     and (.updated_at | type == "string")' \
+     and (.updated_at | type == "string")
+     and (.jobs_started_at | type == "string")
+     and (.jobs_completed_at | type == "string")' \
     "$output_file" >/dev/null \
     || fail "$label run $run_id returned incomplete terminal metadata"
 }
@@ -293,8 +305,8 @@ assert_terminal_before_start() {
   local later_file="$2"
   local label="$3"
   local terminal_at started_at
-  terminal_at="$(jq -r '.updated_at' "$earlier_file")"
-  started_at="$(jq -r '.run_started_at' "$later_file")"
+  terminal_at="$(jq -r '.jobs_completed_at' "$earlier_file")"
+  started_at="$(jq -r '.jobs_started_at' "$later_file")"
   jq -en --arg terminal "$terminal_at" --arg started "$started_at" \
     '$terminal <= $started' >/dev/null \
     || fail "$label violated: terminal=$terminal_at later_start=$started_at"
@@ -315,8 +327,8 @@ verify_aws_final_cleanup() {
   local destroy_file="$2"
   local second_terminal destroy_started destroy_run_id destroy_conclusion
   local lease_json lease_rc lease_status
-  second_terminal="$(jq -r '.updated_at' "$second_file")"
-  destroy_started="$(jq -r '.run_started_at' "$destroy_file")"
+  second_terminal="$(jq -r '.jobs_completed_at' "$second_file")"
+  destroy_started="$(jq -r '.jobs_started_at' "$destroy_file")"
   destroy_run_id="$(jq -r '.id' "$destroy_file")"
   destroy_conclusion="$(jq -r '.conclusion' "$destroy_file")"
 
@@ -352,8 +364,8 @@ verify_aws_final_cleanup() {
 }
 
 print_ordered_runs() {
-  jq -sr 'sort_by(.run_started_at) | to_entries[] |
-    "order=\(.key + 1) run_id=\(.value.id) workflow=\(.value.workflow) conclusion=\(.value.conclusion) run_started_at=\(.value.run_started_at) updated_at=\(.value.updated_at)"' \
+  jq -sr 'sort_by(.jobs_started_at) | to_entries[] |
+    "order=\(.key + 1) run_id=\(.value.id) workflow=\(.value.workflow) conclusion=\(.value.conclusion) jobs_started_at=\(.value.jobs_started_at) jobs_completed_at=\(.value.jobs_completed_at)"' \
     "$tmp_dir/first-apply.json" "$tmp_dir/second-apply.json" "$tmp_dir/destroy.json"
 }
 
