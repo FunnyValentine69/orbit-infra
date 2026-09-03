@@ -37,6 +37,11 @@ variable "name" {
   description = "Project/resource name prefix"
   type        = string
   default     = "orbit-infra-79s5rw"
+
+  validation {
+    condition     = length(var.name) <= 18
+    error_message = "name must be at most 18 characters so that name and a 12-character env_id fit the 32-character IAM role prefix the deployer policy matches on"
+  }
 }
 
 variable "env_id" {

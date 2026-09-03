@@ -83,6 +83,16 @@ run "env_id_trailing_hyphen_rejected" {
   expect_failures = [var.env_id]
 }
 
+run "name_too_long_rejected" {
+  command = plan
+
+  variables {
+    name = "this-name-is-19-chr"
+  }
+
+  expect_failures = [var.name]
+}
+
 run "valid_plan" {
   command = plan
 

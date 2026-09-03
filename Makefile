@@ -5,7 +5,8 @@ TARGET ?= aws
 AWS_PROFILE ?= orbit
 AWS_REGION ?= us-east-1
 
-export TARGET ENV_ID OPERATOR_CIDR AWS_PROFILE AWS_REGION
+PREVIEW_ROOT ?= envs/preview
+export TARGET ENV_ID OPERATOR_CIDR AWS_PROFILE AWS_REGION PREVIEW_ROOT
 
 check-target:
 	@case "$$TARGET" in \
@@ -87,34 +88,44 @@ check-env-id:
 	@if [ -z "$$ENV_ID" ]; then echo "ENV_ID is required, e.g. make plan TARGET=localstack ENV_ID=dev" >&2; exit 1; fi
 	@printf '%s' "$$ENV_ID" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$$' || { echo "ENV_ID must match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$$, got: $$ENV_ID" >&2; exit 1; }
 
+# Terraform loads every *_override.tf file in a directory, so concurrent
+# LocalStack runs cannot be isolated by filename alone. Each ENV_ID gets
+# its own rsync'd copy of envs/preview (same relative depth, so
+# ../../modules/... module sources still resolve) under
+# .preview-runs/<ENV_ID>/, with the override rendered inside that
+# copy. PREVIEW_ROOT points there and is exported so Phase 3's
+# scripts/close-env.sh and scripts/lease.sh can target the same run
+# directory. rsync runs without --delete so LocalStack state
+# (terraform.localstack.<ENV_ID>.tfstate, kept relative by
+# localstack.backend_override.tf.example) persists across runs sharing
+# an ENV_ID.
 render-localstack-backend:
-	awk -v id="$$ENV_ID" '{ gsub(/ENV_ID_PLACEHOLDER/, id); print }' envs/preview/localstack.backend_override.tf.example > envs/preview/backend_override.tf
+	mkdir -p "$$PREVIEW_ROOT"
+	rsync -a --exclude '.terraform*' --exclude 'backend_override.tf' --exclude '*.tfstate*' envs/preview/ "$$PREVIEW_ROOT/"
+	awk -v id="$$ENV_ID" '{ gsub(/ENV_ID_PLACEHOLDER/, id); print }' envs/preview/localstack.backend_override.tf.example > "$$PREVIEW_ROOT/backend_override.tf"
 
-# Per-ENV_ID TF_DATA_DIR keeps concurrent LocalStack environments'
-# plugin/provider caches isolated; backend_override.tf is rendered and
-# removed within the same subshell so it never persists past this command.
 plan:
 	( \
-		trap 'rm -f envs/preview/backend_override.tf' EXIT; \
-		$(MAKE) render-localstack-backend; \
-		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview init -reconfigure -input=false && \
-		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"; \
+		export PREVIEW_ROOT=".preview-runs/$$ENV_ID"; \
+		$(MAKE) render-localstack-backend && \
+		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
+		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" plan -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR"; \
 	)
 
 apply: check-placeholder-image
 	( \
-		trap 'rm -f envs/preview/backend_override.tf' EXIT; \
-		$(MAKE) render-localstack-backend; \
-		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview init -reconfigure -input=false && \
-		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve; \
+		export PREVIEW_ROOT=".preview-runs/$$ENV_ID"; \
+		$(MAKE) render-localstack-backend && \
+		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
+		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" apply -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve; \
 	)
 
 destroy:
 	( \
-		trap 'rm -f envs/preview/backend_override.tf' EXIT; \
-		$(MAKE) render-localstack-backend; \
-		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview init -reconfigure -input=false && \
-		TF_DATA_DIR=.terraform-localstack-$$ENV_ID terraform -chdir=envs/preview destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve; \
+		export PREVIEW_ROOT=".preview-runs/$$ENV_ID"; \
+		$(MAKE) render-localstack-backend && \
+		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" init -reconfigure -input=false && \
+		TF_DATA_DIR=.terraform-localstack terraform -chdir="$$PREVIEW_ROOT" destroy -var "target=$$TARGET" -var "env_id=$$ENV_ID" -var "operator_cidr=$$OPERATOR_CIDR" -auto-approve; \
 	)
 else
 plan apply destroy: check-target check-env-id check-operator-cidr
@@ -165,10 +176,12 @@ test:
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \
 			( \
-				trap 'rm -f "$${d}backend_override.tf"' EXIT; \
-				sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$${d}backend_override.tf"; \
-				TF_DATA_DIR=.terraform-localstack-tftest terraform -chdir="$$d" init -reconfigure -input=false >/dev/null && \
-				TF_DATA_DIR=.terraform-localstack-tftest terraform -chdir="$$d" test; \
+				run_dir=".preview-runs/tftest-$$(basename "$${d%/}")"; \
+				mkdir -p "$$run_dir"; \
+				rsync -a --exclude '.terraform*' --exclude 'backend_override.tf' --exclude '*.tfstate*' "$$d" "$$run_dir/"; \
+				sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$$run_dir/backend_override.tf"; \
+				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" init -reconfigure -input=false >/dev/null && \
+				TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" test; \
 			) || exit $$?; \
 		fi; \
 	done

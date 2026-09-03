@@ -13,6 +13,7 @@ envs/preview/.terraform-localstack/
 envs/preview/.terraform-localstack-*/
 envs/preview/terraform.localstack.tfstate*
 envs/preview/terraform.localstack.*.tfstate*
+.preview-runs/
 envs/preview/backend.aws.hcl
 envs/**/.terraform/
 **/terraform.tfstate*

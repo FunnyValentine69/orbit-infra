@@ -940,6 +940,24 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
     }
   }
 
+  # Post-create tag updates on an already-tagged namespace/service:
+  # servicediscovery:TagResource's own row lists no ResourceTag key
+  # (iam-condition-keys.md Cloud Map section), but the generic
+  # aws:ResourceTag/Project key documented on the namespace/service
+  # resource types applies to the resource being retagged.
+  statement {
+    sid       = "ServiceDiscoveryTagResourceExisting"
+    effect    = "Allow"
+    actions   = ["servicediscovery:TagResource"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
   # UntagResource: the table shows no aws:ResourceTag/aws:RequestTag
   # scoping key documented for this action; kept unconditioned.
   statement {
@@ -1020,6 +1038,24 @@ data "aws_iam_policy_document" "deployer_data" {
     }
   }
 
+  # Post-create tag updates on an already-tagged log group; logs:TagResource
+  # also supports aws:ResourceTag/Project (iam-condition-keys.md CloudWatch
+  # Logs section).
+  statement {
+    sid    = "LogsTagResourceExisting"
+    effect = "Allow"
+    actions = [
+      "logs:TagResource",
+    ]
+    resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/orbit/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
   statement {
     sid    = "LogsModifyDeleteWithResourceTag"
     effect = "Allow"
@@ -1051,6 +1087,24 @@ data "aws_iam_policy_document" "deployer_data" {
     condition {
       test     = "StringEquals"
       variable = "aws:RequestTag/Project"
+      values   = [var.project_tag]
+    }
+  }
+
+  # Post-create tag updates on an already-tagged secret; secretsmanager:TagResource
+  # also supports aws:ResourceTag/Project (iam-condition-keys.md Secrets
+  # Manager section).
+  statement {
+    sid    = "ClickhouseSecretTagResourceExisting"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:TagResource",
+    ]
+    resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name}-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
       values   = [var.project_tag]
     }
   }
@@ -1107,8 +1161,6 @@ data "aws_iam_policy_document" "deployer_data" {
       "sns:ListTagsForResource",
       "sns:UntagResource",
       "sns:Subscribe",
-      "sns:Unsubscribe",
-      "sns:GetSubscriptionAttributes",
       "sns:ListSubscriptionsByTopic",
     ]
     resources = ["arn:aws:sns:${var.region}:${data.aws_caller_identity.current.account_id}:${var.name}-*"]
@@ -1118,6 +1170,21 @@ data "aws_iam_policy_document" "deployer_data" {
       variable = "aws:ResourceTag/Project"
       values   = [var.project_tag]
     }
+  }
+
+  # Subscriptions are a distinct, untaggable SNS resource (subscription
+  # ARN, not the topic ARN) — no aws:ResourceTag/Project condition
+  # applies to them, so their actions get their own unconditioned
+  # statement scoped to the subscription ARN pattern instead.
+  statement {
+    sid    = "SnsSubscriptionManage"
+    effect = "Allow"
+    actions = [
+      "sns:GetSubscriptionAttributes",
+      "sns:Unsubscribe",
+      "sns:SetSubscriptionAttributes",
+    ]
+    resources = ["arn:aws:sns:${var.region}:${data.aws_caller_identity.current.account_id}:${var.name}-*:*"]
   }
 
   # --- Phase 3: CloudWatch alarms, project-scoped. ---
