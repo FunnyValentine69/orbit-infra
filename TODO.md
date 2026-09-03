@@ -67,3 +67,4 @@
 ## End-of-project decisions (user, low priority)
 - [ ] Rewrite or keep the institutional author email on the first 20 commits of main
 - [ ] Delete the superseded remote branch feat/phase2-modules
+- [ ] Delete the superseded remote branch feat/phase3-ci (PR #3 closed as stale; PR #4 is the real one)
