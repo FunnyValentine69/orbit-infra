@@ -6,7 +6,9 @@
         "resource_type": "ec2:security-group-rule",
         "id": "sgr-gone",
         "arn": "arn:aws:ec2:test-region:placeholder:security-group-rule/sgr-gone",
-        "sources": ["tag"]
+        "sources": [
+          "tag"
+        ]
       },
       "response": {
         "rc": 254,
@@ -19,22 +21,33 @@
         "resource_type": "future:widget",
         "id": "widget-one",
         "arn": "arn:aws:future:test-region:placeholder:widget/widget-one",
-        "sources": ["tag"]
+        "sources": [
+          "tag"
+        ]
       },
-      "response": { "rc": 0, "stdout": {}, "stderr": "" }
+      "response": {
+        "rc": 0,
+        "stdout": {},
+        "stderr": ""
+      }
     },
     {
       "candidate": {
         "resource_type": "ec2:vpc-endpoint",
         "id": "vpce-deleted",
         "arn": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-deleted",
-        "sources": ["tag"]
+        "sources": [
+          "tag"
+        ]
       },
       "response": {
         "rc": 0,
         "stdout": {
           "VpcEndpoints": [
-            { "VpcEndpointId": "vpce-deleted", "State": "deleted" }
+            {
+              "VpcEndpointId": "vpce-deleted",
+              "State": "deleted"
+            }
           ]
         },
         "stderr": ""
@@ -45,13 +58,18 @@
         "resource_type": "ec2:vpc-endpoint",
         "id": "vpce-deleting",
         "arn": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-deleting",
-        "sources": ["tag"]
+        "sources": [
+          "tag"
+        ]
       },
       "response": {
         "rc": 0,
         "stdout": {
           "VpcEndpoints": [
-            { "VpcEndpointId": "vpce-deleting", "State": "deleting" }
+            {
+              "VpcEndpointId": "vpce-deleting",
+              "State": "deleting"
+            }
           ]
         },
         "stderr": ""
@@ -62,13 +80,18 @@
         "resource_type": "ec2:vpc-endpoint",
         "id": "vpce-live",
         "arn": "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-live",
-        "sources": ["tag"]
+        "sources": [
+          "tag"
+        ]
       },
       "response": {
         "rc": 0,
         "stdout": {
           "VpcEndpoints": [
-            { "VpcEndpointId": "vpce-live", "State": "available" }
+            {
+              "VpcEndpointId": "vpce-live",
+              "State": "available"
+            }
           ]
         },
         "stderr": ""
@@ -79,8 +102,12 @@
         "resource_type": "ecs:cluster",
         "id": "arn:aws:ecs:test-region:placeholder:cluster/cluster-stale",
         "arn": "arn:aws:ecs:test-region:placeholder:cluster/cluster-stale",
-        "sources": ["manifest"],
-        "discovery_evidence": { "list_clusters_returned": true }
+        "sources": [
+          "manifest"
+        ],
+        "discovery_evidence": {
+          "list_clusters_returned": true
+        }
       },
       "response": {
         "rc": 0,
@@ -96,5 +123,6 @@
         "stderr": ""
       }
     }
-  ]
+  ],
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
 }

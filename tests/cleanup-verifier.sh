@@ -154,6 +154,11 @@ if [ "$service $operation" = "s3api get-object" ]; then
   fi
   cp "$store" "$destination"
   printf '{"ETag":"%s"}\n' "$(cat "$etag_file")"
+  # FAKE_S3_RACE=1 simulates a concurrent writer landing right after this
+  # read: the ETag handed to the caller is already stale.
+  if [ "${FAKE_S3_RACE:-0}" = 1 ]; then
+    printf '%s\n' "$(( $(cat "$etag_file") + 1 ))" > "$etag_file"
+  fi
   exit 0
 fi
 if [ "$service $operation" = "s3api put-object" ]; then
@@ -239,7 +244,7 @@ esac
 EOF
 chmod +x "$tmp_dir/fake-bin/terraform"
 mkdir -p "$tmp_dir/preview"
-state_marker="$tmp_dir/state-retained.marker"
+state_marker="$tmp_dir/preview/terraform.localstack.close-case.tfstate.retained"
 touch "$state_marker"
 env "${lease_env[@]}" "$LEASE" open close-case >/dev/null
 env "${lease_env[@]}" \
@@ -251,7 +256,7 @@ env "${lease_env[@]}" \
   "$REPO_ROOT/scripts/close-env.sh" close-case >/dev/null
 closed_lease="$(env "${lease_env[@]}" "$LEASE" get close-case)"
 close_expected="$(jq -c '.expected' "$FIXTURES/close-expected.json")"
-close_actual="$(jq -c '{status,error,cleanup_attempt,live:.manifest.verification_runs[-1].summary.live,indeterminate:.manifest.verification_runs[-1].summary.indeterminate}' <<< "$closed_lease")"
+close_actual="$(jq -c '{status,error,cleanup_attempt,live:.manifest.verification_runs[-1].summary.live,indeterminate:.manifest.verification_runs[-1].summary.indeterminate,pending:.manifest.verification_runs[-1].summary.pending}' <<< "$closed_lease")"
 if [ "$close_actual" != "$close_expected" ]; then
   echo "FAIL: successful end-to-end stage 1 must retain closing" >&2
   echo "actual:   $close_actual" >&2
@@ -263,5 +268,22 @@ if [ ! -f "$state_marker" ]; then
   exit 1
 fi
 pass "end-to-end close retains state and leaves the lease closing, never closed"
+
+# CAS race: a second writer bumps the object's ETag between read and write;
+# the stale writer must lose loudly (exit 3), never overwrite.
+env "${lease_env[@]}" "$LEASE" open cas-race >/dev/null
+set +e
+race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup cas-race 2>&1)"
+race_rc=$?
+set -e
+if [ "$race_rc" -ne 3 ] || ! grep -q 'lost the CAS race' <<< "$race_out"; then
+  echo "FAIL: a lost compare-and-swap must exit 3 and say so (rc=$race_rc: $race_out)" >&2
+  exit 1
+fi
+if [ "$(env "${lease_env[@]}" "$LEASE" get cas-race | jq -r '.status')" != open ]; then
+  echo "FAIL: the losing writer must not have changed the lease" >&2
+  exit 1
+fi
+pass "a lost compare-and-swap race exits 3 without mutating the lease"
 
 echo "PASS: cleanup verifier suite ($pass_count cases)"

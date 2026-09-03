@@ -85,6 +85,8 @@ Cleanup and lease scripts pass that endpoint to every AWS CLI invocation;
 the AWS branch rejects a LocalStack endpoint. Their shared wrapper also sets
 five-second connect and 20-second read limits plus a 30-second outer timeout.
 
+Image overrides: set `TF_VAR_api_image`, `TF_VAR_redis_image`, or `TF_VAR_clickhouse_image` in the environment before `make plan/apply`; an `api_image` override also skips the `placeholder:local` build check. On `target=aws` every image must be a digest-pinned private-ECR reference (validated at plan time).
+
 ## Lease lifecycle
 
 Every environment has a durable lease at `leases/<ENV_ID>.json` in the

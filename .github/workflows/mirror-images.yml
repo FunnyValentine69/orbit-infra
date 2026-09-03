@@ -278,7 +278,7 @@ jobs:
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}
           severity: CRITICAL,HIGH
-          exit-code: '0'
+          exit-code: '1'
 
       - name: Mirror clickhouse/clickhouse-server:24.3-alpine
         id: mirror-clickhouse
@@ -359,7 +359,7 @@ jobs:
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}
           severity: CRITICAL,HIGH
-          exit-code: '0'
+          exit-code: '1'
 
       - name: Step summary
         if: always()

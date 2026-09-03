@@ -6,9 +6,12 @@
         {
           "address": "module.network.aws_vpc.this",
           "type": "aws_vpc",
-          "values": { "id": "vpc-close" }
+          "values": {
+            "id": "vpc-close"
+          }
         }
       ]
     }
-  }
+  },
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
 }

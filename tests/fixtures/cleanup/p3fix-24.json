@@ -109,35 +109,60 @@
     "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-one": {
       "rc": 0,
       "stdout": {
-        "VpcEndpoints": [{ "VpcEndpointId": "vpce-one", "State": "deleted" }]
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-one",
+            "State": "deleted"
+          }
+        ]
       },
       "stderr": ""
     },
     "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-two": {
       "rc": 0,
       "stdout": {
-        "VpcEndpoints": [{ "VpcEndpointId": "vpce-two", "State": "deleted" }]
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-two",
+            "State": "deleted"
+          }
+        ]
       },
       "stderr": ""
     },
     "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-three": {
       "rc": 0,
       "stdout": {
-        "VpcEndpoints": [{ "VpcEndpointId": "vpce-three", "State": "deleted" }]
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-three",
+            "State": "deleted"
+          }
+        ]
       },
       "stderr": ""
     },
     "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-four": {
       "rc": 0,
       "stdout": {
-        "VpcEndpoints": [{ "VpcEndpointId": "vpce-four", "State": "deleted" }]
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-four",
+            "State": "deleted"
+          }
+        ]
       },
       "stderr": ""
     },
     "arn:aws:ec2:test-region:placeholder:vpc-endpoint/vpce-five": {
       "rc": 0,
       "stdout": {
-        "VpcEndpoints": [{ "VpcEndpointId": "vpce-five", "State": "deleted" }]
+        "VpcEndpoints": [
+          {
+            "VpcEndpointId": "vpce-five",
+            "State": "deleted"
+          }
+        ]
       },
       "stderr": ""
     },
@@ -218,5 +243,6 @@
       "stdout": "",
       "stderr": "An error occurred (ClientException): task definition not found"
     }
-  }
+  },
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
 }

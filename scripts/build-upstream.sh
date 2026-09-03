@@ -82,6 +82,11 @@ mkdir -p "$archive_dir"
 # --- Step 5: archive the locked commit, hash the tar, then extract ---
 git -C "$UPSTREAM_DIR" archive --format=tar "$upstream_sha" > "$tar_file"
 build_input_sha256="$(shasum -a 256 "$tar_file" | awk '{print $1}')"
+locked_input_sha256="$(grep '^build_input_sha256:' "$UPSTREAM_LOCK" | sed 's/^build_input_sha256:[[:space:]]*//')"
+if [[ -n "$locked_input_sha256" && "$locked_input_sha256" != "<pending"* && "$locked_input_sha256" != "$build_input_sha256" ]]; then
+  echo "build-upstream: build input hash $build_input_sha256 does not match upstream.lock ($locked_input_sha256); refusing to build from a different archive" >&2
+  exit 1
+fi
 tar -xf "$tar_file" -C "$archive_dir"
 
 short_sha="${upstream_sha:0:12}"

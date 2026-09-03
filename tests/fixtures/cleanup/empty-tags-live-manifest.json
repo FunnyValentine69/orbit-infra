@@ -1,19 +1,30 @@
 {
   "name": "empty-tag-inventory-live-manifest-candidate",
-  "tag_response": { "ResourceTagMappingList": [] },
+  "tag_response": {
+    "ResourceTagMappingList": []
+  },
   "records": [
     {
       "candidate": {
         "resource_type": "ec2:vpc",
         "id": "vpc-manifest-live",
         "arn": null,
-        "sources": ["manifest"]
+        "sources": [
+          "manifest"
+        ]
       },
       "response": {
         "rc": 0,
-        "stdout": { "Vpcs": [{ "VpcId": "vpc-manifest-live" }] },
+        "stdout": {
+          "Vpcs": [
+            {
+              "VpcId": "vpc-manifest-live"
+            }
+          ]
+        },
         "stderr": ""
       }
     }
-  ]
+  ],
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
 }

@@ -6,5 +6,6 @@
     "cleanup_attempt": 3,
     "manual_intervention_required": true,
     "next_retry_at": null
-  }
+  },
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
 }

@@ -875,9 +875,9 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   statement {
     #checkov:skip=CKV_AWS_111:ListTasks is list-only and is restricted to project cluster ARNs through ecs:cluster
     #checkov:skip=CKV_AWS_356:same as above
-    sid       = "EcsListTasksForProjectClusters"
+    sid       = "EcsListDescribeTasksForProjectClusters"
     effect    = "Allow"
-    actions   = ["ecs:ListTasks"]
+    actions   = ["ecs:ListTasks", "ecs:DescribeTasks"]
     resources = ["*"]
 
     condition {

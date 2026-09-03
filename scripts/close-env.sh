@@ -273,12 +273,16 @@ claim_args=(begin-cleanup "$ENV_ID")
 "$LEASE_SH" "${claim_args[@]}" >/dev/null
 
 tf_init || fail "terraform init failed"
-state_list="$(tf_raw state list 2>/dev/null || true)"
-if state_json="$(tf_raw show -json 2>/dev/null)"; then
-  resource_values_json="$(jq -c '[(.values.root_module? // {}) | recurse(.child_modules[]?) | .resources[]?]' <<< "$state_json")"
-else
-  resource_values_json='[]'
-fi
+# Both reads fail closed: a backend or lock error must not shrink the
+# candidate set (an empty state is a successful read that lists nothing).
+state_err="$tmp_dir/state-read.err"
+state_list="$(tf_raw state list 2>"$state_err")" \
+  || { grep -q 'No state file was found' "$state_err" && state_list=""; } \
+  || fail "terraform state list failed: $(cat "$state_err")"
+state_json="$(tf_raw show -json 2>"$state_err")" \
+  || fail "terraform show -json failed: $(cat "$state_err")"
+resource_values_json="$(jq -c '[(.values.root_module? // {}) | recurse(.child_modules[]?) | .resources[]?]' <<< "$state_json")" \
+  || fail "terraform show -json returned malformed JSON"
 state_candidates > "$tmp_dir/state-candidates.json"
 legacy_manifest_candidates > "$tmp_dir/legacy-candidates.json"
 printf '%s\n' "$(jq -c '.candidates // []' <<< "$existing_manifest")" > "$tmp_dir/prior-candidates.json"
@@ -332,8 +336,15 @@ while IFS=$'\t' read -r cluster service; do
   [ -n "$service" ] || continue
   # A retry after a successful destroy finds no service; only ACTIVE or
   # DRAINING services are scaled, anything else is already gone.
-  svc_status="$(aws_cmd ecs describe-services --cluster "$cluster" --services "$service" \
-    --query 'services[0].status' --output text 2>/dev/null || echo MISSING)"
+  svc_err="$tmp_dir/describe-service.err"
+  if svc_status="$(aws_cmd ecs describe-services --cluster "$cluster" --services "$service" \
+      --query 'services[0].status' --output text 2>"$svc_err")"; then
+    :
+  elif grep -qE 'ClusterNotFoundException|ServiceNotFoundException' "$svc_err"; then
+    svc_status="MISSING"
+  else
+    fail "describe-services failed for $service: $(cat "$svc_err")"
+  fi
   case "$svc_status" in
     ACTIVE|DRAINING)
       echo "scaling $service to 0"
@@ -342,8 +353,11 @@ while IFS=$'\t' read -r cluster service; do
       aws_cmd ecs wait services-stable --cluster "$cluster" --services "$service" \
         || fail "$service did not reach stable at 0"
       ;;
+    MISSING|None|INACTIVE)
+      echo "skip scaling $service: status=$svc_status (already gone)"
+      ;;
     *)
-      echo "skip scaling $service: status=${svc_status:-MISSING}"
+      fail "unexpected service status '$svc_status' for $service"
       ;;
   esac
 done < <(jq -r '.[] | select(.resource_type == "ecs:service" and ((.sources // []) | index("ecs-discovery"))) | [.parent_id,.id] | @tsv' <<< "$candidates")
@@ -453,6 +467,7 @@ while :; do
     if [ "$live_count" -gt 0 ] || [ "$indeterminate_count" -gt 0 ]; then
       fail "cleanup verification deadline reached: live=$live_count indeterminate=$indeterminate_count pending=$pending_count"
     fi
+    echo "close-env.sh: verification deadline reached with pending=$pending_count deletion transitions still in progress; stage 2 (sweeper) re-verifies them"
     break
   fi
   sleep_seconds="${verification_backoff[$backoff_index]:-30}"

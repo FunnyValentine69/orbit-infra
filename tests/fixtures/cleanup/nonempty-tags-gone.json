@@ -6,7 +6,9 @@
         "resource_type": "ec2:vpc",
         "id": "vpc-stale",
         "arn": "arn:aws:ec2:test-region:placeholder:vpc/vpc-stale",
-        "sources": ["tag"]
+        "sources": [
+          "tag"
+        ]
       },
       "response": {
         "rc": 254,
@@ -14,5 +16,6 @@
         "stderr": "An error occurred (InvalidVpcID.NotFound) while calling DescribeVpcs"
       }
     }
-  ]
+  ],
+  "authored": "hand-written from AWS API documentation, not recorded; replace with a recorded response when a real backend is available"
 }

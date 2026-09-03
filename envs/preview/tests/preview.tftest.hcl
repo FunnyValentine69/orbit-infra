@@ -29,6 +29,7 @@ mock_provider "aws" {
 }
 
 variables {
+  target        = "localstack"
   env_id        = "valid-env"
   operator_cidr = "203.0.113.7/32"
 }
@@ -149,4 +150,14 @@ run "api_task_has_clickhouse_password_secret" {
     condition     = contains(output.api_secret_keys, "CLICKHOUSE_PASSWORD")
     error_message = "the api task must receive CLICKHOUSE_PASSWORD as an ECS secret, not a plaintext env var"
   }
+}
+
+run "public_images_rejected_on_aws" {
+  command = plan
+
+  variables {
+    target = "aws"
+  }
+
+  expect_failures = [var.api_image, var.redis_image, var.clickhouse_image]
 }

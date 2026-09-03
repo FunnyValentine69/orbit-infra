@@ -26,19 +26,22 @@ emit_candidate() {
   local arn="$3"
   local parent_id="${4:-}"
   local tag_entry="${5:-null}"
+  local force_delete="${6:-false}"
   jq -cn \
     --arg resource_type "$resource_type" \
     --arg id "$id" \
     --arg arn "$arn" \
     --arg parent_id "$parent_id" \
-    --argjson tag_entry "$tag_entry" '
+    --argjson tag_entry "$tag_entry" \
+    --argjson force_delete "$force_delete" '
       {
         resource_type: $resource_type,
         id: $id,
         arn: (if $arn == "" then null else $arn end),
         parent_id: (if $parent_id == "" then null else $parent_id end),
         sources: ["tag"],
-        tag_entry: $tag_entry
+        tag_entry: $tag_entry,
+        force_delete: $force_delete
       }'
 }
 

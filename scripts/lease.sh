@@ -154,7 +154,7 @@ cmd_transition() {
     shift 2
   fi
   [ "$#" -eq 0 ] || { err "unexpected transition arguments"; exit 2; }
-  case "$to" in closing|closed|cleanup_failed) ;; *) err "invalid target status '$to'"; exit 2 ;; esac
+  case "$to" in closed|cleanup_failed) ;; *) err "invalid target status '$to' (closing is entered only through begin-cleanup)"; exit 2 ;; esac
 
   read_lease "$env_id"
   if [ "$LEASE_FOUND" != 1 ]; then
