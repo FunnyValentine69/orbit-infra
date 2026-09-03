@@ -314,17 +314,23 @@ bash "$REPO_ROOT/tests/policy-size-contracts.sh"
 # GitHub stamps run_started_at at dispatch acceptance, before the concurrency
 # group releases a held run (observed live 2026-09-03).
 ordering_script="$REPO_ROOT/tests/dispatch-ordering.sh"
-if grep -nE "jq -r '\.(run_started_at|updated_at)'" "$ordering_script" >/dev/null; then
-  echo "dispatch-ordering.sh must compare job timestamps (jobs_started_at/jobs_completed_at), never run_started_at or updated_at" >&2
+# Any jq read of the run-level fields, in any quoting, is forbidden outside
+# the metadata capture (which stores them for audit only).
+if grep -nE "(jq|--jq).*['\"][^'\"]*\.(run_started_at|updated_at)([^A-Za-z0-9_]|$)" "$ordering_script" \
+    | grep -vE "run_started_at:\.run_started_at,updated_at:\.updated_at" >/dev/null; then
+  echo "dispatch-ordering.sh must compare job timestamps, never read run_started_at or updated_at for ordering" >&2
   exit 1
 fi
-for field in jobs_started_at jobs_completed_at; do
-  if ! grep -Fq "$field" "$ordering_script"; then
-    echo "dispatch-ordering.sh must derive ordering from $field" >&2
+# The two comparison functions must read the job-derived fields themselves,
+# not merely mention them in a comment.
+ordering_reads="$(sed -n '/^assert_terminal_before_start() {/,/^}/p; /^verify_aws_final_cleanup() {/,/^}/p' "$ordering_script")"
+for field in jobs_completed_at jobs_started_at; do
+  if ! grep -Eq "jq -r ['\"]\.${field}['\"]" <<< "$ordering_reads"; then
+    echo "dispatch-ordering.sh ordering comparisons must read .$field via jq" >&2
     exit 1
   fi
 done
-if ! grep -Fq 'pending|queued)' "$ordering_script"; then
+if ! grep -Eq '(pending\|queued|queued\|pending)\)' "$ordering_script"; then
   echo "dispatch-ordering.sh must treat GitHub's pending status as a held run" >&2
   exit 1
 fi

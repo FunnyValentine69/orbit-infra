@@ -102,6 +102,9 @@ After all runs are terminal, the test requires the first apply's latest job
 apply's latest job `completed_at` <= the destroy's earliest job `started_at`.
 Job timestamps are used because GitHub stamps a run's `run_started_at` when
 it accepts the dispatch, before the concurrency group releases the run.
+Skipped jobs (for example the destroy job behind a refused validate-input)
+are excluded from the aggregation, and the jobs endpoint is read up to three
+times ten seconds apart because it can lag the run's terminal status.
 
 For LocalStack, both applies must conclude `success`; destroy must conclude
 `failure` in `validate-input` with the exact `target=localstack` refusal. For
