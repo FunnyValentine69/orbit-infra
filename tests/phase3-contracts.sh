@@ -266,4 +266,26 @@ if ! grep -Fq "if: always() && (failure() || cancelled()) && steps.lease-open.ou
   exit 1
 fi
 
+apply_workflow="$REPO_ROOT/.github/workflows/session-apply.yml"
+validate_guard="$(sed -n '/^  validate-input:/,/^  apply:/s/^    if: //p' "$apply_workflow")"
+apply_guard="$(sed -n '/^  apply:/,/^    runs-on:/s/^    if: //p' "$apply_workflow")"
+setup_localstack_guard="$(sed -n '/      - name: Start LocalStack/,/        uses:/s/^        if: //p' "$apply_workflow")"
+for guard_record in \
+  "validate-input job|$validate_guard" \
+  "apply job|$apply_guard" \
+  "setup-localstack step|$setup_localstack_guard"; do
+  guard_label="${guard_record%%|*}"
+  guard="${guard_record#*|}"
+  for required_owner_check in \
+    'github.actor == github.repository_owner' \
+    'github.triggering_actor == github.repository_owner'; do
+    if [[ "$guard" != *"$required_owner_check"* ]]; then
+      echo "session-apply $guard_label LocalStack guard must include: $required_owner_check" >&2
+      exit 1
+    fi
+  done
+done
+
+bash "$REPO_ROOT/tests/localstack-concurrency-signal.sh"
+
 echo "PASS: phase3 shell contracts"

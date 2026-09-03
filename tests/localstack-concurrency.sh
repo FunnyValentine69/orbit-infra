@@ -26,6 +26,133 @@ usage_fail() {
   exit 2
 }
 
+CONCURRENCY_SIGNAL_TEST="${CONCURRENCY_SIGNAL_TEST:-0}"
+tmp_dir="$(mktemp -d)"
+acquired_a=false
+acquired_b=false
+cleanup_complete=false
+generation_a=""
+generation_b=""
+worker_pids=()
+worker_pgids=()
+STARTED_WORKER_PID=""
+
+start_grouped_worker() {
+  local worker_pid worker_pgid ready_file attempts=0
+  # The Python launcher calls setpgrp before exec, which is independent of
+  # Bash job-control differences in 3.2 and 5. Its readiness file proves the
+  # invariant pgid == pid before the worker may be treated as fully started.
+  python3 - "$tmp_dir" "$@" <<'PY' &
+import os
+import sys
+
+ready_dir = sys.argv[1]
+os.setpgrp()
+with open(os.path.join(ready_dir, f"worker-{os.getpid()}.ready"), "w", encoding="utf-8"):
+    pass
+os.execvp(sys.argv[2], sys.argv[2:])
+PY
+  worker_pid=$!
+  worker_pgid="$worker_pid"
+  ready_file="$tmp_dir/worker-$worker_pid.ready"
+  # Register immediately so an interrupt during the readiness handshake still
+  # has both a group target and a direct-pid fallback to terminate and reap.
+  worker_pids+=("$worker_pid")
+  worker_pgids+=("$worker_pgid")
+  while [ ! -f "$ready_file" ] && kill -0 "$worker_pid" 2>/dev/null && \
+      [ "$attempts" -lt 50 ]; do
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  [ -f "$ready_file" ] \
+    || fail "worker $worker_pid did not establish its process group"
+  STARTED_WORKER_PID="$worker_pid"
+}
+
+terminate_and_reap_workers() {
+  local index pgid pid
+  if [ "${#worker_pgids[@]}" -gt 0 ]; then
+    for index in "${!worker_pgids[@]}"; do
+      pgid="${worker_pgids[$index]}"
+      pid="${worker_pids[$index]}"
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -TERM -- "-$pgid" 2>/dev/null \
+          || kill -TERM "$pid" 2>/dev/null \
+          || true
+      fi
+    done
+    for pid in "${worker_pids[@]}"; do
+      wait "$pid" 2>/dev/null || true
+    done
+  fi
+  worker_pids=()
+  worker_pgids=()
+}
+
+close_owned_environment() {
+  local env_id="$1"
+  local generation="$2"
+  local log_file="$3"
+  {
+    make -s render-localstack-backend \
+      TARGET=localstack ENV_ID="$env_id" PREVIEW_ROOT=".preview-runs/$env_id" \
+      && PREVIEW_ROOT=".preview-runs/$env_id" \
+        "$CLOSE_ENV_SH" --generation "$generation" "$env_id"
+  } 2>&1 | sed -E 's/[0-9]{12}/************/g' > "$log_file"
+}
+
+cleanup() {
+  local rc=$?
+  trap - EXIT
+  trap - INT TERM
+  set +e
+  terminate_and_reap_workers
+  if [ "$cleanup_complete" != true ]; then
+    if [ "$acquired_a" = true ]; then
+      close_owned_environment "$ENV_A" "$generation_a" "$tmp_dir/trap-close-a.log" \
+        || echo "localstack-concurrency.sh: cleanup failed for $ENV_A; see $tmp_dir/trap-close-a.log" >&2
+    fi
+    if [ "$acquired_b" = true ]; then
+      close_owned_environment "$ENV_B" "$generation_b" "$tmp_dir/trap-close-b.log" \
+        || echo "localstack-concurrency.sh: cleanup failed for $ENV_B; see $tmp_dir/trap-close-b.log" >&2
+    fi
+  fi
+  if [ "$rc" -eq 0 ] || [ "$CONCURRENCY_SIGNAL_TEST" = 1 ]; then
+    rm -rf "$tmp_dir"
+  else
+    echo "localstack-concurrency.sh: retained diagnostics in $tmp_dir" >&2
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [ "$CONCURRENCY_SIGNAL_TEST" = 1 ]; then
+  worker_pid_file="${CONCURRENCY_SIGNAL_WORKER_PID_FILE:?signal worker pid file required}"
+  descendant_pid_file="${CONCURRENCY_SIGNAL_DESCENDANT_PID_FILE:?signal descendant pid file required}"
+  fake_worker="$tmp_dir/fake-worker.sh"
+  cat > "$fake_worker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+sleep 300 &
+descendant_pid=$!
+printf '%s\n' "$descendant_pid" > "$1"
+wait "$descendant_pid"
+EOF
+  chmod +x "$fake_worker"
+  # Positional parameters expand in the child shell.
+  # shellcheck disable=SC2016
+  start_grouped_worker bash -c '
+    set -o pipefail
+    "$1" "$2" 2>&1 | sed "s/^/fake-apply: /" > "$3"
+  ' _ "$fake_worker" "$descendant_pid_file" "$tmp_dir/fake-apply.log"
+  signal_worker_pid="$STARTED_WORKER_PID"
+  printf '%s\n' "$signal_worker_pid" > "$worker_pid_file"
+  wait "$signal_worker_pid"
+  exit $?
+fi
+
 [ "$TARGET" = localstack ] || usage_fail "TARGET must be localstack"
 [ "$PWD" = "$REPO_ROOT" ] || usage_fail "run from the repository root: $REPO_ROOT"
 for env_id in "$ENV_A" "$ENV_B"; do
@@ -47,63 +174,6 @@ export AWS_REGION=us-east-1
 export AWS_EC2_METADATA_DISABLED=true
 export OPERATOR_CIDR
 unset AWS_PROFILE AWS_SESSION_TOKEN AWS_SECURITY_TOKEN PREVIEW_ROOT PLAN_FILE
-
-tmp_dir="$(mktemp -d)"
-acquired_a=false
-acquired_b=false
-cleanup_complete=false
-generation_a=""
-generation_b=""
-child_pids=()
-
-close_owned_environment() {
-  local env_id="$1"
-  local generation="$2"
-  local log_file="$3"
-  {
-    make -s render-localstack-backend \
-      TARGET=localstack ENV_ID="$env_id" PREVIEW_ROOT=".preview-runs/$env_id" \
-      && PREVIEW_ROOT=".preview-runs/$env_id" \
-        "$CLOSE_ENV_SH" --generation "$generation" "$env_id"
-  } 2>&1 | sed -E 's/[0-9]{12}/************/g' > "$log_file"
-}
-
-cleanup() {
-  local rc=$?
-  local pid
-  trap - EXIT
-  set +e
-  # bash 3.2 (macOS) treats an empty array expansion as unbound under set -u.
-  if [ "${#child_pids[@]}" -gt 0 ]; then
-    for pid in "${child_pids[@]}"; do
-      if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null
-      fi
-    done
-    for pid in "${child_pids[@]}"; do
-      wait "$pid" 2>/dev/null
-    done
-  fi
-  if [ "$cleanup_complete" != true ]; then
-    if [ "$acquired_a" = true ]; then
-      close_owned_environment "$ENV_A" "$generation_a" "$tmp_dir/trap-close-a.log" \
-        || echo "localstack-concurrency.sh: cleanup failed for $ENV_A; see $tmp_dir/trap-close-a.log" >&2
-    fi
-    if [ "$acquired_b" = true ]; then
-      close_owned_environment "$ENV_B" "$generation_b" "$tmp_dir/trap-close-b.log" \
-        || echo "localstack-concurrency.sh: cleanup failed for $ENV_B; see $tmp_dir/trap-close-b.log" >&2
-    fi
-  fi
-  if [ "$rc" -eq 0 ]; then
-    rm -rf "$tmp_dir"
-  else
-    echo "localstack-concurrency.sh: retained diagnostics in $tmp_dir" >&2
-  fi
-  exit "$rc"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 expected_generation() {
   local env_id="$1"
@@ -204,16 +274,24 @@ acquired_b=true
 assert_open_refusal "$ENV_A" open "$ENV_A second open"
 assert_open_refusal "$ENV_B" open "$ENV_B second open"
 
-make apply TARGET=localstack ENV_ID="$ENV_A" PREVIEW_ROOT=".preview-runs/$ENV_A" \
-  OPERATOR_CIDR="$OPERATOR_CIDR" 2>&1 \
-  | sed -E 's/[0-9]{12}/************/g' >"$tmp_dir/apply-a.log" &
-apply_pid_a=$!
-child_pids+=("$apply_pid_a")
-make apply TARGET=localstack ENV_ID="$ENV_B" PREVIEW_ROOT=".preview-runs/$ENV_B" \
-  OPERATOR_CIDR="$OPERATOR_CIDR" 2>&1 \
-  | sed -E 's/[0-9]{12}/************/g' >"$tmp_dir/apply-b.log" &
-apply_pid_b=$!
-child_pids+=("$apply_pid_b")
+# Positional parameters expand in the child shell.
+# shellcheck disable=SC2016
+start_grouped_worker bash -c '
+  set -o pipefail
+  make apply TARGET=localstack ENV_ID="$1" PREVIEW_ROOT=".preview-runs/$1" \
+    OPERATOR_CIDR="$2" 2>&1 \
+    | sed -E "s/[0-9]{12}/************/g" > "$3"
+' _ "$ENV_A" "$OPERATOR_CIDR" "$tmp_dir/apply-a.log"
+apply_pid_a="$STARTED_WORKER_PID"
+# Positional parameters expand in the child shell.
+# shellcheck disable=SC2016
+start_grouped_worker bash -c '
+  set -o pipefail
+  make apply TARGET=localstack ENV_ID="$1" PREVIEW_ROOT=".preview-runs/$1" \
+    OPERATOR_CIDR="$2" 2>&1 \
+    | sed -E "s/[0-9]{12}/************/g" > "$3"
+' _ "$ENV_B" "$OPERATOR_CIDR" "$tmp_dir/apply-b.log"
+apply_pid_b="$STARTED_WORKER_PID"
 
 set +e
 wait "$apply_pid_a"
@@ -221,7 +299,8 @@ apply_rc_a=$?
 wait "$apply_pid_b"
 apply_rc_b=$?
 set -e
-child_pids=()
+worker_pids=()
+worker_pgids=()
 if [ "$apply_rc_a" -ne 0 ] || [ "$apply_rc_b" -ne 0 ]; then
   tail -n 80 "$tmp_dir/apply-a.log" >&2
   tail -n 80 "$tmp_dir/apply-b.log" >&2
@@ -280,12 +359,28 @@ assert_no_cross_reference "$(jq -r '.ResourceTagMappingList[].ResourceARN' <<< "
 assert_no_cross_reference "$(jq -r '.ResourceTagMappingList[].ResourceARN' <<< "$inventory_b")" \
   "$ENV_A" "$ENV_B tagging inventory"
 
-close_owned_environment "$ENV_A" "$generation_a" "$tmp_dir/close-a.log" &
-close_pid_a=$!
-child_pids+=("$close_pid_a")
-close_owned_environment "$ENV_B" "$generation_b" "$tmp_dir/close-b.log" &
-close_pid_b=$!
-child_pids+=("$close_pid_b")
+# Positional parameters expand in the child shell.
+# shellcheck disable=SC2016
+start_grouped_worker bash -c '
+  set -o pipefail
+  {
+    make -s render-localstack-backend \
+      TARGET=localstack ENV_ID="$1" PREVIEW_ROOT=".preview-runs/$1" \
+      && PREVIEW_ROOT=".preview-runs/$1" "$4" --generation "$2" "$1"
+  } 2>&1 | sed -E "s/[0-9]{12}/************/g" > "$3"
+' _ "$ENV_A" "$generation_a" "$tmp_dir/close-a.log" "$CLOSE_ENV_SH"
+close_pid_a="$STARTED_WORKER_PID"
+# Positional parameters expand in the child shell.
+# shellcheck disable=SC2016
+start_grouped_worker bash -c '
+  set -o pipefail
+  {
+    make -s render-localstack-backend \
+      TARGET=localstack ENV_ID="$1" PREVIEW_ROOT=".preview-runs/$1" \
+      && PREVIEW_ROOT=".preview-runs/$1" "$4" --generation "$2" "$1"
+  } 2>&1 | sed -E "s/[0-9]{12}/************/g" > "$3"
+' _ "$ENV_B" "$generation_b" "$tmp_dir/close-b.log" "$CLOSE_ENV_SH"
+close_pid_b="$STARTED_WORKER_PID"
 
 set +e
 wait "$close_pid_a"
@@ -293,7 +388,8 @@ close_rc_a=$?
 wait "$close_pid_b"
 close_rc_b=$?
 set -e
-child_pids=()
+worker_pids=()
+worker_pgids=()
 if [ "$close_rc_a" -ne 0 ] || [ "$close_rc_b" -ne 0 ]; then
   tail -n 80 "$tmp_dir/close-a.log" >&2
   tail -n 80 "$tmp_dir/close-b.log" >&2

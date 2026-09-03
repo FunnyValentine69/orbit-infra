@@ -34,7 +34,7 @@ Close is two-stage since task definitions delete asynchronously (up to 24h) whil
 
 ### Cleanup verifier amendment (2026-09-02)
 
-The stage-1 candidate set is created before destroy and is the union of the prior manifest, identifiers from Terraform state, ECS discovery, and the pre-destroy tag inventory. Resource Groups Tagging API results are discovery evidence only. They are re-queried at 0, 2, 4, 8, 16, and 30 seconds after destroy and unioned into the candidate set, but neither a nonempty nor an empty tag response decides liveness. Every scheduled observation must succeed; if any observation fails, an unsupported `tag-inventory-incomplete` candidate remains `indeterminate` so stage 1 fails closed.
+The stage-1 candidate set is created before destroy and is the union of the prior manifest, identifiers from Terraform state, ECS discovery, and the pre-destroy tag inventory. Resource Groups Tagging API results are discovery evidence only. They are re-queried at 0, 2, 4, 8, 16, and 30 seconds after destroy and unioned into the candidate set, but neither a nonempty nor an empty tag response decides liveness. A tag query is successful only when its zero-exit stdout is a JSON object whose `ResourceTagMappingList` is an array; every other response is an indeterminate observation, and any indeterminate scheduled observation adds an unsupported `tag-inventory-incomplete` candidate so stage 1 fails closed.
 
 One exact-resource verifier assigns one result to every candidate and persists every iteration:
 
@@ -43,7 +43,7 @@ One exact-resource verifier assigns one result to every candidate and persists e
 - `live`: the exact API proves the resource remains usable or active.
 - `indeterminate`: the exact probe timed out, was denied, returned malformed data, or has an unsupported resource type.
 
-Stage 1 retries `pending`, post-destroy `live`, and transient `indeterminate` results for up to five minutes, with backoff capped at 30 seconds. Partial results are appended to `manifest.verification_runs` on every iteration. At the deadline, `live` or `indeterminate` results set `cleanup_failed`; `pending` may remain for stage 2. Stale tag records whose exact probes are `gone` are persisted under `manifest.stale_tag_entries` and never fail stage 1.
+Stage 1 retries `pending`, post-destroy `live`, and transient `indeterminate` results for up to five minutes, with backoff capped at 30 seconds. Partial results are appended to `manifest.verification_runs` on every iteration. A non-zero verifier exit or malformed verifier result is routed through the same `cleanup_failed` lease transition with a recorded error. At the deadline, `live` or `indeterminate` results set `cleanup_failed`; `pending` may remain for stage 2. Stale tag records whose exact probes are `gone` are persisted under `manifest.stale_tag_entries` and never fail stage 1.
 
 All cleanup and lease AWS CLI calls pass through `scripts/aws-cli.sh`, with five-second connect and 20-second read timeouts inside a 30-second process-group deadline. The ECS service-stability waiter is the deliberate exception: it gets a 660-second outer deadline for the AWS CLI's ten-minute wait window. `TARGET` is mandatory. `localstack` requires an explicit localhost endpoint, test credentials, disabled metadata lookup, and no `AWS_PROFILE`; `aws` rejects a LocalStack endpoint.
 

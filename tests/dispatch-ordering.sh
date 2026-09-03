@@ -39,6 +39,17 @@ for timeout_value in "$START_TIMEOUT_SECONDS" "$TERMINAL_TIMEOUT_SECONDS"; do
   [[ "$timeout_value" =~ ^[1-9][0-9]*$ ]] \
     || usage_fail "timeout values must be positive integers"
 done
+RUN_NONCE="${DISPATCH_NONCE:-ord-$(date +%s)-$$-$RANDOM}"
+first_dispatch_note="${RUN_NONCE}-a1"
+second_dispatch_note="${RUN_NONCE}-a2"
+destroy_dispatch_note="${RUN_NONCE}-d1"
+cleanup_dispatch_note="${RUN_NONCE}-cleanup"
+for dispatch_note in \
+  "$first_dispatch_note" "$second_dispatch_note" \
+  "$destroy_dispatch_note" "$cleanup_dispatch_note"; do
+  [[ "$dispatch_note" =~ ^[a-z0-9-]{1,40}$ ]] \
+    || usage_fail "generated dispatch_note must match ^[a-z0-9-]{1,40}$"
+done
 for command_name in gh jq; do
   command -v "$command_name" >/dev/null 2>&1 \
     || usage_fail "required command not found: $command_name"
@@ -54,7 +65,8 @@ gh auth status >/dev/null 2>&1 || usage_fail "gh is not authenticated"
 tmp_dir="$(mktemp -d)"
 run_ids=()
 apply_dispatch_attempted=false
-destroy_dispatched=false
+aws_final_cleanup_checked=false
+recovery_cleanup_dispatched=false
 
 run_status() {
   local workflow="$1"
@@ -74,10 +86,13 @@ cleanup() {
   trap - EXIT
   set +e
   if [ "$TARGET" = aws ] && [ "$apply_dispatch_attempted" = true ] && \
-     [ "$destroy_dispatched" != true ]; then
+     [ "$aws_final_cleanup_checked" != true ] && \
+     [ "$recovery_cleanup_dispatched" != true ]; then
+    recovery_cleanup_dispatched=true
     echo "dispatch-ordering.sh: dispatching AWS cleanup after an incomplete test" >&2
     gh workflow run session-destroy.yml --repo "$REPO" --ref "$REF" \
-      -f env_id="$ENV_ID" -f target=aws >/dev/null 2>&1 \
+      -f env_id="$ENV_ID" -f target=aws -f dispatch_note="$cleanup_dispatch_note" \
+      >/dev/null 2>&1 \
       || echo "dispatch-ordering.sh: could not dispatch AWS cleanup for $ENV_ID" >&2
   fi
   # bash 3.2 (macOS) treats an empty array expansion as unbound under set -u,
@@ -104,28 +119,38 @@ trap 'exit 143' TERM
 dispatch_and_capture() {
   local workflow="$1"
   local label="$2"
-  shift 2
+  local dispatch_note="$3"
+  shift 3
   local before after before_ids new_runs count deadline
   before="$(gh run list --repo "$REPO" --workflow "$workflow" --branch "$REF" \
     --event workflow_dispatch --limit 100 \
-    --json databaseId,status,conclusion,createdAt)" \
+    --json databaseId,status,conclusion,createdAt,displayTitle,event,headBranch)" \
     || fail "could not snapshot $workflow before $label"
   before_ids="$(jq -c '[.[].databaseId]' <<< "$before")"
 
   if [ "$workflow" = session-apply.yml ]; then
     apply_dispatch_attempted=true
   fi
-  gh workflow run "$workflow" --repo "$REPO" --ref "$REF" "$@" \
+  gh workflow run "$workflow" --repo "$REPO" --ref "$REF" \
+    -f dispatch_note="$dispatch_note" "$@" \
     || fail "could not dispatch $label"
 
   deadline=$(( $(date +%s) + 120 ))
   while [ "$(date +%s)" -le "$deadline" ]; do
     after="$(gh run list --repo "$REPO" --workflow "$workflow" --branch "$REF" \
       --event workflow_dispatch --limit 100 \
-      --json databaseId,status,conclusion,createdAt)" \
+      --json databaseId,status,conclusion,createdAt,displayTitle,event,headBranch)" \
       || fail "could not find the run created for $label"
-    new_runs="$(jq -c --argjson before_ids "$before_ids" \
-      '[.[] | select(.databaseId as $id | ($before_ids | index($id) | not))]' <<< "$after")"
+    new_runs="$(jq -c \
+      --arg dispatch_note "$dispatch_note" \
+      --arg ref "$REF" \
+      --argjson before_ids "$before_ids" '
+        [.[]
+          | select(.databaseId as $id | ($before_ids | index($id) | not))
+          | select((.displayTitle // "") | contains($dispatch_note))
+          | select(.event == "workflow_dispatch" and .headBranch == $ref)
+        ]
+      ' <<< "$after")"
     count="$(jq 'length' <<< "$new_runs")"
     if [ "$count" -eq 1 ]; then
       CAPTURED_RUN_ID="$(jq -r '.[0].databaseId' <<< "$new_runs")"
@@ -133,11 +158,11 @@ dispatch_and_capture() {
       return
     fi
     if [ "$count" -gt 1 ]; then
-      fail "$label produced an ambiguous set of new run ids: $(jq -c 'map(.databaseId)' <<< "$new_runs")"
+      fail "$label matched multiple new workflow_dispatch runs for note '$dispatch_note' on REF=$REF: $(jq -c 'map(.databaseId)' <<< "$new_runs")"
     fi
     sleep 2
   done
-  fail "no $workflow run appeared within 120 seconds for $label"
+  fail "no new $workflow workflow_dispatch run matched note '$dispatch_note' and head_branch '$REF' within 120 seconds for $label"
 }
 
 wait_for_first_apply() {
@@ -238,53 +263,149 @@ assert_localstack_destroy_refusal() {
   fail "LocalStack destroy logs did not contain the workflow's refusal message: $logs"
 }
 
-print_ordered_runs() {
-  local run_id run_file="$tmp_dir/runs.jsonl"
-  : > "$run_file"
-  for run_id in "${run_ids[@]}"; do
-    gh api "repos/$REPO/actions/runs/$run_id" \
-      --jq '{id:.id,workflow:.name,conclusion:.conclusion,run_started_at:.run_started_at}' \
-      >> "$run_file" \
-      || fail "could not read run metadata for $run_id"
-  done
-  jq -sr 'sort_by(.run_started_at) | to_entries[] |
-    "order=\(.key + 1) run_id=\(.value.id) workflow=\(.value.workflow) conclusion=\(.value.conclusion) run_started_at=\(.value.run_started_at)"' \
-    "$run_file"
+read_run_metadata() {
+  local run_id="$1"
+  local label="$2"
+  local output_file="$3"
+  gh api "repos/$REPO/actions/runs/$run_id" \
+    --jq '{id:.id,workflow:.name,event:.event,head_branch:.head_branch,display_title:.display_title,conclusion:.conclusion,run_started_at:.run_started_at,updated_at:.updated_at}' \
+    > "$output_file" \
+    || fail "could not read run metadata for $label run $run_id"
+  jq -e --argjson run_id "$run_id" \
+    '.id == $run_id
+     and .event == "workflow_dispatch"
+     and (.head_branch | type == "string")
+     and (.display_title | type == "string")
+     and (.conclusion | type == "string")
+     and (.run_started_at | type == "string")
+     and (.updated_at | type == "string")' \
+    "$output_file" >/dev/null \
+    || fail "$label run $run_id returned incomplete terminal metadata"
 }
 
-dispatch_and_capture session-apply.yml "first apply" \
+assert_terminal_before_start() {
+  local earlier_file="$1"
+  local later_file="$2"
+  local label="$3"
+  local terminal_at started_at
+  terminal_at="$(jq -r '.updated_at' "$earlier_file")"
+  started_at="$(jq -r '.run_started_at' "$later_file")"
+  jq -en --arg terminal "$terminal_at" --arg started "$started_at" \
+    '$terminal <= $started' >/dev/null \
+    || fail "$label violated: terminal=$terminal_at later_start=$started_at"
+}
+
+assert_conclusion() {
+  local run_file="$1"
+  local expected="$2"
+  local label="$3"
+  local actual
+  actual="$(jq -r '.conclusion' "$run_file")"
+  [ "$actual" = "$expected" ] \
+    || fail "$label conclusion was '$actual', expected '$expected'"
+}
+
+dispatch_aws_recovery_and_fail() {
+  local reason="$1"
+  recovery_cleanup_dispatched=true
+  aws_final_cleanup_checked=true
+  if ! gh workflow run session-destroy.yml --repo "$REPO" --ref "$REF" \
+      -f env_id="$ENV_ID" -f target=aws -f dispatch_note="$cleanup_dispatch_note"; then
+    fail "$reason; the required recovery session-destroy dispatch also failed"
+  fi
+  fail "$reason; dispatched one recovery session-destroy"
+}
+
+verify_aws_final_cleanup() {
+  local second_file="$1"
+  local destroy_file="$2"
+  local second_terminal destroy_started lease_json lease_rc lease_status
+  second_terminal="$(jq -r '.updated_at' "$second_file")"
+  destroy_started="$(jq -r '.run_started_at' "$destroy_file")"
+  if ! jq -en --arg terminal "$second_terminal" --arg started "$destroy_started" \
+      '$terminal <= $started' >/dev/null; then
+    dispatch_aws_recovery_and_fail \
+      "AWS destroy did not run last: second apply terminal=$second_terminal destroy start=$destroy_started"
+  fi
+
+  set +e
+  lease_json="$(env TARGET=aws "$REPO_ROOT/scripts/lease.sh" get "$ENV_ID" 2>/dev/null)"
+  lease_rc=$?
+  set -e
+  if [ "$lease_rc" -ne 0 ]; then
+    dispatch_aws_recovery_and_fail \
+      "AWS final cleanup verification could not read the lease with scripts/lease.sh (rc=$lease_rc)"
+  fi
+  lease_status="$(jq -r '.status // empty' <<< "$lease_json")"
+  case "$lease_status" in
+    closing|closed) aws_final_cleanup_checked=true ;;
+    open)
+      dispatch_aws_recovery_and_fail \
+        "AWS final lease remained open after the terminal destroy run"
+      ;;
+    *)
+      dispatch_aws_recovery_and_fail \
+        "AWS final lease status was '${lease_status:-missing}', expected closing or closed"
+      ;;
+  esac
+}
+
+print_ordered_runs() {
+  jq -sr 'sort_by(.run_started_at) | to_entries[] |
+    "order=\(.key + 1) run_id=\(.value.id) workflow=\(.value.workflow) conclusion=\(.value.conclusion) run_started_at=\(.value.run_started_at) updated_at=\(.value.updated_at)"' \
+    "$tmp_dir/first-apply.json" "$tmp_dir/second-apply.json" "$tmp_dir/destroy.json"
+}
+
+dispatch_and_capture session-apply.yml "first apply" "$first_dispatch_note" \
   -f env_id="$ENV_ID" -f target="$TARGET" -f mode=public
 first_apply_id="$CAPTURED_RUN_ID"
 run_ids+=("$first_apply_id")
 wait_for_first_apply "$first_apply_id"
 
-dispatch_and_capture session-apply.yml "second apply" \
+dispatch_and_capture session-apply.yml "second apply" "$second_dispatch_note" \
   -f env_id="$ENV_ID" -f target="$TARGET" -f mode=public
 second_apply_id="$CAPTURED_RUN_ID"
 run_ids+=("$second_apply_id")
 assert_three_queued_polls "$first_apply_id" "$second_apply_id"
 
-dispatch_and_capture session-destroy.yml "destroy" \
+dispatch_and_capture session-destroy.yml "destroy" "$destroy_dispatch_note" \
   -f env_id="$ENV_ID" -f target="$TARGET"
 destroy_id="$CAPTURED_RUN_ID"
 run_ids+=("$destroy_id")
-destroy_dispatched=true
 assert_run_queued session-destroy.yml "$destroy_id" "destroy"
 
 wait_for_all_terminal
+read_run_metadata "$first_apply_id" "first apply" "$tmp_dir/first-apply.json"
+read_run_metadata "$second_apply_id" "second apply" "$tmp_dir/second-apply.json"
+read_run_metadata "$destroy_id" "destroy" "$tmp_dir/destroy.json"
 
-if [ "$TARGET" = localstack ]; then
-  assert_localstack_destroy_refusal "$destroy_id"
+if [ "$TARGET" = aws ]; then
+  verify_aws_final_cleanup "$tmp_dir/second-apply.json" "$tmp_dir/destroy.json"
 fi
 
-first_terminal_at="$(gh api --paginate "repos/$REPO/actions/runs/$first_apply_id/jobs?per_page=100" \
-  --jq '.jobs[].completed_at | select(. != null)' | sort | tail -n 1)"
-second_started_at="$(gh api "repos/$REPO/actions/runs/$second_apply_id" --jq '.run_started_at')"
-[ -n "$first_terminal_at" ] || fail "first apply has no terminal job timestamp"
-[ -n "$second_started_at" ] || fail "second apply has no run_started_at timestamp"
-jq -en --arg second "$second_started_at" --arg terminal "$first_terminal_at" \
-  '$second >= $terminal' >/dev/null \
-  || fail "second apply started at $second_started_at before first apply terminated at $first_terminal_at"
+assert_terminal_before_start \
+  "$tmp_dir/first-apply.json" "$tmp_dir/second-apply.json" \
+  "first apply terminal <= second apply start"
+assert_terminal_before_start \
+  "$tmp_dir/second-apply.json" "$tmp_dir/destroy.json" \
+  "second apply terminal <= destroy start"
+
+case "$TARGET" in
+  localstack)
+    assert_conclusion "$tmp_dir/first-apply.json" success "first LocalStack apply"
+    assert_conclusion "$tmp_dir/second-apply.json" success "second LocalStack apply"
+    assert_conclusion "$tmp_dir/destroy.json" failure "LocalStack destroy refusal"
+    assert_localstack_destroy_refusal "$destroy_id"
+    ;;
+  aws)
+    # ADR 0006: a successful AWS apply leaves its lease `open`, so the queued
+    # second apply must be refused at lease open (no lease mutation, no
+    # resources); only the destroy that follows closes generation 1.
+    assert_conclusion "$tmp_dir/first-apply.json" success "first AWS apply"
+    assert_conclusion "$tmp_dir/second-apply.json" failure "second AWS apply (open-lease refusal)"
+    assert_conclusion "$tmp_dir/destroy.json" success "AWS destroy"
+    ;;
+esac
 
 print_ordered_runs
-echo "PASS: dispatch ordering target=$TARGET env_id=$ENV_ID queued_polls=$QUEUE_POLLS runs=3"
+echo "PASS: dispatch ordering target=$TARGET env_id=$ENV_ID nonce=$RUN_NONCE queued_polls=$QUEUE_POLLS runs=3"

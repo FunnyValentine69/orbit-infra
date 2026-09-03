@@ -205,10 +205,12 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   stage-2 sweeper.
 - **Phase 4:** `tests/localstack-concurrency.sh` runs two environments
   concurrently on one LocalStack instance and checks independent state, tags,
-  clusters, lease refusals, generations, and stage-1 close.
-  `tests/dispatch-ordering.sh` confirms same-environment GitHub queueing of
-  the second apply and of the destroy for both targets; only the destroy's
-  outcome is target-specific (LocalStack refusal versus AWS stage-1 close). The
+  clusters, lease refusals, generations, stage-1 close, and group-wide worker
+  termination before trap cleanup. `tests/dispatch-ordering.sh` uses
+  nonce-bearing run names to capture three exact dispatches, proves the full
+  apply-terminal → apply-start → apply-terminal → destroy-start chain, asserts
+  both target-specific conclusion sets, and requires a final AWS lease in
+  `closing` or `closed` with a recovery destroy on unsafe state. The
   dispatch-only LocalStack CI lane proves its own same-job apply → acceptance →
   close path, never cross-run lease semantics.
 - **Phase 5:** drift detection reports clean; a modified resource is caught.

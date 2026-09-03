@@ -233,6 +233,10 @@ if [ "$service $operation" = "resourcegroupstaggingapi get-resources" ]; then
       exit 254
     fi
   fi
+  if [ -n "${FAKE_TAG_RESPONSE_FIXTURE:-}" ]; then
+    jq -jr '.response.stdout' "$FAKE_TAG_RESPONSE_FIXTURE"
+    exit "$(jq -r '.response.rc' "$FAKE_TAG_RESPONSE_FIXTURE")"
+  fi
   echo '{"ResourceTagMappingList":[]}'
   exit 0
 fi
@@ -562,6 +566,96 @@ for expected in \
   fi
 done
 pass "AWS destroy reuses all three image references from the lease manifest"
+
+# A zero-exit tagging response is usable only when it is an object containing
+# the required array. Missing, null, wrong-type, and empty responses must all
+# retain indeterminate discovery evidence and fail stage 1.
+run_tag_schema_fixture_case() {
+  local tag_schema_fixture="$1"
+  local tag_schema_env_id tag_schema_out tag_schema_rc tag_schema_lease
+  local tag_schema_expected tag_schema_actual
+  tag_schema_env_id="$(jq -r '.env_id' "$tag_schema_fixture")"
+  env "${lease_env[@]}" "$LEASE" open "$tag_schema_env_id" >/dev/null
+  set +e
+  tag_schema_out="$(env "${lease_env[@]}" \
+    PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+    FAKE_TAG_RESPONSE_FIXTURE="$tag_schema_fixture" \
+    TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+    "$REPO_ROOT/scripts/close-env.sh" "$tag_schema_env_id" 2>&1)"
+  tag_schema_rc=$?
+  set -e
+  tag_schema_lease="$(env "${lease_env[@]}" "$LEASE" get "$tag_schema_env_id")"
+  tag_schema_expected="$(jq -c '.expected' "$tag_schema_fixture")"
+  tag_schema_actual="$(jq -c '{
+    status,
+    candidate_id: .manifest.verification_runs[-1].results[]
+      | select(.id == "tag-inventory-incomplete")
+      | .id,
+    indeterminate: .manifest.verification_runs[-1].summary.indeterminate,
+    pre_observation_status: ([.manifest.tag_inventory_observations[]
+      | select(.phase == "pre-destroy")][0].status),
+    scheduled_observation_status: .manifest.tag_inventory_observations[-1].status
+  }' <<< "$tag_schema_lease")"
+  if [ "$tag_schema_rc" -eq 0 ] || [ "$tag_schema_actual" != "$tag_schema_expected" ]; then
+    echo "FAIL: zero-exit malformed tag inventory must fail closed (fixture $(basename "$tag_schema_fixture"))" >&2
+    echo "actual:   $tag_schema_actual (rc=$tag_schema_rc: $tag_schema_out)" >&2
+    echo "expected: $tag_schema_expected" >&2
+    exit 1
+  fi
+  pass "$(jq -r '.name' "$tag_schema_fixture") is indeterminate"
+}
+for tag_schema_fixture in \
+  "$FIXTURES/tag-inventory-missing-key.json" \
+  "$FIXTURES/tag-inventory-null.json" \
+  "$FIXTURES/tag-inventory-string.json" \
+  "$FIXTURES/tag-inventory-empty-stdout.json"; do
+  run_tag_schema_fixture_case "$tag_schema_fixture"
+done
+
+# close-env must own verifier process and schema failures so its fail() path
+# records cleanup_failed and a stable lease error.
+cat > "$tmp_dir/fake-bin/injected-cleanup-verifier" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = verify-live ]; then
+  jq -jr '.verifier.stdout' "$INJECTED_VERIFIER_FIXTURE"
+  exit "$(jq -r '.verifier.rc' "$INJECTED_VERIFIER_FIXTURE")"
+fi
+exec "$REAL_CLEANUP_VERIFIER" "$@"
+EOF
+chmod +x "$tmp_dir/fake-bin/injected-cleanup-verifier"
+
+run_verifier_fixture_case() {
+  local verifier_fixture="$1"
+  local verifier_env_id verifier_out verifier_rc verifier_lease
+  local verifier_expected verifier_actual
+  verifier_env_id="$(jq -r '.env_id' "$verifier_fixture")"
+  env "${lease_env[@]}" "$LEASE" open "$verifier_env_id" >/dev/null
+  set +e
+  verifier_out="$(env "${lease_env[@]}" \
+    PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+    CLEANUP_VERIFIER_SH="$tmp_dir/fake-bin/injected-cleanup-verifier" \
+    REAL_CLEANUP_VERIFIER="$VERIFIER" INJECTED_VERIFIER_FIXTURE="$verifier_fixture" \
+    TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+    "$REPO_ROOT/scripts/close-env.sh" "$verifier_env_id" 2>&1)"
+  verifier_rc=$?
+  set -e
+  verifier_lease="$(env "${lease_env[@]}" "$LEASE" get "$verifier_env_id")"
+  verifier_expected="$(jq -c '.expected' "$verifier_fixture")"
+  verifier_actual="$(jq -c '{status,error}' <<< "$verifier_lease")"
+  if [ "$verifier_rc" -eq 0 ] || [ "$verifier_actual" != "$verifier_expected" ]; then
+    echo "FAIL: verifier invocation failure must use close-env fail() (fixture $(basename "$verifier_fixture"))" >&2
+    echo "actual:   $verifier_actual (rc=$verifier_rc: $verifier_out)" >&2
+    echo "expected: $verifier_expected" >&2
+    exit 1
+  fi
+  pass "$(jq -r '.name' "$verifier_fixture") records cleanup_failed"
+}
+for verifier_fixture in \
+  "$FIXTURES/verifier-exit-failure.json" \
+  "$FIXTURES/verifier-malformed-output.json"; do
+  run_verifier_fixture_case "$verifier_fixture"
+done
 
 # A later scheduled tag query cannot be erased by an earlier successful query:
 # incomplete discovery must remain indeterminate and fail stage 1.

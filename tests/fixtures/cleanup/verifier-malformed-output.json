@@ -1,0 +1,10 @@
+{
+  "name": "cleanup-verifier-malformed-output",
+  "authored": "close-env verifier invocation contract",
+  "env_id": "verifyshape",
+  "verifier": { "rc": 0, "stdout": "{}" },
+  "expected": {
+    "status": "cleanup_failed",
+    "error": "cleanup verifier verify-live returned malformed output"
+  }
+}

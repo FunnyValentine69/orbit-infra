@@ -31,6 +31,8 @@ requires both same-repository head ownership and repository-owner PR authorship
 before starting a job that reads `LOCALSTACK_AUTH_TOKEN` or
 `INFRACOST_API_KEY`. Its top-level token permission is `contents: read`;
 `pull-requests: write` is granted only to jobs that post comments.
+Reruns of the owner-only LocalStack session lane by collaborators are refused
+because the triggering actor is checked.
 
 **Local-bootstrap deviation:** the Free Plan blocks IAM Identity Center,
 so bootstrap runs from an IAM user (MFA, keys local-only, deactivated

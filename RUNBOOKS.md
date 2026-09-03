@@ -187,6 +187,8 @@ Dispatch the owner-only, non-scheduled LocalStack lane from `main`:
 gh workflow run session-apply.yml -f env_id=p4ci -f target=localstack -f mode=public
 ```
 
+Reruns by collaborators are refused because the triggering actor is checked.
+
 The job starts the pinned LocalStack image, exports the repository's LocalStack
 AWS contract (localhost endpoint, test credentials, `us-east-1`, metadata
 disabled, and no `AWS_PROFILE`), and runs `make bootstrap-apply

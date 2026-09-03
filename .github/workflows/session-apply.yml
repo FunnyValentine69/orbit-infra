@@ -16,6 +16,7 @@
 # the `preview-<env_id>` concurrency group so they never overlap.
 
 name: session-apply
+run-name: session-apply-${{ inputs.env_id }}-${{ inputs.target }}-${{ inputs.dispatch_note }}
 
 on:
   workflow_dispatch:
@@ -40,6 +41,11 @@ on:
         options:
           - upstream
           - public
+      dispatch_note:
+        description: 'Optional dispatch correlation note'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   id-token: write
@@ -55,20 +61,26 @@ concurrency:
 
 jobs:
   validate-input:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (inputs.target == 'aws' || (github.actor == github.repository_owner && github.triggering_actor == github.repository_owner))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Validate env_id
         env:
+          ACTOR: ${{ github.actor }}
+          DISPATCH_NOTE: ${{ inputs.dispatch_note }}
           ENV_ID: ${{ inputs.env_id }}
           MODE: ${{ inputs.mode }}
-          TARGET: ${{ inputs.target }}
-          ACTOR: ${{ github.actor }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
+          TARGET: ${{ inputs.target }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
           if ! printf '%s' "$ENV_ID" | grep -qE '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$'; then
             echo "env_id '$ENV_ID' does not match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$" >&2
+            exit 1
+          fi
+          if [[ ! "$DISPATCH_NOTE" =~ ^[a-z0-9-]{0,40}$ ]]; then
+            echo "dispatch_note must match ^[a-z0-9-]{0,40}$" >&2
             exit 1
           fi
           case "$MODE" in
@@ -83,14 +95,17 @@ jobs:
             echo "target=localstack requires mode=public" >&2
             exit 1
           fi
-          if [ "$TARGET" = localstack ] && [ "$ACTOR" != "$REPOSITORY_OWNER" ]; then
-            echo "target=localstack may be dispatched only by the repository owner" >&2
+          if [ "$TARGET" = localstack ] && {
+            [ "$ACTOR" != "$REPOSITORY_OWNER" ] ||
+            [ "$TRIGGERING_ACTOR" != "$REPOSITORY_OWNER" ];
+          }; then
+            echo "target=localstack may be dispatched and rerun only by the repository owner" >&2
             exit 1
           fi
 
   apply:
     needs: validate-input
-    if: github.ref == 'refs/heads/main' && (inputs.target == 'aws' || github.actor == github.repository_owner)
+    if: github.ref == 'refs/heads/main' && (inputs.target == 'aws' || (github.actor == github.repository_owner && github.triggering_actor == github.repository_owner))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -153,7 +168,7 @@ jobs:
           make lint
 
       - name: Start LocalStack
-        if: inputs.target == 'localstack'
+        if: inputs.target == 'localstack' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
         uses: LocalStack/setup-localstack@7c8a0cb3405bc58be4c8f763f812aa000bc46303 # v0.3.2
         with:
           image-tag: '2026.8'
