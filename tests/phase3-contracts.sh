@@ -310,4 +310,55 @@ fi
 
 bash "$REPO_ROOT/tests/policy-size-contracts.sh"
 
+# tests/dispatch-ordering.sh derives run order from job timestamps only:
+# GitHub stamps run_started_at at dispatch acceptance, before the concurrency
+# group releases a held run (observed live 2026-09-03).
+ordering_script="$REPO_ROOT/tests/dispatch-ordering.sh"
+if [ ! -f "$ordering_script" ]; then
+  echo "tests/dispatch-ordering.sh is missing; the ordering-source contract cannot run" >&2
+  exit 1
+fi
+# Backslash-continued lines are joined so a jq call split across lines is
+# inspected as one; quotes around the jq filter are optional. Any jq read of
+# the run-level fields is forbidden except the audit capture line.
+ordering_joined="$(sed -e ':a' -e '/\\$/N; s/\\\n//; ta' "$ordering_script")"
+forbidden_reads="$(grep -nE "(jq|--jq)[^#]*['\"]?[^'\"]*\.(run_started_at|updated_at)([^A-Za-z0-9_]|$)" <<< "$ordering_joined" \
+  | grep -vE "run_started_at:\.run_started_at,updated_at:\.updated_at" || true)"
+if [ -n "$forbidden_reads" ]; then
+  echo "dispatch-ordering.sh must compare job timestamps, never read run_started_at or updated_at for ordering:" >&2
+  echo "$forbidden_reads" >&2
+  exit 1
+fi
+# Each comparison function must itself read both job-derived fields via jq.
+for fn in assert_terminal_before_start verify_aws_final_cleanup; do
+  fn_body="$(sed -n "/^${fn}() {/,/^}/p" <<< "$ordering_joined")"
+  if [ -z "$fn_body" ]; then
+    echo "dispatch-ordering.sh must define ${fn}() at column 0 (contract extraction found nothing)" >&2
+    exit 1
+  fi
+  for field in jobs_completed_at jobs_started_at; do
+    if ! grep -Eq "jq -r ['\"]?\.${field}([^A-Za-z0-9_]|$)" <<< "$fn_body"; then
+      echo "dispatch-ordering.sh ${fn}() must read .$field via jq -r" >&2
+      exit 1
+    fi
+  done
+done
+bash "$REPO_ROOT/tests/dispatch-ordering-contracts.sh"
+
+# GitHub reports a concurrency-held run as pending; both pending and queued
+# must be accepted inside each function, whether in one case arm or two.
+for fn in assert_three_queued_polls assert_run_queued; do
+  fn_body="$(sed -n "/^${fn}() {/,/^}/p" <<< "$ordering_joined")"
+  if [ -z "$fn_body" ]; then
+    echo "dispatch-ordering.sh must define ${fn}() at column 0 (contract extraction found nothing)" >&2
+    exit 1
+  fi
+  for held in pending queued; do
+    if ! grep -Eq "(^|[^A-Za-z0-9_])${held}(\)|\|)" <<< "$fn_body"; then
+      echo "dispatch-ordering.sh ${fn}() must treat GitHub's ${held} status as a held run" >&2
+      exit 1
+    fi
+  done
+done
+
 echo "PASS: phase3 shell contracts"

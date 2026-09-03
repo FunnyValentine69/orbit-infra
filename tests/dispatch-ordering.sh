@@ -195,9 +195,14 @@ assert_three_queued_polls() {
     second_status="$(run_status session-apply.yml "$second_id")"
     [ "$first_status" = in_progress ] \
       || fail "queue poll $poll: first apply is '$first_status', expected in_progress"
-    [ "$second_status" = queued ] \
-      || fail "queue poll $poll: second apply is '$second_status', expected queued"
-    echo "dispatch-ordering.sh: queue poll $poll/$QUEUE_POLLS first=in_progress second=queued"
+    # GitHub reports a run held by the concurrency group as `pending`
+    # (observed live 2026-09-03); `queued` is the runner-assignment state.
+    # Either proves the run has not started; `in_progress`/`completed` fail.
+    case "$second_status" in
+      pending|queued) ;;
+      *) fail "queue poll $poll: second apply is '$second_status', expected pending or queued" ;;
+    esac
+    echo "dispatch-ordering.sh: queue poll $poll/$QUEUE_POLLS first=in_progress second=$second_status"
   done
 }
 
@@ -210,12 +215,12 @@ assert_run_queued() {
   while [ "$(date +%s)" -le "$deadline" ]; do
     status="$(run_status "$workflow" "$run_id")"
     case "$status" in
-      queued)
-        echo "dispatch-ordering.sh: $label is queued"
+      pending|queued)
+        echo "dispatch-ordering.sh: $label is held ($status)"
         return
         ;;
-      requested|waiting|pending|"") ;;
-      *) fail "$label is '$status', expected queued" ;;
+      requested|waiting|"") ;;
+      *) fail "$label is '$status', expected pending or queued" ;;
     esac
     sleep 2
   done
@@ -267,10 +272,62 @@ read_run_metadata() {
   local run_id="$1"
   local label="$2"
   local output_file="$3"
-  gh api "repos/$REPO/actions/runs/$run_id" \
-    --jq '{id:.id,workflow:.name,event:.event,head_branch:.head_branch,display_title:.display_title,conclusion:.conclusion,run_started_at:.run_started_at,updated_at:.updated_at}' \
-    > "$output_file" \
+  # run_started_at is stamped when GitHub accepts the dispatch, before the
+  # concurrency group releases the run (observed live 2026-09-03: a held run
+  # carried run_started_at 13:05:17 while its first job started 13:14:29), so
+  # ordering is derived from job timestamps: the latest job completion must
+  # be strictly earlier than the next run's earliest job start.
+  local run_json jobs_json lag_reason attempt
+  run_json="$(gh api "repos/$REPO/actions/runs/$run_id" \
+    --jq '{id:.id,workflow:.name,event:.event,head_branch:.head_branch,display_title:.display_title,conclusion:.conclusion,run_started_at:.run_started_at,updated_at:.updated_at}')" \
     || fail "could not read run metadata for $label run $run_id"
+  [ -n "$run_json" ] || fail "run metadata for $label run $run_id was empty"
+  # Skipped jobs (for example the destroy job behind a refused validate-input)
+  # carry timestamps that do not describe work, so only jobs that ran count.
+  # The jobs sub-resource can lag the run's terminal status; retry briefly
+  # before treating missing timestamps as a failure.
+  jobs_json=""
+  for attempt in 1 2 3; do
+    # The single-quoted jq program uses jq variables, not shell variables.
+    # shellcheck disable=SC2016
+    jobs_json="$(gh api "repos/$REPO/actions/runs/$run_id/jobs" \
+      --jq 'if (.jobs | type) != "array" then
+          {lag_reason: "jobs is not an array"}
+        elif ((.total_count | type) != "number") or (.total_count != (.jobs | length)) then
+          {lag_reason: "total_count does not equal jobs length"}
+        else
+          [.jobs[] | select(.conclusion != "skipped")] as $non_skipped
+          | if ($non_skipped | length) == 0 then
+              {lag_reason: "non-skipped jobs array is empty"}
+            elif any($non_skipped[]; (.started_at | type) != "string") then
+              {lag_reason: "a non-skipped job has non-string started_at"}
+            elif any($non_skipped[]; (.completed_at | type) != "string") then
+              {lag_reason: "a non-skipped job has non-string completed_at"}
+            else
+              {jobs_started_at: ([$non_skipped[].started_at] | min),
+               jobs_completed_at: ([$non_skipped[].completed_at] | max)}
+            end
+        end')" \
+      || fail "could not read job metadata for $label run $run_id"
+    if jq -e '(.lag_reason? == null)
+              and (.jobs_started_at | type == "string")
+              and (.jobs_completed_at | type == "string")' \
+        <<< "$jobs_json" >/dev/null 2>&1; then
+      break
+    fi
+    if [ "$attempt" -eq 3 ]; then
+      lag_reason="$(jq -r \
+        'if (.lag_reason? | type) == "string" then .lag_reason else "aggregate timestamps are incomplete" end' \
+        <<< "$jobs_json" 2>/dev/null || printf '%s' "job metadata response is not valid JSON")"
+      fail "$label run $run_id job metadata remained lagging after 3 reads: $lag_reason; response=$jobs_json"
+    fi
+    sleep 10
+  done
+  jq -e -s 'length == 2 and all(.[]; type == "object")' \
+    <(printf '%s\n' "$run_json") <(printf '%s\n' "$jobs_json") >/dev/null \
+    || fail "run and job metadata for $label run $run_id are not both objects"
+  jq -s '.[0] + .[1]' <(printf '%s\n' "$run_json") <(printf '%s\n' "$jobs_json") > "$output_file" \
+    || fail "could not merge run and job metadata for $label run $run_id"
   jq -e --argjson run_id "$run_id" \
     '.id == $run_id
      and .event == "workflow_dispatch"
@@ -278,9 +335,11 @@ read_run_metadata() {
      and (.display_title | type == "string")
      and (.conclusion | type == "string")
      and (.run_started_at | type == "string")
-     and (.updated_at | type == "string")' \
+     and (.updated_at | type == "string")
+     and (.jobs_started_at | type == "string")
+     and (.jobs_completed_at | type == "string")' \
     "$output_file" >/dev/null \
-    || fail "$label run $run_id returned incomplete terminal metadata"
+    || fail "$label run $run_id returned incomplete terminal metadata: $(jq -c 'with_entries(.value |= type)' "$output_file")"
 }
 
 assert_terminal_before_start() {
@@ -288,11 +347,15 @@ assert_terminal_before_start() {
   local later_file="$2"
   local label="$3"
   local terminal_at started_at
-  terminal_at="$(jq -r '.updated_at' "$earlier_file")"
-  started_at="$(jq -r '.run_started_at' "$later_file")"
-  jq -en --arg terminal "$terminal_at" --arg started "$started_at" \
-    '$terminal <= $started' >/dev/null \
-    || fail "$label violated: terminal=$terminal_at later_start=$started_at"
+  terminal_at="$(jq -r '.jobs_completed_at' "$earlier_file")"
+  started_at="$(jq -r '.jobs_started_at' "$later_file")"
+  if ! jq -en --arg terminal "$terminal_at" --arg started "$started_at" \
+      '$terminal < $started' >/dev/null; then
+    if [ "$terminal_at" = "$started_at" ]; then
+      fail "$label inconclusive: terminal equals later_start at $terminal_at"
+    fi
+    fail "$label violated: terminal=$terminal_at later_start=$started_at"
+  fi
 }
 
 assert_conclusion() {
@@ -310,8 +373,8 @@ verify_aws_final_cleanup() {
   local destroy_file="$2"
   local second_terminal destroy_started destroy_run_id destroy_conclusion
   local lease_json lease_rc lease_status
-  second_terminal="$(jq -r '.updated_at' "$second_file")"
-  destroy_started="$(jq -r '.run_started_at' "$destroy_file")"
+  second_terminal="$(jq -r '.jobs_completed_at' "$second_file")"
+  destroy_started="$(jq -r '.jobs_started_at' "$destroy_file")"
   destroy_run_id="$(jq -r '.id' "$destroy_file")"
   destroy_conclusion="$(jq -r '.conclusion' "$destroy_file")"
 
@@ -328,8 +391,11 @@ verify_aws_final_cleanup() {
   fi
 
   if ! jq -en --arg terminal "$second_terminal" --arg started "$destroy_started" \
-      '$terminal <= $started' >/dev/null; then
-    fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': second apply terminal=$second_terminal is after destroy start=$destroy_started"
+      '$terminal < $started' >/dev/null; then
+    if [ "$second_terminal" = "$destroy_started" ]; then
+      fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': second apply terminal equals destroy start at $second_terminal, so ordering is inconclusive"
+    fi
+    fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': second apply terminal=$second_terminal is not before destroy start=$destroy_started"
   fi
   if [ "$lease_rc" -ne 0 ]; then
     fail "AWS final cleanup unsafe for destroy run $destroy_run_id with lease status '$lease_status': scripts/lease.sh get failed with rc=$lease_rc"
@@ -347,8 +413,8 @@ verify_aws_final_cleanup() {
 }
 
 print_ordered_runs() {
-  jq -sr 'sort_by(.run_started_at) | to_entries[] |
-    "order=\(.key + 1) run_id=\(.value.id) workflow=\(.value.workflow) conclusion=\(.value.conclusion) run_started_at=\(.value.run_started_at) updated_at=\(.value.updated_at)"' \
+  jq -sr 'sort_by(.jobs_started_at) | to_entries[] |
+    "order=\(.key + 1) run_id=\(.value.id) workflow=\(.value.workflow) conclusion=\(.value.conclusion) jobs_started_at=\(.value.jobs_started_at) jobs_completed_at=\(.value.jobs_completed_at)"' \
     "$tmp_dir/first-apply.json" "$tmp_dir/second-apply.json" "$tmp_dir/destroy.json"
 }
 
@@ -381,10 +447,10 @@ fi
 
 assert_terminal_before_start \
   "$tmp_dir/first-apply.json" "$tmp_dir/second-apply.json" \
-  "first apply terminal <= second apply start"
+  "first apply terminal < second apply start"
 assert_terminal_before_start \
   "$tmp_dir/second-apply.json" "$tmp_dir/destroy.json" \
-  "second apply terminal <= destroy start"
+  "second apply terminal < destroy start"
 
 case "$TARGET" in
   localstack)
