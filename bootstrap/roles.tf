@@ -871,13 +871,12 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   statement {
     #checkov:skip=CKV_AWS_111:no documented ResourceTag/RequestTag condition key for these route53 hosted-zone actions
     #checkov:skip=CKV_AWS_356:same as above
-    sid    = "Route53HostedZoneManage"
-    effect = "Allow"
-    actions = [
-      "route53:GetHostedZone",
-      "route53:DeleteHostedZone",
-      "route53:ChangeTagsForResource",
-    ]
+    # CreatePrivateDnsNamespace needs GetHostedZone on the zone Cloud Map
+    # creates; DeleteNamespace needs no Route 53 action (Cloud Map reference),
+    # so no hosted-zone delete or tag rights are granted.
+    sid       = "Route53HostedZoneRead"
+    effect    = "Allow"
+    actions   = ["route53:GetHostedZone"]
     resources = ["arn:aws:route53:::hostedzone/*"]
   }
 }
