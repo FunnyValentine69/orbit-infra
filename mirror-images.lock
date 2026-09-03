@@ -1,6 +1,8 @@
-# Source manifest-list digests copied into the private ECR mirrors.
-# mirror-images.yml verifies the destination digest equals this lock before
-# signing; session-apply.yml reads the same digest at dispatch time.
+# Private-ECR placeholder digest plus source manifest-list digests copied into
+# the Redis and ClickHouse mirrors. session-apply.yml fails closed unless the
+# selected mode's entries are digest-pinned.
+placeholder_repository: orbit-infra-79s5rw/placeholder
+placeholder_digest: <pending real-AWS push (P0-3b)>
 redis_source: redis:7-alpine
 redis_digest: sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
 redis_repository: orbit-infra-79s5rw/mirror/redis

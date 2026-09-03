@@ -1,6 +1,6 @@
 # ADR 0005: OIDC roles split by purpose
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
@@ -24,6 +24,13 @@ trusts the `pull_request` subject: pull-request-triggered jobs receive no
 AWS credentials at all. Pull-request Terraform plans instead run against
 LocalStack (see ADR 0008); a real plan-reader read against AWS state
 happens only from `main`.
+
+PR CI secrets are limited to the repository owner's own pull requests; a
+compromised owner account is outside the threat model. `terraform-plan.yml`
+requires both same-repository head ownership and repository-owner PR authorship
+before starting a job that reads `LOCALSTACK_AUTH_TOKEN` or
+`INFRACOST_API_KEY`. Its top-level token permission is `contents: read`;
+`pull-requests: write` is granted only to jobs that post comments.
 
 **Local-bootstrap deviation:** the Free Plan blocks IAM Identity Center,
 so bootstrap runs from an IAM user (MFA, keys local-only, deactivated

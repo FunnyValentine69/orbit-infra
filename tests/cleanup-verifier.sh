@@ -45,6 +45,21 @@ assert_jq "$predicates" '.results[5].outcome == "gone"' \
   "exact inactive ECS describe must override stale list discovery"
 pass "stale list-clusters evidence is ignored when exact describe is INACTIVE"
 
+ecs_missing="$($VERIFIER verify-recorded "$FIXTURES/ecs-exact-missing.json")"
+assert_jq "$ecs_missing" '.passed and .summary.gone == 3 and all(.results[]; .reason == "exact-ecs-missing-failure")' \
+  "only an exact MISSING failure for each requested ECS ARN may prove it gone"
+pass "exact ECS MISSING failures classify requested cluster, service, and task ARNs as gone"
+
+ecs_non_missing="$($VERIFIER verify-recorded "$FIXTURES/ecs-non-missing-failure.json")"
+assert_jq "$ecs_non_missing" '(.passed | not) and .summary.indeterminate == 3 and all(.results[]; .reason == "ecs-failure-indeterminate")' \
+  "non-MISSING, unmatched, and malformed ECS failures must be indeterminate"
+pass "non-MISSING, unmatched, and malformed ECS failures remain indeterminate"
+
+ecs_empty_services="$($VERIFIER verify-recorded "$FIXTURES/ecs-empty-services.json")"
+assert_jq "$ecs_empty_services" '(.passed | not) and .summary.indeterminate == 1 and .results[0].reason == "ecs-absence-unconfirmed"' \
+  "empty services with empty failures must not prove the requested ARN is gone"
+pass "empty ECS services without an exact MISSING failure remain indeterminate"
+
 allowance_fixture="$FIXTURES/task-definition-allowance.json"
 local_allowance="$($VERIFIER task-definition-delete-allowance localstack "$allowance_fixture")"
 assert_jq "$local_allowance" '.allowed and .allowance.id == "localstack-delete-task-definitions-inactive" and .allowance.error_code == "InternalFailure"' \
@@ -285,6 +300,35 @@ if [ ! -f "$state_marker" ]; then
   exit 1
 fi
 pass "end-to-end close retains state and leaves the lease closing, never closed"
+
+# A failed apply may only close the lease generation that its successful CAS
+# open returned. A later generation belongs to a different run.
+generation_fixture="$FIXTURES/lease-generation-mismatch.json"
+generation_env_id="$(jq -r '.env_id' "$generation_fixture")"
+supplied_generation="$(jq -r '.supplied_generation' "$generation_fixture")"
+env "${lease_env[@]}" "$LEASE" open "$generation_env_id" >/dev/null
+set +e
+generation_out="$(env "${lease_env[@]}" \
+  ENV_ID="$generation_env_id" PATH="$tmp_dir/fake-bin:$PATH" \
+  PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  "$REPO_ROOT/scripts/close-env.sh" --generation "$supplied_generation" "$generation_env_id" 2>&1)"
+generation_rc=$?
+set -e
+generation_lease="$(env "${lease_env[@]}" "$LEASE" get "$generation_env_id")"
+generation_expected="$(jq -c '.expected' "$generation_fixture")"
+generation_actual="$(jq -cn \
+  --argjson exit_code "$generation_rc" \
+  --arg status "$(jq -r '.status' <<< "$generation_lease")" \
+  --argjson cleanup_attempt "$(jq -r '.cleanup_attempt' <<< "$generation_lease")" \
+  '{exit_code:$exit_code,status:$status,cleanup_attempt:$cleanup_attempt}')"
+if [ "$generation_actual" != "$generation_expected" ] || \
+   ! grep -q 'lease generation mismatch' <<< "$generation_out"; then
+  echo "FAIL: close must refuse a lease generation owned by another run" >&2
+  echo "actual:   $generation_actual ($generation_out)" >&2
+  echo "expected: $generation_expected" >&2
+  exit 1
+fi
+pass "generation mismatch exits non-zero without transitioning the lease"
 
 # CAS race: a second writer bumps the object's ETag between read and write;
 # the stale writer must lose loudly (exit 3), never overwrite.

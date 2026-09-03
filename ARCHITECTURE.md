@@ -1,5 +1,7 @@
 # Architecture
 
+Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+
 ## Purpose
 
 This document describes the target architecture; STATE.md and TODO.md
@@ -112,7 +114,8 @@ no profile; the AWS branch rejects that endpoint. Every cleanup and lease AWS
 CLI call shares connect/read limits and a 30-second outer timeout. Emulator
 allowances are narrow manifest records, not predicate changes: only an exact
 unsupported task-definition delete for an already-inactive definition is
-accepted. Host-port injection remains a separate plan-drift allowance.
+accepted. The prior host-port plan-drift allowance is withdrawn: every Fargate
+`awsvpc` port mapping now sets `hostPort` equal to `containerPort`.
 
 The lease admits three automatic stage-1 executions per generation, with the
 attempt, next retry time, and manual-intervention flag persisted by ETag CAS.
@@ -141,7 +144,10 @@ CRITICAL and HIGH with unfixed findings ignored. See ADR 0007.
 the local upstream clone's origin, HEAD, and working-tree cleanliness
 against `upstream.lock` before doing anything else, `git archive`s the
 locked commit into a temp dir outside the repo, hashes the tar
-(`build_input_sha256`), and builds
+(`upstream_archive_sha256`), and separately hashes the exact repository-owned
+input list (`repo_build_inputs_sha256`): `images/clickhouse/Dockerfile`,
+`scripts/build-upstream.sh`, and the complete `clickhouse_digest` line from
+`mirror-images.lock`, in that documented order. It then builds
 `orbit-infra-79s5rw/orbit-api`/`orbit-infra-79s5rw/orbit-worker` from the
 archived `Dockerfile.api`/`Dockerfile.worker` and
 `orbit-infra-79s5rw/orbit-clickhouse` from
@@ -153,9 +159,10 @@ workload's ClickHouse init SQL onto the same pinned base image
 attests the already-pushed images with the KMS key, reading and validating
 the commit, build-input hash, repository names, and pushed digests from
 `upstream.lock`; it never builds anything. `mirror-images.lock` pins the
-Redis/ClickHouse source manifest digests copied into their private-ECR
-repositories; `session-apply.yml` reads that lock and the API digest in
-`upstream.lock` at dispatch time.
+placeholder and Redis/ClickHouse private-ECR digests. `session-apply.yml`
+selects either the `upstream` set (upstream API and ClickHouse plus mirrored
+Redis) or the `public` set (placeholder plus mirrored Redis and ClickHouse),
+then records the selected mode in the lease manifest.
 
 ## Cost model
 

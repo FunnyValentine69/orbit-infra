@@ -1,5 +1,7 @@
 # Runbooks
 
+Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+
 ## Local credentials
 
 The AWS Free Plan has no IAM Identity Center, so local bootstrap uses IAM
@@ -52,8 +54,8 @@ The ALB allowlist is the repository secret `OPERATOR_CIDR`. To update it:
 gh secret set OPERATOR_CIDR -R FunnyValentine69/orbit-infra --body "$(curl -s https://checkip.amazonaws.com)/32"
 ```
 
-Then re-dispatch `session-apply` for each live environment (arrives in
-Phase 3). Local applies use the Makefile's lookup; run
+Then re-dispatch `session-apply` for each live environment. Local applies use
+the Makefile's lookup; run
 `make apply TARGET=aws ENV_ID=<id>` to re-apply the whole preview
 environment for that ID — only the ALB security-group ingress rule
 actually changes, since it's the only resource that reads
@@ -61,12 +63,17 @@ actually changes, since it's the only resource that reads
 
 ## Session acceptance
 
-At dispatch time, `session-apply.yml` reads the API digest from
-`upstream.lock` and the Redis/ClickHouse mirror digests from
-`mirror-images.lock`, then combines those digests with the current account's
-private ECR registry. A missing or malformed digest fails before the lease is
-opened. After apply, the workflow discovers every service in the environment's
-ECS cluster and requires `runningCount == desiredCount` within ten minutes.
+At dispatch time, `session-apply.yml` requires `mode=upstream` or `mode=public`.
+`upstream` reads the API and ClickHouse digests from `upstream.lock` and the
+Redis digest from `mirror-images.lock`; `public` reads the placeholder, Redis,
+and ClickHouse digests from `mirror-images.lock`. It combines the selected set
+with the current account's private ECR registry. A missing digest, a tag rather
+than a digest, or a repository name that differs from `bootstrap/ecr.tf` fails
+before the lease is opened. The mode is stored in the lease manifest.
+
+After apply, the workflow runs `aws ecs wait services-stable`, describes every
+enabled service, and requires one completed deployment per service whose task
+definition ARN exactly matches the corresponding Terraform output.
 
 The hosted runner is deliberately outside `operator_cidr`, so it cannot run a
 positive `/health` or `/s3-roundtrip` request. It instead proves the negative
@@ -168,6 +175,10 @@ and does not assume an AWS role. `mirror-images.yml` and `sign-images.yml`
 assume the publisher role; `session-apply.yml` and `session-destroy.yml`
 assume the deployer role. These AWS sessions come from GitHub OIDC and use no
 stored static AWS access keys.
+
+PR CI secrets are limited to the repository owner's own pull requests; a
+compromised owner account is outside the threat model. The workflow grants
+`pull-requests: write` only to jobs that post or update their PR comments.
 
 The Infracost service-account token expires one year after creation
 (created 2026-09-02), and the LocalStack student license renews yearly

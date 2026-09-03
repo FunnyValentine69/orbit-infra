@@ -2,6 +2,8 @@
 
 Ephemeral, near-zero-idle AWS platform for a containerized workload: Terraform, ECS Fargate (ARM64), GitHub Actions with OIDC (no static cloud keys), signed images, per-environment lease lifecycle.
 
+Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+
 ## What this is
 
 An ephemeral, near-zero-idle AWS platform: every environment is created and
@@ -23,17 +25,18 @@ exist anywhere in the pipeline.
 | Dispatch-created parallel environments with nightly auto-destroy | planned |
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
-| Observability: CloudWatch logs, one alarm, one written SLO | done |
+| Observability: CloudWatch logs, two alarms, one written SLO | done |
 | ADRs, runbooks, threat model | in progress |
 
 ## Two targets
 
 Development runs against LocalStack, using the GitHub Student
 Developer Pack's LocalStack Student plan (Ultimate-tier service coverage),
-so the stack can be built and tested without AWS spend. The terraform-plan
-CI workflow (running Terraform plans on LocalStack, never holding AWS
-credentials) lands with Phase 3; until then, gates run locally. Real
-AWS is the promotion target once the platform is proven. Three things are
+so the stack can be built and tested without AWS spend. The Phase 3
+`terraform-plan` workflow has landed: static gates run on every pull request,
+while its secret-bearing LocalStack and Infracost jobs run only for the
+repository owner's own same-repository pull requests. Real AWS is the promotion
+target once the platform is proven. Three things are
 verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact
 OIDC trust-condition semantics. See ADR 0008.
 
@@ -62,6 +65,12 @@ published; this repository deploys any image that satisfies the workload
 contract (see ARCHITECTURE.md), and ships a public-source placeholder image
 through private ECR so the stack can be applied without the private upstream.
 
+`session-apply` requires an explicit deployment mode. `upstream` selects the
+locked `orbit-api` and `orbit-clickhouse` images plus mirrored Redis. `public`
+selects the locked private-ECR placeholder plus mirrored Redis and ClickHouse.
+The workflow opens no lease until every repository name matches
+`bootstrap/ecr.tf` and every selected lock entry is digest-pinned.
+
 ## Repository layout
 
 ```
@@ -75,7 +84,7 @@ modules/              reusable Terraform modules (Phase 2+)
 envs/                 per-environment composition (Phase 2+)
 images/                workload image sources (Phase 2+)
 upstream.lock           private upstream build inputs and pushed ECR digests
-mirror-images.lock      Redis/ClickHouse source and private-mirror digests
+mirror-images.lock      placeholder plus Redis/ClickHouse private-ECR digests
 ```
 
 ## Gates
@@ -94,8 +103,9 @@ plan of `bootstrap/` and requires every planned IAM policy document to be
 plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone
 with `bootstrap/policy-size-check.sh`.
 
-CI: terraform-plan.yml runs the gates and a LocalStack plan on every pull
-request; no AWS credentials are involved.
+CI: `terraform-plan.yml` runs static gates on every pull request. Its
+LocalStack plan and Infracost comment jobs run only for the repository owner's
+own same-repository pull requests; no AWS credentials are involved.
 
 ## Toolchain
 

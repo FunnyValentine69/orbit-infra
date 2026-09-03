@@ -61,6 +61,8 @@ jobs:
       - name: Read and validate mirror lock
         id: mirror-lock
         run: |
+          placeholder_repository="$(awk '$1 == "placeholder_repository:" { print $2 }' mirror-images.lock)"
+          placeholder_digest="$(awk '$1 == "placeholder_digest:" { print $2 }' mirror-images.lock)"
           redis_source="$(awk '$1 == "redis_source:" { print $2 }' mirror-images.lock)"
           redis_digest="$(awk '$1 == "redis_digest:" { print $2 }' mirror-images.lock)"
           redis_repository="$(awk '$1 == "redis_repository:" { print $2 }' mirror-images.lock)"
@@ -78,13 +80,16 @@ jobs:
             echo "mirror-images.lock source names do not match the approved mirrors" >&2
             exit 1
           fi
-          if [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
+          if [[ "$placeholder_repository" != "orbit-infra-79s5rw/placeholder" ]] || \
+             [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
              [[ "$clickhouse_repository" != "orbit-infra-79s5rw/mirror/clickhouse" ]]; then
             echo "mirror-images.lock repository names do not match bootstrap/ecr.tf" >&2
             exit 1
           fi
 
           {
+            echo "placeholder_repository=${placeholder_repository}"
+            echo "placeholder_digest=${placeholder_digest}"
             echo "redis_source=${redis_source}"
             echo "redis_digest=${redis_digest}"
             echo "redis_repository=${redis_repository}"
@@ -159,6 +164,14 @@ jobs:
             echo "placeholder digest is invalid" >&2
             exit 1
           fi
+          locked_digest="${{ steps.mirror-lock.outputs.placeholder_digest }}"
+          if [[ "$locked_digest" =~ ^sha256:[0-9a-f]{64}$ && "$digest" != "$locked_digest" ]]; then
+            echo "placeholder destination digest does not match mirror-images.lock" >&2
+            exit 1
+          elif [[ ! "$locked_digest" =~ ^sha256:[0-9a-f]{64}$ && "$locked_digest" != "<pending"* ]]; then
+            echo "placeholder_digest in mirror-images.lock is invalid" >&2
+            exit 1
+          fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Trivy scan placeholder
@@ -183,9 +196,16 @@ jobs:
           fi
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog "$IMAGE" >/dev/null
 
-          if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type custom "$IMAGE" >/dev/null 2>&1; then
-            echo "placeholder attestation already exists"
+          attestation_matches=false
+          if attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type custom "$IMAGE" 2>/dev/null)" && \
+             jq -e --arg source_sha "$SOURCE_SHA" '
+               any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
+             ' <<< "$attestations" >/dev/null; then
+            attestation_matches=true
+          fi
+          if [ "$attestation_matches" = true ]; then
+            echo "matching placeholder attestation already exists"
           else
             predicate_file=$(mktemp)
             printf '{"source_sha":"%s","built_on":"%s"}\n' \
@@ -195,7 +215,10 @@ jobs:
             rm -f "$predicate_file"
           fi
           cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type custom "$IMAGE" >/dev/null
+            --type custom "$IMAGE" 2>/dev/null \
+            | jq -e --arg source_sha "$SOURCE_SHA" '
+                any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
+              ' >/dev/null
 
       # --- mirrors: private ECR, KMS-signed with --tlog-upload=false (ADR 0007) ---
 
@@ -241,10 +264,18 @@ jobs:
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${dest}@${SOURCE_DIGEST}" >/dev/null
 
-          if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+          attestation_matches=false
+          if attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-            "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
-            echo "mirror attestation already exists"
+            "${dest}@${SOURCE_DIGEST}" 2>/dev/null)" && \
+             jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+               any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                 | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
+             ' <<< "$attestations" >/dev/null; then
+            attestation_matches=true
+          fi
+          if [ "$attestation_matches" = true ]; then
+            echo "matching mirror attestation already exists"
           else
             predicate_file=$(mktemp)
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
@@ -257,7 +288,11 @@ jobs:
           fi
           cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-            "${dest}@${SOURCE_DIGEST}" >/dev/null
+            "${dest}@${SOURCE_DIGEST}" 2>/dev/null \
+            | jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+                any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                  | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
+              ' >/dev/null
 
           echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
@@ -322,10 +357,18 @@ jobs:
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             "${dest}@${SOURCE_DIGEST}" >/dev/null
 
-          if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+          attestation_matches=false
+          if attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-            "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
-            echo "mirror attestation already exists"
+            "${dest}@${SOURCE_DIGEST}" 2>/dev/null)" && \
+             jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+               any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                 | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
+             ' <<< "$attestations" >/dev/null; then
+            attestation_matches=true
+          fi
+          if [ "$attestation_matches" = true ]; then
+            echo "matching mirror attestation already exists"
           else
             predicate_file=$(mktemp)
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
@@ -338,7 +381,11 @@ jobs:
           fi
           cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-            "${dest}@${SOURCE_DIGEST}" >/dev/null
+            "${dest}@${SOURCE_DIGEST}" 2>/dev/null \
+            | jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+                any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                  | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
+              ' >/dev/null
 
           echo "digest=${SOURCE_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"

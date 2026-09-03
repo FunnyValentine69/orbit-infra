@@ -81,6 +81,11 @@ run "default_topology" {
   }
 
   assert {
+    condition     = jsondecode(aws_ecs_task_definition.this[0].container_definitions)[0].portMappings[0].hostPort == var.container_port
+    error_message = "Fargate awsvpc hostPort must equal containerPort"
+  }
+
+  assert {
     condition     = aws_cloudwatch_log_group.this[0].tags["env_id"] == "test"
     error_message = "log group must carry the env_id tag"
   }

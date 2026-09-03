@@ -13,6 +13,11 @@ output "service_name" {
   value       = module.service.service_name
 }
 
+output "task_definition_arn" {
+  description = "ARN of the underlying ECS task definition"
+  value       = module.service.task_definition_arn
+}
+
 output "container_definitions_json" {
   description = "The underlying ECS service's task definition container_definitions JSON string"
   value       = module.service.container_definitions_json

@@ -271,7 +271,8 @@ classify() {
     return
   fi
 
-  local valid match state
+  local valid match state ecs_failure
+  ecs_failure=""
   valid=false
   match=false
   state=""
@@ -324,18 +325,39 @@ classify() {
       match="$(jq -r --arg id "$id" 'any(.Rules[]?; .RuleArn == $id)' <<< "$output_json")"
       ;;
     ecs:cluster)
-      valid="$(jq -r 'has("clusters") and (.clusters | type == "array") and ((.failures // []) | type == "array")' <<< "$output_json")"
+      valid="$(jq -r 'has("clusters") and (.clusters | type == "array") and has("failures") and (.failures | type == "array")' <<< "$output_json")"
       match="$(jq -r --arg id "$id" 'any(.clusters[]?; .clusterArn == $id)' <<< "$output_json")"
+      if [ "$valid" = true ]; then
+        ecs_failure="$(jq -r --arg id "$id" '
+          if (.failures | length) == 0 then "none"
+          elif all(.failures[];
+            try (.arn == $id and .reason == "MISSING") catch false)
+          then "exact-missing" else "indeterminate" end' <<< "$output_json")"
+      fi
       if [ "$match" = true ]; then state="$(jq -r --arg id "$id" '.clusters[] | select(.clusterArn == $id) | .status // empty' <<< "$output_json" | head -n1)"; fi
       ;;
     ecs:service)
-      valid="$(jq -r 'has("services") and (.services | type == "array") and ((.failures // []) | type == "array")' <<< "$output_json")"
+      valid="$(jq -r 'has("services") and (.services | type == "array") and has("failures") and (.failures | type == "array")' <<< "$output_json")"
       match="$(jq -r --arg id "$id" 'any(.services[]?; .serviceArn == $id)' <<< "$output_json")"
+      if [ "$valid" = true ]; then
+        ecs_failure="$(jq -r --arg id "$id" '
+          if (.failures | length) == 0 then "none"
+          elif all(.failures[];
+            try (.arn == $id and .reason == "MISSING") catch false)
+          then "exact-missing" else "indeterminate" end' <<< "$output_json")"
+      fi
       if [ "$match" = true ]; then state="$(jq -r --arg id "$id" '.services[] | select(.serviceArn == $id) | .status // empty' <<< "$output_json" | head -n1)"; fi
       ;;
     ecs:task)
-      valid="$(jq -r 'has("tasks") and (.tasks | type == "array") and ((.failures // []) | type == "array")' <<< "$output_json")"
+      valid="$(jq -r 'has("tasks") and (.tasks | type == "array") and has("failures") and (.failures | type == "array")' <<< "$output_json")"
       match="$(jq -r --arg id "$id" 'any(.tasks[]?; .taskArn == $id)' <<< "$output_json")"
+      if [ "$valid" = true ]; then
+        ecs_failure="$(jq -r --arg id "$id" '
+          if (.failures | length) == 0 then "none"
+          elif all(.failures[];
+            try (.arn == $id and .reason == "MISSING") catch false)
+          then "exact-missing" else "indeterminate" end' <<< "$output_json")"
+      fi
       if [ "$match" = true ]; then state="$(jq -r --arg id "$id" '.tasks[] | select(.taskArn == $id) | .lastStatus // empty' <<< "$output_json" | head -n1)"; fi
       ;;
     ecs:task-definition)
@@ -378,10 +400,28 @@ classify() {
     emit_result "$candidate" indeterminate malformed-response
     return
   fi
-  if [ "$match" != true ]; then
-    emit_result "$candidate" gone exact-resource-missing
-    return
-  fi
+  case "$resource_type" in
+    ecs:cluster|ecs:service|ecs:task)
+      if [ "$ecs_failure" = indeterminate ] || { [ "$ecs_failure" = exact-missing ] && [ "$match" = true ]; }; then
+        emit_result "$candidate" indeterminate ecs-failure-indeterminate
+        return
+      fi
+      if [ "$match" != true ]; then
+        if [ "$ecs_failure" = exact-missing ]; then
+          emit_result "$candidate" gone exact-ecs-missing-failure
+        else
+          emit_result "$candidate" indeterminate ecs-absence-unconfirmed
+        fi
+        return
+      fi
+      ;;
+    *)
+      if [ "$match" != true ]; then
+        emit_result "$candidate" gone exact-resource-missing
+        return
+      fi
+      ;;
+  esac
 
   case "$resource_type:$state" in
     ec2:vpc-endpoint:deleted) emit_result "$candidate" gone terminal-state "$state" ;;

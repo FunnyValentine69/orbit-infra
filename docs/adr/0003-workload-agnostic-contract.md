@@ -1,6 +1,6 @@
 # ADR 0003: Workload-agnostic contract
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
@@ -20,10 +20,13 @@ image, and the redis/clickhouse modules' `image` variables default to
 their public Docker Hub images (`redis:7-alpine`,
 `clickhouse/clickhouse-server:24.3-alpine`) — so `terraform apply` works
 end to end with no private code and no CI dependency. The real-AWS path
-instead requires the private-ECR digests that Phase 3's `mirror-images.yml`
-and `sign-images.yml` workflows produce, passed through all three image
-variables; the dispatch fails closed until all three locks hold real digests.
-For the upstream workload,
+instead requires an explicit `session-apply` mode and private-ECR digests.
+`upstream` deploys `orbit-api` and `orbit-clickhouse` from `upstream.lock`
+plus Redis from `mirror-images.lock`. `public` deploys the placeholder, Redis,
+and ClickHouse from `mirror-images.lock`. Each mode fails closed before lease
+open unless its complete three-image set is digest-pinned and its repository
+names match `bootstrap/ecr.tf`. The selected mode is recorded in the lease
+manifest. For the upstream workload,
 `worker_image` stays `null`
 because its shipped entrypoint module is absent upstream; shipping a guess
 would misrepresent functionality. The upstream's S3 integration is out of

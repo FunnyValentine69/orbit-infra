@@ -8,9 +8,8 @@
 # in hosted CI: the archive step needs a private, pre-authenticated local
 # clone of the upstream repo.
 #
-# The archive's sha256 is the build-input hash; when upstream.lock already
-# records one, a mismatch refuses the build (the lock and the archive must
-# describe the same input).
+# The archive sha256 and this repository's ClickHouse build-input sha256 are
+# both locked; a mismatch in either refuses the build.
 #
 # Required env:
 #   UPSTREAM_DIR    path to a local clone of the upstream repo
@@ -29,14 +28,26 @@ IMAGE_PREFIX="${IMAGE_PREFIX:-orbit}"
 ECR_REPOSITORY_PREFIX="${ECR_REPOSITORY_PREFIX:-orbit-infra-79s5rw}"
 UPSTREAM_LOCK="${UPSTREAM_LOCK:-${repo_root}/upstream.lock}"
 
+api_repository="${ECR_REPOSITORY_PREFIX}/orbit-api"
+worker_repository="${ECR_REPOSITORY_PREFIX}/orbit-worker"
+clickhouse_repository="${ECR_REPOSITORY_PREFIX}/orbit-clickhouse"
+
 if [[ -z "${UPSTREAM_DIR:-}" ]]; then
   echo "build-upstream: UPSTREAM_DIR is required" >&2
   exit 1
 fi
 
-if [[ "${PUSH:-0}" == "1" && -z "${ECR_REGISTRY:-}" ]]; then
-  echo "build-upstream: ECR_REGISTRY is required when PUSH=1" >&2
-  exit 1
+if [[ "${PUSH:-0}" == "1" ]]; then
+  if [[ ! "${ECR_REGISTRY:-}" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com$ ]]; then
+    echo "build-upstream: ECR_REGISTRY must be an exact private ECR registry when PUSH=1" >&2
+    exit 1
+  fi
+  if [[ "$api_repository" != "orbit-infra-79s5rw/orbit-api" ]] || \
+     [[ "$worker_repository" != "orbit-infra-79s5rw/orbit-worker" ]] || \
+     [[ "$clickhouse_repository" != "orbit-infra-79s5rw/orbit-clickhouse" ]]; then
+    echo "build-upstream: destination repositories must match bootstrap/ecr.tf" >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -f "$UPSTREAM_LOCK" ]]; then
@@ -83,12 +94,33 @@ tar_file="${tmp_dir}/archive.tar"
 archive_dir="${tmp_dir}/archive"
 mkdir -p "$archive_dir"
 
-# --- Step 5: archive the locked commit, hash the tar, then extract ---
+# --- Step 5: archive the locked commit, hash every build input, then extract ---
 git -C "$UPSTREAM_DIR" archive --format=tar "$upstream_sha" > "$tar_file"
-build_input_sha256="$(shasum -a 256 "$tar_file" | awk '{print $1}')"
-locked_input_sha256="$(grep '^build_input_sha256:' "$UPSTREAM_LOCK" | sed 's/^build_input_sha256:[[:space:]]*//')"
-if [[ -n "$locked_input_sha256" && "$locked_input_sha256" != "<pending"* && "$locked_input_sha256" != "$build_input_sha256" ]]; then
-  echo "build-upstream: build input hash $build_input_sha256 does not match upstream.lock ($locked_input_sha256); refusing to build from a different archive" >&2
+upstream_archive_sha256="$(shasum -a 256 "$tar_file" | awk '{print $1}')"
+locked_archive_sha256="$(grep '^upstream_archive_sha256:' "$UPSTREAM_LOCK" | sed 's/^upstream_archive_sha256:[[:space:]]*//')"
+if [[ -n "$locked_archive_sha256" && "$locked_archive_sha256" != "<pending"* && "$locked_archive_sha256" != "$upstream_archive_sha256" ]]; then
+  echo "build-upstream: upstream archive hash $upstream_archive_sha256 does not match upstream.lock ($locked_archive_sha256)" >&2
+  exit 1
+fi
+
+# Exact repository-owned input list and byte order: the ClickHouse Dockerfile,
+# this build script, and the complete clickhouse_digest line from
+# mirror-images.lock. Path labels and newlines delimit each item.
+clickhouse_digest_line="$(grep '^clickhouse_digest:' "${repo_root}/mirror-images.lock")"
+if [[ ! "$clickhouse_digest_line" =~ ^clickhouse_digest:\ sha256:[0-9a-f]{64}$ ]]; then
+  echo "build-upstream: mirror-images.lock must contain one digest-pinned clickhouse_digest line" >&2
+  exit 1
+fi
+repo_build_inputs_sha256="$({
+  printf 'images/clickhouse/Dockerfile\n'
+  cat "${repo_root}/images/clickhouse/Dockerfile"
+  printf '\nscripts/build-upstream.sh\n'
+  cat "${repo_root}/scripts/build-upstream.sh"
+  printf '\nmirror-images.lock:clickhouse_digest\n%s\n' "$clickhouse_digest_line"
+} | shasum -a 256 | awk '{print $1}')"
+locked_repo_inputs_sha256="$(grep '^repo_build_inputs_sha256:' "$UPSTREAM_LOCK" | sed 's/^repo_build_inputs_sha256:[[:space:]]*//')"
+if [[ -n "$locked_repo_inputs_sha256" && "$locked_repo_inputs_sha256" != "<pending"* && "$locked_repo_inputs_sha256" != "$repo_build_inputs_sha256" ]]; then
+  echo "build-upstream: repository build-input hash $repo_build_inputs_sha256 does not match upstream.lock ($locked_repo_inputs_sha256)" >&2
   exit 1
 fi
 tar -xf "$tar_file" -C "$archive_dir"
@@ -98,10 +130,6 @@ short_sha="${upstream_sha:0:12}"
 api_image="${IMAGE_PREFIX}-api"
 worker_image="${IMAGE_PREFIX}-worker"
 clickhouse_image="${IMAGE_PREFIX}-clickhouse"
-
-api_repository="${ECR_REPOSITORY_PREFIX}/orbit-api"
-worker_repository="${ECR_REPOSITORY_PREFIX}/orbit-worker"
-clickhouse_repository="${ECR_REPOSITORY_PREFIX}/orbit-clickhouse"
 
 # --- Step 6: build the three images ---
 docker build --platform linux/arm64 \
@@ -129,20 +157,31 @@ worker_digest=""
 clickhouse_digest=""
 
 if [[ "${PUSH:-0}" == "1" ]]; then
+  pushed_digest() {
+    local tagged_reference="$1"
+    local repository_reference="$2"
+    local digest_reference
+    digest_reference="$(docker image inspect --format '{{json .RepoDigests}}' "$tagged_reference" \
+      | jq -er --arg repository "$repository_reference" '
+        [.[] | select((split("@")[0]) == $repository)]
+        | if length == 1 then .[0] else error("exact destination RepoDigest not found") end')" || {
+      echo "build-upstream: pushed image has no unique RepoDigest for $repository_reference" >&2
+      return 1
+    }
+    printf '%s\n' "${digest_reference##*@}"
+  }
+
   docker tag "${api_image}:${short_sha}" "${ECR_REGISTRY}/${api_repository}:${short_sha}"
   docker push "${ECR_REGISTRY}/${api_repository}:${short_sha}"
-  api_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${api_repository}:${short_sha}")"
-  api_digest="${api_digest_ref##*@}"
+  api_digest="$(pushed_digest "${ECR_REGISTRY}/${api_repository}:${short_sha}" "${ECR_REGISTRY}/${api_repository}")"
 
   docker tag "${worker_image}:${short_sha}" "${ECR_REGISTRY}/${worker_repository}:${short_sha}"
   docker push "${ECR_REGISTRY}/${worker_repository}:${short_sha}"
-  worker_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${worker_repository}:${short_sha}")"
-  worker_digest="${worker_digest_ref##*@}"
+  worker_digest="$(pushed_digest "${ECR_REGISTRY}/${worker_repository}:${short_sha}" "${ECR_REGISTRY}/${worker_repository}")"
 
   docker tag "${clickhouse_image}:${short_sha}" "${ECR_REGISTRY}/${clickhouse_repository}:${short_sha}"
   docker push "${ECR_REGISTRY}/${clickhouse_repository}:${short_sha}"
-  clickhouse_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "${ECR_REGISTRY}/${clickhouse_repository}:${short_sha}")"
-  clickhouse_digest="${clickhouse_digest_ref##*@}"
+  clickhouse_digest="$(pushed_digest "${ECR_REGISTRY}/${clickhouse_repository}:${short_sha}" "${ECR_REGISTRY}/${clickhouse_repository}")"
 
   for digest in "$api_digest" "$worker_digest" "$clickhouse_digest"; do
     if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -176,7 +215,8 @@ fi
 cat <<JSON
 {
   "upstream_sha": "${upstream_sha}",
-  "build_input_sha256": "${build_input_sha256}",
+  "upstream_archive_sha256": "${upstream_archive_sha256}",
+  "repo_build_inputs_sha256": "${repo_build_inputs_sha256}",
   "images": {
     "${api_repository}": {
       "tag": "${short_sha}",

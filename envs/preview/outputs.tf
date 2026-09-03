@@ -43,9 +43,19 @@ output "api_service_name" {
   value       = module.api.service_name
 }
 
+output "api_task_definition_arn" {
+  description = "ARN of the applied api ECS task definition"
+  value       = module.api.task_definition_arn
+}
+
 output "worker_service_name" {
   description = "Name of the worker ECS service"
   value       = module.worker.service_name
+}
+
+output "worker_task_definition_arn" {
+  description = "ARN of the applied worker ECS task definition, or null when disabled"
+  value       = module.worker.task_definition_arn
 }
 
 output "redis_service_name" {
@@ -53,9 +63,19 @@ output "redis_service_name" {
   value       = module.redis.service_name
 }
 
+output "redis_task_definition_arn" {
+  description = "ARN of the applied Redis ECS task definition"
+  value       = module.redis.task_definition_arn
+}
+
 output "clickhouse_service_name" {
   description = "Name of the ClickHouse ECS service"
   value       = module.clickhouse.service_name
+}
+
+output "clickhouse_task_definition_arn" {
+  description = "ARN of the applied ClickHouse ECS task definition"
+  value       = module.clickhouse.task_definition_arn
 }
 
 output "data_bucket_name" {

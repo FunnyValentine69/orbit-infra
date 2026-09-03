@@ -1,17 +1,16 @@
 # terraform-plan
 #
-# Runs the policy gates (validate/lint/test, via scripts/gates.sh) and a
-# Terraform plan against LocalStack on every pull request. No AWS
-# credentials of any kind are used anywhere in this workflow -- pull
+# Runs the policy gates (validate/lint/test, via scripts/gates.sh) on every
+# pull request. Secret-bearing LocalStack and Infracost jobs run only for the
+# repository owner's own same-repository pull requests. No AWS credentials
+# of any kind are used anywhere in this workflow -- pull
 # requests never trust an OIDC subject that any real-AWS role would honor
 # (ADR 0005), so PR-triggered plans run against LocalStack instead
 # (ADR 0008). Real-AWS plans are a `main`-only, human-triggered action
 # outside this workflow.
 #
-# The `head.repo.full_name == github.repository` fork guard on every job
-# is a cost/no-op filter, matching oidc-smoke.yml: fork PRs cannot receive
-# secrets (LOCALSTACK_AUTH_TOKEN, INFRACOST_API_KEY) from this repository
-# regardless, so skipping them here just avoids a guaranteed-broken run.
+# Secret-bearing PR jobs run only for the repository owner's own same-repository
+# pull requests. The static gates remain safe for every trigger.
 
 name: terraform-plan
 
@@ -22,7 +21,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: plan-${{ github.ref }}
@@ -32,7 +30,6 @@ jobs:
   gates:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,7 +72,7 @@ jobs:
     needs: gates
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == github.repository_owner
     permissions:
       contents: read
       pull-requests: write
@@ -124,6 +121,7 @@ jobs:
 
       - name: Terraform plan (LocalStack)
         env:
+          # RFC 1918 placeholder from the plan; never an operator address.
           OPERATOR_CIDR: 10.255.255.255/32
           TF_CLI_ARGS_plan: -out=tfplan.bin
         run: |
@@ -172,7 +170,10 @@ jobs:
     needs: gates
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == github.repository_owner
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Check for Infracost API key
         id: check
@@ -195,6 +196,7 @@ jobs:
         run: |
           cat > /tmp/infracost.tfvars <<'EOF'
           env_id = "pr"
+          # RFC 1918 placeholder from the plan; never an operator address.
           operator_cidr = "10.255.255.255/32"
           target = "aws"
           EOF

@@ -1,6 +1,6 @@
 # ADR 0006: Preview environment lease lifecycle
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
@@ -8,7 +8,7 @@ Environments are created/destroyed by independent CI dispatches that can be inte
 
 ## Decision
 
-Each `env_id` has a durable lease at `leases/<env_id>.json` with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every transition is a compare-and-swap (S3 conditional write on the ETag, asserting prior state/generation) — two writers can never both win. Apply order: runner-CIDR check → lint → checkov → create lease (only if none exists or `closed`, generation N+1) → init → plan → apply; static gate failures never create a lease or resources. Any failure after the lease exists triggers stage 1 of close in the same job.
+Each `env_id` has a durable lease at `leases/<env_id>.json` with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every transition is a compare-and-swap (S3 conditional write on the ETag, asserting prior state/generation) — two writers can never both win. Apply order: runner-CIDR check → lint → checkov → create lease (only if none exists or `closed`, generation N+1) → init → plan → apply; static gate failures never create a lease or resources. The apply workflow emits acquisition state and generation only after its CAS open succeeds. Its failure handler runs only for that acquisition and passes the generation to `close-env.sh`, which refuses without a transition if the current lease generation differs.
 
 Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) re-checks the manifest; once every task definition is deleted, it removes state versions and sets `closed`. The sweeper shares `preview-<env_id>` concurrency with apply/destroy (`queue: max`) so they never overlap. `closed` leases prune after 7 days.
 
@@ -18,7 +18,7 @@ The stage-1 candidate set is created before destroy and is the union of the prio
 
 One exact-resource verifier assigns one result to every candidate and persists every iteration:
 
-- `gone`: absent, terminal, or non-billable under the resource-specific predicate. This includes VPC endpoints in `deleted`; ECS clusters/services in `INACTIVE`; ECS tasks in `STOPPED`; and task definitions in `INACTIVE` or `DELETE_IN_PROGRESS`.
+- `gone`: absent, terminal, or non-billable under the resource-specific predicate. This includes VPC endpoints in `deleted`; ECS clusters/services in `INACTIVE`; ECS tasks in `STOPPED`; and task definitions in `INACTIVE` or `DELETE_IN_PROGRESS`. A successful ECS describe response with no matching cluster/service/task is `gone` only when every failure entry names the exact candidate ARN with reason `MISSING`; an empty collection with empty failures is indeterminate.
 - `pending`: a recognized deletion transition, such as a VPC endpoint in `deleting`, or a secret with `DeletedDate` when force-delete semantics were not recorded.
 - `live`: the exact API proves the resource remains usable or active.
 - `indeterminate`: the exact probe timed out, was denied, returned malformed data, or has an unsupported resource type.
@@ -27,7 +27,7 @@ Stage 1 retries `pending`, post-destroy `live`, and transient `indeterminate` re
 
 All cleanup and lease AWS CLI calls pass through `scripts/aws-cli.sh`, with five-second connect and 20-second read timeouts inside a 30-second process-group deadline. `TARGET` is mandatory. `localstack` requires an explicit localhost endpoint, test credentials, disabled metadata lookup, and no `AWS_PROFILE`; `aws` rejects a LocalStack endpoint.
 
-The only stage-1 emulator allowance is `localstack-delete-task-definitions-inactive`: `TARGET=localstack`, the exact unsupported `DeleteTaskDefinitions` signature, and an already-`INACTIVE` task definition are all required. Its ID, ARN, error code, and timestamp are persisted. The same response under `TARGET=aws` fails. Stale tags, retained cluster list entries, and endpoints in `deleted` are normal typed outcomes, not allowances. LocalStack host-port injection remains a separate Terraform plan-drift allowance and cannot weaken cleanup predicates.
+The only stage-1 emulator allowance is `localstack-delete-task-definitions-inactive`: `TARGET=localstack`, the exact unsupported `DeleteTaskDefinitions` signature, and an already-`INACTIVE` task definition are all required. Its ID, ARN, error code, and timestamp are persisted. The same response under `TARGET=aws` fails. Stale tags, retained cluster list entries, and endpoints in `deleted` are normal typed outcomes, not allowances. The former host-port plan-drift allowance is withdrawn because Fargate `awsvpc` port mappings now set equal host and container ports.
 
 Each lease generation stores `cleanup_attempt`, `next_retry_at`, and `manual_intervention_required` through the same ETag compare-and-swap as status and manifest updates. Three automatic stage-1 executions are permitted. The third failure retains `cleanup_failed`, retains state, and requires manual intervention; a fourth automatic claim is refused. An operator may use the explicit `--force-retry` path after review, which appends a lease audit entry.
 
@@ -49,4 +49,4 @@ This amendment corrects three prior assumptions:
 - **DynamoDB lock table for leases:** rejected — a second persistent resource for what S3 ETag compare-and-swap already provides.
 - **Single-stage close, longer timeout:** rejected — hosted jobs cap at 6 hours; task-definition deletion can take up to 24.
 
-Live-proof findings 2026-09-02 (LocalStack 2026.8.1, after the typed-outcome redesign): (1) the `DeleteTaskDefinitions` allowance matched on the error code `NotImplementedException` from an invented fixture, while the emulator returns `InternalFailure` with the same message; the allowance now keys on the message signature and records the code, and the fixture is the recorded response. (2) A stage-1 retry after a successful destroy tried to scale services that no longer exist; scale-to-zero now describes each service first and skips anything not ACTIVE or DRAINING. Rule: fixtures under `tests/fixtures/cleanup/` are recorded from a real backend, never written from documentation.
+Live-proof findings 2026-09-02 (LocalStack 2026.8.1, after the typed-outcome redesign): (1) the `DeleteTaskDefinitions` allowance matched on the error code `NotImplementedException` from an invented fixture, while the emulator returns `InternalFailure` with the same message; the allowance now keys on the message signature and records the code, and that fixture is the one recorded backend response. (2) A stage-1 retry after a successful destroy tried to scale services that no longer exist; scale-to-zero now describes each service first and skips anything not ACTIVE or DRAINING. The remaining cleanup fixtures are authored from API or lifecycle contracts and are labeled `authored`, as documented in `tests/README.md`.

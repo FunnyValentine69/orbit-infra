@@ -1,0 +1,74 @@
+{
+  "authored": "AWS ECS describe API response contract",
+  "name": "exact ECS MISSING failures identify the requested ARN as gone",
+  "records": [
+    {
+      "candidate": {
+        "resource_type": "ecs:cluster",
+        "id": "arn:aws:ecs:test-region:placeholder:cluster/cluster-missing",
+        "arn": "arn:aws:ecs:test-region:placeholder:cluster/cluster-missing",
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": {
+          "clusters": [],
+          "failures": [
+            {
+              "arn": "arn:aws:ecs:test-region:placeholder:cluster/cluster-missing",
+              "reason": "MISSING",
+              "detail": "The referenced cluster was not found."
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    },
+    {
+      "candidate": {
+        "resource_type": "ecs:service",
+        "id": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-missing",
+        "arn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-missing",
+        "parent_id": "cluster-one",
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": {
+          "services": [],
+          "failures": [
+            {
+              "arn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-missing",
+              "reason": "MISSING",
+              "detail": "The referenced service was not found."
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    },
+    {
+      "candidate": {
+        "resource_type": "ecs:task",
+        "id": "arn:aws:ecs:test-region:placeholder:task/cluster-one/task-missing",
+        "arn": "arn:aws:ecs:test-region:placeholder:task/cluster-one/task-missing",
+        "parent_id": "cluster-one",
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": {
+          "tasks": [],
+          "failures": [
+            {
+              "arn": "arn:aws:ecs:test-region:placeholder:task/cluster-one/task-missing",
+              "reason": "MISSING",
+              "detail": "The referenced task was not found."
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    }
+  ]
+}

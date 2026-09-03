@@ -22,12 +22,16 @@ locals {
 
   container_definition = merge(
     {
-      name         = var.name
-      image        = var.image
-      essential    = true
-      portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
-      environment  = local.env_list
-      secrets      = local.secrets_list
+      name      = var.name
+      image     = var.image
+      essential = true
+      portMappings = [{
+        containerPort = var.container_port
+        hostPort      = var.container_port
+        protocol      = "tcp"
+      }]
+      environment = local.env_list
+      secrets     = local.secrets_list
       logConfiguration = {
         logDriver = "awslogs"
         options = {

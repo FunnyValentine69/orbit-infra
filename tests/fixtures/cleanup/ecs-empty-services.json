@@ -1,0 +1,20 @@
+{
+  "authored": "AWS ECS describe-services response contract",
+  "name": "an empty service collection without an exact MISSING failure is indeterminate",
+  "records": [
+    {
+      "candidate": {
+        "resource_type": "ecs:service",
+        "id": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-unconfirmed",
+        "arn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-unconfirmed",
+        "parent_id": "cluster-one",
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": { "services": [], "failures": [] },
+        "stderr": ""
+      }
+    }
+  ]
+}

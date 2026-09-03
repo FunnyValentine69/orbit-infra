@@ -1,0 +1,77 @@
+{
+  "authored": "AWS ECS describe API response contract",
+  "name": "non-MISSING and unmatched ECS failures remain indeterminate",
+  "records": [
+    {
+      "candidate": {
+        "resource_type": "ecs:cluster",
+        "id": "arn:aws:ecs:test-region:placeholder:cluster/cluster-candidate",
+        "arn": "arn:aws:ecs:test-region:placeholder:cluster/cluster-candidate",
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": {
+          "clusters": [],
+          "failures": [
+            {
+              "arn": "arn:aws:ecs:test-region:placeholder:cluster/cluster-candidate",
+              "reason": "ACCESS_DENIED",
+              "detail": "The request could not be evaluated."
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    },
+    {
+      "candidate": {
+        "resource_type": "ecs:service",
+        "id": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-candidate",
+        "arn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-candidate",
+        "parent_id": "cluster-one",
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": {
+          "services": [],
+          "failures": [
+            {
+              "arn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/service-candidate",
+              "reason": "MISSING",
+              "detail": "The requested service was not found."
+            },
+            {
+              "arn": "arn:aws:ecs:test-region:placeholder:service/cluster-one/different-service",
+              "reason": "MISSING",
+              "detail": "A different service was not found."
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    },
+    {
+      "candidate": {
+        "resource_type": "ecs:task",
+        "id": "arn:aws:ecs:test-region:placeholder:task/cluster-one/task-candidate",
+        "arn": "arn:aws:ecs:test-region:placeholder:task/cluster-one/task-candidate",
+        "parent_id": "cluster-one",
+        "sources": ["manifest"]
+      },
+      "response": {
+        "rc": 0,
+        "stdout": {
+          "tasks": [],
+          "failures": [
+            {
+              "arn": "arn:aws:ecs:test-region:placeholder:task/cluster-one/task-candidate"
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    }
+  ]
+}

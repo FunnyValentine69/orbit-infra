@@ -121,4 +121,111 @@ for required in \
   fi
 done
 
+build_script="$REPO_ROOT/scripts/build-upstream.sh"
+clickhouse_digest_line="$(grep '^clickhouse_digest:' "$REPO_ROOT/mirror-images.lock")"
+repo_build_inputs_sha256="$({
+  printf 'images/clickhouse/Dockerfile\n'
+  cat "$REPO_ROOT/images/clickhouse/Dockerfile"
+  printf '\nscripts/build-upstream.sh\n'
+  cat "$build_script"
+  printf '\nmirror-images.lock:clickhouse_digest\n%s\n' "$clickhouse_digest_line"
+} | shasum -a 256 | awk '{print $1}')"
+if [[ "$(awk '$1 == "repo_build_inputs_sha256:" { print $2 }' "$REPO_ROOT/upstream.lock")" != "$repo_build_inputs_sha256" ]]; then
+  echo "upstream.lock repo_build_inputs_sha256 does not match the documented input list" >&2
+  exit 1
+fi
+
+set +e
+invalid_registry_out="$(UPSTREAM_DIR="$tmp_dir" PUSH=1 ECR_REGISTRY=not-an-ecr-registry \
+  "$build_script" 2>&1)"
+invalid_registry_rc=$?
+set -e
+if [[ "$invalid_registry_rc" -eq 0 ]] || \
+   ! grep -Fq 'ECR_REGISTRY must be an exact private ECR registry' <<< "$invalid_registry_out"; then
+  echo "PUSH=1 must reject a non-ECR registry before building" >&2
+  exit 1
+fi
+
+archive_source="$tmp_dir/upstream-archive"
+mkdir -p "$archive_source" "$tmp_dir/build-bin"
+cat > "$archive_source/Dockerfile.api" <<'EOF'
+FROM scratch
+EOF
+cat > "$archive_source/Dockerfile.worker" <<'EOF'
+FROM scratch
+EOF
+printf 'SELECT 1;\n' > "$archive_source/init.sql"
+archive_tar="$tmp_dir/upstream.tar"
+tar -cf "$archive_tar" -C "$archive_source" .
+archive_sha256="$(shasum -a 256 "$archive_tar" | awk '{print $1}')"
+locked_sha="$(printf 'a%.0s' {1..40})"
+build_lock="$tmp_dir/upstream.lock"
+cat > "$build_lock" <<EOF
+upstream_repo: SuperGokou/happyCoding
+upstream_sha: $locked_sha
+upstream_archive_sha256: $archive_sha256
+repo_build_inputs_sha256: $repo_build_inputs_sha256
+
+images:
+  orbit-infra-79s5rw/orbit-api:
+    local_id: pending
+    digest: pending
+  orbit-infra-79s5rw/orbit-worker:
+    local_id: pending
+    digest: pending
+  orbit-infra-79s5rw/orbit-clickhouse:
+    local_id: pending
+    digest: pending
+EOF
+
+cat > "$tmp_dir/build-bin/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"remote get-url origin"*) echo 'https://example.invalid/SuperGokou/happyCoding.git' ;;
+  *"rev-parse HEAD"*) printf '%s\n' "$FAKE_UPSTREAM_SHA" ;;
+  *"status --porcelain --untracked-files=all"*) ;;
+  *"archive --format=tar"*) cat "$FAKE_ARCHIVE_TAR" ;;
+  *) echo "unexpected git call: $*" >&2; exit 2 ;;
+esac
+EOF
+cat > "$tmp_dir/build-bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"image inspect --format {{.Id}}"* ]]; then
+  printf 'sha256:%s\n' "$(printf 'c%.0s' {1..64})"
+elif [[ "$*" == *"image inspect --format {{json .RepoDigests}}"* ]]; then
+  tagged_reference="${@: -1}"
+  repository_reference="${tagged_reference%:*}"
+  wrong_digest="sha256:$(printf 'd%.0s' {1..64})"
+  exact_digest="sha256:$(printf 'e%.0s' {1..64})"
+  printf '["example.invalid/wrong@%s","%s@%s"]\n' \
+    "$wrong_digest" "$repository_reference" "$exact_digest"
+elif [[ "$1" == build || "$1" == tag || "$1" == push ]]; then
+  :
+else
+  echo "unexpected docker call: $*" >&2
+  exit 2
+fi
+EOF
+chmod +x "$tmp_dir/build-bin/git" "$tmp_dir/build-bin/docker"
+
+fake_account="$(printf '0%.0s' {1..12})"
+fake_registry="${fake_account}.dkr.ecr.test-region.amazonaws.com"
+build_summary="$(
+  PATH="$tmp_dir/build-bin:$PATH" \
+  FAKE_UPSTREAM_SHA="$locked_sha" \
+  FAKE_ARCHIVE_TAR="$archive_tar" \
+  UPSTREAM_DIR="$tmp_dir/fake-upstream" \
+  UPSTREAM_LOCK="$build_lock" \
+  PUSH=1 \
+  ECR_REGISTRY="$fake_registry" \
+    "$build_script"
+)"
+exact_digest="sha256:$(printf 'e%.0s' {1..64})"
+if ! jq -e --arg digest "$exact_digest" 'all(.images[]; .digest == $digest)' <<< "$build_summary" >/dev/null; then
+  echo "pushed digests must be selected by exact destination repository, not RepoDigests index" >&2
+  exit 1
+fi
+
 echo "PASS: phase3 shell contracts"

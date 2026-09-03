@@ -23,6 +23,14 @@ on:
         description: 'Preview environment id matching Terraform (1-12 chars)'
         required: true
         type: string
+      mode:
+        description: 'Deployment image set'
+        required: true
+        default: public
+        type: choice
+        options:
+          - upstream
+          - public
 
 permissions:
   id-token: write
@@ -42,11 +50,16 @@ jobs:
       - name: Validate env_id
         env:
           ENV_ID: ${{ inputs.env_id }}
+          MODE: ${{ inputs.mode }}
         run: |
           if ! printf '%s' "$ENV_ID" | grep -qE '^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?$'; then
             echo "env_id '$ENV_ID' does not match ^[a-z0-9]([a-z0-9-]{0,10}[a-z0-9])?\$" >&2
             exit 1
           fi
+          case "$MODE" in
+            upstream|public) ;;
+            *) echo "mode must be upstream or public" >&2; exit 1 ;;
+          esac
 
   runner-cidr-check:
     needs: validate-input
@@ -147,57 +160,116 @@ jobs:
       - name: Write AWS backend config
         run: scripts/write-preview-backend.sh
 
-      - name: Read deployable image digests
+      - name: Read deployable image set
         id: images
+        env:
+          MODE: ${{ inputs.mode }}
         run: |
-          api_repository="orbit-infra-79s5rw/orbit-api"
-          api_digest="$(awk -v repository="$api_repository" '
-            $1 == repository ":" { in_repository = 1; next }
-            in_repository && $1 == "digest:" { print $2; exit }
-          ' upstream.lock)"
-          redis_repository="$(awk '$1 == "redis_repository:" { print $2 }' mirror-images.lock)"
-          redis_digest="$(awk '$1 == "redis_digest:" { print $2 }' mirror-images.lock)"
-          clickhouse_repository="$(awk '$1 == "clickhouse_repository:" { print $2 }' mirror-images.lock)"
-          clickhouse_digest="$(awk '$1 == "clickhouse_digest:" { print $2 }' mirror-images.lock)"
+          lock_scalar() {
+            local key="$1"
+            local file="$2"
+            awk -v key="${key}:" '$1 == key { print $2 }' "$file"
+          }
+          upstream_digest() {
+            local repository="$1"
+            awk -v repository="$repository" '
+              $1 == repository ":" { in_repository = 1; next }
+              in_repository && $1 == "digest:" { print $2; exit }
+            ' upstream.lock
+          }
 
+          redis_repository="$(lock_scalar redis_repository mirror-images.lock)"
+          redis_digest="$(lock_scalar redis_digest mirror-images.lock)"
+          case "$MODE" in
+            upstream)
+              expected_api_repository="orbit-infra-79s5rw/orbit-api"
+              expected_clickhouse_repository="orbit-infra-79s5rw/orbit-clickhouse"
+              api_repository="$expected_api_repository"
+              api_digest="$(upstream_digest "$api_repository")"
+              clickhouse_repository="$expected_clickhouse_repository"
+              clickhouse_digest="$(upstream_digest "$clickhouse_repository")"
+              ;;
+            public)
+              expected_api_repository="orbit-infra-79s5rw/placeholder"
+              expected_clickhouse_repository="orbit-infra-79s5rw/mirror/clickhouse"
+              api_repository="$(lock_scalar placeholder_repository mirror-images.lock)"
+              api_digest="$(lock_scalar placeholder_digest mirror-images.lock)"
+              clickhouse_repository="$(lock_scalar clickhouse_repository mirror-images.lock)"
+              clickhouse_digest="$(lock_scalar clickhouse_digest mirror-images.lock)"
+              ;;
+            *)
+              echo "unsupported deployment mode: $MODE" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "$api_repository" != "$expected_api_repository" ]] || \
+             [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
+             [[ "$clickhouse_repository" != "$expected_clickhouse_repository" ]]; then
+            echo "selected image repositories do not match bootstrap/ecr.tf" >&2
+            exit 1
+          fi
           for digest in "$api_digest" "$redis_digest" "$clickhouse_digest"; do
             if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "an image lock contains a missing or invalid digest" >&2
+              echo "the $MODE image lock set is incomplete or not digest-pinned" >&2
               exit 1
             fi
           done
-          if [[ "$redis_repository" != "orbit-infra-79s5rw/mirror/redis" ]] || \
-             [[ "$clickhouse_repository" != "orbit-infra-79s5rw/mirror/clickhouse" ]]; then
-            echo "mirror repository names do not match bootstrap/ecr.tf" >&2
-            exit 1
-          fi
 
           {
+            echo "api_repository=${api_repository}"
             echo "api_digest=${api_digest}"
+            echo "redis_repository=${redis_repository}"
             echo "redis_digest=${redis_digest}"
+            echo "clickhouse_repository=${clickhouse_repository}"
             echo "clickhouse_digest=${clickhouse_digest}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Open lease
+        id: lease-open
         env:
           ENV_ID: ${{ inputs.env_id }}
           TARGET: aws
-        run: scripts/lease.sh open "$ENV_ID"
+        run: |
+          lease_json="$(scripts/lease.sh open "$ENV_ID")"
+          generation="$(jq -r '.generation' <<< "$lease_json")"
+          if [[ ! "$generation" =~ ^[1-9][0-9]*$ ]]; then
+            echo "lease open returned an invalid generation" >&2
+            exit 1
+          fi
+          {
+            echo "acquired=true"
+            echo "generation=${generation}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record deployment mode in lease
+        env:
+          ENV_ID: ${{ inputs.env_id }}
+          MODE: ${{ inputs.mode }}
+          TARGET: aws
+        run: |
+          manifest_file="$(mktemp)"
+          trap 'rm -f "$manifest_file"' EXIT
+          jq -n --arg mode "$MODE" '{mode:$mode}' > "$manifest_file"
+          scripts/lease.sh set-manifest "$ENV_ID" "$manifest_file" >/dev/null
 
       - name: Terraform plan (AWS)
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
+          API_REPOSITORY: ${{ steps.images.outputs.api_repository }}
           API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          REDIS_REPOSITORY: ${{ steps.images.outputs.redis_repository }}
           REDIS_DIGEST: ${{ steps.images.outputs.redis_digest }}
+          CLICKHOUSE_REPOSITORY: ${{ steps.images.outputs.clickhouse_repository }}
           CLICKHOUSE_DIGEST: ${{ steps.images.outputs.clickhouse_digest }}
         run: |
           account_id="$(aws sts get-caller-identity --query Account --output text)"
           echo "::add-mask::${account_id}"
           registry="${account_id}.dkr.ecr.us-east-1.amazonaws.com"
-          export TF_VAR_api_image="${registry}/orbit-infra-79s5rw/orbit-api@${API_DIGEST}"
-          export TF_VAR_redis_image="${registry}/orbit-infra-79s5rw/mirror/redis@${REDIS_DIGEST}"
-          export TF_VAR_clickhouse_image="${registry}/orbit-infra-79s5rw/mirror/clickhouse@${CLICKHOUSE_DIGEST}"
+          export TF_VAR_api_image="${registry}/${API_REPOSITORY}@${API_DIGEST}"
+          export TF_VAR_redis_image="${registry}/${REDIS_REPOSITORY}@${REDIS_DIGEST}"
+          export TF_VAR_clickhouse_image="${registry}/${CLICKHOUSE_REPOSITORY}@${CLICKHOUSE_DIGEST}"
           make plan TARGET=aws ENV_ID="$ENV_ID"
 
       - name: Terraform apply (AWS)
@@ -210,14 +282,27 @@ jobs:
         if: always()
         run: rm -f envs/preview/tfplan.bin
 
-      - name: Wait up to 10 minutes for every ECS service
+      - name: Wait for the applied ECS deployments
         run: |
           cluster_arn="$(terraform -chdir=envs/preview output -raw ecs_cluster_arn)"
           services=()
-          for output_name in api_service_name redis_service_name clickhouse_service_name worker_service_name; do
-            service_name="$(terraform -chdir=envs/preview output -raw "$output_name" 2>/dev/null || true)"
+          task_definitions=()
+          for output_pair in \
+            api_service_name:api_task_definition_arn \
+            redis_service_name:redis_task_definition_arn \
+            clickhouse_service_name:clickhouse_task_definition_arn \
+            worker_service_name:worker_task_definition_arn; do
+            service_output="${output_pair%%:*}"
+            task_definition_output="${output_pair##*:}"
+            service_name="$(terraform -chdir=envs/preview output -raw "$service_output" 2>/dev/null || true)"
+            task_definition_arn="$(terraform -chdir=envs/preview output -raw "$task_definition_output" 2>/dev/null || true)"
             if [[ -n "$service_name" && "$service_name" != "null" ]]; then
+              if [[ -z "$task_definition_arn" || "$task_definition_arn" == "null" ]]; then
+                echo "$service_name has no applied task definition output" >&2
+                exit 1
+              fi
               services+=("$service_name")
+              task_definitions+=("$task_definition_arn")
             fi
           done
           if (( ${#services[@]} < 3 )); then
@@ -225,36 +310,40 @@ jobs:
             exit 1
           fi
 
-          listed_services="$(aws ecs list-services --cluster "$cluster_arn" --output json)"
-          for service_name in "${services[@]}"; do
-            if ! jq -e --arg service_name "$service_name" \
-              'any(.serviceArns[]; endswith("/" + $service_name))' <<< "$listed_services" >/dev/null; then
-              echo "enabled ECS service $service_name is absent from list-services" >&2
-              exit 1
-            fi
-          done
-
-          deadline=$((SECONDS + 600))
-          while (( SECONDS < deadline )); do
-            response="$(aws ecs describe-services --cluster "$cluster_arn" --services "${services[@]}")"
-            failures="$(jq -c '.failures // []' <<< "$response")"
-            if [[ "$failures" != "[]" ]]; then
-              echo "ECS describe-services returned failures: $failures" >&2
-              exit 1
-            fi
-            unstable="$(jq -c '[.services[] | select(.runningCount != .desiredCount)]' <<< "$response")"
-            if [[ "$unstable" == "[]" ]]; then
-              echo "all ${#services[@]} ECS services reached runningCount == desiredCount"
-              break
-            fi
-            echo "waiting for ECS services: $unstable"
-            sleep 15
-          done
-
-          if [[ "$unstable" != "[]" ]]; then
-            echo "ECS services did not reach runningCount == desiredCount within 10 minutes: $unstable" >&2
+          aws ecs wait services-stable --cluster "$cluster_arn" --services "${services[@]}"
+          response="$(aws ecs describe-services --cluster "$cluster_arn" --services "${services[@]}")"
+          if ! jq -e '.failures | type == "array" and length == 0' <<< "$response" >/dev/null; then
+            echo "ECS describe-services returned failures or malformed data" >&2
             exit 1
           fi
+
+          for index in "${!services[@]}"; do
+            service_name="${services[$index]}"
+            task_definition_arn="${task_definitions[$index]}"
+            if ! jq -e --arg service_name "$service_name" --arg task_definition "$task_definition_arn" '
+              [.services[] | select(.serviceArn | endswith("/" + $service_name))] as $matches
+              | ($matches | length) == 1
+              and $matches[0].taskDefinition == $task_definition
+              and ($matches[0].deployments | type == "array")
+              and ($matches[0].deployments | length) == 1
+              and ($matches[0].deployments[0] as $deployment
+                | $deployment.taskDefinition == $task_definition
+                and (
+                  $deployment.rolloutState == "COMPLETED"
+                  or (
+                    $deployment.status == "PRIMARY"
+                    and $deployment.runningCount == $deployment.desiredCount
+                    and ([
+                      $matches[0].deployments[]
+                      | select(.status == "ACTIVE" and .id != $deployment.id)
+                    ] | length) == 0
+                  )
+                ))' <<< "$response" >/dev/null; then
+              echo "$service_name is not on its single completed applied deployment" >&2
+              exit 1
+            fi
+          done
+          echo "all ${#services[@]} ECS services reached their applied task definitions"
 
       - name: Negative ingress test (runner must time out or be refused)
         run: |
@@ -280,12 +369,13 @@ jobs:
           esac
 
       - name: Close on failure (stage 1)
-        if: failure()
+        if: failure() && steps.lease-open.outputs.acquired == 'true'
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
+          LEASE_GENERATION: ${{ steps.lease-open.outputs.generation }}
           TARGET: aws
-        run: scripts/close-env.sh "$ENV_ID"
+        run: scripts/close-env.sh --generation "$LEASE_GENERATION" "$ENV_ID"
 
       - name: Masked summary
         if: always()

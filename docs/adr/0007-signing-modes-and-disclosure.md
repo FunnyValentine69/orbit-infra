@@ -1,6 +1,6 @@
 # ADR 0007: Signing modes and disclosure
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02). Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
 
 ## Context
 
@@ -20,8 +20,8 @@ than Rekor. This rule includes the public-source placeholder, the private
 upstream images, and the Redis/ClickHouse mirrors. The placeholder's custom
 CI-build predicate carries only its source commit and build date. The private
 images' `local-build/v1` predicate carries only the upstream commit SHA, the
-build-input hash (sha256 of the `git archive` of that commit — the only input
-any private build reads), and the build date; it does not claim CI build
+upstream archive hash, the repository-owned build-input hash, and the build
+date; it does not claim CI build
 provenance. No predicate carries a hostname or account identifier. Cosign's
 version is pinned in `tools.lock` and checked before signing. Each SBOM, scan,
 signature, and attestation is handled independently on a re-run.
@@ -48,12 +48,17 @@ are built locally by `scripts/build-upstream.sh`, never in hosted CI: the
 build reads only a `git archive` of the pinned, verified upstream commit
 (`upstream.lock`), never the working tree, after asserting the local
 clone's origin, HEAD, and cleanliness match the lock file. The archive's
-sha256 (`build_input_sha256`) is recorded in `upstream.lock` alongside each
-image's local content id. Signing is a separate, later step:
+sha256 (`upstream_archive_sha256`) is recorded in `upstream.lock`. A second
+hash, `repo_build_inputs_sha256`, covers exactly, in order,
+`images/clickhouse/Dockerfile`, `scripts/build-upstream.sh`, and the complete
+`clickhouse_digest` line from `mirror-images.lock`; these repository-owned
+files and the archive are all build inputs. Each image's local content id is
+recorded alongside them. Signing is a separate, later step:
 `.github/workflows/sign-images.yml` (`workflow_dispatch` only) signs the
 already-pushed images with the same asymmetric KMS key described above
 (`--tlog-upload=false`, verified via the exported public key), and
 attests a `local-build/v1` custom predicate carrying only the upstream
-commit SHA, `build_input_sha256`, and the signing date — no hostname or
+commit SHA, `upstream_archive_sha256`, `repo_build_inputs_sha256`, and the
+signing date — no hostname or
 account identifier, and no claim of CI build provenance, since these
 images were never built in CI.

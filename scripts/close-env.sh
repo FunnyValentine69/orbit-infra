@@ -9,11 +9,33 @@ AWS_CLI_SH="${AWS_CLI_SH:-$SCRIPT_DIR/aws-cli.sh}"
 CLEANUP_VERIFIER_SH="${CLEANUP_VERIFIER_SH:-$SCRIPT_DIR/cleanup-verifier.sh}"
 
 FORCE_RETRY=false
-if [ "${1:-}" = --force-retry ]; then
-  FORCE_RETRY=true
-  shift
-fi
-ENV_ID="${1:-${ENV_ID:-}}"
+EXPECTED_GENERATION=""
+ENV_ID="${ENV_ID:-}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force-retry)
+      FORCE_RETRY=true
+      shift
+      ;;
+    --generation)
+      [ "$#" -ge 2 ] || { echo "close-env.sh: --generation requires a value" >&2; exit 2; }
+      EXPECTED_GENERATION="$2"
+      shift 2
+      ;;
+    --*)
+      echo "close-env.sh: unknown option '$1'" >&2
+      exit 2
+      ;;
+    *)
+      if [ -n "$ENV_ID" ] && [ "$ENV_ID" != "$1" ]; then
+        echo "close-env.sh: conflicting env_id values" >&2
+        exit 2
+      fi
+      ENV_ID="$1"
+      shift
+      ;;
+  esac
+done
 TARGET="${TARGET:-}"
 LEASE_BUCKET="${LEASE_BUCKET:-orbit-infra-79s5rw-tfstate}"
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
@@ -27,7 +49,11 @@ case "$TARGET" in
   *) echo "close-env.sh: TARGET is required and must be aws or localstack" >&2; exit 2 ;;
 esac
 if [ -z "$ENV_ID" ]; then
-  echo "close-env.sh: env_id required (arg 1 or ENV_ID)" >&2
+  echo "close-env.sh: env_id required (argument or ENV_ID)" >&2
+  exit 2
+fi
+if [ -n "$EXPECTED_GENERATION" ] && ! [[ "$EXPECTED_GENERATION" =~ ^[1-9][0-9]*$ ]]; then
+  echo "close-env.sh: --generation must be a positive integer" >&2
   exit 2
 fi
 if ! [[ "$CLEANUP_VERIFY_DEADLINE_SECONDS" =~ ^[0-9]+$ ]]; then
@@ -265,6 +291,11 @@ lease_get_rc=$?
 set -e
 if [ "$lease_get_rc" -eq 0 ]; then
   current_status="$(jq -r '.status' <<< "$lease_json")"
+  lease_generation="$(jq -r '.generation // empty' <<< "$lease_json")"
+  if [ -n "$EXPECTED_GENERATION" ] && [ "$lease_generation" != "$EXPECTED_GENERATION" ]; then
+    echo "close-env.sh: lease generation mismatch for $ENV_ID: expected $EXPECTED_GENERATION, current ${lease_generation:-missing}; refusing cleanup" >&2
+    exit 3
+  fi
   existing_manifest="$(jq -c '.manifest // {}' <<< "$lease_json")"
 elif [ "$lease_get_rc" -eq 1 ] && grep -q 'no lease for' "$lease_get_err"; then
   current_status=""
