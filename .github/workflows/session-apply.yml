@@ -6,9 +6,10 @@
 # on one hosted runner because emulator state cannot cross jobs.
 #
 # Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov ->
-# target-specific bootstrap/supply-chain checks -> lease open (CAS) and
-# manifest record -> apply -> acceptance. Any failure or cancellation after
-# the lease exists runs scripts/close-env.sh (stage 1) in this same job; the
+# target-specific bootstrap/supply-chain checks -> lease open (one CAS carrying
+# owner and initial manifest) -> apply -> acceptance. Any failure or cancellation
+# reads the lease and runs scripts/close-env.sh (stage 1) only when this run owns
+# an open or closing generation; the
 # LocalStack target always closes at the end of the job.
 # Gate failures before the CAS never create a lease or resources.
 #
@@ -501,24 +502,8 @@ jobs:
               ;;
           esac
 
-      - name: Open lease
+      - name: Open lease with owner and initial manifest
         id: lease-open
-        env:
-          ENV_ID: ${{ inputs.env_id }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          lease_json="$(scripts/lease.sh open "$ENV_ID")"
-          generation="$(jq -r '.generation' <<< "$lease_json")"
-          if [[ ! "$generation" =~ ^[1-9][0-9]*$ ]]; then
-            echo "lease open returned an invalid generation" >&2
-            exit 1
-          fi
-          {
-            echo "acquired=true"
-            echo "generation=${generation}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Record deployment target, mode, and images in lease
         env:
           ENV_ID: ${{ inputs.env_id }}
           MODE: ${{ inputs.mode }}
@@ -553,7 +538,18 @@ jobs:
             --arg clickhouse_image "$clickhouse_image" \
             '{target:$target,mode:$mode,images:{api_image:$api_image,redis_image:$redis_image,clickhouse_image:$clickhouse_image}}' \
             > "$manifest_file"
-          scripts/lease.sh set-manifest "$ENV_ID" "$manifest_file" >/dev/null
+          lease_json="$(scripts/lease.sh open "$ENV_ID" \
+            --owner "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --manifest "$manifest_file")"
+          generation="$(jq -r '.generation' <<< "$lease_json")"
+          if [[ ! "$generation" =~ ^[1-9][0-9]*$ ]]; then
+            echo "lease open returned an invalid generation" >&2
+            exit 1
+          fi
+          {
+            echo "acquired=true"
+            echo "generation=${generation}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Terraform plan (AWS)
         if: inputs.target == 'aws'
@@ -702,22 +698,98 @@ jobs:
           esac
 
       - name: Close AWS on failure or cancellation (stage 1)
-        if: always() && (failure() || cancelled()) && steps.lease-open.outputs.acquired == 'true' && inputs.target == 'aws'
+        if: always() && (failure() || cancelled()) && inputs.target == 'aws'
         env:
           OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
           ENV_ID: ${{ inputs.env_id }}
-          LEASE_GENERATION: ${{ steps.lease-open.outputs.generation }}
           TARGET: aws
-        run: scripts/close-env.sh --generation "$LEASE_GENERATION" "$ENV_ID"
+        run: |
+          owner="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          lease_err="$(mktemp)"
+          trap 'rm -f "$lease_err"' EXIT
+          set +e
+          lease_json="$(scripts/lease.sh get "$ENV_ID" 2>"$lease_err")"
+          lease_rc=$?
+          set -e
+          if [ "$lease_rc" -eq 1 ]; then
+            echo "no owner-bound close: lease for $ENV_ID does not exist"
+            exit 0
+          fi
+          if [ "$lease_rc" -ne 0 ]; then
+            echo "lease for $ENV_ID could not be read (exit $lease_rc); refusing to report a clean close" >&2
+            exit 1
+          fi
+          if ! lease_status="$(jq -er '.status | select(type == "string")' <<< "$lease_json")"; then
+            echo "no owner-bound close: lease for $ENV_ID has no valid status"
+            exit 0
+          fi
+          case "$lease_status" in
+            open|closing) ;;
+            *)
+              echo "no owner-bound close: lease for $ENV_ID has status '$lease_status', not open or closing"
+              exit 0
+              ;;
+          esac
+          if ! lease_owner="$(jq -er '.owner | select(type == "string")' <<< "$lease_json")"; then
+            echo "no owner-bound close: lease for $ENV_ID has no valid owner"
+            exit 0
+          fi
+          if [ "$lease_owner" != "$owner" ]; then
+            echo "no owner-bound close: lease for $ENV_ID belongs to a different workflow run"
+            exit 0
+          fi
+          if ! generation="$(jq -er '.generation | select(type == "number" and . >= 1 and floor == .)' <<< "$lease_json")"; then
+            echo "no owner-bound close: lease for $ENV_ID has no valid generation"
+            exit 0
+          fi
+          scripts/close-env.sh --generation "$generation" --owner "$owner" "$ENV_ID"
 
       - name: Close LocalStack after acceptance or failure (stage 1)
-        if: always() && inputs.target == 'localstack' && steps.lease-open.outputs.acquired == 'true'
+        if: always() && inputs.target == 'localstack'
         env:
           OPERATOR_CIDR: 10.255.255.255/32
           ENV_ID: ${{ inputs.env_id }}
-          LEASE_GENERATION: ${{ steps.lease-open.outputs.generation }}
           TARGET: localstack
-        run: scripts/close-env.sh --generation "$LEASE_GENERATION" "$ENV_ID"
+        run: |
+          owner="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          lease_err="$(mktemp)"
+          trap 'rm -f "$lease_err"' EXIT
+          set +e
+          lease_json="$(scripts/lease.sh get "$ENV_ID" 2>"$lease_err")"
+          lease_rc=$?
+          set -e
+          if [ "$lease_rc" -eq 1 ]; then
+            echo "no owner-bound close: lease for $ENV_ID does not exist"
+            exit 0
+          fi
+          if [ "$lease_rc" -ne 0 ]; then
+            echo "lease for $ENV_ID could not be read (exit $lease_rc); refusing to report a clean close" >&2
+            exit 1
+          fi
+          if ! lease_status="$(jq -er '.status | select(type == "string")' <<< "$lease_json")"; then
+            echo "no owner-bound close: lease for $ENV_ID has no valid status"
+            exit 0
+          fi
+          case "$lease_status" in
+            open|closing) ;;
+            *)
+              echo "no owner-bound close: lease for $ENV_ID has status '$lease_status', not open or closing"
+              exit 0
+              ;;
+          esac
+          if ! lease_owner="$(jq -er '.owner | select(type == "string")' <<< "$lease_json")"; then
+            echo "no owner-bound close: lease for $ENV_ID has no valid owner"
+            exit 0
+          fi
+          if [ "$lease_owner" != "$owner" ]; then
+            echo "no owner-bound close: lease for $ENV_ID belongs to a different workflow run"
+            exit 0
+          fi
+          if ! generation="$(jq -er '.generation | select(type == "number" and . >= 1 and floor == .)' <<< "$lease_json")"; then
+            echo "no owner-bound close: lease for $ENV_ID has no valid generation"
+            exit 0
+          fi
+          scripts/close-env.sh --generation "$generation" --owner "$owner" "$ENV_ID"
 
       - name: Masked summary
         if: always()
@@ -725,6 +797,8 @@ jobs:
           ALB_URL: ${{ steps.endpoint.outputs.url }}
           ENV_ID: ${{ inputs.env_id }}
           JOB_STATUS: ${{ job.status }}
+          LEASE_ACQUIRED: ${{ steps.lease-open.outputs.acquired }}
+          LEASE_GENERATION: ${{ steps.lease-open.outputs.generation }}
           MODE: ${{ inputs.mode }}
           TARGET: ${{ inputs.target }}
         run: |
@@ -735,6 +809,8 @@ jobs:
             echo "target: $TARGET"
             echo "mode: $MODE"
             echo "result: $JOB_STATUS"
+            echo "lease acquired: ${LEASE_ACQUIRED:-false}"
+            echo "lease generation: ${LEASE_GENERATION:-unavailable}"
             if [[ -n "$ALB_URL" ]]; then
               echo "ALB URL: $ALB_URL"
             else

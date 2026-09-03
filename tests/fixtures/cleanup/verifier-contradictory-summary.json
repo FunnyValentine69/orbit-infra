@@ -1,0 +1,13 @@
+{
+  "name": "cleanup-verifier-contradictory-summary",
+  "authored": "close-env verifier result consistency contract",
+  "env_id": "verifysummary",
+  "verifier": {
+    "rc": 0,
+    "stdout": "{\"passed\":false,\"summary\":{\"gone\":0,\"pending\":0,\"live\":0,\"indeterminate\":0},\"results\":[{\"outcome\":\"live\"}],\"stale_tag_entries\":[]}"
+  },
+  "expected": {
+    "status": "cleanup_failed",
+    "error": "cleanup verifier summary mismatch: reported={\"gone\":0,\"pending\":0,\"live\":0,\"indeterminate\":0} recomputed={\"gone\":0,\"pending\":0,\"live\":1,\"indeterminate\":0}"
+  }
+}

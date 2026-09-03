@@ -222,8 +222,8 @@ if [ "$service $operation" = "s3api put-object" ]; then
   exit 0
 fi
 if [ "$service $operation" = "resourcegroupstaggingapi get-resources" ]; then
+  tag_call=1
   if [ -n "${FAKE_TAG_CALLS_FILE:-}" ]; then
-    tag_call=1
     if [ -f "$FAKE_TAG_CALLS_FILE" ]; then
       tag_call=$(( $(cat "$FAKE_TAG_CALLS_FILE") + 1 ))
     fi
@@ -234,6 +234,11 @@ if [ "$service $operation" = "resourcegroupstaggingapi get-resources" ]; then
     fi
   fi
   if [ -n "${FAKE_TAG_RESPONSE_FIXTURE:-}" ]; then
+    if jq -e '.responses | type == "array"' "$FAKE_TAG_RESPONSE_FIXTURE" >/dev/null; then
+      response_index=$((tag_call - 1))
+      jq -jr --argjson index "$response_index" '.responses[$index].stdout' "$FAKE_TAG_RESPONSE_FIXTURE"
+      exit "$(jq -r --argjson index "$response_index" '.responses[$index].rc' "$FAKE_TAG_RESPONSE_FIXTURE")"
+    fi
     jq -jr '.response.stdout' "$FAKE_TAG_RESPONSE_FIXTURE"
     exit "$(jq -r '.response.rc' "$FAKE_TAG_RESPONSE_FIXTURE")"
   fi
@@ -306,6 +311,42 @@ lease_env=(
   "LEASE_BUCKET=test-state"
   "CLEANUP_RETRY_DELAY_SECONDS=0"
 )
+
+# A new generation must publish its owner and initial manifest in the same CAS
+# PUT. A second open of that environment must still be refused without a write.
+atomic_env_id=atomic-open
+atomic_owner=run-owner-a
+atomic_manifest="$tmp_dir/atomic-open-manifest.json"
+atomic_call_log="$tmp_dir/atomic-open-aws-calls.log"
+jq -n '{target:"localstack",mode:"public",images:{api_image:"placeholder:local",redis_image:"redis:7-alpine",clickhouse_image:"clickhouse/clickhouse-server:24.3-alpine"}}' \
+  > "$atomic_manifest"
+: > "$atomic_call_log"
+atomic_lease="$(env "${lease_env[@]}" FAKE_AWS_CALL_LOG="$atomic_call_log" \
+  "$LEASE" open "$atomic_env_id" --owner "$atomic_owner" --manifest "$atomic_manifest")"
+if ! jq -e --arg owner "$atomic_owner" --argjson manifest "$(cat "$atomic_manifest")" \
+    '.owner == $owner and .manifest == $manifest' <<< "$atomic_lease" >/dev/null || \
+   [ "$(grep -c '^s3api put-object ' "$atomic_call_log")" -ne 1 ]; then
+  echo "FAIL: lease open must persist owner and initial manifest in one CAS PUT" >&2
+  cat "$atomic_call_log" >&2
+  exit 1
+fi
+pass "lease open persists owner and initial manifest atomically in one CAS PUT"
+
+set +e
+second_open_out="$(env "${lease_env[@]}" FAKE_AWS_CALL_LOG="$atomic_call_log" \
+  "$LEASE" open "$atomic_env_id" --owner run-owner-b --manifest "$atomic_manifest" 2>&1)"
+second_open_rc=$?
+set -e
+atomic_after_refusal="$(env "${lease_env[@]}" "$LEASE" get "$atomic_env_id")"
+if [ "$second_open_rc" -ne 3 ] || \
+   ! grep -Fq "current status is 'open'" <<< "$second_open_out" || \
+   ! jq -e --arg owner "$atomic_owner" '.status == "open" and .generation == 1 and .owner == $owner' \
+     <<< "$atomic_after_refusal" >/dev/null || \
+   [ "$(grep -c '^s3api put-object ' "$atomic_call_log")" -ne 1 ]; then
+  echo "FAIL: a second open must be refused without mutating the atomic lease" >&2
+  exit 1
+fi
+pass "a second open on the same environment is refused without another PUT"
 
 env "${lease_env[@]}" "$LEASE" open retry-case >/dev/null
 retry_failures="$(jq -r '.failures' "$FIXTURES/retry-exhaustion.json")"
@@ -573,14 +614,17 @@ pass "AWS destroy reuses all three image references from the lease manifest"
 run_tag_schema_fixture_case() {
   local tag_schema_fixture="$1"
   local tag_schema_env_id tag_schema_out tag_schema_rc tag_schema_lease
-  local tag_schema_expected tag_schema_actual
+  local tag_schema_expected tag_schema_actual tag_schema_offsets tag_schema_calls
   tag_schema_env_id="$(jq -r '.env_id' "$tag_schema_fixture")"
+  tag_schema_offsets="$(jq -r '.tag_requery_offsets // "0"' "$tag_schema_fixture")"
+  tag_schema_calls="$tmp_dir/tag-schema-calls-$tag_schema_env_id"
+  rm -f "$tag_schema_calls"
   env "${lease_env[@]}" "$LEASE" open "$tag_schema_env_id" >/dev/null
   set +e
   tag_schema_out="$(env "${lease_env[@]}" \
     PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
-    FAKE_TAG_RESPONSE_FIXTURE="$tag_schema_fixture" \
-    TAG_REQUERY_OFFSETS=0 CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
+    FAKE_TAG_RESPONSE_FIXTURE="$tag_schema_fixture" FAKE_TAG_CALLS_FILE="$tag_schema_calls" \
+    TAG_REQUERY_OFFSETS="$tag_schema_offsets" CLEANUP_VERIFY_DEADLINE_SECONDS=0 \
     "$REPO_ROOT/scripts/close-env.sh" "$tag_schema_env_id" 2>&1)"
   tag_schema_rc=$?
   set -e
@@ -608,7 +652,10 @@ for tag_schema_fixture in \
   "$FIXTURES/tag-inventory-missing-key.json" \
   "$FIXTURES/tag-inventory-null.json" \
   "$FIXTURES/tag-inventory-string.json" \
-  "$FIXTURES/tag-inventory-empty-stdout.json"; do
+  "$FIXTURES/tag-inventory-empty-stdout.json" \
+  "$FIXTURES/tag-inventory-entry-missing-arn-pre.json" \
+  "$FIXTURES/tag-inventory-entry-numeric-arn-scheduled.json" \
+  "$FIXTURES/tag-pre-malformed-later-valid.json"; do
   run_tag_schema_fixture_case "$tag_schema_fixture"
 done
 
@@ -653,7 +700,10 @@ run_verifier_fixture_case() {
 }
 for verifier_fixture in \
   "$FIXTURES/verifier-exit-failure.json" \
-  "$FIXTURES/verifier-malformed-output.json"; do
+  "$FIXTURES/verifier-malformed-output.json" \
+  "$FIXTURES/verifier-contradictory-summary.json" \
+  "$FIXTURES/verifier-invalid-outcome.json" \
+  "$FIXTURES/verifier-passed-with-live.json"; do
   run_verifier_fixture_case "$verifier_fixture"
 done
 
@@ -717,6 +767,29 @@ if [ "$generation_actual" != "$generation_expected" ] || \
   exit 1
 fi
 pass "generation mismatch exits non-zero without transitioning the lease"
+
+# An owner-bound close must refuse a lease acquired by another run with its own
+# exit code and without claiming or transitioning cleanup.
+owner_guard_env_id=owner-guard
+env "${lease_env[@]}" "$LEASE" open "$owner_guard_env_id" \
+  --owner run-owner-a --manifest "$atomic_manifest" >/dev/null
+set +e
+owner_guard_out="$(env "${lease_env[@]}" \
+  ENV_ID="$owner_guard_env_id" PATH="$tmp_dir/fake-bin:$PATH" \
+  PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
+  "$REPO_ROOT/scripts/close-env.sh" --generation 1 --owner run-owner-b \
+  "$owner_guard_env_id" 2>&1)"
+owner_guard_rc=$?
+set -e
+owner_guard_lease="$(env "${lease_env[@]}" "$LEASE" get "$owner_guard_env_id")"
+if [ "$owner_guard_rc" -ne 4 ] || \
+   ! grep -Fq 'lease owner mismatch' <<< "$owner_guard_out" || \
+   ! jq -e '.status == "open" and .cleanup_attempt == 0' <<< "$owner_guard_lease" >/dev/null; then
+  echo "FAIL: owner mismatch must exit 4 without transitioning the lease" >&2
+  echo "rc=$owner_guard_rc output=$owner_guard_out" >&2
+  exit 1
+fi
+pass "owner mismatch exits 4 without claiming or transitioning cleanup"
 
 # CAS race: a second writer bumps the object's ETag between read and write;
 # the stale writer must lose loudly (exit 3), never overwrite.

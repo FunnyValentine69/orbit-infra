@@ -1,0 +1,16 @@
+{
+  "name": "scheduled-tag-entry-numeric-resource-arn",
+  "authored": "Resource Groups Tagging API entry schema contract",
+  "env_id": "tagentryscheduled",
+  "responses": [
+    { "rc": 0, "stdout": "{\"ResourceTagMappingList\":[]}" },
+    { "rc": 0, "stdout": "{\"ResourceTagMappingList\":[{\"ResourceARN\":5}]}" }
+  ],
+  "expected": {
+    "status": "cleanup_failed",
+    "candidate_id": "tag-inventory-incomplete",
+    "indeterminate": 1,
+    "pre_observation_status": "ok",
+    "scheduled_observation_status": "indeterminate"
+  }
+}

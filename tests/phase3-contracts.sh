@@ -260,9 +260,9 @@ for mirror in redis clickhouse; do
     exit 1
   fi
 done
-if ! grep -Fq "if: always() && (failure() || cancelled()) && steps.lease-open.outputs.acquired == 'true' && inputs.target == 'aws'" \
+if ! grep -Fq "if: always() && (failure() || cancelled()) && inputs.target == 'aws'" \
     "$REPO_ROOT/.github/workflows/session-apply.yml"; then
-  echo "session-apply must run the AWS stage-1 close on failure or cancellation once the lease is acquired" >&2
+  echo "session-apply must inspect the lease on AWS failure or cancellation without relying on step outputs" >&2
   exit 1
 fi
 

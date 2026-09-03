@@ -97,15 +97,19 @@ Each `env_id` will have its own state key and a durable lease with states
 ETag, so two writers can never both win. The lease is created only after
 the static gates (runner-CIDR rejection, lint, checkov) and selected-image
 signature/attestation checks pass, so a rejected config or supply-chain
-mismatch never produces a lease or AWS resources. The lease manifest records
-the deployment mode and all three resolved image references. Close is two-stage
+mismatch never produces a lease or AWS resources. Its workflow-run owner and
+initial manifest containing the deployment mode and all three resolved image
+references are written in the same CAS PUT that opens the generation. Close is two-stage
 because ECS task definitions delete asynchronously (up to 24 hours) while a hosted
 job caps at 6: stage 1 tears down and calls `DeleteTaskDefinitions`,
 then verifies a pre-destroy candidate union from the prior manifest, Terraform
 state identifiers, ECS discovery, and eventually consistent tag discovery.
 One exact-service predicate layer records `gone`, `pending`, `live`, or
-`indeterminate` for every candidate and persists partial iterations. Tag
-presence alone is never liveness. Stage 1 retries for five minutes and leaves
+`indeterminate` for every candidate and persists partial iterations. Close
+validates every outcome, recomputes all four counts, and rejects summary,
+`passed`, or stale-tag shape discrepancies. An indeterminate pre-destroy or
+scheduled tag observation adds a durable sentinel; later success cannot erase
+it. Tag presence alone is never liveness. Stage 1 retries for five minutes and leaves
 the lease `closing` with state retained; only deadline-expired `live` or
 `indeterminate` results set `cleanup_failed`. Stage 2 (the nightly sweeper)
 confirms deletion and sets `closed`.
@@ -126,8 +130,11 @@ After the third failure only an audited force retry can claim stage 1. The
 sweeper shares the `preview-<env_id>` concurrency group with manual
 apply/destroy so running jobs do not overlap. Both session workflows use the
 documented `queue: max` property with `cancel-in-progress: false`, retaining
-pending dispatches up to GitHub's queue limit. The lease CAS and generation
-checks remain the correctness boundary. Closed leases prune after 7 days.
+pending dispatches up to GitHub's queue limit. Apply failure/cancellation close
+re-reads the lease and proceeds only for this workflow run's owner token in
+`open` or `closing`; it does not trust lease-step outputs. The lease owner,
+generation, and CAS checks remain the correctness boundary. Closed leases prune
+after 7 days.
 
 The dispatch workflows accept `target=aws|localstack`. AWS keeps independent
 apply and destroy jobs. LocalStack cannot preserve its emulator or state
@@ -180,8 +187,8 @@ placeholder and Redis/ClickHouse private-ECR digests. `session-apply.yml`
 selects either the `upstream` set (upstream API and ClickHouse plus mirrored
 Redis) or the `public` set (placeholder plus mirrored Redis and ClickHouse),
 verifies every signature and attestation against the corresponding lock-file
-inputs before opening a lease, and records the selected mode and three resolved
-image references in the lease manifest.
+inputs before opening a lease, then records the workflow owner, selected mode,
+and three resolved image references atomically in the lease-open CAS.
 
 ## Cost model
 

@@ -71,9 +71,11 @@ locked `orbit-api` and `orbit-clickhouse` images plus mirrored Redis. `public`
 selects the locked private-ECR placeholder plus mirrored Redis and ClickHouse.
 The workflow opens no lease until every repository name matches
 `bootstrap/ecr.tf`, every selected lock entry is digest-pinned, and every image
-has a valid signature and lock-matching attestation. The opened lease records
-the mode and resolved image references so AWS cleanup can load the same
-Terraform configuration for destroy.
+has a valid signature and lock-matching attestation. The lease-open CAS records
+the workflow-run owner, mode, and resolved image references atomically so AWS
+cleanup can load the same Terraform configuration for destroy. Failure and
+cancellation cleanup re-reads that lease and runs only when the same workflow
+run owns an `open` or `closing` generation.
 
 ## Repository layout
 

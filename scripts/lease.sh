@@ -13,14 +13,15 @@ Usage: lease.sh <subcommand> [args]
 
 Subcommands:
   get <env_id>
-  open <env_id>
+  open <env_id> [--owner <token>] [--manifest <file>]
   transition <env_id> <from> <to> [--error <text>]
   begin-cleanup <env_id> [--force-retry]
   set-manifest <env_id> <file>
   list
 
-open creates generation N+1 only for an absent or closed lease. Every mutation
-uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_attempt and
+open creates generation N+1 only for an absent or closed lease. Its optional
+owner and initial manifest are written by that same compare-and-swap PUT. Every
+mutation uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_attempt and
 allows at most three automatic stage-1 executions per generation; --force-retry
 is required after exhaustion and appends an audit entry.
 
@@ -104,6 +105,36 @@ cmd_get() {
 
 cmd_open() {
   local env_id="${1:?env_id required}"
+  shift
+  local owner=""
+  local manifest_file=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --owner)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--owner requires a nonempty token"; exit 2; }
+        owner="$2"
+        shift 2
+        ;;
+      --manifest)
+        [ "$#" -ge 2 ] || { err "--manifest requires a file"; exit 2; }
+        manifest_file="$2"
+        shift 2
+        ;;
+      *)
+        err "unexpected open argument '$1'"
+        exit 2
+        ;;
+    esac
+  done
+
+  local initial_manifest='null'
+  if [ -n "$manifest_file" ]; then
+    if ! initial_manifest="$(jq -c . "$manifest_file" 2>/dev/null)"; then
+      err "$manifest_file is not valid JSON"
+      exit 2
+    fi
+  fi
+
   local generation=1
   local precondition_flag=(--if-none-match '*')
   read_lease "$env_id"
@@ -126,7 +157,9 @@ cmd_open() {
   jq -n \
     --arg env_id "$env_id" \
     --argjson generation "$generation" \
-    --arg ts "$ts" '
+    --arg ts "$ts" \
+    --arg owner "$owner" \
+    --argjson manifest "$initial_manifest" '
       {
         env_id: $env_id,
         status: "open",
@@ -134,7 +167,8 @@ cmd_open() {
         opened_at: $ts,
         updated_at: $ts,
         error: null,
-        manifest: null,
+        owner: (if $owner == "" then null else $owner end),
+        manifest: $manifest,
         cleanup_attempt: 0,
         next_retry_at: null,
         manual_intervention_required: false,

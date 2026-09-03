@@ -109,13 +109,22 @@ gh workflow run session-apply.yml --ref main -f env_id="$ENV_ID" -f target="$TAR
 gh run list --workflow session-apply.yml --branch main --event workflow_dispatch --limit 5
 ```
 
-4. For `TARGET=aws`, confirm the lease is `open` and use the ALB URL from the
-   run summary for the acceptance commands below. For `TARGET=localstack`, the
-   same job always performs stage-1 close, so its terminal lease is `closing`
-   on that job's fresh emulator and is not observable from a later runner.
+4. For `TARGET=aws`, read the lease and confirm it is `open`, has a string
+   workflow-run owner, and already carries the requested target, mode, and all
+   three image references. The owner and initial manifest are part of the same
+   CAS PUT that created the generation. Use the ALB URL from the run summary
+   for the acceptance commands below. For `TARGET=localstack`, the same job
+   always performs owner-bound stage-1 close, so its terminal lease is
+   `closing` on that job's fresh emulator and is not observable from a later
+   runner.
 
 ```
-make lease-get TARGET=aws ENV_ID="$ENV_ID"
+LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
+jq -e '.status == "open" and (.owner | type) == "string"
+  and .manifest.target == "aws"
+  and (.manifest.mode == "public" or .manifest.mode == "upstream")
+  and all(.manifest.images.api_image, .manifest.images.redis_image, .manifest.images.clickhouse_image;
+    type == "string" and length > 0)' <<< "$LEASE_JSON"
 ```
 
 Executed: CODE-ONLY — promote with `gh workflow run session-apply.yml --ref main -f env_id=p4ci -f target=localstack -f mode=public` after this change reaches `main`.
@@ -160,9 +169,11 @@ than a digest, or a repository name that differs from `bootstrap/ecr.tf` fails
 before the lease is opened. Before opening the lease, the workflow also
 verifies every selected signature through the exported KMS public key and
 requires attestations whose predicates match the corresponding lock entries.
-The mode and all three resolved image references are stored in the lease
-manifest; AWS close reuses those exact references for Terraform destroy and
-fails closed if any are missing.
+The workflow-run owner, mode, and all three resolved image references are
+stored atomically by the lease-open CAS; AWS close reuses those exact
+references for Terraform destroy and fails closed if any are missing.
+Cancellation and failure cleanup re-read the lease instead of trusting step
+outputs and proceed only for an `open` or `closing` lease owned by that run.
 
 After apply, the workflow runs `aws ecs wait services-stable`, describes every
 enabled service, and requires one completed deployment per service whose task
@@ -200,7 +211,8 @@ runs the unchanged `make placeholder-build`. Public mode uses
 applicable lock-file schema but deliberately skips the AWS-only private-ECR
 digest and KMS signature/attestation gate.
 
-After opening a generation-bound lease, the same job runs `make apply`, waits
+After atomically opening an owner- and generation-bound lease with its initial
+manifest, the same job runs `make apply`, waits
 for every enabled ECS service, checks that each service reached its applied
 task definition, probes the Terraform `api_url` output (the LocalStack ALB) from the excluded runner
 CIDR, records the ALB URL in the summary, and always runs stage-1 close. The
@@ -232,7 +244,7 @@ a schedule.
 ```
 ENV_ID=demo1
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
-jq '{status,generation,cleanup_attempt,next_retry_at,manual_intervention_required,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
+jq '{status,generation,owner,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
 ```
 
 2. If the verifier reports VPC deletion blocked by orphaned ENIs, derive the
@@ -268,13 +280,14 @@ make close TARGET=aws ENV_ID="$ENV_ID" OPERATOR_CIDR="$OPERATOR_CIDR"
 5. When the third failed execution leaves `cleanup_failed`, retained state,
    `next_retry_at=null`, and `manual_intervention_required=true`, re-read the
    lease generation after the targeted repair and claim one audited force
-   retry. The generation argument prevents stale operator work from touching a
-   newer lease:
+   retry. Bind both owner and generation from the same read so stale operator
+   work cannot touch a newer lease or a generation owned by another run:
 
 ```
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
 GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"
-TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" "$ENV_ID"
+OWNER="$(jq -er '.owner | select(type == "string" and length > 0)' <<< "$LEASE_JSON")"
+TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" --owner "$OWNER" "$ENV_ID"
 ```
 
 6. Confirm `cleanup_attempt` incremented, `cleanup_retry_audit` gained the
@@ -282,7 +295,7 @@ TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" "$ENV_I
    after successful stage 1 or `cleanup_failed` with a new exact error:
 
 ```
-TARGET=aws scripts/lease.sh get "$ENV_ID" | jq '{status,generation,cleanup_attempt,manual_intervention_required,cleanup_retry_audit,last_verification:.manifest.verification_runs[-1]}'
+TARGET=aws scripts/lease.sh get "$ENV_ID" | jq '{status,generation,owner,cleanup_attempt,manual_intervention_required,cleanup_retry_audit,last_verification:.manifest.verification_runs[-1]}'
 ```
 
 The exact verifier owns all `gone`, `pending`, `live`, and `indeterminate`

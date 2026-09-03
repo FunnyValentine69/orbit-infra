@@ -19,15 +19,18 @@ consumes the same response shape for recorded and live probes. The suite covers
 the 24-entry stale inventory incident, security-group-rule and unknown ARN
 handling, VPC endpoint states, exact inactive ECS status, the scoped LocalStack
 allowance, the 30-second AWS process boundary and 660-second ECS waiter
-boundary, tag-versus-manifest authority, a failed delayed tag observation,
-zero-exit tag responses with a missing key, null list, string list, or empty
-stdout, non-zero and malformed cleanup-verifier results,
-exact ECS `MISSING`/non-`MISSING`/unconfirmed-empty responses, an absent state
-file, required AWS destroy image references and their Terraform forwarding,
+boundary, tag-versus-manifest authority, failed delayed and pre-destroy-only tag
+observations, zero-exit tag responses with a missing key, null list, string
+list, empty stdout, entry missing `ResourceARN`, or numeric `ResourceARN`,
+non-zero and malformed cleanup-verifier results, contradictory summaries,
+invalid outcome strings, and `passed:true` with a live result, exact ECS
+`MISSING`/non-`MISSING`/unconfirmed-empty responses, an absent state file,
+required AWS destroy image references and their Terraform forwarding,
 zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
-their `failures` array,
-the three-attempt lease limit, audited force retry, generation-bound close
-refusal, and end-to-end stage-1 state retention.
+their `failures` array, atomic owner-plus-manifest lease open with one PUT,
+same-environment second-open refusal, owner- and generation-bound close
+refusals, the three-attempt lease limit, audited force retry, and end-to-end
+stage-1 state retention. The suite currently reports 40 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
