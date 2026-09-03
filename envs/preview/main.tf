@@ -334,10 +334,16 @@ locals {
     AWS_SECRET_ACCESS_KEY = "test"
   } : {}
 
+  # module.clickhouse exposes no output for the user/database it configured
+  # (it has no var.user/var.database override here, so it used its own
+  # defaults); these two literals mirror those clickhouse module defaults so
+  # the api container's CLICKHOUSE_USER/CLICKHOUSE_DB stay in sync with it.
   fixed_api_env = merge(
     {
       CLICKHOUSE_HOST    = module.clickhouse.discovery_dns_name
       CLICKHOUSE_PORT    = tostring(module.clickhouse.port)
+      CLICKHOUSE_USER    = "default"
+      CLICKHOUSE_DB      = "app"
       REDIS_HOST         = module.redis.discovery_dns_name
       REDIS_PORT         = tostring(module.redis.port)
       PLACEHOLDER_BUCKET = aws_s3_bucket.data.bucket
@@ -349,6 +355,13 @@ locals {
   # var.api_env is merged first so the fixed keys above always win on
   # conflict; the S3 bucket/Redis/ClickHouse wiring must stay authoritative.
   api_env = merge(var.api_env, local.fixed_api_env)
+
+  # The ClickHouse container reads its password from this same secret via
+  # module.clickhouse's password_secret_arn wiring (CLICKHOUSE_PASSWORD);
+  # the api task needs the identical secret grant to authenticate against it.
+  api_secrets = {
+    CLICKHOUSE_PASSWORD = aws_secretsmanager_secret.clickhouse_password.arn
+  }
 }
 
 module "api" {
@@ -368,6 +381,7 @@ module "api" {
   security_group_ids = [aws_security_group.service.id]
 
   env                   = local.api_env
+  secrets               = local.api_secrets
   task_role_policy_json = local.api_bucket_policy_json
   alb_target_group_arn  = aws_lb_target_group.api.arn
 

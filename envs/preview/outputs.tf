@@ -77,3 +77,8 @@ output "api_environment_keys" {
   description = "Keys of the merged api service environment (var.api_env plus the fixed keys this root computes); used to assert that user-supplied api_env keys reach the api task"
   value       = keys(local.api_env)
 }
+
+output "api_secret_keys" {
+  description = "Keys of the api task's ECS `secrets` map (local.api_secrets, passed into module.api); used to assert the ClickHouse password secret reaches the api task"
+  value       = keys(local.api_secrets)
+}

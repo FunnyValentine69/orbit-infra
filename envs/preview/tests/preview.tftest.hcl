@@ -116,3 +116,12 @@ run "api_env_key_reaches_api_task" {
     error_message = "a supplied api_env key must appear in the merged api environment"
   }
 }
+
+run "api_task_has_clickhouse_password_secret" {
+  command = plan
+
+  assert {
+    condition     = contains(output.api_secret_keys, "CLICKHOUSE_PASSWORD")
+    error_message = "the api task must receive CLICKHOUSE_PASSWORD as an ECS secret, not a plaintext env var"
+  }
+}

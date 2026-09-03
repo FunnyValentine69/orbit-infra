@@ -237,7 +237,7 @@ data "aws_iam_policy_document" "plan_reader_deny" {
 
 resource "aws_iam_role_policy" "plan_reader_deny" {
   name   = "${var.name}-plan-reader-deny"
-  role   = aws_iam_role.plan_reader.id
+  role   = aws_iam_role.plan_reader.name
   policy = data.aws_iam_policy_document.plan_reader_deny.json
 
   lifecycle {
@@ -274,7 +274,7 @@ data "aws_iam_policy_document" "plan_reader_state" {
 
 resource "aws_iam_role_policy" "plan_reader_state" {
   name   = "${var.name}-plan-reader-state"
-  role   = aws_iam_role.plan_reader.id
+  role   = aws_iam_role.plan_reader.name
   policy = data.aws_iam_policy_document.plan_reader_state.json
 
   lifecycle {
@@ -344,8 +344,8 @@ data "aws_iam_policy_document" "task_boundary" {
       "s3:DeleteObject",
     ]
     resources = [
-      "arn:aws:s3:::${var.name}-*",
-      "arn:aws:s3:::${var.name}-*/*",
+      "arn:${data.aws_partition.current.partition}:s3:::${var.name}-*-data",
+      "arn:${data.aws_partition.current.partition}:s3:::${var.name}-*-data/*",
     ]
   }
 }
@@ -809,6 +809,22 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
         "CreateService",
         "RegisterTaskDefinition",
       ]
+    }
+  }
+
+  # Post-create tag updates on clusters/services already carrying the
+  # project tag (ecs:TagResource has no ecs:CreateAction row for
+  # already-existing resources; scope by the current resource tag instead).
+  statement {
+    sid       = "EcsTagResourceExisting"
+    effect    = "Allow"
+    actions   = ["ecs:TagResource"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:ResourceTag/Project"
+      values   = [var.project_tag]
     }
   }
 
@@ -1563,7 +1579,7 @@ data "aws_iam_policy_document" "publisher" {
 
 resource "aws_iam_role_policy" "publisher" {
   name   = "${var.name}-publisher"
-  role   = aws_iam_role.publisher.id
+  role   = aws_iam_role.publisher.name
   policy = data.aws_iam_policy_document.publisher.json
 
   lifecycle {

@@ -64,7 +64,11 @@ placeholder-build:
 	docker build --platform linux/arm64 -t placeholder:local placeholder/
 
 check-placeholder-image:
-	@docker image inspect placeholder:local >/dev/null 2>&1 || { echo "placeholder:local image not found; run make placeholder-build first" >&2; exit 1; }
+	@if [ -n "$$TF_VAR_api_image" ] && [ "$$TF_VAR_api_image" != "placeholder:local" ]; then \
+		echo "api_image override in effect; skipping placeholder image check"; \
+	else \
+		docker image inspect placeholder:local >/dev/null 2>&1 || { echo "placeholder:local image not found; run make placeholder-build first" >&2; exit 1; }; \
+	fi
 
 # Intentionally no bootstrap-destroy target: every bootstrap resource has
 # prevent_destroy = true and this state must never be torn down via make.
