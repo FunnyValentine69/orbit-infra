@@ -34,11 +34,13 @@ stage-1 state retention. The suite currently reports 40 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
-signal-path test below. It also verifies that policy-size remains required by
-default and moves to the owner-only `plan-localstack` job after its health
-wait. Fork PRs receive the secret-free gates with policy-size explicitly
-skipped; owner PRs receive those gates plus the LocalStack-backed policy-size
-check. Neither suite starts, stops, or reconfigures LocalStack.
+signal-path test below. It runs `tests/dispatch-ordering-contracts.sh`, whose
+jq-level probes extract the live jobs aggregation and timestamp-comparison
+filters from `tests/dispatch-ordering.sh`. It also verifies that policy-size
+remains required by default and moves to the owner-only `plan-localstack` job
+after its health wait. Fork PRs receive the secret-free gates with policy-size
+explicitly skipped; owner PRs receive those gates plus the LocalStack-backed
+policy-size check. Neither suite starts, stops, or reconfigures LocalStack.
 
 Run the process-group signal test directly without LocalStack:
 
@@ -98,13 +100,18 @@ equals `REF`. Both targets require three queue polls with the first apply
 in-progress and the second held (`pending`, GitHub's status for a run blocked
 by its concurrency group, or `queued`), then observe the destroy held behind it.
 After all runs are terminal, the test requires the first apply's latest job
-`completed_at` <= the second apply's earliest job `started_at`, and the second
-apply's latest job `completed_at` <= the destroy's earliest job `started_at`.
+`completed_at` < the second apply's earliest job `started_at`, and the second
+apply's latest job `completed_at` < the destroy's earliest job `started_at`.
+Equal timestamps are inconclusive and fail closed.
 Job timestamps are used because GitHub stamps a run's `run_started_at` when
 it accepts the dispatch, before the concurrency group releases the run.
 Skipped jobs (for example the destroy job behind a refused validate-input)
-are excluded from the aggregation, and the jobs endpoint is read up to three
-times ten seconds apart because it can lag the run's terminal status.
+are excluded from the aggregation. Before aggregating, each jobs response must
+have `total_count` equal to the returned jobs-array length, at least one
+non-skipped job, and string `started_at` and `completed_at` values on every
+non-skipped job. A response that fails any condition is treated as lagging and
+the jobs endpoint is read up to three times ten seconds apart before failing
+closed with the condition that remained unsatisfied.
 
 For LocalStack, both applies must conclude `success`; destroy must conclude
 `failure` in `validate-input` with the exact `target=localstack` refusal. For

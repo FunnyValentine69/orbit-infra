@@ -343,13 +343,22 @@ for fn in assert_terminal_before_start verify_aws_final_cleanup; do
     fi
   done
 done
+bash "$REPO_ROOT/tests/dispatch-ordering-contracts.sh"
+
 # GitHub reports a concurrency-held run as pending; both pending and queued
-# must be accepted as held, whether in one case arm or two.
-for held in pending queued; do
-  if ! grep -Eq "(^|[^A-Za-z0-9_])${held}(\)|\|)" "$ordering_script"; then
-    echo "dispatch-ordering.sh must treat GitHub's ${held} status as a held run" >&2
+# must be accepted inside each function, whether in one case arm or two.
+for fn in assert_three_queued_polls assert_run_queued; do
+  fn_body="$(sed -n "/^${fn}() {/,/^}/p" <<< "$ordering_joined")"
+  if [ -z "$fn_body" ]; then
+    echo "dispatch-ordering.sh must define ${fn}() at column 0 (contract extraction found nothing)" >&2
     exit 1
   fi
+  for held in pending queued; do
+    if ! grep -Eq "(^|[^A-Za-z0-9_])${held}(\)|\|)" <<< "$fn_body"; then
+      echo "dispatch-ordering.sh ${fn}() must treat GitHub's ${held} status as a held run" >&2
+      exit 1
+    fi
+  done
 done
 
 echo "PASS: phase3 shell contracts"
