@@ -157,7 +157,9 @@ records `in_job:true` before closing the lease. The nightly sweeper refuses
 LocalStack because a later runner cannot recover that emulator. Lease CAS,
 lifecycle refusals, generation increments, and two-environment state isolation
 are proved locally against one emulator by `tests/localstack-concurrency.sh`.
-See ADR 0006. The new Stage 2 paths remain CODE-ONLY until P0-3b.
+See ADR 0006. In-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and
+CODE-ONLY in CI until the post-merge dispatch; the nightly AWS sweeper remains
+CODE-ONLY until P0-3b.
 
 ## Image supply chain summary
 

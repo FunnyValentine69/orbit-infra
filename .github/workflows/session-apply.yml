@@ -9,8 +9,8 @@
 # target-specific bootstrap/supply-chain checks -> lease open (one CAS carrying
 # owner and initial manifest) -> apply -> acceptance. Any failure or cancellation
 # reads the lease and runs scripts/close-env.sh (Stage 1) only when this run owns
-# an open or closing generation. The LocalStack target always runs Stage 1 and
-# Stage 2 at the end of the job.
+# an open or closing generation. The LocalStack target runs Stage 1 at the end
+# of the job and, only when Stage 1 succeeds, in-job Stage 2.
 # Gate failures before the CAS never create a lease or resources.
 #
 # Per ADR 0006 / ARCHITECTURE.md, apply, destroy, and the sweeper share

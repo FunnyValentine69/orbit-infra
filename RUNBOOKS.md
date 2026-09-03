@@ -311,8 +311,9 @@ Promote the path after merge with:
 gh workflow run session-apply.yml --ref main -f env_id=sw1 -f target=localstack -f mode=public
 ```
 
-The new LocalStack Stage 2 and nightly AWS workflow remain CODE-ONLY until
-P0-3b promotion.
+The in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in
+CI until the post-merge dispatch above runs; the nightly AWS workflow remains
+CODE-ONLY until P0-3b.
 
 ## Stuck-environment force-destroy
 
