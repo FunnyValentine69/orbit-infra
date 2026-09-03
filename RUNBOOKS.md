@@ -107,11 +107,11 @@ also recorded under `manifest.stale_tag_entries`. A `live` or `indeterminate`
 result at the deadline fails stage 1. Stage 1 retains Terraform state and never
 sets `closed`; only the Phase 5 sweeper may prune state versions and do that.
 
-GitHub concurrency serializes running jobs for one `env_id`, but its default
-behavior retains only one pending job: a new pending dispatch replaces an older
-one in the same `preview-<env_id>` group. The lease CAS and generation checks,
-not the workflow queue, protect lifecycle state. After overlapping dispatches,
-inspect the Actions history; if a destroy was cancelled while pending,
+GitHub concurrency serializes running jobs for one `env_id`, and `queue: max`
+on both session workflows keeps every pending dispatch (up to GitHub's queue
+limit) so a queued destroy is not displaced. The lease CAS and generation
+checks, not the workflow queue, protect lifecycle state. After overlapping
+dispatches, inspect the Actions history; if a destroy did not run,
 re-dispatch `session-destroy` for that `env_id`.
 
 Check the current state first:
