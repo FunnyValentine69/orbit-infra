@@ -99,8 +99,13 @@ Local, pre-CI policy gates (`.tflint.hcl`, `.checkov.yaml` at repo root):
 make validate     # terraform init -backend=false + validate, every module/env
 make lint         # terraform fmt -check, tflint --recursive, checkov
 make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
+make test-concurrency TARGET=localstack OPERATOR_CIDR=10.255.255.255/32  # two live environments on one already-running emulator
 scripts/gates.sh  # runs all four above (validate, lint, test, no-nat-gateway), PASS/FAIL summary; CI calls this from Phase 3 onward
 ```
+
+The live concurrency target and the post-merge GitHub dispatch-ordering test
+are documented in `tests/README.md`; neither starts, stops, or reconfigures
+LocalStack.
 
 `scripts/gates.sh` also runs the `policy-size` gate: it renders a LocalStack
 plan of `bootstrap/` and requires every planned IAM policy document to be

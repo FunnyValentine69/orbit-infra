@@ -1,9 +1,9 @@
 # STATE
 
 ```
-LOCATION   Phase 4 (Option A): P4-0 overflow fixes + P4-4 LocalStack CI mode implemented on feat/phase4; PR #4 merged
-STATE      Local apply/close is LOCALSTACK-VERIFIED; P4-0/P4-4 workflow changes are CODE-ONLY until CI executes; AWS remains CODE-ONLY until P0-3b/P0-3d
-NEXT       P4-1 concurrency script, P4-2 dispatch-ordering test + PR-comment dispatch line, P4-3 runbooks; PR #5; first main-only dispatch of session-apply target=localstack after merge
+LOCATION   Phase 4 (Option A): P4-0/P4-4 plus P4-1 concurrency, P4-2 dispatch ordering/comment, and P4-3 runbooks implemented on feat/phase4; PR #4 merged
+STATE      Local apply/close, P4-1 concurrency, and the end-session and force-retry runbooks are LOCALSTACK-VERIFIED; the CI LocalStack lane, P4-2 dispatch ordering, and the other runbook sections are CODE-ONLY until their recorded promotion commands run from main; AWS remains CODE-ONLY until P0-3b/P0-3d
+NEXT       PR #5 through the three tiers; after merge: first `session-apply` dispatch with target=localstack from main, then `tests/dispatch-ordering.sh`, relabeling only observed evidence
 ```
 
 Last verified: tools.lock versions verified 2026-09-02 via brew list --versions.

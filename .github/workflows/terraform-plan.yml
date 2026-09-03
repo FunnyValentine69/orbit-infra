@@ -158,7 +158,13 @@ jobs:
         run: |
           marker='<!-- terraform-plan -->'
           body_file=/tmp/plan-comment.md
-          { echo "$marker"; echo ""; cat /tmp/plan-summary.md; } > "$body_file"
+          dispatch_env_id="$(printf 'pr%s' "$PR_NUMBER" | cut -c1-12)"
+          {
+            echo "$marker"
+            echo ""
+            cat /tmp/plan-summary.md
+            printf 'Post-merge dispatch: `gh workflow run session-apply.yml --ref main -f env_id=%s -f target=aws -f mode=public`; LocalStack: `gh workflow run session-apply.yml --ref main -f env_id=%s -f target=localstack -f mode=public`\n' "$dispatch_env_id" "$dispatch_env_id"
+          } > "$body_file"
           existing_id=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
           if [ -n "$existing_id" ]; then
             gh api --method PATCH "repos/${{ github.repository }}/issues/comments/${existing_id}" -F body=@"$body_file"

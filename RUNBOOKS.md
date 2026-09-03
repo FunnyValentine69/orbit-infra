@@ -1,6 +1,6 @@
 # Runbooks
 
-Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs. Run every procedure from the repository root.
 
 ## Local credentials
 
@@ -48,18 +48,106 @@ aws s3api copy-object --bucket orbit-infra-79s5rw-tfstate --copy-source "orbit-i
 
 ## Operator CIDR change
 
-The ALB allowlist is the repository secret `OPERATOR_CIDR`. To update it:
+1. Read the replacement CIDR without echoing it, then update the repository
+   secret without printing the value:
 
 ```
-gh secret set OPERATOR_CIDR -R FunnyValentine69/orbit-infra --body "$(curl -s https://checkip.amazonaws.com)/32"
+read -r -s -p "OPERATOR_CIDR: " OPERATOR_CIDR
+echo
+export OPERATOR_CIDR
+printf '%s' "$OPERATOR_CIDR" | gh secret set OPERATOR_CIDR
 ```
 
-Then re-dispatch `session-apply` for each live environment. Local applies use
-the Makefile's lookup; run
-`make apply TARGET=aws ENV_ID=<id>` to re-apply the whole preview
-environment for that ID — only the ALB security-group ingress rule
-actually changes, since it's the only resource that reads
-`var.operator_cidr`.
+2. Bind the active environment and recover its exact digest-pinned image inputs
+   from the durable lease. Refuse to continue unless all three are present:
+
+```
+ENV_ID=demo1
+LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
+export TF_VAR_api_image="$(jq -er '.manifest.images.api_image' <<< "$LEASE_JSON")"
+export TF_VAR_redis_image="$(jq -er '.manifest.images.redis_image' <<< "$LEASE_JSON")"
+export TF_VAR_clickhouse_image="$(jq -er '.manifest.images.clickhouse_image' <<< "$LEASE_JSON")"
+```
+
+3. Generate the existing backend configuration, create a saved plan, and apply
+   that exact plan. The ingress rule is the intended change; inspect the plan
+   and stop if it contains any unrelated replacement:
+
+```
+scripts/write-preview-backend.sh
+make plan TARGET=aws ENV_ID="$ENV_ID" OPERATOR_CIDR="$OPERATOR_CIDR"
+make apply TARGET=aws ENV_ID="$ENV_ID" OPERATOR_CIDR="$OPERATOR_CIDR"
+```
+
+Executed: CODE-ONLY — promote with `make plan TARGET=aws ENV_ID=cidr1 OPERATOR_CIDR="$OPERATOR_CIDR"` followed by `make apply TARGET=aws ENV_ID=cidr1 OPERATOR_CIDR="$OPERATOR_CIDR"` after the real-AWS promotion gate.
+
+## Start session
+
+1. Choose a valid environment ID, target, and image mode. Use `public` for the
+   placeholder stack or `upstream` for the locked upstream workload:
+
+```
+ENV_ID=demo1
+TARGET=aws
+MODE=public
+```
+
+2. For `TARGET=aws`, confirm that the durable lease is absent or `closed`.
+   An `open`, `closing`, or `cleanup_failed` lease is an intentional refusal,
+   not a signal to bypass the state machine. A LocalStack CI run cannot inspect
+   another run's lease because its emulator is fresh:
+
+```
+make lease-get TARGET=aws ENV_ID="$ENV_ID"
+```
+
+3. Dispatch from `main`, then inspect the matching run and wait for its
+   terminal conclusion:
+
+```
+gh workflow run session-apply.yml --ref main -f env_id="$ENV_ID" -f target="$TARGET" -f mode="$MODE"
+gh run list --workflow session-apply.yml --branch main --event workflow_dispatch --limit 5
+```
+
+4. For `TARGET=aws`, confirm the lease is `open` and use the ALB URL from the
+   run summary for the acceptance commands below. For `TARGET=localstack`, the
+   same job always performs stage-1 close, so its terminal lease is `closing`
+   on that job's fresh emulator and is not observable from a later runner.
+
+```
+make lease-get TARGET=aws ENV_ID="$ENV_ID"
+```
+
+Executed: CODE-ONLY — promote with `gh workflow run session-apply.yml --ref main -f env_id=p4ci -f target=localstack -f mode=public` after this change reaches `main`.
+
+## End session
+
+1. Bind the real-AWS environment and inspect its current lease generation and
+   cleanup-attempt budget:
+
+```
+ENV_ID=demo1
+make lease-get TARGET=aws ENV_ID="$ENV_ID"
+```
+
+2. Dispatch the existing stage-1 close workflow from `main` and follow its
+   run. Do not dispatch `session-destroy target=localstack`: LocalStack state
+   is runner-local and `session-apply` already closes in the same job.
+
+```
+gh workflow run session-destroy.yml --ref main -f env_id="$ENV_ID" -f target=aws
+gh run list --workflow session-destroy.yml --branch main --event workflow_dispatch --limit 5
+```
+
+3. Confirm that a successful stage 1 retained Terraform state evidence and
+   left the lease `closing` for the Phase 5 sweeper. `closed` is not a
+   stage-1 success state:
+
+```
+make lease-get TARGET=aws ENV_ID="$ENV_ID"
+```
+
+Executed: LOCALSTACK-VERIFIED 2026-09-03 — the LocalStack close path ran through `make test-concurrency TARGET=localstack OPERATOR_CIDR=10.255.255.255/32` (two generation-bound closes, both leases `closing`, empty states); the independent AWS dispatch is CODE-ONLY until P0-3d.
 
 ## Session acceptance
 
@@ -123,7 +211,11 @@ HTTP response from the excluded runner as a failure.
 This mode proves the workflow's full bootstrap → lease → apply → service
 acceptance → close control flow on one runner. It does not prove GitHub OIDC,
 real-AWS IAM, private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec,
-real security-group packet enforcement, or a cross-job destroy. A
+real security-group packet enforcement, or a cross-job destroy. Every
+LocalStack CI run uses a fresh runner and fresh emulator, so the gh-driven
+dispatch test proves only GitHub concurrency queueing on this target. Lease CAS,
+refusal on `open`/`closing`/`cleanup_failed`, and generation increments are
+proved locally against one emulator by `tests/localstack-concurrency.sh`. A
 `session-destroy.yml` dispatch with `target=localstack` is refused because a
 fresh runner cannot recover the prior emulator or local state. LocalStack CI
 uses licensed credits, so this lane is dispatch-only and must never be added to
@@ -131,107 +223,186 @@ a schedule.
 
 ## Stuck-environment force-destroy
 
-Every preview environment has a durable lease at `leases/<env_id>.json`
-in the state bucket (ADR 0006), states `open -> closing -> closed |
-cleanup_failed`. `scripts/lease.sh` manages it directly;
-`scripts/close-env.sh` (wired into `make close` and `session-destroy.yml`)
-drives it through stage 1 of close. Stage 1 discovers and scales every ECS
-service, merges a retry-safe manifest, destroys Terraform resources, requests
-asynchronous task-definition deletion, unions state/manifest/ECS/tag candidates,
-and verifies each candidate through its exact service API. Results are `gone`,
-`pending`, `live`, or `indeterminate`; each five-minute retry iteration is
-persisted under `manifest.verification_runs`. Confirmed-gone tag results are
-also recorded under `manifest.stale_tag_entries`. A `live` or `indeterminate`
-result at the deadline fails stage 1. Stage 1 retains Terraform state and never
-sets `closed`; only the Phase 5 sweeper may prune state versions and do that.
-
-GitHub concurrency serializes running jobs for one `env_id`, and `queue: max`
-on both session workflows keeps every pending dispatch (up to GitHub's queue
-limit) so a queued destroy is not displaced. The lease CAS and generation
-checks, not the workflow queue, protect lifecycle state. After overlapping
-dispatches, inspect the Actions history; if a destroy did not run,
-re-dispatch `session-destroy` for that `env_id`.
-
-Check the current state first:
+1. Bind the environment, read the durable lease once, and inspect only its
+   lifecycle fields and most recent exact-resource outcomes. Keep the retained
+   Terraform state; it is evidence and an input to every retry:
 
 ```
-make lease-get TARGET=aws ENV_ID=<id>
-# or: TARGET=aws scripts/lease.sh get <id>
+ENV_ID=demo1
+LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
+jq '{status,generation,cleanup_attempt,next_retry_at,manual_intervention_required,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
 ```
 
-**Lease is `cleanup_failed`** (a destroy or verification step failed and state
-was kept): inspect `cleanup_attempt`, `next_retry_at`,
-`manual_intervention_required`, and the last verification summary. Before the
-three-attempt limit, re-run close no earlier than `next_retry_at`:
+2. If the verifier reports VPC deletion blocked by orphaned ENIs, derive the
+   exact VPC from the manifest and inspect a redacted field set. Resolve the
+   owning endpoint, load balancer, or ECS service; never delete a
+   requester-managed ENI directly:
 
 ```
-make close TARGET=aws ENV_ID=<id>
+VPC_ID="$(jq -er '.manifest.candidates[] | select(.resource_type == "ec2:vpc") | .id' <<< "$LEASE_JSON" | head -n1)"
+TARGET=aws scripts/aws-cli.sh ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[].{id:NetworkInterfaceId,status:Status,requester_managed:RequesterManaged,description:Description}' --output json
 ```
 
-The third failed stage-1 execution leaves `cleanup_failed`, clears
-`next_retry_at`, and sets `manual_intervention_required=true`. A fourth
-automatic execution is refused. After reviewing and addressing the persisted
-`live`/`indeterminate` results, explicitly claim an audited retry:
+3. If the exact S3 candidate is still live because the data bucket is not
+   empty, resolve its name from the lease, assert that it is this environment's
+   data bucket, inspect current keys, and empty only that bucket. Versioning is
+   intentionally disabled on the ephemeral data bucket:
 
 ```
-TARGET=aws scripts/close-env.sh --force-retry <id>
+BUCKET="$(jq -er '.manifest.candidates[] | select(.resource_type == "s3:bucket") | .id' <<< "$LEASE_JSON" | head -n1)"
+case "$BUCKET" in *-"$ENV_ID"-data) ;; *) echo "refusing unexpected bucket: $BUCKET" >&2; exit 1 ;; esac
+TARGET=aws scripts/aws-cli.sh s3api list-objects-v2 --bucket "$BUCKET" --max-items 20 --query 'Contents[].Key' --output json
+TARGET=aws scripts/aws-cli.sh s3 rm "s3://$BUCKET" --recursive
 ```
 
-`--force-retry` increments `cleanup_attempt` and appends to
-`cleanup_retry_audit`; it does not delete the retained state or weaken any
-resource predicate.
-
-**Lease is `closing`** but stalled (task definitions still pending
-deletion, or the job was interrupted mid-close): re-run `make close`
-again -- it detects `closing` and resumes stage 1 rather than failing on
-the CAS precondition. Stage 2 (the sweeper, Phase 5) finishes the
-transition to `closed` once every task definition it recorded in the
-manifest is confirmed gone.
-
-**Lease is `open` but no resources exist** (e.g. a plan-only dry run, or
-resources were removed out-of-band): move it into stage 1 so the sweeper can
-verify the manifest and finish it:
+4. Before the three-attempt limit, wait until `next_retry_at`, refresh the
+   lease, and use the normal retry path. `make close` resumes either `closing`
+   or due `cleanup_failed` state:
 
 ```
-TARGET=aws scripts/lease.sh begin-cleanup <id>   # the only entry into closing; counts against the three-attempt budget
+make close TARGET=aws ENV_ID="$ENV_ID" OPERATOR_CIDR="$OPERATOR_CIDR"
 ```
 
-**Manual, targeted recovery** when the verifier reports `live` or
-`indeterminate`: inspect `manifest.candidates`, `manifest.verification_runs`,
-`manifest.tag_inventory_observations`, `manifest.stale_tag_entries`, and
-`manifest.allowances` via `TARGET=aws scripts/lease.sh get <id> | jq
-.manifest`. Resolve only the named resource or access failure, then use the
-normal retry or audited force retry above. An unsupported future ARN is one
-indeterminate result; it does not discard earlier results.
+5. When the third failed execution leaves `cleanup_failed`, retained state,
+   `next_retry_at=null`, and `manual_intervention_required=true`, re-read the
+   lease generation after the targeted repair and claim one audited force
+   retry. The generation argument prevents stale operator work from touching a
+   newer lease:
 
-On LocalStack, the known `DeleteTaskDefinitions` gap is accepted only when the
-task definition is already `INACTIVE` and the exact unsupported-operation
-signature matches. The allowance ID, ARN, error code, and timestamp are stored
-under `manifest.allowances`. The same error on the AWS target fails closed.
-Stale tag entries, stale `list-clusters` output, and a VPC endpoint in
-`deleted` use normal exact-state predicates and are not allowances.
+```
+LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
+GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"
+TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" "$ENV_ID"
+```
 
-Every direct lease or close command requires `TARGET`. LocalStack calls also
-require an explicit localhost `AWS_ENDPOINT_URL`, test credentials,
-`AWS_EC2_METADATA_DISABLED=true`, and an unset `AWS_PROFILE`; prefer the
-Makefile targets, which establish that contract. The shared AWS wrapper adds
-connect/read limits and a 30-second outer process-group timeout to every cleanup
-and lease AWS CLI call except `ecs wait services-stable`, which gets 660 seconds
-for the AWS CLI's ten-minute service-stability window.
+6. Confirm `cleanup_attempt` incremented, `cleanup_retry_audit` gained the
+   forced attempt, state remains retained, and the lease is either `closing`
+   after successful stage 1 or `cleanup_failed` with a new exact error:
 
-## Credential rotation
+```
+TARGET=aws scripts/lease.sh get "$ENV_ID" | jq '{status,generation,cleanup_attempt,manual_intervention_required,cleanup_retry_audit,last_verification:.manifest.verification_runs[-1]}'
+```
 
-`terraform-plan.yml` reads `LOCALSTACK_AUTH_TOKEN` and `INFRACOST_API_KEY`
-and does not assume an AWS role. `mirror-images.yml` and `sign-images.yml`
-assume the publisher role; `session-apply.yml` and `session-destroy.yml`
-assume the deployer role. These AWS sessions come from GitHub OIDC and use no
-stored static AWS access keys.
+The exact verifier owns all `gone`, `pending`, `live`, and `indeterminate`
+predicates. The only LocalStack allowance remains an unsupported
+`DeleteTaskDefinitions` response for an already-`INACTIVE` task definition;
+its ID, ARN, error code, and timestamp are persisted. Stale tags, retained
+cluster-list entries, VPC endpoints in `deleted`, ENI ownership, and S3
+emptiness are never generalized allowances.
 
-PR CI secrets are limited to the repository owner's own pull requests; a
-compromised owner account is outside the threat model. The workflow grants
-`pull-requests: write` only to jobs that post or update their PR comments.
+Executed: LOCALSTACK-VERIFIED 2026-09-03 — an applied `rbstuck` environment whose lease was driven to `cleanup_failed` with cleanup_attempt 3 and manual_intervention_required refused `close-env.sh` with exit 3; the audited step 5 run destroyed all 59 resources and left `closing`, cleanup_attempt 4, one `cleanup_retry_audit` entry (steps 2 and 3 remain CODE-ONLY: no ENI orphan or non-empty bucket occurred). Command used: `TARGET=localstack AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 AWS_EC2_METADATA_DISABLED=true OPERATOR_CIDR=10.255.255.255/32 scripts/close-env.sh --force-retry rbstuck`.
 
-The Infracost service-account token expires one year after creation
-(created 2026-09-02), and the LocalStack student license renews yearly
-(2027-09-02). Rotate via `gh secret set INFRACOST_API_KEY` /
-`gh secret set LOCALSTACK_AUTH_TOKEN` (hidden prompts).
+## Rotate secrets
+
+1. Authenticate `gh` for the repository, then rotate each secret through its
+   hidden prompt. Never pass values on a command line, echo them, or write them
+   to a file:
+
+```
+gh secret set LOCALSTACK_AUTH_TOKEN
+gh secret set INFRACOST_API_KEY
+gh secret set OPERATOR_CIDR
+gh secret set AWS_KMS_SIGNING_KEY_ARN
+gh secret set AWS_ROLE_PLAN_READER
+gh secret set AWS_ROLE_DEPLOYER
+gh secret set AWS_ROLE_PUBLISHER
+```
+
+2. Confirm only the names and update timestamps, never the values:
+
+```
+gh secret list
+```
+
+3. Exercise each consumer after rotation: `oidc-smoke` covers all three role
+   ARN secrets, a LocalStack session covers `LOCALSTACK_AUTH_TOKEN`, an owner
+   PR covers `INFRACOST_API_KEY`, the operator-CIDR procedure covers
+   `OPERATOR_CIDR`, and the image workflows cover the publisher role and KMS
+   key:
+
+```
+gh workflow run oidc-smoke.yml --ref main
+gh workflow run session-apply.yml --ref main -f env_id=rot1 -f target=localstack -f mode=public
+gh workflow run mirror-images.yml --ref main
+```
+
+The Infracost service-account token expires one year after creation (created
+2026-09-02), and the LocalStack student license renews yearly (2027-09-02).
+
+Executed: CODE-ONLY — promote the role-secret checks with `gh workflow run oidc-smoke.yml --ref main`; promote the LocalStack token with `gh workflow run session-apply.yml --ref main -f env_id=rot1 -f target=localstack -f mode=public`; verify Infracost only on an owner PR.
+
+## Re-sign an already-signed digest
+
+1. Re-dispatch `sign-images` with the exact commit already locked in
+   `upstream.lock`:
+
+```
+UPSTREAM_SHA="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
+gh workflow run sign-images.yml --ref main -f upstream_sha="$UPSTREAM_SHA"
+```
+
+2. Re-dispatch `mirror-images` for the placeholder and public-image mirrors:
+
+```
+gh workflow run mirror-images.yml --ref main
+```
+
+3. Inspect both runs. Each workflow re-runs its scans and final verification.
+   An existing valid signature is not duplicated, and an attestation is added
+   only when no existing predicate matches the current lock inputs. Existing
+   destination images must still match the locked digest; a mismatch fails.
+
+```
+gh run list --workflow sign-images.yml --branch main --event workflow_dispatch --limit 3
+gh run list --workflow mirror-images.yml --branch main --event workflow_dispatch --limit 3
+```
+
+Executed: CODE-ONLY — promote with `gh workflow run sign-images.yml --ref main -f upstream_sha="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"` and `gh workflow run mirror-images.yml --ref main` after P0-3b.
+
+## Image bump
+
+1. For a Redis or ClickHouse base-image bump, resolve the new ARM64 manifest
+   digest, then update the corresponding `*_source` and `*_digest` fields in
+   `mirror-images.lock`. Keep the repository fields unchanged. For a
+   placeholder source bump, set `placeholder_digest` and
+   `placeholder_source_sha` to explicit `<pending ...>` markers for the first
+   run, dispatch from `main`, then replace both markers with the digest and
+   source commit reported by that run.
+
+2. Mirror, scan, sign, and attest the new locked public-image set, then run it
+   a second time to verify the idempotent already-published/already-signed path:
+
+```
+gh workflow run mirror-images.yml --ref main
+gh workflow run mirror-images.yml --ref main
+```
+
+3. A changed ClickHouse mirror digest changes a repository-owned build input
+   for the private ClickHouse image. Set the `upstream.lock`
+   `repo_build_inputs_sha256` field to an explicit pending marker, run the
+   existing archive-only builder without pushing, and record the reported
+   `upstream_archive_sha256`, `repo_build_inputs_sha256`, and three `local_id`
+   values in `upstream.lock`:
+
+```
+UPSTREAM_DIR="${UPSTREAM_DIR:?set UPSTREAM_DIR to the clean locked clone}"
+PUSH=0 UPSTREAM_DIR="$UPSTREAM_DIR" scripts/build-upstream.sh
+```
+
+4. For an upstream commit bump, update `upstream_sha` first and perform the
+   same no-push build-and-record step. The builder verifies origin, exact HEAD,
+   clean working tree, archive hash, and repository-owned input hash before it
+   builds.
+
+5. After the real-AWS bootstrap and registry login are ready, push the three
+   exact builds. `PUSH=1` records the exact destination-repository digests back
+   into `upstream.lock`; then dispatch the idempotent signing workflow:
+
+```
+ECR_REGISTRY="${ECR_REGISTRY:?set the private ECR registry without printing it}"
+PUSH=1 UPSTREAM_DIR="$UPSTREAM_DIR" ECR_REGISTRY="$ECR_REGISTRY" scripts/build-upstream.sh
+UPSTREAM_SHA="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
+gh workflow run sign-images.yml --ref main -f upstream_sha="$UPSTREAM_SHA"
+```
+
+Executed: CODE-ONLY — promote the public-image path with two consecutive `gh workflow run mirror-images.yml --ref main` runs; promote the private-image path with the exact step 5 commands after P0-3b.

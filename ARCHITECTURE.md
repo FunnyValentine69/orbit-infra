@@ -136,7 +136,10 @@ applies, runs acceptance, and performs generation-bound stage-1 close in one
 job; `session-destroy target=localstack` refuses. The LocalStack path uses test
 credentials and no AWS role, and is evidence for workflow control flow rather
 than real-AWS OIDC, IAM, KMS/ECR, or packet-level security-group enforcement.
-See ADR 0006.
+Every LocalStack CI run has a fresh runner and emulator, so the gh-driven
+dispatch test proves only GitHub queueing on that target. Lease CAS, lifecycle
+refusals, generation increments, and two-environment state isolation are proved
+locally against one emulator by `tests/localstack-concurrency.sh`. See ADR 0006.
 
 ## Image supply chain summary
 
@@ -200,11 +203,13 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `/health` and `/s3-roundtrip` checks. `session-destroy` leaves no active
   services or cost-bearing resources and leaves the lease `closing` for the
   stage-2 sweeper.
-- **Phase 4:** the dispatch-only LocalStack CI lane must prove a complete
-  same-job apply → acceptance → close cycle. Two concurrently dispatched
-  environments must destroy independently with no shared state; same-environment
-  ordering tests must confirm queued work while lease CAS and generation checks
-  refuse stale work.
+- **Phase 4:** `tests/localstack-concurrency.sh` runs two environments
+  concurrently on one LocalStack instance and checks independent state, tags,
+  clusters, lease refusals, generations, and stage-1 close.
+  `tests/dispatch-ordering.sh` confirms same-environment GitHub queueing for
+  both targets, LocalStack destroy refusal, and AWS destroy queueing. The
+  dispatch-only LocalStack CI lane proves its own same-job apply → acceptance →
+  close path, never cross-run lease semantics.
 - **Phase 5:** drift detection reports clean; a modified resource is caught.
 
 ### SLO

@@ -21,6 +21,13 @@ destroy. The owner-only LocalStack job uses test credentials and never assumes
 or reads an AWS role. This asymmetry is intentional and is not evidence for
 the real-AWS cross-dispatch lifecycle.
 
+Every LocalStack CI run starts on a fresh hosted runner with a fresh emulator.
+Therefore the gh-driven dispatch-ordering test can prove only GitHub
+concurrency queueing on the LocalStack target; it cannot observe cross-run
+lease CAS, lifecycle refusals, retained state, or generation increments. Those
+lease semantics are proved locally by `tests/localstack-concurrency.sh`, which
+runs both environments against one already-running LocalStack instance.
+
 Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) re-checks the manifest; once every task definition is deleted, it removes state versions and sets `closed`. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
 
 ### Cleanup verifier amendment (2026-09-02)
