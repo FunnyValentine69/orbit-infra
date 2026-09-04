@@ -10,6 +10,15 @@ also run the `plan-localstack` job, which executes policy-size after the
 emulator health wait with the LocalStack environment contract. Local
 `scripts/gates.sh` runs keep policy-size required by default.
 
+The `oidc-smoke.yml` PR jobs behave differently: fork PRs skip the three
+`assume-*` jobs (green-by-skip, the roles never trust the pull_request
+subject), while owner PRs run them and they fail in their first step
+until P0-3b because the `AWS_ROLE_PLAN_READER`, `AWS_ROLE_DEPLOYER`, and
+`AWS_ROLE_PUBLISHER` repository secrets are created by the real-AWS
+bootstrap. Those three red checks are the expected state on every PR
+before P0-3b; `decode-subject`, `gates`, `plan-localstack`, and
+`infracost` are the checks that must be green.
+
 ## Local credentials
 
 The AWS Free Plan has no IAM Identity Center, so local bootstrap uses IAM

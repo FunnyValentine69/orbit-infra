@@ -241,7 +241,11 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   recovery destroy. The
   dispatch-only LocalStack CI lane proves its own same-job apply → acceptance →
   close path, never cross-run lease semantics.
-- **Phase 5:** drift detection reports clean; a modified resource is caught.
+- **Phase 5:** the stage-2 sweeper closes a stage-1 lease in the same
+  LocalStack job (LOCALSTACK-VERIFIED in CI, run 33825140591) and its
+  27-case fixture suite covers the pending, hand-back, prune, and
+  CAS-loss paths; drift detection (P5-1, not started) reports clean and
+  catches a modified bootstrap resource.
 
 ### SLO
 
