@@ -16,8 +16,9 @@ subject), while owner PRs run them and they fail in their first step
 until P0-3b because the `AWS_ROLE_PLAN_READER`, `AWS_ROLE_DEPLOYER`, and
 `AWS_ROLE_PUBLISHER` repository secrets are created by the real-AWS
 bootstrap. Those three red checks are the expected state on every PR
-before P0-3b; `decode-subject`, `gates`, `plan-localstack`, and
-`infracost` are the checks that must be green.
+before P0-3b; `gates`, `plan-localstack`, and `infracost` are the checks that
+must be green; `decode-subject` passes on owner PRs and is skipped on fork PRs
+like the `assume-*` jobs.
 
 ## Local credentials
 
