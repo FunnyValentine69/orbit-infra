@@ -66,11 +66,16 @@ Each `env_id` has a durable lease with states `open → closing → closed | cle
 stateDiagram-v2
     [*] --> open: lease created, CAS open
     open --> closing: begin-cleanup acquires stage1_claim
-    closing --> closing: stage1 destroy + verifier, five-minute verification deadline
-    closing --> cleanup_failed: stage1 deadline, live or indeterminate results
+    state closing {
+        [*] --> stage1
+        stage1: Stage 1, destroy + verifier, five-minute verification deadline
+        stage2: Stage 2, stage2_claim, task-definition re-probe
+        stage1 --> stage2: verification passed, stage1_claim released
+        stage2 --> stage1: pending non-task resource hands back
+        stage2 --> stage2: pending task definition releases the claim
+    }
+    closing --> cleanup_failed: stage 1 deadline with live or indeterminate results
     cleanup_failed --> closing: automatic retry (three per generation) or audited force-retry
-    closing --> closing: stage2_claim, task-definition re-probe, pending task definition releases the claim
-    closing --> closing: pending non-task resource hands back to stage 1
     closing --> closed: complete-stage2, state versions removed
     closed --> [*]: prune after 7 days
 ```
