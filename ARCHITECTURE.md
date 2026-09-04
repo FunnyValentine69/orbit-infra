@@ -87,7 +87,8 @@ job. Pull-request-triggered Terraform plans run against LocalStack instead
 (see ADR 0008), never against real AWS. Locally, the AWS Free Plan's
 IAM Identity Center restriction forced a deviation: bootstrap runs from an
 IAM user (MFA required, keys local-only), used solely for one-time
-bootstrap; CI is unaffected. See ADR 0005.
+bootstrap; CI is unaffected. See ADR 0005 and `docs/THREAT_MODEL.md` for the
+threat-to-control mapping.
 
 ## Environment lifecycle summary
 
