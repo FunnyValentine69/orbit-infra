@@ -20,22 +20,22 @@ Most demo infrastructure runs always-on and costs money whether or not anyone is
 - No-NAT private networking: interface VPC endpoints (ECR `api`/`dkr`, CloudWatch Logs, Secrets Manager, `ssmmessages`) plus the S3 gateway endpoint carry every AWS API call a task makes.
 - Per-environment lease lifecycle on S3 with ETag compare-and-swap and a two-stage close: stage 1 destroys and verifies with an exclusive claim, stage 2 re-probes task definitions and removes state versions under its own claim.
 - LocalStack CI lane proves apply, Stage 1, and the successful in-job Stage 2 allowance/close path without AWS spend (stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only), using the GitHub Student Developer Pack's LocalStack Student plan.
-- Tiered PR review gates: secret-free static gates on every PR, LocalStack plan and Infracost on owner PRs, OIDC smoke checks layered on top; paired with explicit per-claim evidence labels (LOCALSTACK-VERIFIED, CODE-ONLY, fixture-verified) instead of unqualified status claims.
-- KMS-signed private images with local-build attestation: upstream images are built and signed locally from a pinned `git archive`, never in hosted CI, with Rekor transparency-log upload disabled so no private-ECR reference is published.
+- PR checks that must be green are `gates` on every PR and, on repository-owner-authored same-repository PRs, `plan-localstack` and `infracost`. The separate `oidc-smoke.yml` jobs skip fork PRs and runs whose `github.actor` is `dependabot[bot]`; their three `assume-*` jobs stay red on same-repository PRs until P0-3b.
+- KMS-signed private images with local-build attestation: upstream images are built locally from a pinned `git archive` and never built in hosted CI; the separate `sign-images.yml` hosted workflow scans, KMS-signs, and attests the already-pushed digests with Rekor upload disabled.
 - Fail-closed verifier fixture suites: 27 sweeper cases and 48 cleanup-verifier cases cover the pending, hand-back, prune, and CAS-loss paths.
 
 ## System overview
 
 ```mermaid
 flowchart LR
-    gha["GitHub Actions<br/>OIDC federated"] -->|assume| planReader["plan-reader role<br/>read-only"]
-    gha -->|assume| deployer["deployer role"]
-    gha -->|assume| publisher["publisher role"]
+    gha["GitHub Actions<br/>workflows"] -->|"OIDC assume"| planReader["plan-reader role<br/>read-only"]
+    gha -->|"OIDC assume"| deployer["deployer role"]
+    gha -->|"OIDC assume"| publisher["publisher role"]
+    gha -.->|"same workflows, test credentials<br/>no AWS role, emulator target"| localstack["LocalStack dev/CI lane"]
     deployer --> leases[("S3 state bucket<br/>per-env lease objects")]
     deployer --> vpc
     publisher --> ecr[("ECR repos")]
     publisher --> kms["KMS signing key"]
-    deployer -.alternate target.-> localstack["LocalStack dev lane"]
     subgraph vpc["Preview VPC, no NAT"]
         subgraph pub["Public subnets, 2 AZs"]
             alb["ALB<br/>operator_cidr only"]
@@ -60,7 +60,7 @@ One VPC per environment, no NAT gateway. Two public subnets across two AZs hold 
 
 ## Lease lifecycle
 
-Each `env_id` has a durable lease with states `open → closing → closed | cleanup_failed` and a monotonically increasing `generation`. Every mutation is a compare-and-swap on the lease object's S3 ETag, so two writers can never both win.
+Each `env_id` has a durable lease with states `open → closing → closed | cleanup_failed`. Within a lease object's lifetime, its `generation` increases when a retained `closed` lease is reopened; after the seven-day prune deletes the lease object, reopening starts a new lease at generation 1. TODO P5-13 tracks the planned generation tombstone or non-reusable lease-incarnation fix. Every mutation is a compare-and-swap on the lease object's S3 ETag, so two writers can never both win.
 
 ```mermaid
 stateDiagram-v2
@@ -68,16 +68,16 @@ stateDiagram-v2
     open --> closing: begin-cleanup acquires stage1_claim
     state closing {
         [*] --> stage1
-        stage1: Stage 1, destroy + verifier, five-minute verification deadline
-        stage2: Stage 2, stage2_claim, task-definition re-probe
-        stage1 --> stage2: verification passed, stage1_claim released
-        stage2 --> stage1: pending non-task resource hands back
-        stage2 --> stage2: pending task definition releases the claim
+        stage1: Stage 1 destroy and verifier with five-minute verification deadline
+        stage2: Stage 2 task-definition re-probe under stage2_claim
+        stage1 --> stage2: complete-stage1 releases stage1_claim, claim-stage2 acquires stage2_claim
+        stage2 --> stage1: release-stage2 on pending non-task, next sweep runs begin-cleanup
+        stage2 --> stage2: release-stage2 on pending task definition
     }
-    closing --> cleanup_failed: stage 1 deadline with live or indeterminate results
-    cleanup_failed --> closing: automatic retry (three per generation) or audited force-retry
-    closing --> closed: complete-stage2, state versions removed
-    closed --> [*]: prune after 7 days
+    closing --> cleanup_failed: cleanup_failed on any Stage 1 failure or Stage 2 indeterminate or partial failure
+    cleanup_failed --> closing: due begin-cleanup below three automatic attempts per generation, or audited begin-cleanup --force-retry
+    closing --> closed: sweeper removes and verifies state versions, complete-stage2 records proof and sets closed
+    closed --> [*]: prune after seven days
 ```
 
 Close is two-stage because ECS task definitions delete asynchronously (up to 24 hours) while a hosted job caps at 6. Stage 1 CAS-acquires an exclusive, generation-bound `stage1_claim`, tears down services, calls `DeleteTaskDefinitions`, and verifies every candidate against an exact-service predicate (`gone`, `pending`, `live`, `indeterminate`); success clears the claim and leaves `closing` with state retained, failure sets `cleanup_failed`. The lease admits three automatic stage-1 attempts per generation; after the third, only an audited force retry can claim stage 1 again. Stage 2 claims the exclusive `stage2_claim` only when `stage1_claim` is null, re-probes every recorded task-definition candidate, requires the last Stage 1 verification to have passed with zero live or indeterminate results, then deletes every version and delete marker for the environment's state key before setting `closed`. A pending task definition releases the Stage 2 claim and leaves the lease `closing` for the next sweep; a pending non-task resource hands the lease back to Stage 1 for re-verification. Closed leases prune after 7 days. See ADR 0006 for the full state machine, the sweeper's `discover`/`env` split, and the fixture-recorded LocalStack allowance.
