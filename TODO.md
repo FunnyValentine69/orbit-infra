@@ -41,7 +41,7 @@
 
 (expanded when the phase starts)
 - [x] P3-1 terraform-plan.yml: gates + LocalStack plan + sticky PR comment + gated infracost job; no AWS credentials (P2-6's cost line lands from the first CI run)
-- [x] P3-x: documented 2026-09-03 in README and RUNBOOKS "PR review gates": fork and Dependabot PRs skip all four oidc-smoke jobs (green-by-skip); same-repository PRs run them and each assume-* job fails at its first step until P0-3b because the role secrets are not yet published
+- [x] P3-x: documented 2026-09-03 in README and RUNBOOKS "PR review gates": fork PRs and runs whose github.actor is dependabot[bot] skip all four oidc-smoke jobs (green-by-skip); other same-repository PR runs execute them and each assume-* job fails at its first step until P0-3b because the role secrets are not yet published
 - [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
 - [ ] P3-2b: hash-pin placeholder requirements (needs pip-tools; not installed this session)
 - [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock records upstream_archive_sha256, repo_build_inputs_sha256, and local_id per image
@@ -73,7 +73,7 @@
   - the nightly AWS sweeper and the exact AWS deleted-task-definition error text (authored fixture) until P0-3b
 - [ ] P5-2: `docs/THREAT_MODEL.md` — STRIDE-lite over ALB, ECS, S3, IAM, and OIDC with at least five threats, each mapped to an implemented control and its evidence label
 - [ ] P5-3 (stretch): Conftest/OPA rule "no public S3, no 0.0.0.0/0 on non-ALB security groups" that fails on a committed bad-plan fixture and runs in `scripts/gates.sh`
-- [ ] P5-4: README polish, architecture diagram, recorded demo link, `/publish`-ready check (demo needs the user)
+- [ ] P5-4: README polish and Mermaid architecture + lease-lifecycle diagrams landed 2026-09-03 (badges, highlights, documentation map); remaining: recorded demo link and `/publish`-ready check (demo needs the user)
 - P5-5 through P5-11 below are real-AWS hardening items that are not yet implemented and are deferred until P0-3b
 - [ ] P5-x: per-workflow OIDC subject binding (verify the customized claim on a real token first)
 - [ ] P5-5: `bootstrap/preflight.sh` runs `terraform init` (or detects an uninitialized backend) before `terraform state list`, so a fresh checkout that already has `backend.tf` is not treated as empty state (Tier-3 P2 on PR #1)
