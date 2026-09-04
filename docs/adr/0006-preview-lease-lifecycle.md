@@ -30,7 +30,7 @@ retained state, or generation increments. Those
 lease semantics are proved locally by `tests/localstack-concurrency.sh`, which
 runs both environments against one already-running LocalStack instance.
 
-Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. Stage 1 sets `closing`, persists a retry-merged manifest, discovers and scales every ECS service to zero, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A successful stage 1 ends `closing`, retaining the Terraform state object and its versions. Stage 1 never sets `closed`. Stage 2 (sweeper) first claims the exact `closing` generation; once every task definition is deleted, it removes state versions and atomically appends its proof while setting `closed` and consuming the claim. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
+Close is two-stage since task definitions delete asynchronously (up to 24h) while a hosted job caps at 6. `begin-cleanup` CAS-acquires an exclusive `stage1_claim = {token, claimed_at}` while setting `closing`. Stage 1 carries that token on every manifest and failure transition while it discovers and scales ECS services, destroys with retries, requests task-definition deletion, and verifies every recorded candidate. A repeat Stage 1 and Stage 2 both refuse while the claim is active. Success clears the claim by CAS and leaves `closing` with Terraform state retained; failure clears it in the `cleanup_failed` transition, released by complete-stage1 or taken over only by an audited --force-retry run. Stage 1 never sets `closed`. Stage 2 then claims the exact unclaimed `closing` generation; once every task definition is deleted, it removes state versions and atomically appends its proof while setting `closed` and consuming its claim. The sweeper shares the `preview-<env_id>` concurrency group with apply/destroy so running jobs do not overlap. Both session workflows set `queue: max` (a documented GitHub Actions concurrency property since 2026-05-07, allowed only with `cancel-in-progress: false`) so every pending dispatch is retained and a queued destroy is never displaced; a review claim that the key is unsupported was refuted against the workflow-syntax reference and the changelog. The lease compare-and-swap, generation check, and retry-safe state machine are the correctness boundary; the workflow queue is only serialization. If a destroy is displaced while pending, the operator must re-dispatch it. `closed` leases prune after 7 days.
 
 ### Stage 2 sweeper amendment (2026-09-03)
 
@@ -67,9 +67,9 @@ must return that exact ARN in `INACTIVE`, and `TARGET` must be `localstack`.
 The sweeper records the allowance ID, ARN, and timestamp under
 `manifest.stage2_allowances`; AWS never honors it.
 
-Stage 2 first obtains one exclusive `stage2_claim = {token, claimed_at}`
-for the exact `closing` generation. Every Stage 2 manifest write requires that
-generation and token. A pending task definition releases only that matching
+Stage 2 obtains one exclusive `stage2_claim = {token, claimed_at}` only
+when `stage1_claim` is null for the exact `closing` generation. Every Stage 2
+manifest write requires that status, generation, and token. A pending task definition releases only that matching
 claim by CAS so a later sweep can retry; successful completion has no separate
 release. After every task definition is deleted or deleted-by-allowance, Stage
 2 requires the last Stage 1 verification run to record `passed:true`, `live:0`,
@@ -115,14 +115,16 @@ The only stage-1 emulator allowance is `localstack-delete-task-definitions-inact
 
 Each lease generation stores `cleanup_attempt`, `next_retry_at`, and `manual_intervention_required` through the same ETag compare-and-swap as status and manifest updates. Three automatic stage-1 executions are permitted. The third failure retains `cleanup_failed`, retains state, and requires manual intervention; a fourth automatic claim is refused. An operator may use the explicit `--force-retry` path after review, which clears any active Stage 2 claim and appends that cleared claim to the lease audit entry.
 
-The mutation interface is generation-bound. `begin-cleanup` requires
-`--generation` and `--from open|closing|cleanup_failed`; `claim-stage2` acquires
-the exclusive token, and `release-stage2` relinquishes only a matching pending
-claim. `set-manifest` always requires `--generation` and also `--claim` whenever
-the lease carries an active Stage 2 claim. Generic `transition` accepts only
-`cleanup_failed` and clears its matching claim. Only `complete-stage2` may
-produce `closed`, in the same CAS that appends the Stage 2 proof and clears the
-claim.
+The mutation interface is generation-bound. Each lease has
+`stage1_claim` and `stage2_claim`, each null or `{token, claimed_at}`, and at
+most one may be active. `begin-cleanup` requires `--generation`, the observed
+`--from open|closing|cleanup_failed`, and `--claim`; its CAS installs the Stage
+1 token. Stage-1 `set-manifest` and failure transitions require `closing`, the
+generation, and that token. `complete-stage1` clears it by CAS. `claim-stage2`
+requires an unclaimed `closing` lease, and `release-stage2` relinquishes only a
+matching pending claim. Generic `transition` accepts only `cleanup_failed` and
+clears the matching active claim. Only `complete-stage2` may produce `closed`,
+in the same CAS that appends the Stage 2 proof and clears its claim.
 
 This amendment corrects three prior assumptions:
 

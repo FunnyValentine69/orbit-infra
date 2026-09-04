@@ -16,7 +16,8 @@ Subcommands:
   get-with-etag <env_id>
   open <env_id> [--owner <token>] [--manifest <file>]
   transition <env_id> <from> cleanup_failed --generation <n> [--claim <token>] [--error <text>]
-  begin-cleanup <env_id> --generation <n> --from <open|closing|cleanup_failed> [--force-retry]
+  begin-cleanup <env_id> --generation <n> --from <open|closing|cleanup_failed> --claim <token> [--force-retry]
+  complete-stage1 <env_id> --generation <n> --claim <token>
   claim-stage2 <env_id> --generation <n> --claim <token>
   release-stage2 <env_id> --generation <n> --claim <token>
   set-manifest <env_id> <file> --generation <n> [--claim <token>]
@@ -30,6 +31,8 @@ mutation uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_atte
 requires the generation and source status observed by its caller, and allows at
 most three automatic stage-1 executions per generation. --force-retry is
 required after exhaustion; it clears an active Stage-2 claim and audits it.
+It also takes over a stale Stage-1 claim and records it as cleared_stage1_claim.
+Stage 1 holds an exclusive claim until complete-stage1 or a failure transition.
 Only complete-stage2 can produce closed, atomically with its Stage-2 proof.
 
 Env: TARGET (aws|localstack, required), LEASE_BUCKET.
@@ -195,6 +198,7 @@ cmd_open() {
         next_retry_at: null,
         manual_intervention_required: false,
         cleanup_retry_audit: [],
+        stage1_claim: null,
         stage2_claim: null
       }' > "$body_file"
   put_lease open "$env_id" "$body_file" "${precondition_flag[@]}"
@@ -245,7 +249,8 @@ cmd_transition() {
     err "no lease for $env_id"
     exit 3
   fi
-  local lease_json status generation etag ts next_retry_at body_file attempt has_claim
+  local lease_json status generation etag ts next_retry_at body_file attempt
+  local has_stage1_claim has_stage2_claim
   lease_json="$(cat "$LEASE_BODY_FILE")"
   status="$(jq -r '.status' <<< "$lease_json")"
   generation="$(jq -r '.generation // empty' <<< "$lease_json")"
@@ -255,8 +260,20 @@ cmd_transition() {
     err "transition $env_id: lease generation or status changed"
     exit 3
   fi
-  has_claim="$(jq -r 'if .stage2_claim == null then "false" else "true" end' <<< "$lease_json")"
-  if [ "$has_claim" = true ]; then
+  has_stage1_claim="$(jq -r 'if (.stage1_claim // null) == null then "false" else "true" end' <<< "$lease_json")"
+  has_stage2_claim="$(jq -r 'if (.stage2_claim // null) == null then "false" else "true" end' <<< "$lease_json")"
+  if [ "$has_stage1_claim" = true ] && [ "$has_stage2_claim" = true ]; then
+    err "transition $env_id: lease has multiple active claims"
+    exit 3
+  elif [ "$has_stage1_claim" = true ]; then
+    if [ "$claim_set" != true ] || ! jq -e --arg claim "$claim" '
+        (.stage1_claim | type) == "object"
+        and .stage1_claim.token == $claim
+      ' <<< "$lease_json" >/dev/null; then
+      err "transition $env_id: active Stage-1 claim does not match"
+      exit 3
+    fi
+  elif [ "$has_stage2_claim" = true ]; then
     if [ "$claim_set" != true ] || ! jq -e --arg claim "$claim" '
         (.stage2_claim | type) == "object"
         and .stage2_claim.token == $claim
@@ -265,7 +282,7 @@ cmd_transition() {
       exit 3
     fi
   elif [ "$claim_set" = true ]; then
-    err "transition $env_id: no active Stage-2 claim matches"
+    err "transition $env_id: no active claim matches"
     exit 3
   fi
 
@@ -283,6 +300,7 @@ cmd_transition() {
       .status = "cleanup_failed"
       | .updated_at = $updated_at
       | .error = (if $error_text == "" then null else $error_text end)
+      | .stage1_claim = null
       | .stage2_claim = null
       | if (.cleanup_attempt // 0) >= 3 then
           .manual_intervention_required = true
@@ -300,6 +318,7 @@ cmd_begin_cleanup() {
   local force_retry=false
   local expected_generation=""
   local expected_status=""
+  local claim=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --force-retry) force_retry=true; shift ;;
@@ -313,6 +332,11 @@ cmd_begin_cleanup() {
         expected_status="$2"
         shift 2
         ;;
+      --claim)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--claim requires a nonempty token"; exit 2; }
+        claim="$2"
+        shift 2
+        ;;
       *) err "unexpected begin-cleanup argument '$1'"; exit 2 ;;
     esac
   done
@@ -324,6 +348,7 @@ cmd_begin_cleanup() {
     open|closing|cleanup_failed) ;;
     *) err "begin-cleanup requires --from <open|closing|cleanup_failed>"; exit 2 ;;
   esac
+  [ -n "$claim" ] || { err "begin-cleanup requires --claim <token>"; exit 2; }
 
   read_lease "$env_id"
   if [ "$LEASE_FOUND" != 1 ]; then
@@ -332,14 +357,16 @@ cmd_begin_cleanup() {
     exit 3
   fi
   local lease_json status generation attempt next_retry_at etag ts body_file retry_epoch
-  local has_claim cleared_claim
+  local has_stage1_claim has_stage2_claim cleared_claim cleared_stage1_claim
   lease_json="$(cat "$LEASE_BODY_FILE")"
   status="$(jq -r '.status' <<< "$lease_json")"
   generation="$(jq -r '.generation // empty' <<< "$lease_json")"
   attempt="$(jq -r '.cleanup_attempt // 0' <<< "$lease_json")"
   next_retry_at="$(jq -r '.next_retry_at // empty' <<< "$lease_json")"
-  has_claim="$(jq -r 'if .stage2_claim == null then "false" else "true" end' <<< "$lease_json")"
+  has_stage1_claim="$(jq -r 'if (.stage1_claim // null) == null then "false" else "true" end' <<< "$lease_json")"
+  has_stage2_claim="$(jq -r 'if (.stage2_claim // null) == null then "false" else "true" end' <<< "$lease_json")"
   cleared_claim="$(jq -c '.stage2_claim // null' <<< "$lease_json")"
+  cleared_stage1_claim="$(jq -c '.stage1_claim // null' <<< "$lease_json")"
   etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
 
@@ -347,7 +374,11 @@ cmd_begin_cleanup() {
     err "begin-cleanup $env_id: lease generation or status changed"
     exit 3
   fi
-  if [ "$has_claim" = true ] && [ "$force_retry" != true ]; then
+  if [ "$has_stage1_claim" = true ] && [ "$force_retry" != true ]; then
+    err "begin-cleanup $env_id: lease has an active Stage-1 claim; use --force-retry only after confirming the Stage-1 process is dead"
+    exit 3
+  fi
+  if [ "$has_stage2_claim" = true ] && [ "$force_retry" != true ]; then
     err "begin-cleanup $env_id: Stage 2 has an active claim"
     exit 3
   fi
@@ -369,14 +400,17 @@ cmd_begin_cleanup() {
   jq \
     --arg updated_at "$ts" \
     --argjson attempt "$attempt" \
+    --arg claim "$claim" \
     --argjson forced "$force_retry" \
-    --argjson cleared_claim "$cleared_claim" '
+    --argjson cleared_claim "$cleared_claim" \
+    --argjson cleared_stage1_claim "$cleared_stage1_claim" '
       .status = "closing"
       | .updated_at = $updated_at
       | .error = null
       | .cleanup_attempt = $attempt
       | .next_retry_at = null
       | .manual_intervention_required = false
+      | .stage1_claim = {token: $claim, claimed_at: $updated_at}
       | .stage2_claim = null
       | .cleanup_retry_audit = (.cleanup_retry_audit // [])
       | if $forced then
@@ -384,10 +418,67 @@ cmd_begin_cleanup() {
             ({attempt: $attempt, forced_at: $updated_at}
               + if $cleared_claim == null then {}
                 else {cleared_stage2_claim: $cleared_claim}
+                end
+              + if $cleared_stage1_claim == null then {}
+                else {cleared_stage1_claim: $cleared_stage1_claim}
                 end)
           ]
         else . end' <<< "$lease_json" > "$body_file"
   put_lease begin-cleanup "$env_id" "$body_file" --if-match "$etag"
+}
+
+cmd_complete_stage1() {
+  local env_id="${1:?env_id required}"
+  shift
+  local expected_generation=""
+  local claim=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --generation)
+        [ "$#" -ge 2 ] || { err "--generation requires a value"; exit 2; }
+        expected_generation="$2"
+        shift 2
+        ;;
+      --claim)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--claim requires a nonempty token"; exit 2; }
+        claim="$2"
+        shift 2
+        ;;
+      *) err "unexpected complete-stage1 argument '$1'"; exit 2 ;;
+    esac
+  done
+  [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]] || {
+    err "complete-stage1 requires --generation <positive integer>"
+    exit 2
+  }
+  [ -n "$claim" ] || { err "complete-stage1 requires --claim <token>"; exit 2; }
+
+  read_lease "$env_id"
+  if [ "$LEASE_FOUND" != 1 ]; then
+    rm -f "$LEASE_BODY_FILE"
+    err "no lease for $env_id"
+    exit 3
+  fi
+  local lease_json etag body_file
+  lease_json="$(cat "$LEASE_BODY_FILE")"
+  etag="$LEASE_ETAG"
+  rm -f "$LEASE_BODY_FILE"
+  if ! jq -e --argjson generation "$expected_generation" --arg claim "$claim" '
+      .status == "closing"
+      and .generation == $generation
+      and (.stage1_claim | type) == "object"
+      and .stage1_claim.token == $claim
+      and (.stage2_claim // null) == null
+    ' <<< "$lease_json" >/dev/null; then
+    err "complete-stage1 $env_id: lease generation, status, or claim changed"
+    exit 3
+  fi
+  body_file="$(mktemp)"
+  jq --arg updated_at "$(now_iso)" '
+    .updated_at = $updated_at
+    | .stage1_claim = null
+  ' <<< "$lease_json" > "$body_file"
+  put_lease complete-stage1 "$env_id" "$body_file" --if-match "$etag"
 }
 
 cmd_claim_stage2() {
@@ -426,10 +517,15 @@ cmd_claim_stage2() {
   lease_json="$(cat "$LEASE_BODY_FILE")"
   etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
+  if jq -e '(.stage1_claim // null) != null' <<< "$lease_json" >/dev/null; then
+    err "claim-stage2 $env_id: lease has an active Stage-1 claim"
+    exit 3
+  fi
   if ! jq -e --argjson generation "$expected_generation" '
       .status == "closing"
       and .generation == $generation
-      and .stage2_claim == null
+      and (.stage1_claim // null) == null
+      and (.stage2_claim // null) == null
     ' <<< "$lease_json" >/dev/null; then
     err "claim-stage2 $env_id: lease is not unclaimed closing generation $expected_generation"
     exit 3
@@ -481,6 +577,7 @@ cmd_release_stage2() {
   if ! jq -e --argjson generation "$expected_generation" --arg claim "$claim" '
       .status == "closing"
       and .generation == $generation
+      and (.stage1_claim // null) == null
       and (.stage2_claim | type) == "object"
       and .stage2_claim.token == $claim
     ' <<< "$lease_json" >/dev/null; then
@@ -532,7 +629,7 @@ cmd_set_manifest() {
     err "no lease for $env_id"
     exit 3
   fi
-  local lease_json etag body_file has_claim
+  local lease_json etag body_file has_stage1_claim has_stage2_claim status
   lease_json="$(cat "$LEASE_BODY_FILE")"
   etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
@@ -541,17 +638,30 @@ cmd_set_manifest() {
     err "set-manifest $env_id: lease generation changed"
     exit 3
   fi
-  has_claim="$(jq -r 'if .stage2_claim == null then "false" else "true" end' <<< "$lease_json")"
-  if [ "$has_claim" = true ]; then
-    if [ "$claim_set" != true ] || ! jq -e --arg claim "$claim" '
+  status="$(jq -r '.status // empty' <<< "$lease_json")"
+  has_stage1_claim="$(jq -r 'if (.stage1_claim // null) == null then "false" else "true" end' <<< "$lease_json")"
+  has_stage2_claim="$(jq -r 'if (.stage2_claim // null) == null then "false" else "true" end' <<< "$lease_json")"
+  if [ "$has_stage1_claim" = true ] && [ "$has_stage2_claim" = true ]; then
+    err "set-manifest $env_id: lease has multiple active claims"
+    exit 3
+  elif [ "$has_stage1_claim" = true ]; then
+    if [ "$status" != closing ] || [ "$claim_set" != true ] || ! jq -e --arg claim "$claim" '
+        (.stage1_claim | type) == "object"
+        and .stage1_claim.token == $claim
+      ' <<< "$lease_json" >/dev/null; then
+      err "set-manifest $env_id: active Stage-1 claim does not match closing lease"
+      exit 3
+    fi
+  elif [ "$has_stage2_claim" = true ]; then
+    if [ "$status" != closing ] || [ "$claim_set" != true ] || ! jq -e --arg claim "$claim" '
         (.stage2_claim | type) == "object"
         and .stage2_claim.token == $claim
       ' <<< "$lease_json" >/dev/null; then
-      err "set-manifest $env_id: active Stage-2 claim does not match"
+      err "set-manifest $env_id: active Stage-2 claim does not match closing lease"
       exit 3
     fi
   elif [ "$claim_set" = true ]; then
-    err "set-manifest $env_id: no active Stage-2 claim matches"
+    err "set-manifest $env_id: no active claim matches"
     exit 3
   fi
   body_file="$(mktemp)"
@@ -624,6 +734,7 @@ cmd_complete_stage2() {
       .status == "closing"
       and .generation == $generation
       and (.manifest | type) == "object"
+      and (.stage1_claim // null) == null
       and (.stage2_claim | type) == "object"
       and .stage2_claim.token == $claim
     ' <<< "$lease_json" >/dev/null; then
@@ -637,6 +748,7 @@ cmd_complete_stage2() {
     | .error = null
     | .manual_intervention_required = false
     | .next_retry_at = null
+    | .stage1_claim = null
     | .stage2_claim = null
     | .manifest.stage2_runs = ((.manifest.stage2_runs // []) + [$proof])
   ' <<< "$lease_json" > "$body_file"
@@ -716,6 +828,7 @@ main() {
     open) shift; cmd_open "$@" ;;
     transition) shift; cmd_transition "$@" ;;
     begin-cleanup) shift; cmd_begin_cleanup "$@" ;;
+    complete-stage1) shift; cmd_complete_stage1 "$@" ;;
     claim-stage2) shift; cmd_claim_stage2 "$@" ;;
     release-stage2) shift; cmd_release_stage2 "$@" ;;
     set-manifest) shift; cmd_set_manifest "$@" ;;

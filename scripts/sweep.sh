@@ -254,8 +254,8 @@ list_state_versions() {
     if ! jq -e '
       type == "object"
       and (.IsTruncated | type == "boolean")
-      and ((.Versions // []) | type == "array")
-      and ((.DeleteMarkers // []) | type == "array")
+      and ((has("Versions") | not) or (.Versions | type == "array"))
+      and ((has("DeleteMarkers") | not) or (.DeleteMarkers | type == "array"))
       and all((.Versions // [])[], (.DeleteMarkers // [])[];
         type == "object" and (.Key | type == "string") and (.VersionId | type == "string"))
     ' <<< "$response" >/dev/null 2>&1; then
@@ -308,8 +308,12 @@ delete_state_versions() {
     rm -f "$payload"
     if ! jq -e '
       type == "object"
-      and ((.Deleted // []) | type == "array")
-      and ((.Errors // []) | type == "array")
+      and ((has("Deleted") | not) or (.Deleted | type == "array"))
+      and ((has("Errors") | not) or (.Errors | type == "array"))
+      and all((.Deleted // [])[];
+        type == "object"
+        and (.Key | type == "string")
+        and (.VersionId | type == "string"))
     ' <<< "$response" >/dev/null 2>&1; then
       err "delete-objects returned malformed output"
       return 1
@@ -317,6 +321,14 @@ delete_state_versions() {
     error_count="$(jq '(.Errors // []) | length' <<< "$response")"
     if [ "$error_count" -ne 0 ]; then
       err "delete-objects reported $error_count object-version errors"
+      return 1
+    fi
+    if ! jq -e --argjson requested "$batch" '
+      def pair_set:
+        map({Key,VersionId}) | unique_by([.Key,.VersionId]) | sort_by([.Key,.VersionId]);
+      (($requested | pair_set) == ((.Deleted // []) | pair_set))
+    ' <<< "$response" >/dev/null 2>&1; then
+      err "delete-objects acknowledgement did not match requested object versions"
       return 1
     fi
     remaining="$(jq -c --argjson size "$SWEEP_DELETE_BATCH_SIZE" '.[$size:]' <<< "$remaining")"

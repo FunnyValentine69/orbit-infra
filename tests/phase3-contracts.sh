@@ -361,27 +361,28 @@ for fn in assert_three_queued_polls assert_run_queued; do
   done
 done
 
-# Execute the LocalStack close-and-sweep workflow block against controlled
-# lease/close/sweep scripts so its generation, status, and owner forwarding are
-# checked as behavior rather than by grepping the workflow source.
+# Execute both close workflow blocks against controlled lease/close/sweep
+# scripts so their generation, status, and owner forwarding are checked as
+# behavior rather than by grepping the workflow source.
 workflow_exec_root="$tmp_dir/workflow-close"
-workflow_run_block="$workflow_exec_root/run.sh"
+workflow_aws_run_block="$workflow_exec_root/aws-run.sh"
+workflow_localstack_run_block="$workflow_exec_root/localstack-run.sh"
 mkdir -p "$workflow_exec_root/scripts"
-python3 - "$apply_workflow" "$workflow_run_block" <<'PY'
+python3 - "$apply_workflow" "$workflow_aws_run_block" "$workflow_localstack_run_block" <<'PY'
 from pathlib import Path
 import sys
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
 steps = workflow["jobs"]["apply"]["steps"]
-matches = [
-    step["run"]
-    for step in steps
-    if step.get("name") == "Close and sweep LocalStack after acceptance or failure"
-]
-if len(matches) != 1:
-    raise SystemExit(f"expected one LocalStack close step, found {len(matches)}")
-Path(sys.argv[2]).write_text(matches[0])
+for name, destination in (
+    ("Close AWS on failure or cancellation (stage 1)", sys.argv[2]),
+    ("Close and sweep LocalStack after acceptance or failure", sys.argv[3]),
+):
+    matches = [step["run"] for step in steps if step.get("name") == name]
+    if len(matches) != 1:
+        raise SystemExit(f"expected one {name!r} step, found {len(matches)}")
+    Path(destination).write_text(matches[0])
 PY
 cat > "$workflow_exec_root/scripts/lease.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -406,9 +407,22 @@ chmod +x "$workflow_exec_root/scripts/lease.sh" \
   ENV_ID=contract \
   GITHUB_RUN_ID=workflow-run \
   GITHUB_RUN_ATTEMPT=1 \
+  WORKFLOW_CLOSE_ARGS_LOG="$workflow_exec_root/aws-close-args.log" \
+    bash "$workflow_aws_run_block"
+)
+if [ "$(cat "$workflow_exec_root/aws-close-args.log")" != \
+     "--generation 7 --from open --owner workflow-run-1 contract" ]; then
+  echo "session-apply AWS close must forward its observed generation, status, and owner" >&2
+  exit 1
+fi
+(
+  cd "$workflow_exec_root"
+  ENV_ID=contract \
+  GITHUB_RUN_ID=workflow-run \
+  GITHUB_RUN_ATTEMPT=1 \
   WORKFLOW_CLOSE_ARGS_LOG="$workflow_exec_root/close-args.log" \
   WORKFLOW_SWEEP_ARGS_LOG="$workflow_exec_root/sweep-args.log" \
-    bash "$workflow_run_block"
+    bash "$workflow_localstack_run_block"
 )
 if [ "$(cat "$workflow_exec_root/close-args.log")" != \
      "--generation 7 --from open --owner workflow-run-1 contract" ]; then

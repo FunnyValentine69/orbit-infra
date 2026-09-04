@@ -76,7 +76,8 @@ has a valid signature and lock-matching attestation. The lease-open CAS records
 the workflow-run owner, mode, and resolved image references atomically so AWS
 cleanup can load the same Terraform configuration for destroy. Failure and
 cancellation cleanup re-reads that lease and runs only when the same workflow
-run owns an `open` or `closing` generation.
+run owns an `open` or `closing` generation. Stage 1 holds an exclusive lease
+claim until its success or failure CAS; Stage 2 refuses while that claim exists.
 
 ## Repository layout
 

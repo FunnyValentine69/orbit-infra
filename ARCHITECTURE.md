@@ -109,15 +109,20 @@ One exact-service predicate layer records `gone`, `pending`, `live`, or
 validates every outcome, recomputes all four counts, and rejects summary,
 `passed`, or stale-tag shape discrepancies. An indeterminate pre-destroy or
 scheduled tag observation adds a durable sentinel; later success cannot erase
-it. Tag presence alone is never liveness. Stage 1 retries for five minutes and leaves
-the lease `closing` with state retained; only deadline-expired `live` or
+it. Tag presence alone is never liveness. Stage 1 CAS-acquires an exclusive,
+generation-bound claim before cleanup; every manifest and failure write
+requires the `closing` status and token. Success clears the claim while leaving
+`closing` with state retained, and failure clears it while setting
+`cleanup_failed`. A repeat Stage 1 and Stage 2 both refuse an active Stage-1
+claim. Stage 1 retries for five minutes; only deadline-expired `live` or
 `indeterminate` results set `cleanup_failed`. Stage 2 re-reads the lease,
 requires the persisted Stage 1 verification to have passed with zero live or
 indeterminate results, and probes only the recorded task-definition candidates.
 The exact deleted `ClientException` is gone; `DELETE_IN_PROGRESS` remains
 pending. LocalStack may additionally accept exact `INACTIVE` only for the same
-ARN's recorded Stage 1 allowance. Once all candidates are gone, Stage 2 holds an exclusive generation-bound
-claim, deletes every version and delete marker for
+ARN's recorded Stage 1 allowance. Once all candidates are gone and the
+Stage-1 claim is null, Stage 2 holds its exclusive generation-bound claim,
+deletes every version and delete marker for
 `envs/preview/<env_id>.tfstate`, verifies none remain, and atomically records
 the proof, transitions to `closed`, and consumes the claim.
 

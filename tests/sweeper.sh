@@ -140,6 +140,10 @@ case "$service $operation" in
     echo '{"DeleteMarker":true}'
     ;;
   "s3api list-object-versions")
+    if [ -n "${FAKE_LIST_OBJECT_VERSIONS_FIXTURE:-}" ]; then
+      jq -c '.response' "$FAKE_LIST_OBJECT_VERSIONS_FIXTURE"
+      exit 0
+    fi
     state_file="$FAKE_STATE_DIR/${key//\//_}.json"
     [ -f "$state_file" ] || printf '[]\n' > "$state_file"
     state_entries="$(cat "$state_file")"
@@ -195,6 +199,10 @@ case "$service $operation" in
       errors="$(jq -ce 'select(type == "array" and length > 0)' \
         <<< "$FAKE_DELETE_OBJECTS_ERRORS")"
       jq -cn --argjson errors "$errors" '{Deleted:[],Errors:$errors}'
+      exit 0
+    fi
+    if [ -n "${FAKE_DELETE_OBJECTS_FIXTURE:-}" ]; then
+      jq -c '.response' "$FAKE_DELETE_OBJECTS_FIXTURE"
       exit 0
     fi
     payload="${delete_arg#file://}"
@@ -628,6 +636,68 @@ jq -e '.status == "cleanup_failed"
 grep -Fq 'delete-objects reported 1 object-version errors' <<< "$delete_errors_output" || \
   fail "delete-objects Errors branch did not report the object-version error"
 pass "delete-objects rc zero with Errors fails closed and retains versions"
+
+reset_store
+store_fixture "$happy_fixture"
+null_versions_fixture="$FIXTURES/list-null-versions.json"
+set +e
+null_versions_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_LIST_OBJECT_VERSIONS_FIXTURE="$null_versions_fixture" \
+  run_aws "$SWEEPER" env aws-happy 2>&1)"
+null_versions_rc=$?
+set -e
+null_versions_lease="$(run_aws "$LEASE" get aws-happy)"
+if [ "$null_versions_rc" -ne 1 ] || \
+   ! jq -e '.status == "cleanup_failed"
+     and .error == "state deletion failed while listing retained versions"
+     and ((.manifest.stage2_runs // []) | length) == 0' \
+     <<< "$null_versions_lease" >/dev/null || \
+   ! grep -Fq 'list-object-versions returned malformed output' <<< "$null_versions_output"; then
+  fail "present-null Versions must fail closed before Stage 2 completion"
+fi
+pass "$(jq -r '.name' "$null_versions_fixture")"
+
+reset_store
+store_fixture "$happy_fixture"
+null_deleted_fixture="$FIXTURES/delete-null-entry.json"
+set +e
+null_deleted_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_DELETE_OBJECTS_FIXTURE="$null_deleted_fixture" SWEEP_DELETE_BATCH_SIZE=2 \
+  run_aws "$SWEEPER" env aws-happy 2>&1)"
+null_deleted_rc=$?
+set -e
+null_deleted_lease="$(run_aws "$LEASE" get aws-happy)"
+if [ "$null_deleted_rc" -ne 1 ] || \
+   ! jq -e '.status == "cleanup_failed"
+     and .error == "state deletion failed before all versions were removed"
+     and ((.manifest.stage2_runs // []) | length) == 0' \
+     <<< "$null_deleted_lease" >/dev/null || \
+   ! grep -Fq 'delete-objects returned malformed output' <<< "$null_deleted_output"; then
+  fail "Deleted:[null] must fail closed before Stage 2 completion"
+fi
+pass "$(jq -r '.name' "$null_deleted_fixture")"
+
+reset_store
+store_fixture "$happy_fixture"
+incomplete_ack_fixture="$FIXTURES/delete-incomplete-ack.json"
+set +e
+incomplete_ack_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_DELETE_OBJECTS_FIXTURE="$incomplete_ack_fixture" SWEEP_DELETE_BATCH_SIZE=2 \
+  run_aws "$SWEEPER" env aws-happy 2>&1)"
+incomplete_ack_rc=$?
+set -e
+incomplete_ack_lease="$(run_aws "$LEASE" get aws-happy)"
+if [ "$incomplete_ack_rc" -ne 1 ] || \
+   ! jq -e '.status == "cleanup_failed"
+     and .error == "state deletion failed before all versions were removed"
+     and ((.manifest.stage2_runs // []) | length) == 0' \
+     <<< "$incomplete_ack_lease" >/dev/null || \
+   ! grep -Fq 'delete-objects acknowledgement did not match requested object versions' \
+     <<< "$incomplete_ack_output" || \
+   [ "$(grep -c '^s3api delete-objects ' "$tmp_dir/aws-calls.log")" -ne 1 ]; then
+  fail "an incomplete DeleteObjects acknowledgement must stop before another batch or Stage 2 completion"
+fi
+pass "$(jq -r '.name' "$incomplete_ack_fixture")"
 
 reset_store
 post_delete_fixture="$FIXTURES/aws-post-delete-relist.json"

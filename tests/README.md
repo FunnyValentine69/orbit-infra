@@ -31,18 +31,19 @@ consistent `passed:false` live result before deadline failure, exact ECS
 required AWS destroy image references and their Terraform forwarding,
 zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
 their `failures` array, atomic owner-plus-manifest lease open with one PUT,
-same-environment second-open refusal, generation/status-bound Stage 1,
-exclusive Stage 2 claims, claim-bound manifest writes, generic-transition
+same-environment second-open refusal, empty-`--from` refusal,
+generation/status-bound Stage 1, exclusive Stage-1 and Stage-2 claims,
+claim-bound manifest writes, duplicate-close refusal, generic-transition
 refusal of `closed`, atomic proof-plus-close, force-cleared claim audit,
 owner- and generation-bound close refusals, the three-attempt lease limit,
-audited force retry, and end-to-end stage-1 state retention. The suite currently
-reports 43 cases.
+audited force retry, and end-to-end Stage-1 claim release with state retention.
+The suite currently reports 48 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
-signal-path test below. It also executes the LocalStack close-and-sweep workflow
-block against controlled lease/close/sweep scripts and verifies the observed
-generation, status, and owner arguments. It runs
+signal-path test below. It also executes both the AWS close and LocalStack
+close-and-sweep workflow blocks against controlled lease/close/sweep scripts
+and verifies the observed generation, status, and owner arguments. It runs
 `tests/dispatch-ordering-contracts.sh`, whose
 jq-level probes extract the live jobs aggregation and timestamp-comparison
 filters from `tests/dispatch-ordering.sh`. It also verifies that policy-size
@@ -77,12 +78,13 @@ and manual-intervention refusal, exact AWS deleted `ClientException` versus
 other non-zero describe errors, paginated/batched state-version and
 delete-marker removal, `DELETE_IN_PROGRESS`, malformed describe/candidate
 refusal, target-scoped LocalStack allowances and missing-allowance refusal,
-Stage-1 `passed:false` refusal, zero-exit `delete-objects` errors, post-delete
-re-list refusal, partial deletion, a lease change between delete batches,
+Stage-1 `passed:false` refusal, present-null version lists, malformed or
+incomplete `delete-objects` acknowledgements, zero-exit per-object errors,
+post-delete re-list refusal, partial deletion, a lease change between batches,
 stale-open generation replacement before Stage 1, exclusive Stage 2 claim and
 proof recording, an atomic-completion race that adds a new state version,
 prune-time If-Match loss, and ETag-conditional prune. The suite currently
-reports 22 cases.
+reports 25 cases.
 
 Fixture provenance:
 
@@ -99,9 +101,11 @@ Fixture provenance:
 - `aws-clientexception-mismatch.json`,
   `aws-inactive-with-localstack-allowance.json`,
   `localstack-inactive-no-allowance.json`, `aws-verification-failed.json`,
-  `delete-objects-errors.json`, and `aws-post-delete-relist.json` — `authored`
-  fail-closed branch contracts; replace only from sanitized backend recordings
-  that preserve the same condition.
+  `delete-objects-errors.json`, `list-null-versions.json`,
+  `delete-null-entry.json`, `delete-incomplete-ack.json`, and
+  `aws-post-delete-relist.json` — `authored` fail-closed branch contracts;
+  replace only from sanitized backend recordings that preserve the same
+  condition.
 
 ## Phase 4 live concurrency
 

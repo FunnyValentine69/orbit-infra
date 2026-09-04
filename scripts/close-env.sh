@@ -12,6 +12,7 @@ FORCE_RETRY=false
 EXPECTED_GENERATION=""
 EXPECTED_STATUS=""
 EXPECTED_OWNER=""
+STAGE1_CLAIM="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-stage1-$$"
 ENV_ID="${ENV_ID:-}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -25,7 +26,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --from)
-      [ "$#" -ge 2 ] || { echo "close-env.sh: --from requires a status" >&2; exit 2; }
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "close-env.sh: --from requires a nonempty status" >&2; exit 2; }
       EXPECTED_STATUS="$2"
       shift 2
       ;;
@@ -138,7 +139,7 @@ fail() {
   local message="$1"
   echo "close-env.sh: $message" >&2
   "$LEASE_SH" transition "$ENV_ID" closing cleanup_failed \
-    --generation "$lease_generation" --error "$message" >/dev/null \
+    --generation "$lease_generation" --claim "$STAGE1_CLAIM" --error "$message" >/dev/null \
     || echo "close-env.sh: could not record cleanup_failed for $ENV_ID (lease may still read closing)" >&2
   exit 1
 }
@@ -147,7 +148,7 @@ persist_manifest() {
   local manifest_file="$tmp_dir/manifest.json"
   printf '%s\n' "$manifest_json" > "$manifest_file"
   "$LEASE_SH" set-manifest "$ENV_ID" "$manifest_file" \
-    --generation "$lease_generation" >/dev/null \
+    --generation "$lease_generation" --claim "$STAGE1_CLAIM" >/dev/null \
     || fail "could not persist cleanup manifest"
 }
 
@@ -375,7 +376,7 @@ case "$current_status" in
   *) echo "close-env.sh: unexpected lease status '$current_status'" >&2; exit 2 ;;
 esac
 
-claim_args=(begin-cleanup "$ENV_ID" --generation "$lease_generation" --from "$current_status")
+claim_args=(begin-cleanup "$ENV_ID" --generation "$lease_generation" --from "$current_status" --claim "$STAGE1_CLAIM")
 [ "$FORCE_RETRY" != true ] || claim_args+=(--force-retry)
 "$LEASE_SH" "${claim_args[@]}" >/dev/null
 
@@ -730,4 +731,6 @@ while :; do
   backoff_index=$((backoff_index + 1))
 done
 
+"$LEASE_SH" complete-stage1 "$ENV_ID" \
+  --generation "$lease_generation" --claim "$STAGE1_CLAIM" >/dev/null
 echo "close-env.sh: $ENV_ID stage 1 complete; lease remains 'closing' for the sweeper"

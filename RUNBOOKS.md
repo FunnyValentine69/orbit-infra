@@ -165,9 +165,10 @@ gh workflow run session-destroy.yml --ref main -f env_id="$ENV_ID" -f target=aws
 gh run list --workflow session-destroy.yml --branch main --event workflow_dispatch --limit 5
 ```
 
-3. Confirm that a successful Stage 1 retained Terraform state evidence and
-   left the lease `closing` for the nightly sweeper. `closed` is not a Stage 1
-   success state; it is written only after Stage 2 deletes every state version:
+3. Confirm that a successful Stage 1 retained Terraform state evidence,
+   cleared `stage1_claim`, and left the lease `closing` for the nightly sweeper.
+   `closed` is not a Stage 1 success state; it is written only after Stage 2
+   deletes every state version:
 
 ```
 make lease-get TARGET=aws ENV_ID="$ENV_ID"
@@ -191,6 +192,7 @@ stored atomically by the lease-open CAS; AWS close reuses those exact
 references for Terraform destroy and fails closed if any are missing.
 Cancellation and failure cleanup re-read the lease instead of trusting step
 outputs and proceed only for an `open` or `closing` lease owned by that run.
+Stage 1 then holds an exclusive claim until its success or failure CAS.
 
 After apply, the workflow runs `aws ecs wait services-stable`, describes every
 enabled service, and requires one completed deployment per service whose task
@@ -233,8 +235,9 @@ manifest, the same job runs `make apply`, waits for every enabled ECS service,
 checks that each service reached its applied task definition, probes the
 Terraform `api_url` output (the LocalStack ALB) from the excluded runner CIDR,
 records the ALB URL in the summary, and always runs Stage 1. After a successful
-Stage 1, it immediately runs `SWEEP_IN_JOB=true scripts/sweep.sh env
-"$ENV_ID"`. Stage 2 consumes the recorded LocalStack allowance, deletes all
+Stage 1, which clears its claim, it immediately runs `SWEEP_IN_JOB=true
+scripts/sweep.sh env "$ENV_ID"`. Stage 2 consumes the recorded LocalStack
+allowance, deletes all
 versions and delete markers for the emulator's S3 state key, records
 `in_job:true`, and sets the lease `closed`. A refused or
 timed-out probe (curl exit 7 or 28) records the negative-CIDR outcome. If the
@@ -290,10 +293,12 @@ task-definition candidates, Stage 1 verification, and Stage 2 allowances:
 ```
 ENV_ID=demo1
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
-jq '{status,generation,stage2_claim,task_definitions:[.manifest.candidates[] | select(.resource_type == "ecs:task-definition") | .arn],last_verification:.manifest.verification_runs[-1],stage2_allowances:.manifest.stage2_allowances,last_stage2_run:.manifest.stage2_runs[-1]}' <<< "$LEASE_JSON"
+jq '{status,generation,stage1_claim,stage2_claim,task_definitions:[.manifest.candidates[] | select(.resource_type == "ecs:task-definition") | .arn],last_verification:.manifest.verification_runs[-1],stage2_allowances:.manifest.stage2_allowances,last_stage2_run:.manifest.stage2_runs[-1]}' <<< "$LEASE_JSON"
 TARGET=aws scripts/sweep.sh env "$ENV_ID"
 ```
 
+An active `stage1_claim` means Stage 1 still owns the generation; repeat
+Stage 1 and Stage 2 both refuse it. Successful Stage 1 leaves that field null.
 A printed `DELETE_IN_PROGRESS` ARN is pending, not an error; the sweeper
 releases its matching claim and leaves the lease `closing` for the next nightly
 run. An indeterminate describe or state delete sets `cleanup_failed`, clears
@@ -329,12 +334,13 @@ CODE-ONLY until P0-3b.
 ```
 ENV_ID=demo1
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
-jq '{status,generation,owner,stage2_claim,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
+jq '{status,generation,owner,stage1_claim,stage2_claim,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
 ```
 
-If `status` is `closing` and `stage2_claim` is present after an interrupted or
-CAS-refused sweep, first confirm that the recorded claimant is no longer
-running. Release only that token and generation, then re-read before rerunning
+If `stage1_claim` is present, Stage 1 owns the lease; do not start Stage 2
+or another close. If `status` is `closing` and `stage2_claim` is present after
+an interrupted or CAS-refused sweep, first confirm that the recorded claimant
+is no longer running. Release only that token and generation, then re-read before rerunning
 the sweeper. The release itself is one fresh-read CAS and refuses changed state
 with exit 3:
 
@@ -396,6 +402,10 @@ TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" --from 
 ```
 TARGET=aws scripts/lease.sh get "$ENV_ID" | jq '{status,generation,owner,cleanup_attempt,manual_intervention_required,cleanup_retry_audit,last_verification:.manifest.verification_runs[-1]}'
 ```
+
+The same forced run takes over a stale stage-1 claim left by a killed
+stage-1 job and records it as cleared_stage1_claim in the audit entry;
+never force while the previous stage-1 process may still be running.
 
 If step 6 leaves `closing`, use the Sweeper procedure above. Do not force Stage
 1 merely because a task definition is still `DELETE_IN_PROGRESS`; Stage 2
