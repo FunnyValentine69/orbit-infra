@@ -2,7 +2,7 @@
 
 Ephemeral, near-zero-idle AWS platform for a containerized workload: Terraform, ECS Fargate (ARM64), GitHub Actions with OIDC (no static cloud keys), signed images, per-environment lease lifecycle.
 
-Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
+Evidence gates: LocalStack apply, Stage 1, and in-job Stage 2 are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6); the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ## What this is
 
@@ -23,7 +23,7 @@ exist anywhere in the pipeline.
 | Policy gates: tflint + checkov on every plan | done |
 | Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
 | SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
-| In-job LocalStack Stage 2 | LOCALSTACK-VERIFIED locally; CODE-ONLY in CI until post-merge dispatch |
+| In-job LocalStack Stage 2 | LOCALSTACK-VERIFIED in CI (run 33825140591) |
 | AWS nightly sweeper | CODE-ONLY until P0-3b |
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |

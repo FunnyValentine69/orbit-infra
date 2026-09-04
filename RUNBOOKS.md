@@ -1,6 +1,6 @@
 # Runbooks
 
-Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b. Run every procedure from the repository root.
+Evidence gates: LocalStack apply, Stage 1, and in-job Stage 2 are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6); the nightly AWS sweeper is CODE-ONLY until P0-3b. Run every procedure from the repository root.
 
 ## PR review gates
 
@@ -253,7 +253,8 @@ Stage 2 control flow on one runner. It does not prove GitHub OIDC, real-AWS IAM,
 private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec, real
 security-group packet enforcement, or a cross-job destroy. The scheduled
 sweeper is AWS-only and refuses `target=localstack` because emulator state is
-job-local. Until that dispatch, in-job Stage 2 remains CODE-ONLY in CI. Every
+job-local. The post-merge dispatch ran as run 33825140591 (main 9b253b6);
+in-job Stage 2 is LOCALSTACK-VERIFIED in CI. Every
 LocalStack CI run uses a fresh runner and fresh emulator, so the gh-driven
 dispatch test proves only GitHub concurrency queueing on this target. Lease CAS,
 refusal on `open`/`closing`/`cleanup_failed`, and generation increments are
@@ -269,9 +270,9 @@ The workflow runs nightly at 03:17 UTC; the odd minute avoids common
 top-of-hour scheduling congestion. It runs only on `main` and only against
 AWS. A manual LocalStack target is intentionally refused because the emulator
 and its state do not survive the `session-apply` job. LocalStack apply and
-Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack
-Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until the post-merge
-dispatch below; this nightly AWS path is CODE-ONLY until P0-3b. Dispatch an
+Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; the post-merge
+dispatch below ran as run 33825140591 (main 9b253b6), and in-job LocalStack
+Stage 2 is LOCALSTACK-VERIFIED in CI; this nightly AWS path is CODE-ONLY until P0-3b. Dispatch an
 extra AWS run with a correlation note when needed:
 
 ```
@@ -324,9 +325,9 @@ Promote the path after merge with:
 gh workflow run session-apply.yml --ref main -f env_id=sw1 -f target=localstack -f mode=public
 ```
 
-The in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in
-CI until the post-merge dispatch above runs; the nightly AWS workflow remains
-CODE-ONLY until P0-3b.
+The post-merge dispatch above ran as run 33825140591 (main 9b253b6); the
+in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED in CI. The nightly AWS
+workflow remains CODE-ONLY until P0-3b.
 
 ## Stuck-environment force-destroy
 
