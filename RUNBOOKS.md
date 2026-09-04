@@ -247,7 +247,8 @@ and does not document source-CIDR enforcement, so an HTTP 200 proves endpoint
 routing but not the real-AWS security-group boundary. On AWS, any HTTP response
 from the excluded runner remains a failure.
 
-After the post-merge `session-apply` dispatch, this mode proves the
+Now that the post-merge `session-apply` dispatch has run (run 33825140591),
+this mode proves the
 workflow's full bootstrap → lease → apply → service acceptance → Stage 1 →
 Stage 2 control flow on one runner. It does not prove GitHub OIDC, real-AWS IAM,
 private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec, real
