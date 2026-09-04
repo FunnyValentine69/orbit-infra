@@ -1,6 +1,6 @@
 # Runbooks
 
-Evidence gates: LocalStack apply, Stage 1, and in-job Stage 2 are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6); the nightly AWS sweeper is CODE-ONLY until P0-3b. Run every procedure from the repository root.
+Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b. Run every procedure from the repository root.
 
 ## PR review gates
 
