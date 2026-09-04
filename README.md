@@ -41,8 +41,9 @@ repository owner's own same-repository pull requests. Real AWS is the promotion
 target once the platform is proven. Three things are
 verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact
 OIDC trust-condition semantics. See ADR 0008. The three `assume-*` checks of
-`oidc-smoke.yml` fail on owner PRs until P0-3b (role secrets absent) and
-are skipped on fork PRs; see RUNBOOKS "PR review gates".
+`oidc-smoke.yml` fail on same-repository PRs until P0-3b (role secrets not
+yet published) and are skipped on fork and Dependabot PRs; see RUNBOOKS
+"PR review gates".
 
 ## Quickstart (LocalStack)
 
@@ -84,17 +85,19 @@ claim until its success or failure CAS; Stage 2 refuses while that claim exists.
 ## Repository layout
 
 ```
-bootstrap/          one-time Terraform: state bucket, OIDC + roles, KMS, ECR, Budget
-placeholder/         public-source placeholder workload image
-docs/adr/            architecture decision records
+bootstrap/            one-time Terraform: state bucket, OIDC + roles, KMS, ECR, Budget
+placeholder/          public-source placeholder workload image
+docs/adr/             architecture decision records
 scripts/              repo hooks (pre-push guard, hook installer)
 tests/                shell-level lifecycle and CI contracts
-.github/workflows/    CI: terraform-plan (PR gates), oidc-smoke, session-apply/destroy, sweeper, mirror-images, sign-images
+.github/workflows/    CI: terraform-plan.yml, oidc-smoke.yml,
+                      session-apply.yml, session-destroy.yml, sweeper.yml,
+                      mirror-images.yml, sign-images.yml
 modules/              reusable Terraform modules (Phase 2+)
 envs/                 per-environment composition (Phase 2+)
-images/                workload image sources (Phase 2+)
-upstream.lock           private upstream build inputs and pushed ECR digests
-mirror-images.lock      placeholder plus Redis/ClickHouse private-ECR digests
+images/               workload image sources (Phase 2+)
+upstream.lock         private upstream build inputs and pushed ECR digests
+mirror-images.lock    placeholder plus Redis/ClickHouse private-ECR digests
 ```
 
 ## Gates

@@ -10,15 +10,16 @@ also run the `plan-localstack` job, which executes policy-size after the
 emulator health wait with the LocalStack environment contract. Local
 `scripts/gates.sh` runs keep policy-size required by default.
 
-The `oidc-smoke.yml` PR jobs behave differently: fork PRs skip the three
-`assume-*` jobs (green-by-skip, the roles never trust the pull_request
-subject), while owner PRs run them and they fail in their first step
-until P0-3b because the `AWS_ROLE_PLAN_READER`, `AWS_ROLE_DEPLOYER`, and
-`AWS_ROLE_PUBLISHER` repository secrets are created by the real-AWS
-bootstrap. Those three red checks are the expected state on every PR
-before P0-3b; `gates`, `plan-localstack`, and `infracost` are the checks that
-must be green; `decode-subject` passes on owner PRs and is skipped on fork PRs
-like the `assume-*` jobs.
+The `oidc-smoke.yml` jobs run on any same-repository, non-Dependabot PR
+and are skipped on fork and Dependabot PRs (all four: `decode-subject` and
+the three `assume-*` jobs). Before P0-3b each `assume-*` job fails at its
+first `Require AWS_ROLE_*` step with exit 1, because the real-AWS bootstrap
+has not produced the role ARNs and the post-apply `gh secret set` commands
+have not published `AWS_ROLE_PLAN_READER`, `AWS_ROLE_DEPLOYER`, and
+`AWS_ROLE_PUBLISHER`. Those three red checks are the expected state on
+same-repository PRs until then. `gates` runs on every PR; `plan-localstack`
+and `infracost` run only on PRs authored by the repository owner; those
+three are the checks that must be green.
 
 ## Local credentials
 
