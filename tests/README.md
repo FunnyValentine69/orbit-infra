@@ -1,6 +1,6 @@
 # Shell contract tests
 
-Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
+Evidence gates: LocalStack apply, Stage 1, and in-job Stage 2 are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6); the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 Run the cleanup regression suite without AWS or LocalStack:
 
@@ -84,7 +84,7 @@ post-delete re-list refusal, partial deletion, a lease change between batches,
 stale-open generation replacement before Stage 1, exclusive Stage 2 claim and
 proof recording, an atomic-completion race that adds a new state version,
 prune-time If-Match loss, and ETag-conditional prune. The suite currently
-reports 25 cases.
+reports 27 cases.
 
 Fixture provenance:
 

@@ -247,9 +247,10 @@ routing but not the real-AWS security-group boundary. On AWS, any HTTP response
 from the excluded runner remains a failure.
 
 Now that the post-merge `session-apply` dispatch has run (run 33825140591),
-this mode proves the
-workflow's full bootstrap → lease → apply → service acceptance → Stage 1 →
-Stage 2 control flow on one runner. It does not prove GitHub OIDC, real-AWS IAM,
+this mode proves the workflow's successful close-and-sweep bootstrap → lease →
+apply → service acceptance → Stage 1 → Stage 2 control flow on one runner,
+while stage-claim exclusivity and the pending hand-back branches remain
+fixture-verified. It does not prove GitHub OIDC, real-AWS IAM,
 private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec, real
 security-group packet enforcement, or a cross-job destroy. The scheduled
 sweeper is AWS-only and refuses `target=localstack` because emulator state is
