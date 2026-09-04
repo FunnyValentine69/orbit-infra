@@ -141,10 +141,9 @@ jq -e '.status == "open" and (.owner | type) == "string"
 
 Executed: the apply/acceptance/Stage-1 portion is LOCALSTACK-VERIFIED in CI
 2026-09-03 from the recorded Phase 4 run. The same-job Stage 2 is
-LOCALSTACK-VERIFIED locally 2026-09-03 (env sw1 reached `closed` with its state
-versions removed) and CODE-ONLY in CI until the dispatch after merge; promote it
-with `gh workflow run session-apply.yml
---ref main -f env_id=sw1 -f target=localstack -f mode=public`.
+LOCALSTACK-VERIFIED in CI 2026-09-03 by the post-merge dispatch `gh workflow run
+session-apply.yml --ref main -f env_id=sw1 -f target=localstack -f mode=public`
+(run 33825140591 from main 9b253b6: env sw1 reached `closed`, state versions removed).
 
 ## End session
 
@@ -320,7 +319,7 @@ is pruned. `sweep.sh env` on a younger `closed` lease prints the retention
 no-op reason.
 
 LocalStack Stage 2 is proved only inside the owner-bound `session-apply` job.
-Promote the path after merge with:
+The promotion dispatch that produced run 33825140591 was:
 
 ```
 gh workflow run session-apply.yml --ref main -f env_id=sw1 -f target=localstack -f mode=public
