@@ -69,7 +69,7 @@ stateDiagram-v2
     closing --> closing: stage1 destroy + verifier, five-minute verification deadline
     closing --> cleanup_failed: stage1 deadline, live or indeterminate results
     cleanup_failed --> closing: automatic retry (three per generation) or audited force-retry
-    closing --> closing: stage2_claim, task-definition re-probe; pending task definition releases the claim
+    closing --> closing: stage2_claim, task-definition re-probe, pending task definition releases the claim
     closing --> closing: pending non-task resource hands back to stage 1
     closing --> closed: complete-stage2, state versions removed
     closed --> [*]: prune after 7 days
