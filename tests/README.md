@@ -1,5 +1,7 @@
 # Shell contract tests
 
+Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
+
 Run the cleanup regression suite without AWS or LocalStack:
 
 ```
@@ -23,18 +25,26 @@ boundary, tag-versus-manifest authority, failed delayed and pre-destroy-only tag
 observations, zero-exit tag responses with a missing key, null list, string
 list, empty stdout, entry missing `ResourceARN`, or numeric `ResourceARN`,
 non-zero and malformed cleanup-verifier results, contradictory summaries,
-invalid outcome strings, and `passed:true` with a live result, exact ECS
+invalid outcome strings, `passed:true` with a live result, and persistence of a
+consistent `passed:false` live result before deadline failure, exact ECS
 `MISSING`/non-`MISSING`/unconfirmed-empty responses, an absent state file,
 required AWS destroy image references and their Terraform forwarding,
 zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
 their `failures` array, atomic owner-plus-manifest lease open with one PUT,
-same-environment second-open refusal, owner- and generation-bound close
-refusals, the three-attempt lease limit, audited force retry, and end-to-end
-stage-1 state retention. The suite currently reports 40 cases.
+same-environment second-open refusal, empty-`--from` refusal,
+generation/status-bound Stage 1, exclusive Stage-1 and Stage-2 claims,
+claim-bound manifest writes, duplicate-close refusal, generic-transition
+refusal of `closed`, atomic proof-plus-close, force-cleared claim audit,
+owner- and generation-bound close refusals, the three-attempt lease limit,
+audited force retry, and end-to-end Stage-1 claim release with state retention.
+The suite currently reports 48 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
-signal-path test below. It runs `tests/dispatch-ordering-contracts.sh`, whose
+signal-path test below. It also executes both the AWS close and LocalStack
+close-and-sweep workflow blocks against controlled lease/close/sweep scripts
+and verifies the observed generation, status, and owner arguments. It runs
+`tests/dispatch-ordering-contracts.sh`, whose
 jq-level probes extract the live jobs aggregation and timestamp-comparison
 filters from `tests/dispatch-ordering.sh`. It also verifies that policy-size
 remains required by default and moves to the owner-only `plan-localstack` job
@@ -52,6 +62,50 @@ It starts a fake worker whose process-group leader exits while a descendant
 keeps running, sends SIGTERM to the concurrency script, and requires the
 descendant to be gone after the exit trap targets the recorded process group
 and reaps the recorded worker.
+
+## Phase 5 sweeper fixtures
+
+Run the Stage 2 regression suite without AWS or LocalStack:
+
+```
+bash tests/sweeper.sh
+```
+
+The suite reuses the repository AWS wrapper with a fake AWS CLI and a fake
+versioned S3 lease/state store. It covers every discovery class and age
+boundary, invalid inventory IDs, fresh-read Stage 1 selection, retry-budget
+and manual-intervention refusal, exact AWS deleted `ClientException` versus
+other non-zero describe errors, paginated/batched state-version and
+delete-marker removal, `DELETE_IN_PROGRESS`, malformed describe/candidate
+refusal, target-scoped LocalStack allowances and missing-allowance refusal,
+Stage-1 `passed:false` refusal, present-null version lists, malformed or
+incomplete `delete-objects` acknowledgements, zero-exit per-object errors,
+post-delete re-list refusal, partial deletion, a lease change between batches,
+stale-open generation replacement before Stage 1, exclusive Stage 2 claim and
+proof recording, an atomic-completion race that adds a new state version,
+prune-time If-Match loss, and ETag-conditional prune. The suite currently
+reports 25 cases.
+
+Fixture provenance:
+
+- `discover-cases.json` — `authored` from ADR 0006 lifecycle thresholds.
+- `aws-deleted-client-exception.json` — `authored` from the AWS ECS deleted
+  DescribeTaskDefinition contract; replace with a sanitized recording during
+  real-AWS promotion.
+- `aws-delete-in-progress.json` — `authored` from the AWS ECS
+  `DELETE_IN_PROGRESS` contract.
+- `aws-malformed-describe.json` — `authored` fail-closed schema case.
+- `localstack-inactive-allowance.json` — `authored` Stage 2 response paired
+  with the Stage 1 allowance recorded from LocalStack 2026.8.1; the
+  orchestrator replaces it only from a sanitized in-job recording.
+- `aws-clientexception-mismatch.json`,
+  `aws-inactive-with-localstack-allowance.json`,
+  `localstack-inactive-no-allowance.json`, `aws-verification-failed.json`,
+  `delete-objects-errors.json`, `list-null-versions.json`,
+  `delete-null-entry.json`, `delete-incomplete-ack.json`, and
+  `aws-post-delete-relist.json` — `authored` fail-closed branch contracts;
+  replace only from sanitized backend recordings that preserve the same
+  condition.
 
 ## Phase 4 live concurrency
 

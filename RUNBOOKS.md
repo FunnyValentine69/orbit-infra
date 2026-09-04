@@ -1,6 +1,6 @@
 # Runbooks
 
-Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs. Run every procedure from the repository root.
+Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b. Run every procedure from the repository root.
 
 ## PR review gates
 
@@ -122,9 +122,13 @@ gh run list --workflow session-apply.yml --branch main --event workflow_dispatch
    three image references. The owner and initial manifest are part of the same
    CAS PUT that created the generation. Use the ALB URL from the run summary
    for the acceptance commands below. For `TARGET=localstack`, the same job
-   always performs owner-bound stage-1 close, so its terminal lease is
-   `closing` on that job's fresh emulator and is not observable from a later
-   runner.
+   runs owner-bound Stage 1 and, only when Stage 1 succeeds, in-job Stage 2
+   (a Stage-1 failure leaves `cleanup_failed`, and an absent or foreign lease
+   skips both); when every
+   recorded task definition confirms deletion the terminal lease is `closed`
+   with `manifest.stage2_runs[-1].in_job=true`, and a still-pending definition
+   leaves it `closing`. Either way the lease lives on that job's fresh
+   emulator and is not observable from a later runner.
 
 ```
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
@@ -135,7 +139,12 @@ jq -e '.status == "open" and (.owner | type) == "string"
     type == "string" and length > 0)' <<< "$LEASE_JSON"
 ```
 
-Executed: LOCALSTACK-VERIFIED in CI 2026-09-03 — `gh workflow run session-apply.yml --ref main -f env_id=p4ci -f target=localstack -f mode=public` (run 33757937265): bootstrap applied on the runner, lease opened with owner and manifest, 59 resources applied, all three services reached their applied task definitions, the runner probe was refused (curl exit 7), and the same-job stage-1 close destroyed all 59 and left the lease `closing`.
+Executed: the apply/acceptance/Stage-1 portion is LOCALSTACK-VERIFIED in CI
+2026-09-03 from the recorded Phase 4 run. The same-job Stage 2 is
+LOCALSTACK-VERIFIED locally 2026-09-03 (env sw1 reached `closed` with its state
+versions removed) and CODE-ONLY in CI until the dispatch after merge; promote it
+with `gh workflow run session-apply.yml
+--ref main -f env_id=sw1 -f target=localstack -f mode=public`.
 
 ## End session
 
@@ -156,9 +165,10 @@ gh workflow run session-destroy.yml --ref main -f env_id="$ENV_ID" -f target=aws
 gh run list --workflow session-destroy.yml --branch main --event workflow_dispatch --limit 5
 ```
 
-3. Confirm that a successful stage 1 retained Terraform state evidence and
-   left the lease `closing` for the Phase 5 sweeper. `closed` is not a
-   stage-1 success state:
+3. Confirm that a successful Stage 1 retained Terraform state evidence,
+   cleared `stage1_claim`, and left the lease `closing` for the nightly sweeper.
+   `closed` is not a Stage 1 success state; it is written only after Stage 2
+   deletes every state version:
 
 ```
 make lease-get TARGET=aws ENV_ID="$ENV_ID"
@@ -182,6 +192,7 @@ stored atomically by the lease-open CAS; AWS close reuses those exact
 references for Terraform destroy and fails closed if any are missing.
 Cancellation and failure cleanup re-read the lease instead of trusting step
 outputs and proceed only for an `open` or `closing` lease owned by that run.
+Stage 1 then holds an exclusive claim until its success or failure CAS.
 
 After apply, the workflow runs `aws ecs wait services-stable`, describes every
 enabled service, and requires one completed deployment per service whose task
@@ -223,7 +234,12 @@ After atomically opening an owner- and generation-bound lease with its initial
 manifest, the same job runs `make apply`, waits for every enabled ECS service,
 checks that each service reached its applied task definition, probes the
 Terraform `api_url` output (the LocalStack ALB) from the excluded runner CIDR,
-records the ALB URL in the summary, and always runs stage-1 close. A refused or
+records the ALB URL in the summary, and always runs Stage 1. After a successful
+Stage 1, which clears its claim, it immediately runs `SWEEP_IN_JOB=true
+scripts/sweep.sh env "$ENV_ID"`. Stage 2 consumes the recorded LocalStack
+allowance, deletes all
+versions and delete markers for the emulator's S3 state key, records
+`in_job:true`, and sets the lease `closed`. A refused or
 timed-out probe (curl exit 7 or 28) records the negative-CIDR outcome. If the
 LocalStack edge responds, `/health` must return HTTP 200; any other HTTP status
 or curl error fails the step. LocalStack routes ALB DNS through its shared edge
@@ -231,10 +247,13 @@ and does not document source-CIDR enforcement, so an HTTP 200 proves endpoint
 routing but not the real-AWS security-group boundary. On AWS, any HTTP response
 from the excluded runner remains a failure.
 
-This mode proves the workflow's full bootstrap → lease → apply → service
-acceptance → close control flow on one runner. It does not prove GitHub OIDC,
-real-AWS IAM, private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec,
-real security-group packet enforcement, or a cross-job destroy. Every
+After the post-merge `session-apply` dispatch, this mode proves the
+workflow's full bootstrap → lease → apply → service acceptance → Stage 1 →
+Stage 2 control flow on one runner. It does not prove GitHub OIDC, real-AWS IAM,
+private ECR/KMS supply-chain verification, AWS Budgets, ECS Exec, real
+security-group packet enforcement, or a cross-job destroy. The scheduled
+sweeper is AWS-only and refuses `target=localstack` because emulator state is
+job-local. Until that dispatch, in-job Stage 2 remains CODE-ONLY in CI. Every
 LocalStack CI run uses a fresh runner and fresh emulator, so the gh-driven
 dispatch test proves only GitHub concurrency queueing on this target. Lease CAS,
 refusal on `open`/`closing`/`cleanup_failed`, and generation increments are
@@ -243,6 +262,71 @@ proved locally against one emulator by `tests/localstack-concurrency.sh`. A
 fresh runner cannot recover the prior emulator or local state. LocalStack CI
 uses licensed credits, so this lane is dispatch-only and must never be added to
 a schedule.
+
+## Sweeper
+
+The workflow runs nightly at 03:17 UTC; the odd minute avoids common
+top-of-hour scheduling congestion. It runs only on `main` and only against
+AWS. A manual LocalStack target is intentionally refused because the emulator
+and its state do not survive the `session-apply` job. LocalStack apply and
+Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack
+Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until the post-merge
+dispatch below; this nightly AWS path is CODE-ONLY until P0-3b. Dispatch an
+extra AWS run with a correlation note when needed:
+
+```
+gh workflow run sweeper.yml --ref main -f target=aws -f dispatch_note=manual
+gh run list --workflow sweeper.yml --branch main --limit 5
+```
+
+The discover summary lists every lease classification and the number of
+actionable environments. More than 20 actionable leases fails discovery
+instead of truncating cleanup. Each environment gets an independent summary
+with `before`, `after`, and `result`; account-shaped numbers are masked. The
+matrix runs at most three environments in parallel, retains each queued
+`preview-<env_id>` job behind apply/destroy, and one failure does not cancel
+siblings.
+
+If a lease remains `closing`, inspect only the current status, recorded
+task-definition candidates, Stage 1 verification, and Stage 2 allowances:
+
+```
+ENV_ID=demo1
+LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
+jq '{status,generation,stage1_claim,stage2_claim,task_definitions:[.manifest.candidates[] | select(.resource_type == "ecs:task-definition") | .arn],last_verification:.manifest.verification_runs[-1],stage2_allowances:.manifest.stage2_allowances,last_stage2_run:.manifest.stage2_runs[-1]}' <<< "$LEASE_JSON"
+TARGET=aws scripts/sweep.sh env "$ENV_ID"
+```
+
+An active `stage1_claim` means Stage 1 still owns the generation; repeat
+Stage 1 and Stage 2 both refuse it. Successful Stage 1 leaves that field null.
+A printed `DELETE_IN_PROGRESS` ARN is pending, not an error; the sweeper
+releases its matching claim and leaves the lease `closing` for the next nightly
+run. Stage 2 also requires zero pending non-task results; otherwise it releases
+its claim and hands the `closing` lease back to Stage 1 for re-verification
+before any state deletion. An indeterminate describe or state delete sets
+`cleanup_failed`, clears the matching claim, and retains state wherever deletion
+stopped. Resolve that exact failure and use the normal due Stage 1 retry only
+when Stage 1 must be
+repeated; the sweeper never forces the three-attempt budget. A Stage 2 CAS loss
+exits 3 without closing the lease or deleting a concurrently added state
+version. Re-read the lease; do not rerun while it carries an active claim.
+
+After Stage 2 records zero state versions, `closed` leases remain readable for
+seven days. The first later sweep prunes the current lease object with its ETag
+precondition. A lease exactly seven days old is retained; only an older lease
+is pruned. `sweep.sh env` on a younger `closed` lease prints the retention
+no-op reason.
+
+LocalStack Stage 2 is proved only inside the owner-bound `session-apply` job.
+Promote the path after merge with:
+
+```
+gh workflow run session-apply.yml --ref main -f env_id=sw1 -f target=localstack -f mode=public
+```
+
+The in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in
+CI until the post-merge dispatch above runs; the nightly AWS workflow remains
+CODE-ONLY until P0-3b.
 
 ## Stuck-environment force-destroy
 
@@ -253,7 +337,21 @@ a schedule.
 ```
 ENV_ID=demo1
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
-jq '{status,generation,owner,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
+jq '{status,generation,owner,stage1_claim,stage2_claim,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
+```
+
+If `stage1_claim` is present, Stage 1 owns the lease; do not start Stage 2
+or another close. If `status` is `closing` and `stage2_claim` is present after
+an interrupted or CAS-refused sweep, first confirm that the recorded claimant
+is no longer running. Release only that token and generation, then re-read before rerunning
+the sweeper. The release itself is one fresh-read CAS and refuses changed state
+with exit 3:
+
+```
+GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"
+CLAIM="$(jq -er '.stage2_claim.token | select(type == "string" and length > 0)' <<< "$LEASE_JSON")"
+TARGET=aws scripts/lease.sh release-stage2 "$ENV_ID" --generation "$GENERATION" --claim "$CLAIM"
+LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
 ```
 
 2. If the verifier reports VPC deletion blocked by orphaned ENIs, derive the
@@ -295,8 +393,9 @@ make close TARGET=aws ENV_ID="$ENV_ID" OPERATOR_CIDR="$OPERATOR_CIDR"
 ```
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
 GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"
+STATUS="$(jq -er '.status | select(. == "open" or . == "closing" or . == "cleanup_failed")' <<< "$LEASE_JSON")"
 OWNER="$(jq -er '.owner | select(type == "string" and length > 0)' <<< "$LEASE_JSON")"
-TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" --owner "$OWNER" "$ENV_ID"
+TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" --from "$STATUS" --owner "$OWNER" "$ENV_ID"
 ```
 
 6. Confirm `cleanup_attempt` incremented, `cleanup_retry_audit` gained the
@@ -307,6 +406,14 @@ TARGET=aws scripts/close-env.sh --force-retry --generation "$GENERATION" --owner
 TARGET=aws scripts/lease.sh get "$ENV_ID" | jq '{status,generation,owner,cleanup_attempt,manual_intervention_required,cleanup_retry_audit,last_verification:.manifest.verification_runs[-1]}'
 ```
 
+The same forced run takes over a stale stage-1 claim left by a killed
+stage-1 job and records it as cleared_stage1_claim in the audit entry;
+never force while the previous stage-1 process may still be running.
+
+If step 6 leaves `closing`, use the Sweeper procedure above. Do not force Stage
+1 merely because a task definition is still `DELETE_IN_PROGRESS`; Stage 2
+will retry it without consuming the Stage 1 attempt budget.
+
 The exact verifier owns all `gone`, `pending`, `live`, and `indeterminate`
 predicates. The only LocalStack allowance remains an unsupported
 `DeleteTaskDefinitions` response for an already-`INACTIVE` task definition;
@@ -314,7 +421,7 @@ its ID, ARN, error code, and timestamp are persisted. Stale tags, retained
 cluster-list entries, VPC endpoints in `deleted`, ENI ownership, and S3
 emptiness are never generalized allowances.
 
-Executed: LOCALSTACK-VERIFIED 2026-09-03 — an applied `rbstuck` environment whose lease was driven to `cleanup_failed` with cleanup_attempt 3 and manual_intervention_required refused `close-env.sh` with exit 3; the audited step 5 run destroyed all 59 resources and left `closing`, cleanup_attempt 4, one `cleanup_retry_audit` entry (steps 2 and 3 remain CODE-ONLY: no ENI orphan or non-empty bucket occurred). Command used: `TARGET=localstack AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 AWS_EC2_METADATA_DISABLED=true OPERATOR_CIDR=10.255.255.255/32 scripts/close-env.sh --force-retry rbstuck`.
+Executed: LOCALSTACK-VERIFIED 2026-09-03 — an applied `rbstuck` environment whose lease was driven to `cleanup_failed` with cleanup_attempt 3 and manual_intervention_required refused the automatic close with exit 3; the audited force retry destroyed all 59 resources and left `closing`, cleanup_attempt 4, and one `cleanup_retry_audit` entry (steps 2 and 3 remain CODE-ONLY: no ENI orphan or non-empty bucket occurred). That recorded run predates the current generation/status-bound interface; repeat it only with the step 5 command above.
 
 ## Rotate secrets
 

@@ -8,9 +8,9 @@
 # Apply order per ADR 0006: runner-CIDR rejection check -> lint+checkov ->
 # target-specific bootstrap/supply-chain checks -> lease open (one CAS carrying
 # owner and initial manifest) -> apply -> acceptance. Any failure or cancellation
-# reads the lease and runs scripts/close-env.sh (stage 1) only when this run owns
-# an open or closing generation; the
-# LocalStack target always closes at the end of the job.
+# reads the lease and runs scripts/close-env.sh (Stage 1) only when this run owns
+# an open or closing generation. The LocalStack target runs Stage 1 at the end
+# of the job and, only when Stage 1 succeeds, in-job Stage 2.
 # Gate failures before the CAS never create a lease or resources.
 #
 # Per ADR 0006 / ARCHITECTURE.md, apply, destroy, and the sweeper share
@@ -746,9 +746,9 @@ jobs:
             echo "no owner-bound close: lease for $ENV_ID has no valid generation"
             exit 0
           fi
-          scripts/close-env.sh --generation "$generation" --owner "$owner" "$ENV_ID"
+          scripts/close-env.sh --generation "$generation" --from "$lease_status" --owner "$owner" "$ENV_ID"
 
-      - name: Close LocalStack after acceptance or failure (stage 1)
+      - name: Close and sweep LocalStack after acceptance or failure
         if: always() && inputs.target == 'localstack'
         env:
           OPERATOR_CIDR: 10.255.255.255/32
@@ -793,7 +793,8 @@ jobs:
             echo "no owner-bound close: lease for $ENV_ID has no valid generation"
             exit 0
           fi
-          scripts/close-env.sh --generation "$generation" --owner "$owner" "$ENV_ID"
+          scripts/close-env.sh --generation "$generation" --from "$lease_status" --owner "$owner" "$ENV_ID"
+          SWEEP_IN_JOB=true scripts/sweep.sh env "$ENV_ID"
 
       - name: Masked summary
         if: always()

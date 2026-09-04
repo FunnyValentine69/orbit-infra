@@ -1,0 +1,8 @@
+{
+  "authored": "S3 DeleteObjects zero-exit response with a null Deleted entry",
+  "name": "Deleted null entry fails closed",
+  "response": {
+    "Deleted": [null],
+    "Errors": []
+  }
+}

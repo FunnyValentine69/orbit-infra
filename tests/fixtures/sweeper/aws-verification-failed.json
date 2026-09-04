@@ -1,0 +1,19 @@
+{
+  "authored": "Stage 2 refusal when the persisted last Stage-1 verification run has passed false",
+  "env_id": "verify-fail",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/fixture-task:8",
+  "verification_passed": false,
+  "describe": {
+    "rc": 254,
+    "stdout": "",
+    "stderr": "An error occurred (ClientException) when calling the DescribeTaskDefinition operation: Unable to describe task definition.\n"
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/verify-fail.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}

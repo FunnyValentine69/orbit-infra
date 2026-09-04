@@ -1,0 +1,13 @@
+{
+  "authored": "S3 DeleteObjects zero-exit response missing one requested object-version acknowledgement",
+  "name": "incomplete DeleteObjects acknowledgement fails closed",
+  "response": {
+    "Deleted": [
+      {
+        "Key": "envs/preview/aws-happy.tfstate",
+        "VersionId": "version-3"
+      }
+    ],
+    "Errors": []
+  }
+}

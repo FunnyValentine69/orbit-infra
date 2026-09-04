@@ -2,7 +2,7 @@
 
 Ephemeral, near-zero-idle AWS platform for a containerized workload: Terraform, ECS Fargate (ARM64), GitHub Actions with OIDC (no static cloud keys), signed images, per-environment lease lifecycle.
 
-Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ## What this is
 
@@ -21,9 +21,10 @@ exist anywhere in the pipeline.
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov on every plan | done |
-| Dispatch-only LocalStack CI apply → acceptance → close cycle | implemented, CODE-ONLY until first dispatch |
+| Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
 | SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
-| Dispatch-created parallel environments with nightly auto-destroy | planned |
+| In-job LocalStack Stage 2 | LOCALSTACK-VERIFIED locally; CODE-ONLY in CI until post-merge dispatch |
+| AWS nightly sweeper | CODE-ONLY until P0-3b |
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
 | Observability: CloudWatch logs, two alarms, one written SLO | done |
@@ -75,7 +76,8 @@ has a valid signature and lock-matching attestation. The lease-open CAS records
 the workflow-run owner, mode, and resolved image references atomically so AWS
 cleanup can load the same Terraform configuration for destroy. Failure and
 cancellation cleanup re-reads that lease and runs only when the same workflow
-run owns an `open` or `closing` generation.
+run owns an `open` or `closing` generation. Stage 1 holds an exclusive lease
+claim until its success or failure CAS; Stage 2 refuses while that claim exists.
 
 ## Repository layout
 

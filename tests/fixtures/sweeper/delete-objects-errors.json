@@ -1,0 +1,11 @@
+{
+  "authored": "S3 DeleteObjects zero-exit response with one per-object error",
+  "errors": [
+    {
+      "Key": "envs/preview/aws-happy.tfstate",
+      "VersionId": "version-3",
+      "Code": "AccessDenied",
+      "Message": "Access denied."
+    }
+  ]
+}

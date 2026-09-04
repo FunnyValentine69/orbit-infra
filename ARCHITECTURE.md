@@ -1,6 +1,6 @@
 # Architecture
 
-Evidence: LOCALSTACK-VERIFIED for apply/close on LocalStack; every real-AWS behavior in this document is CODE-ONLY until the promotion gate P0-3d runs.
+Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ## Purpose
 
@@ -109,10 +109,22 @@ One exact-service predicate layer records `gone`, `pending`, `live`, or
 validates every outcome, recomputes all four counts, and rejects summary,
 `passed`, or stale-tag shape discrepancies. An indeterminate pre-destroy or
 scheduled tag observation adds a durable sentinel; later success cannot erase
-it. Tag presence alone is never liveness. Stage 1 retries for five minutes and leaves
-the lease `closing` with state retained; only deadline-expired `live` or
-`indeterminate` results set `cleanup_failed`. Stage 2 (the nightly sweeper)
-confirms deletion and sets `closed`.
+it. Tag presence alone is never liveness. Stage 1 CAS-acquires an exclusive,
+generation-bound claim before cleanup; every manifest and failure write
+requires the `closing` status and token. Success clears the claim while leaving
+`closing` with state retained, and failure clears it while setting
+`cleanup_failed`. A repeat Stage 1 and Stage 2 both refuse an active Stage-1
+claim. Stage 1 retries for five minutes; only deadline-expired `live` or
+`indeterminate` results set `cleanup_failed`. Stage 2 re-reads the lease,
+requires the persisted Stage 1 verification to have passed with zero live or
+indeterminate results, and probes only the recorded task-definition candidates.
+The exact deleted `ClientException` is gone; `DELETE_IN_PROGRESS` remains
+pending. LocalStack may additionally accept exact `INACTIVE` only for the same
+ARN's recorded Stage 1 allowance. Once all candidates are gone and the
+Stage-1 claim is null, Stage 2 holds its exclusive generation-bound claim,
+deletes every version and delete marker for
+`envs/preview/<env_id>.tfstate`, verifies none remain, and atomically records
+the proof, transitions to `closed`, and consumes the claim.
 
 Cleanup execution is bound to an explicit `TARGET`. The LocalStack branch
 requires a localhost endpoint, test credentials, disabled metadata lookup, and
@@ -139,14 +151,21 @@ after 7 days.
 The dispatch workflows accept `target=aws|localstack`. AWS keeps independent
 apply and destroy jobs. LocalStack cannot preserve its emulator or state
 across hosted runners, so its owner-only `session-apply` path bootstraps,
-applies, runs acceptance, and performs generation-bound stage-1 close in one
-job; `session-destroy target=localstack` refuses. The LocalStack path uses test
-credentials and no AWS role, and is evidence for workflow control flow rather
+applies, runs acceptance, performs generation-bound Stage 1, and completes
+Stage 2 in one job; `session-destroy target=localstack` refuses. The LocalStack
+path uses test credentials and no AWS role, and is evidence for workflow control flow rather
 than real-AWS OIDC, IAM, KMS/ECR, or packet-level security-group enforcement.
-Every LocalStack CI run has a fresh runner and emulator, so the gh-driven
-dispatch test proves only GitHub queueing on that target. Lease CAS, lifecycle
-refusals, generation increments, and two-environment state isolation are proved
-locally against one emulator by `tests/localstack-concurrency.sh`. See ADR 0006.
+Every LocalStack CI run has a fresh runner and fresh emulator, so the gh-driven
+dispatch test proves only GitHub queueing on that target. The preview override
+uses the emulator's versioned state bucket and the same state key as AWS;
+`session-apply` therefore runs Stage 2 immediately after successful Stage 1 and
+records `in_job:true` before closing the lease. The nightly sweeper refuses
+LocalStack because a later runner cannot recover that emulator. Lease CAS,
+lifecycle refusals, generation increments, and two-environment state isolation
+are proved locally against one emulator by `tests/localstack-concurrency.sh`.
+See ADR 0006. In-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and
+CODE-ONLY in CI until the post-merge dispatch; the nightly AWS sweeper remains
+CODE-ONLY until P0-3b.
 
 ## Image supply chain summary
 

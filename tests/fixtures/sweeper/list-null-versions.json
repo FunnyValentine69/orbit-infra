@@ -1,0 +1,9 @@
+{
+  "authored": "S3 ListObjectVersions zero-exit response with a present-null Versions field",
+  "name": "present-null Versions fails closed",
+  "response": {
+    "Versions": null,
+    "DeleteMarkers": [],
+    "IsTruncated": false
+  }
+}

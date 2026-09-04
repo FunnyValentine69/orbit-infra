@@ -10,7 +10,9 @@ CLEANUP_VERIFIER_SH="${CLEANUP_VERIFIER_SH:-$SCRIPT_DIR/cleanup-verifier.sh}"
 
 FORCE_RETRY=false
 EXPECTED_GENERATION=""
+EXPECTED_STATUS=""
 EXPECTED_OWNER=""
+STAGE1_CLAIM="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-stage1-$$"
 ENV_ID="${ENV_ID:-}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -21,6 +23,11 @@ while [ "$#" -gt 0 ]; do
     --generation)
       [ "$#" -ge 2 ] || { echo "close-env.sh: --generation requires a value" >&2; exit 2; }
       EXPECTED_GENERATION="$2"
+      shift 2
+      ;;
+    --from)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "close-env.sh: --from requires a nonempty status" >&2; exit 2; }
+      EXPECTED_STATUS="$2"
       shift 2
       ;;
     --owner)
@@ -62,6 +69,12 @@ fi
 if [ -n "$EXPECTED_GENERATION" ] && ! [[ "$EXPECTED_GENERATION" =~ ^[1-9][0-9]*$ ]]; then
   echo "close-env.sh: --generation must be a positive integer" >&2
   exit 2
+fi
+if [ -n "$EXPECTED_STATUS" ]; then
+  case "$EXPECTED_STATUS" in
+    open|closing|cleanup_failed|closed) ;;
+    *) echo "close-env.sh: --from must be open, closing, cleanup_failed, or closed" >&2; exit 2 ;;
+  esac
 fi
 if ! [[ "$CLEANUP_VERIFY_DEADLINE_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "close-env.sh: CLEANUP_VERIFY_DEADLINE_SECONDS must be a nonnegative integer" >&2
@@ -125,7 +138,8 @@ tf_destroy() {
 fail() {
   local message="$1"
   echo "close-env.sh: $message" >&2
-  "$LEASE_SH" transition "$ENV_ID" closing cleanup_failed --error "$message" >/dev/null \
+  "$LEASE_SH" transition "$ENV_ID" closing cleanup_failed \
+    --generation "$lease_generation" --claim "$STAGE1_CLAIM" --error "$message" >/dev/null \
     || echo "close-env.sh: could not record cleanup_failed for $ENV_ID (lease may still read closing)" >&2
   exit 1
 }
@@ -133,7 +147,8 @@ fail() {
 persist_manifest() {
   local manifest_file="$tmp_dir/manifest.json"
   printf '%s\n' "$manifest_json" > "$manifest_file"
-  "$LEASE_SH" set-manifest "$ENV_ID" "$manifest_file" >/dev/null \
+  "$LEASE_SH" set-manifest "$ENV_ID" "$manifest_file" \
+    --generation "$lease_generation" --claim "$STAGE1_CLAIM" >/dev/null \
     || fail "could not persist cleanup manifest"
 }
 
@@ -337,6 +352,14 @@ if [ "$lease_get_rc" -eq 0 ]; then
     echo "close-env.sh: lease generation mismatch for $ENV_ID: expected $EXPECTED_GENERATION, current ${lease_generation:-missing}; refusing cleanup" >&2
     exit 3
   fi
+  if [ -n "$EXPECTED_STATUS" ] && [ "$current_status" != "$EXPECTED_STATUS" ]; then
+    echo "close-env.sh: lease status mismatch for $ENV_ID: expected $EXPECTED_STATUS, current $current_status; refusing cleanup" >&2
+    exit 3
+  fi
+  if ! [[ "$lease_generation" =~ ^[1-9][0-9]*$ ]]; then
+    echo "close-env.sh: lease generation for $ENV_ID is invalid; refusing cleanup" >&2
+    exit 2
+  fi
   existing_manifest="$(jq -c '.manifest // {}' <<< "$lease_json")"
 elif [ "$lease_get_rc" -eq 1 ] && grep -q 'no lease for' "$lease_get_err"; then
   current_status=""
@@ -353,7 +376,7 @@ case "$current_status" in
   *) echo "close-env.sh: unexpected lease status '$current_status'" >&2; exit 2 ;;
 esac
 
-claim_args=(begin-cleanup "$ENV_ID")
+claim_args=(begin-cleanup "$ENV_ID" --generation "$lease_generation" --from "$current_status" --claim "$STAGE1_CLAIM")
 [ "$FORCE_RETRY" != true ] || claim_args+=(--force-retry)
 "$LEASE_SH" "${claim_args[@]}" >/dev/null
 
@@ -676,9 +699,10 @@ while :; do
   run="$(jq -cn \
     --arg started_at "$(date -u -r "$verification_start" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$verification_start" +%Y-%m-%dT%H:%M:%SZ)" \
     --arg completed_at "$(now_iso)" \
+    --argjson passed "$reported_passed" \
     --argjson results "$results_json" \
     --argjson summary "$recomputed_summary" \
-    '{started_at:$started_at,completed_at:$completed_at,results:$results,summary:$summary}')"
+    '{started_at:$started_at,completed_at:$completed_at,passed:$passed,results:$results,summary:$summary}')"
   stale_entries="$(jq -c '.stale_tag_entries // []' <<< "$verification")"
   manifest_json="$(jq -c --argjson run "$run" --argjson stale "$stale_entries" '
     ((.stale_tag_entries.entries // []) + $stale | unique_by(.ResourceARN)) as $entries
@@ -707,4 +731,6 @@ while :; do
   backoff_index=$((backoff_index + 1))
 done
 
+"$LEASE_SH" complete-stage1 "$ENV_ID" \
+  --generation "$lease_generation" --claim "$STAGE1_CLAIM" >/dev/null
 echo "close-env.sh: $ENV_ID stage 1 complete; lease remains 'closing' for the sweeper"

@@ -267,6 +267,56 @@ if ! grep -Fq "if: always() && (failure() || cancelled()) && inputs.target == 'a
 fi
 
 apply_workflow="$REPO_ROOT/.github/workflows/session-apply.yml"
+sweeper_workflow="$REPO_ROOT/.github/workflows/sweeper.yml"
+plan_workflow="$REPO_ROOT/.github/workflows/terraform-plan.yml"
+python3 - "$sweeper_workflow" "$plan_workflow" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+
+def one_index(steps, predicate, label):
+    matches = [index for index, step in enumerate(steps) if predicate(step)]
+    if len(matches) != 1:
+        raise SystemExit(f"expected one {label}, found {len(matches)}")
+    return matches[0]
+
+
+sweeper = yaml.safe_load(Path(sys.argv[1]).read_text())
+sweep_steps = sweeper["jobs"]["sweep"]["steps"]
+setup_index = one_index(
+    sweep_steps,
+    lambda step: step.get("uses") == "hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e",
+    "pinned Terraform setup in sweeper sweep job",
+)
+backend_index = one_index(
+    sweep_steps,
+    lambda step: step.get("run") == "scripts/write-preview-backend.sh",
+    "AWS backend writer in sweeper sweep job",
+)
+sweep_index = one_index(
+    sweep_steps,
+    lambda step: 'scripts/sweep.sh env "$ENV_ID"' in step.get("run", ""),
+    "environment sweep in sweeper sweep job",
+)
+if not setup_index < sweep_index or not backend_index < sweep_index:
+    raise SystemExit("sweeper must set up Terraform and write the AWS backend before sweeping an environment")
+
+plan = yaml.safe_load(Path(sys.argv[2]).read_text())
+plan_steps = plan["jobs"]["plan-localstack"]["steps"]
+bootstrap_index = one_index(
+    plan_steps,
+    lambda step: step.get("run") == "make bootstrap-apply TARGET=localstack",
+    "LocalStack bootstrap apply in terraform-plan plan-localstack job",
+)
+plan_index = one_index(
+    plan_steps,
+    lambda step: "make plan TARGET=localstack" in step.get("run", ""),
+    "LocalStack Terraform plan in terraform-plan plan-localstack job",
+)
+if not bootstrap_index < plan_index:
+    raise SystemExit("terraform-plan must bootstrap LocalStack state before planning")
+PY
 validate_guard="$(sed -n '/^  validate-input:/,/^  apply:/s/^    if: //p' "$apply_workflow")"
 apply_guard="$(sed -n '/^  apply:/,/^    runs-on:/s/^    if: //p' "$apply_workflow")"
 setup_localstack_guard="$(sed -n '/      - name: Start LocalStack/,/        uses:/s/^        if: //p' "$apply_workflow")"
@@ -360,5 +410,78 @@ for fn in assert_three_queued_polls assert_run_queued; do
     fi
   done
 done
+
+# Execute both close workflow blocks against controlled lease/close/sweep
+# scripts so their generation, status, and owner forwarding are checked as
+# behavior rather than by grepping the workflow source.
+workflow_exec_root="$tmp_dir/workflow-close"
+workflow_aws_run_block="$workflow_exec_root/aws-run.sh"
+workflow_localstack_run_block="$workflow_exec_root/localstack-run.sh"
+mkdir -p "$workflow_exec_root/scripts"
+python3 - "$apply_workflow" "$workflow_aws_run_block" "$workflow_localstack_run_block" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+steps = workflow["jobs"]["apply"]["steps"]
+for name, destination in (
+    ("Close AWS on failure or cancellation (stage 1)", sys.argv[2]),
+    ("Close and sweep LocalStack after acceptance or failure", sys.argv[3]),
+):
+    matches = [step["run"] for step in steps if step.get("name") == name]
+    if len(matches) != 1:
+        raise SystemExit(f"expected one {name!r} step, found {len(matches)}")
+    Path(destination).write_text(matches[0])
+PY
+cat > "$workflow_exec_root/scripts/lease.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$1" = get ]
+printf '%s\n' '{"status":"open","generation":7,"owner":"workflow-run-1"}'
+EOF
+cat > "$workflow_exec_root/scripts/close-env.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "$WORKFLOW_CLOSE_ARGS_LOG"
+EOF
+cat > "$workflow_exec_root/scripts/sweep.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "$WORKFLOW_SWEEP_ARGS_LOG"
+EOF
+chmod +x "$workflow_exec_root/scripts/lease.sh" \
+  "$workflow_exec_root/scripts/close-env.sh" "$workflow_exec_root/scripts/sweep.sh"
+(
+  cd "$workflow_exec_root"
+  ENV_ID=contract \
+  GITHUB_RUN_ID=workflow-run \
+  GITHUB_RUN_ATTEMPT=1 \
+  WORKFLOW_CLOSE_ARGS_LOG="$workflow_exec_root/aws-close-args.log" \
+    bash "$workflow_aws_run_block"
+)
+if [ "$(cat "$workflow_exec_root/aws-close-args.log")" != \
+     "--generation 7 --from open --owner workflow-run-1 contract" ]; then
+  echo "session-apply AWS close must forward its observed generation, status, and owner" >&2
+  exit 1
+fi
+(
+  cd "$workflow_exec_root"
+  ENV_ID=contract \
+  GITHUB_RUN_ID=workflow-run \
+  GITHUB_RUN_ATTEMPT=1 \
+  WORKFLOW_CLOSE_ARGS_LOG="$workflow_exec_root/close-args.log" \
+  WORKFLOW_SWEEP_ARGS_LOG="$workflow_exec_root/sweep-args.log" \
+    bash "$workflow_localstack_run_block"
+)
+if [ "$(cat "$workflow_exec_root/close-args.log")" != \
+     "--generation 7 --from open --owner workflow-run-1 contract" ]; then
+  echo "session-apply LocalStack close must forward its observed generation, status, and owner" >&2
+  exit 1
+fi
+if [ "$(cat "$workflow_exec_root/sweep-args.log")" != "env contract" ]; then
+  echo "session-apply LocalStack close must invoke its in-job sweep" >&2
+  exit 1
+fi
 
 echo "PASS: phase3 shell contracts"

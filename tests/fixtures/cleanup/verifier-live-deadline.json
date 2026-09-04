@@ -1,0 +1,15 @@
+{
+  "name": "cleanup-verifier-live-deadline",
+  "authored": "close-env failed-verification persistence contract",
+  "env_id": "verifylivefail",
+  "verifier": {
+    "rc": 0,
+    "stdout": "{\"passed\":false,\"summary\":{\"gone\":0,\"pending\":0,\"live\":1,\"indeterminate\":0},\"results\":[{\"resource_type\":\"ec2:vpc\",\"id\":\"vpc-live\",\"arn\":\"arn:aws:ec2:test-region:placeholder:vpc/vpc-live\",\"parent_id\":null,\"sources\":[\"terraform-state\"],\"tag_entry\":null,\"force_delete\":false,\"outcome\":\"live\",\"reason\":\"exact-resource-present\",\"observed_state\":\"available\",\"observed_at\":\"2033-05-18T03:33:20Z\"}],\"stale_tag_entries\":[]}"
+  },
+  "expected": {
+    "status": "cleanup_failed",
+    "error": "cleanup verification deadline reached: live=1 indeterminate=0 pending=0",
+    "passed": false,
+    "live": 1
+  }
+}

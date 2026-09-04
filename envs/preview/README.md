@@ -61,18 +61,18 @@ the plan file on success or failure.
 automatically; run `make placeholder-build` first, or `make apply
 TARGET=localstack ...` fails fast with a reminder.
 
-LocalStack runs use a local backend keyed by `ENV_ID`
-(`terraform.localstack.<ENV_ID>.tfstate`). Because Terraform loads every
+LocalStack runs use the emulator's versioned state bucket and the same
+`envs/preview/<ENV_ID>.tfstate` key layout as AWS. Because Terraform loads every
 `*_override.tf` file in a directory, concurrent runs cannot share
 `envs/preview/`: each `ENV_ID` gets its own rsync'd copy of this
 composition under `.preview-runs/<ENV_ID>/`, with
 `backend_override.tf` rendered inside that copy from
 `localstack.backend_override.tf.example`, and every terraform command
-run with `-chdir` into it and its own `TF_DATA_DIR=.terraform-localstack`
-— separate state and data dir per environment, never touching the AWS
-backend. Each sync copies the committed `.terraform.lock.hcl`, deletes stale
-source files, and excludes only Terraform data directories, the rendered
-override, and `*.tfstate*` files. `PREVIEW_ROOT`
+run with `-chdir` into it and its own `TF_DATA_DIR=.terraform-localstack`.
+The rendered backend pins the localhost S3 endpoint and test credentials, so
+it cannot touch AWS. Each sync copies the committed `.terraform.lock.hcl` and
+deletes stale source files while retaining Terraform data and the rendered
+override. `PREVIEW_ROOT`
 (exported by the Makefile, defaulting to
 `envs/preview` on the `aws` target) points at the active run directory.
 The `aws` target refuses to run while `envs/preview/backend_override.tf`
@@ -108,9 +108,10 @@ results fail stage 1.
 CAS-persisted per generation. Three automatic stage-1 executions are allowed;
 after the third failure an explicit, audited `--force-retry` is required. A
 successful stage 1 leaves the lease `closing` and retains state; only the
-sweeper removes state versions and sets `closed`. The LocalStack-only inactive
-task-definition deletion allowance is recorded in the manifest. Host-port plan
-drift is tracked separately and never changes cleanup predicates. See
+sweeper removes state versions and sets `closed`. `session-apply` runs that
+sweeper in-job for LocalStack; the nightly workflow is AWS-only. The
+LocalStack-only inactive task-definition deletion allowance is recorded in the
+manifest. Host-port plan drift is tracked separately and never changes cleanup predicates. See
 `RUNBOOKS.md`, "Stuck-environment force-destroy", for terminal recovery.
 
 ```

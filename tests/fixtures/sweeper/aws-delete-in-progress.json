@@ -1,0 +1,18 @@
+{
+  "authored": "AWS ECS task-definition DELETE_IN_PROGRESS lifecycle contract",
+  "env_id": "aws-pending",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/stage-two:2",
+  "describe": {
+    "rc": 0,
+    "stdout": "{\"taskDefinition\":{\"taskDefinitionArn\":\"arn:aws:ecs:region:account:task-definition/stage-two:2\",\"status\":\"DELETE_IN_PROGRESS\"}}\n",
+    "stderr": ""
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/aws-pending.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}

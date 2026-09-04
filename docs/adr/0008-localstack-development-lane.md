@@ -19,7 +19,9 @@ and in CI. Every root module takes a `target` variable (`"aws"` or
 contains LocalStack-only resources. The AWS Budgets resource is toggled
 off when `target = "localstack"`, since Budgets is not emulated. Real AWS
 remains the final promotion step once the platform is proven on
-LocalStack.
+LocalStack. Every LocalStack job runs `make bootstrap-apply TARGET=localstack`
+after the emulator health check and before any plan or apply so the versioned
+state bucket exists.
 
 ## Consequences
 

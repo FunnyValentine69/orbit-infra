@@ -1,0 +1,26 @@
+{
+  "authored": "AWS target must not consume the LocalStack-only task-definition allowance",
+  "env_id": "aws-allow",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/fixture-task:6",
+  "manifest_allowances": [
+    {
+      "id": "localstack-delete-task-definitions-inactive",
+      "arn": "arn:aws:ecs:region:account:task-definition/fixture-task:6",
+      "error_code": "InternalFailure",
+      "recorded_at": "2033-05-18T03:30:00Z"
+    }
+  ],
+  "describe": {
+    "rc": 0,
+    "stdout": "{\"taskDefinition\":{\"taskDefinitionArn\":\"arn:aws:ecs:region:account:task-definition/fixture-task:6\",\"status\":\"INACTIVE\"}}\n",
+    "stderr": ""
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/aws-allow.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}

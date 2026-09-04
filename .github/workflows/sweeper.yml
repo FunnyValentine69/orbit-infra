@@ -1,0 +1,191 @@
+# Nightly AWS-only Stage-1 retry, Stage-2 close, and lease pruning (ADR 0006).
+name: sweeper
+run-name: sweeper-${{ github.event_name }}-${{ inputs.target || 'aws' }}-${{ inputs.dispatch_note }}
+
+on:
+  schedule:
+    # An odd minute avoids the top-of-hour congestion common to scheduled CI.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Execution target (localstack is refused; emulator state is job-local)'
+        required: true
+        default: aws
+        type: choice
+        options:
+          - aws
+          - localstack
+      dispatch_note:
+        description: 'Optional dispatch correlation note'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate-input:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate target and dispatch note
+        env:
+          DISPATCH_NOTE: ${{ inputs.dispatch_note || '' }}
+          TARGET: ${{ github.event_name == 'schedule' && 'aws' || inputs.target }}
+        run: |
+          if [[ ! "$DISPATCH_NOTE" =~ ^[a-z0-9-]{0,40}$ ]]; then
+            echo "dispatch_note must match ^[a-z0-9-]{0,40}$" >&2
+            exit 1
+          fi
+          case "$TARGET" in
+            aws) ;;
+            localstack)
+              echo "sweeper refuses target=localstack: LocalStack state is runner-local, so session-apply performs apply -> acceptance -> close -> sweep in one job" >&2
+              exit 1
+              ;;
+            *) echo "target must be aws or localstack" >&2; exit 1 ;;
+          esac
+
+  discover:
+    needs: validate-input
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      count: ${{ steps.inventory.outputs.count }}
+      matrix: ${{ steps.inventory.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (deployer)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_DEPLOYER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Discover actionable leases
+        id: inventory
+        env:
+          TARGET: aws
+        run: |
+          inventory_file="$(mktemp)"
+          trap 'rm -f "$inventory_file"' EXIT
+          scripts/sweep.sh discover | tee "$inventory_file"
+          env_ids="$(jq -sc '[.[] | select(.classification != "skip") | .env_id] | unique' "$inventory_file")"
+          count="$(jq 'length' <<< "$env_ids")"
+          if [ "$count" -gt 20 ]; then
+            echo "sweeper discovered $count actionable leases; refusing to exceed the 20-environment matrix cap" >&2
+            exit 1
+          fi
+          matrix="$(jq -cn --argjson env_id "$env_ids" '{env_id:$env_id}')"
+          {
+            echo "count=$count"
+            echo "matrix=$matrix"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### sweeper discovery"
+            echo ""
+            echo "actionable environments: $count"
+            jq -r '"- \(.env_id): \(.classification)" + (if .reason == null then "" else " (\(.reason))" end)' "$inventory_file"
+          } | sed -E 's/[0-9]{12}/************/g' >> "$GITHUB_STEP_SUMMARY"
+
+  sweep:
+    needs: discover
+    if: github.ref == 'refs/heads/main' && needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    concurrency:
+      group: preview-${{ matrix.env_id }}
+      cancel-in-progress: false
+      # Retain every pending environment behind apply/destroy up to GitHub's limit.
+      queue: max
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (deployer)
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_DEPLOYER }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: echo "version=$(scripts/tool-version.sh terraform)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Write AWS backend config
+        run: scripts/write-preview-backend.sh
+
+      - name: Read status before sweep
+        id: before
+        env:
+          ENV_ID: ${{ matrix.env_id }}
+          TARGET: aws
+        run: |
+          status="$(scripts/lease.sh get "$ENV_ID" | jq -er '.status | select(type == "string")')"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Sweep environment
+        env:
+          ENV_ID: ${{ matrix.env_id }}
+          OPERATOR_CIDR: ${{ secrets.OPERATOR_CIDR }}
+          TARGET: aws
+        run: scripts/sweep.sh env "$ENV_ID"
+
+      - name: Read status after sweep
+        if: always()
+        id: after
+        env:
+          ENV_ID: ${{ matrix.env_id }}
+          TARGET: aws
+        run: |
+          set +e
+          lease_json="$(scripts/lease.sh get "$ENV_ID" 2>/dev/null)"
+          lease_rc=$?
+          set -e
+          if [ "$lease_rc" -eq 0 ]; then
+            status="$(jq -r '.status // "invalid"' <<< "$lease_json")"
+          elif [ "$lease_rc" -eq 1 ]; then
+            status=absent
+          else
+            status=unreadable
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Masked summary
+        if: always()
+        env:
+          AFTER_STATUS: ${{ steps.after.outputs.status }}
+          BEFORE_STATUS: ${{ steps.before.outputs.status }}
+          ENV_ID: ${{ matrix.env_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### sweeper"
+            echo ""
+            echo "env_id: $ENV_ID"
+            echo "before: ${BEFORE_STATUS:-unavailable}"
+            echo "after: ${AFTER_STATUS:-unavailable}"
+            echo "result: $JOB_STATUS"
+          } | sed -E 's/[0-9]{12}/************/g' >> "$GITHUB_STEP_SUMMARY"

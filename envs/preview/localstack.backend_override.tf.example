@@ -2,15 +2,28 @@
 #
 # Terraform loads any *_override.tf file after the primary configuration
 # and merges it into the same block, with override semantics: the backend
-# block below replaces the (absent, default-local) backend configuration
-# for this root, keeping LocalStack state completely separate from real
-# AWS state, in its own file and its own TF_DATA_DIR.
+# block below completes the partial S3 backend with the LocalStack endpoint.
+# The emulator uses the same versioned bucket/key layout as AWS so Stage 2
+# exercises version and delete-marker removal in-job. Its per-environment run
+# copy and TF_DATA_DIR remain isolated from AWS.
 #
 # The Makefile renders this file to backend_override.tf, substituting
-# ENV_ID_PLACEHOLDER with the real ENV_ID so concurrent preview
-# environments each get their own local state file.
+# the real ENV_ID into the exact envs/preview/<env_id>.tfstate key.
 terraform {
-  backend "local" {
-    path = "terraform.localstack.ENV_ID_PLACEHOLDER.tfstate"
+  backend "s3" {
+    bucket                      = "orbit-infra-79s5rw-tfstate"
+    key                         = "envs/preview/ENV_ID_PLACEHOLDER.tfstate"
+    region                      = "us-east-1"
+    use_lockfile                = true
+    encrypt                     = true
+    use_path_style              = true
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+
+    endpoints = {
+      s3 = "http://localhost:4566"
+    }
   }
 }

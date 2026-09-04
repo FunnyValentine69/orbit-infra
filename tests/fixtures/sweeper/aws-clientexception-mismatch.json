@@ -1,0 +1,18 @@
+{
+  "authored": "fail-closed non-deleted ClientException contract",
+  "env_id": "aws-denied",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/fixture-task:5",
+  "describe": {
+    "rc": 254,
+    "stdout": "",
+    "stderr": "An error occurred (ClientException) when calling the DescribeTaskDefinition operation: Access denied.\n"
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/aws-denied.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}

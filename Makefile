@@ -107,9 +107,8 @@ check-env-id:
 # .preview-runs/<ENV_ID>/, with the override rendered inside that
 # copy. PREVIEW_ROOT points there and is exported so Phase 3's
 # scripts/close-env.sh and scripts/lease.sh can target the same run
-# directory. rsync deletes stale source files but excludes Terraform data,
-# the rendered backend override, and LocalStack state so those persist
-# across runs sharing an ENV_ID.
+# directory. State itself uses the emulator's versioned state bucket at the
+# same envs/preview/<env_id>.tfstate key layout as AWS.
 render-localstack-backend:
 	mkdir -p "$$PREVIEW_ROOT"
 	rsync -a --delete --exclude '.terraform/' --exclude '.terraform-localstack*/' --exclude 'backend_override.tf' --exclude '*.tfstate*' envs/preview/ "$$PREVIEW_ROOT/"
@@ -191,6 +190,7 @@ destroy: check-backend-hcl
 endif
 
 test:
+	@bash tests/sweeper.sh
 	@bash tests/cleanup-verifier.sh
 	@bash tests/phase3-contracts.sh
 	@for d in modules/*/; do \
@@ -208,8 +208,7 @@ test:
 				mkdir -p "$$run_dir"; \
 				rsync -a --delete --exclude '.terraform/' --exclude '.terraform-localstack*/' --exclude 'backend_override.tf' --exclude '*.tfstate*' "$$d" "$$run_dir/"; \
 				[ -f "$$run_dir/.terraform.lock.hcl" ] || { echo "missing committed provider lock file in $$run_dir" >&2; exit 1; }; \
-				sed 's/ENV_ID_PLACEHOLDER/tftest/' "$${d}localstack.backend_override.tf.example" > "$$run_dir/backend_override.tf"; \
-				$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" init -reconfigure -input=false >/dev/null && \
+				$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" init -backend=false -input=false >/dev/null && \
 				$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir="$$run_dir" test; \
 			) || exit $$?; \
 		fi; \
