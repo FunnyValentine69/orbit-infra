@@ -1,6 +1,6 @@
 # Architecture
 
-Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
+Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ## Purpose
 
@@ -163,9 +163,9 @@ records `in_job:true` before closing the lease. The nightly sweeper refuses
 LocalStack because a later runner cannot recover that emulator. Lease CAS,
 lifecycle refusals, generation increments, and two-environment state isolation
 are proved locally against one emulator by `tests/localstack-concurrency.sh`.
-See ADR 0006. In-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and
-CODE-ONLY in CI until the post-merge dispatch; the nightly AWS sweeper remains
-CODE-ONLY until P0-3b.
+See ADR 0006. The post-merge dispatch ran as run 33825140591 (main 9b253b6);
+in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED in CI. The nightly AWS sweeper
+remains CODE-ONLY until P0-3b.
 
 ## Image supply chain summary
 

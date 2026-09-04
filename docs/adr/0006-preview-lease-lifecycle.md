@@ -1,6 +1,6 @@
 # ADR 0006: Preview environment lease lifecycle
 
-Status: Accepted (2026-09-02; amended 2026-09-03). Evidence gates: LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the Phase 4 run; in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and CODE-ONLY in CI until a post-merge `session-apply` dispatch; the nightly AWS sweeper is CODE-ONLY until P0-3b.
+Status: Accepted (2026-09-02; amended 2026-09-03). Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ## Context
 
@@ -95,9 +95,9 @@ not cancel sibling failures. LocalStack proves Stage 2 only in the same
 `session-apply` job, using the emulator's versioned state bucket and identical
 state-key layout; a second sweep over its new `closed` lease is a retention
 no-op. LocalStack apply and Stage 1 are LOCALSTACK-VERIFIED in CI by the
-Phase 4 run. In-job LocalStack Stage 2 is LOCALSTACK-VERIFIED locally and
-CODE-ONLY in CI until the post-merge `session-apply` dispatch. The nightly AWS
-sweeper is CODE-ONLY until P0-3b.
+Phase 4 run. The post-merge `session-apply` dispatch ran as run 33825140591
+(main 9b253b6); in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED in CI. The
+nightly AWS sweeper is CODE-ONLY until P0-3b.
 
 ### Cleanup verifier amendment (2026-09-02)
 
