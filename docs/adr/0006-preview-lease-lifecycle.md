@@ -73,8 +73,11 @@ manifest write requires that status, generation, and token. A pending task defin
 claim by CAS so a later sweep can retry; successful completion has no separate
 release. After every task definition is deleted or deleted-by-allowance, Stage
 2 requires the last Stage 1 verification run to record `passed:true`, `live:0`,
-and `indeterminate:0`. It does not repeat Stage 1's destroy-time probes. It
-paginates every version and delete marker for the exact
+and `indeterminate:0`. It does not repeat Stage 1's destroy-time probes. Stage
+2 additionally requires zero pending results outside the manifest
+task-definition ARN set; otherwise it releases its claim and hands the
+`closing` lease back to Stage 1 for re-verification before any state deletion.
+It paginates every version and delete marker for the exact
 `envs/preview/<env_id>.tfstate` key, deletes them in batches of at most 1,000,
 and performs a final empty-version read. A partial or indeterminate deletion
 transitions to `cleanup_failed` and clears the matching claim. `closed` is

@@ -301,9 +301,12 @@ An active `stage1_claim` means Stage 1 still owns the generation; repeat
 Stage 1 and Stage 2 both refuse it. Successful Stage 1 leaves that field null.
 A printed `DELETE_IN_PROGRESS` ARN is pending, not an error; the sweeper
 releases its matching claim and leaves the lease `closing` for the next nightly
-run. An indeterminate describe or state delete sets `cleanup_failed`, clears
-the matching claim, and retains state wherever deletion stopped. Resolve that
-exact failure and use the normal due Stage 1 retry only when Stage 1 must be
+run. Stage 2 also requires zero pending non-task results; otherwise it releases
+its claim and hands the `closing` lease back to Stage 1 for re-verification
+before any state deletion. An indeterminate describe or state delete sets
+`cleanup_failed`, clears the matching claim, and retains state wherever deletion
+stopped. Resolve that exact failure and use the normal due Stage 1 retry only
+when Stage 1 must be
 repeated; the sweeper never forces the three-attempt budget. A Stage 2 CAS loss
 exits 3 without closing the lease or deleting a concurrently added state
 version. Re-read the lease; do not rerun while it carries an active claim.

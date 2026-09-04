@@ -231,6 +231,15 @@ case "$service $operation" in
       echo "unexpected task definition" >&2
       exit 2
     }
+    if [ "${FAKE_VERIFICATION_CHANGE_AFTER_DESCRIBE:-0}" = 1 ]; then
+      env_id="$(jq -r '.env_id' "$FAKE_SCENARIO_FILE")"
+      lease_store="$FAKE_S3_DIR/leases_${env_id}.json.body"
+      lease_etag="$FAKE_S3_DIR/leases_${env_id}.json.etag"
+      jq --argjson run "$(jq -c '.late_verification_run' "$FAKE_SCENARIO_FILE")" \
+        '.manifest.verification_runs[-1] = $run' "$lease_store" > "$lease_store.next"
+      mv "$lease_store.next" "$lease_store"
+      printf '%s\n' "$(( $(cat "$lease_etag") + 1 ))" > "$lease_etag"
+    fi
     jq -jr '.describe.stdout' "$FAKE_SCENARIO_FILE"
     jq -jr '.describe.stderr' "$FAKE_SCENARIO_FILE" >&2
     exit "$(jq -r '.describe.rc' "$FAKE_SCENARIO_FILE")"
@@ -366,6 +375,10 @@ store_fixture() {
     lease="$(jq -c --argjson passed "$(jq -c '.verification_passed' "$fixture")" \
       '.manifest.verification_runs[-1].passed = $passed' <<< "$lease")"
   fi
+  if jq -e 'has("verification_run")' "$fixture" >/dev/null; then
+    lease="$(jq -c --argjson run "$(jq -c '.verification_run' "$fixture")" \
+      '.manifest.verification_runs = [$run]' <<< "$lease")"
+  fi
   store_lease "$lease"
   state_key="envs_preview_${env_id}.tfstate.json"
   jq -c '.state_versions' "$fixture" > "$fake_state/$state_key"
@@ -471,6 +484,25 @@ grep -Fq 'manual intervention is required' <<< "$manual_output" || fail "manual-
 pass "manual-intervention lease is a reasoned no-op through sweep env"
 
 reset_store
+non_task_pending_fixture="$FIXTURES/aws-non-task-pending.json"
+store_fixture "$non_task_pending_fixture"
+non_task_pending_output="$(FAKE_SCENARIO_FILE="$non_task_pending_fixture" \
+  run_aws "$SWEEPER" env non-task)"
+non_task_pending_lease="$(run_aws "$LEASE" get non-task)"
+grep -Fq 'running stage 1 for non-task (stage1-retry)' <<< "$non_task_pending_output" || \
+  fail "pending non-task resource did not classify the closing lease for Stage 1 retry"
+[ "$(cat "$tmp_dir/close-calls.log")" = "--generation 1 --from closing non-task" ] || \
+  fail "pending non-task Stage 1 retry did not preserve generation and closing status"
+jq -e '.status == "closing" and .stage2_claim == null' <<< "$non_task_pending_lease" >/dev/null || \
+  fail "pending non-task classification mutated the lease"
+[ "$(jq 'length' "$fake_state/envs_preview_non-task.tfstate.json")" -eq 1 ] || \
+  fail "pending non-task classification touched retained state"
+if grep -Eq '^s3api (list-object-versions|delete-objects) ' "$tmp_dir/aws-calls.log"; then
+  fail "pending non-task classification reached state-version operations"
+fi
+pass "closing lease with a pending non-task result returns to Stage 1"
+
+reset_store
 happy_fixture="$FIXTURES/aws-deleted-client-exception.json"
 store_fixture "$happy_fixture"
 FAKE_SCENARIO_FILE="$happy_fixture" SWEEP_DELETE_BATCH_SIZE=2 run_aws "$SWEEPER" env aws-happy >/dev/null
@@ -489,6 +521,25 @@ if [ "$(grep -c '^s3api delete-objects ' "$tmp_dir/aws-calls.log")" -ne 2 ]; the
   fail "paginated state inventory must delete versions and markers in bounded batches"
 fi
 pass "AWS Stage 2 accepts only the exact deleted ClientException, deletes every state version, and closes"
+
+reset_store
+non_task_reread_fixture="$FIXTURES/aws-non-task-pending-reread.json"
+store_fixture "$non_task_reread_fixture"
+non_task_reread_output="$(FAKE_SCENARIO_FILE="$non_task_reread_fixture" \
+  FAKE_VERIFICATION_CHANGE_AFTER_DESCRIBE=1 run_aws "$SWEEPER" env pending-race)"
+non_task_reread_lease="$(run_aws "$LEASE" get pending-race)"
+grep -Fq 'remains closing while non-task resources are pending; stage 1 re-verification required' \
+  <<< "$non_task_reread_output" || fail "post-claim non-task pending guard reason missing"
+jq -e '.status == "closing" and .stage2_claim == null
+  and .manifest.verification_runs[-1].summary.pending == 1' \
+  <<< "$non_task_reread_lease" >/dev/null || \
+  fail "post-claim non-task pending guard did not release the Stage 2 claim"
+[ "$(jq 'length' "$fake_state/envs_preview_pending-race.tfstate.json")" -eq 1 ] || \
+  fail "post-claim non-task pending guard touched retained state"
+if grep -Eq '^s3api (list-object-versions|delete-objects) ' "$tmp_dir/aws-calls.log"; then
+  fail "post-claim non-task pending guard reached state-version operations"
+fi
+pass "Stage 2 re-read releases its claim when non-task pending evidence appears"
 
 reset_store
 pending_fixture="$FIXTURES/aws-delete-in-progress.json"

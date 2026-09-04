@@ -94,6 +94,22 @@ validate_inventory_lease() {
   ' <<< "$lease" >/dev/null 2>&1
 }
 
+non_task_pending_present() {
+  local lease="$1"
+  jq -e '
+    [
+      (.manifest.candidates // [])[]
+      | select(.resource_type == "ecs:task-definition")
+      | .arn
+      | select(type == "string")
+    ] as $task_definition_arns
+    | any((.manifest.verification_runs[-1].results // [])[];
+        . as $result
+        | $result.outcome == "pending"
+          and ($task_definition_arns | index($result.arn)) == null)
+  ' <<< "$lease" >/dev/null 2>&1
+}
+
 classify_lease() {
   local lease="$1"
   local status updated_at updated_epoch age attempt manual next_retry retry_epoch
@@ -137,8 +153,13 @@ classify_lease() {
       fi
       ;;
     closing)
-      CLASSIFICATION=stage2
-      CLASSIFICATION_REASON=""
+      if non_task_pending_present "$lease"; then
+        CLASSIFICATION=stage1-retry
+        CLASSIFICATION_REASON="pending non-task resources require Stage 1 re-verification"
+      else
+        CLASSIFICATION=stage2
+        CLASSIFICATION_REASON=""
+      fi
       ;;
     closed)
       if [ "$age" -gt "$PRUNE_AFTER_SECONDS" ]; then
@@ -442,6 +463,12 @@ stage2() {
   state_key="envs/preview/${env_id}.tfstate"
   lease="$(get_lease "$env_id")" || exit $?
   require_closing_generation_claim "$lease" "$generation" "$claim" || exit $?
+  if non_task_pending_present "$lease"; then
+    "$LEASE_SH" release-stage2 "$env_id" \
+      --generation "$generation" --claim "$claim" >/dev/null
+    echo "sweep.sh: $env_id remains closing while non-task resources are pending; stage 1 re-verification required"
+    return 0
+  fi
   if ! entries="$(list_state_versions "$state_key")"; then
     transition_stage2_failure "$env_id" "$generation" "$claim" "state deletion failed while listing retained versions"
   fi

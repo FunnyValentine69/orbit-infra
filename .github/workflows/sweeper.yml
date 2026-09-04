@@ -124,6 +124,19 @@ jobs:
           aws-region: us-east-1
           mask-aws-account-id: true
 
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: echo "version=$(scripts/tool-version.sh terraform)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Write AWS backend config
+        run: scripts/write-preview-backend.sh
+
       - name: Read status before sweep
         id: before
         env:

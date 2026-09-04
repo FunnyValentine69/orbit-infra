@@ -1,0 +1,36 @@
+{
+  "authored": "Stage 2 post-claim re-read gains a pending non-task deletion transition",
+  "env_id": "pending-race",
+  "target": "aws",
+  "task_definition_arn": "arn:aws:ecs:region:account:task-definition/fixture-task:11",
+  "late_verification_run": {
+    "passed": true,
+    "summary": { "gone": 1, "pending": 1, "live": 0, "indeterminate": 0 },
+    "results": [
+      {
+        "resource_type": "ecs:task-definition",
+        "id": "arn:aws:ecs:region:account:task-definition/fixture-task:11",
+        "arn": "arn:aws:ecs:region:account:task-definition/fixture-task:11",
+        "outcome": "gone"
+      },
+      {
+        "resource_type": "ec2:vpc-endpoint",
+        "id": "vpce-pending",
+        "arn": "arn:aws:ec2:region:account:vpc-endpoint/vpce-pending",
+        "outcome": "pending"
+      }
+    ]
+  },
+  "describe": {
+    "rc": 254,
+    "stdout": "",
+    "stderr": "An error occurred (ClientException) when calling the DescribeTaskDefinition operation: Unable to describe task definition.\n"
+  },
+  "state_versions": [
+    {
+      "Key": "envs/preview/pending-race.tfstate",
+      "VersionId": "version-1",
+      "type": "version"
+    }
+  ]
+}

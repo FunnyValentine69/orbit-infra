@@ -267,6 +267,56 @@ if ! grep -Fq "if: always() && (failure() || cancelled()) && inputs.target == 'a
 fi
 
 apply_workflow="$REPO_ROOT/.github/workflows/session-apply.yml"
+sweeper_workflow="$REPO_ROOT/.github/workflows/sweeper.yml"
+plan_workflow="$REPO_ROOT/.github/workflows/terraform-plan.yml"
+python3 - "$sweeper_workflow" "$plan_workflow" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+
+def one_index(steps, predicate, label):
+    matches = [index for index, step in enumerate(steps) if predicate(step)]
+    if len(matches) != 1:
+        raise SystemExit(f"expected one {label}, found {len(matches)}")
+    return matches[0]
+
+
+sweeper = yaml.safe_load(Path(sys.argv[1]).read_text())
+sweep_steps = sweeper["jobs"]["sweep"]["steps"]
+setup_index = one_index(
+    sweep_steps,
+    lambda step: step.get("uses") == "hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e",
+    "pinned Terraform setup in sweeper sweep job",
+)
+backend_index = one_index(
+    sweep_steps,
+    lambda step: step.get("run") == "scripts/write-preview-backend.sh",
+    "AWS backend writer in sweeper sweep job",
+)
+sweep_index = one_index(
+    sweep_steps,
+    lambda step: 'scripts/sweep.sh env "$ENV_ID"' in step.get("run", ""),
+    "environment sweep in sweeper sweep job",
+)
+if not setup_index < sweep_index or not backend_index < sweep_index:
+    raise SystemExit("sweeper must set up Terraform and write the AWS backend before sweeping an environment")
+
+plan = yaml.safe_load(Path(sys.argv[2]).read_text())
+plan_steps = plan["jobs"]["plan-localstack"]["steps"]
+bootstrap_index = one_index(
+    plan_steps,
+    lambda step: step.get("run") == "make bootstrap-apply TARGET=localstack",
+    "LocalStack bootstrap apply in terraform-plan plan-localstack job",
+)
+plan_index = one_index(
+    plan_steps,
+    lambda step: "make plan TARGET=localstack" in step.get("run", ""),
+    "LocalStack Terraform plan in terraform-plan plan-localstack job",
+)
+if not bootstrap_index < plan_index:
+    raise SystemExit("terraform-plan must bootstrap LocalStack state before planning")
+PY
 validate_guard="$(sed -n '/^  validate-input:/,/^  apply:/s/^    if: //p' "$apply_workflow")"
 apply_guard="$(sed -n '/^  apply:/,/^    runs-on:/s/^    if: //p' "$apply_workflow")"
 setup_localstack_guard="$(sed -n '/      - name: Start LocalStack/,/        uses:/s/^        if: //p' "$apply_workflow")"
