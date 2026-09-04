@@ -1,6 +1,6 @@
 # orbit-infra
 
-Ephemeral, near-zero-idle AWS platform for a containerized workload: Terraform, ECS Fargate (ARM64), GitHub Actions with OIDC (no static cloud keys), signed images, per-environment lease lifecycle.
+Ephemeral, near-zero-idle AWS platform for a containerized workload: Terraform, ECS Fargate (ARM64), GitHub Actions with OIDC (no static cloud keys), signed-image pipeline, per-environment lease lifecycle.
 
 [![terraform-plan](https://github.com/FunnyValentine69/orbit-infra/actions/workflows/terraform-plan.yml/badge.svg)](https://github.com/FunnyValentine69/orbit-infra/actions/workflows/terraform-plan.yml)
 ![Terraform](https://img.shields.io/badge/IaC-Terraform-844FBA)
@@ -12,7 +12,7 @@ Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 all
 
 ## Why this project exists
 
-Most demo infrastructure runs always-on and costs money whether or not anyone is using it. orbit-infra is ephemeral and near-zero-idle instead: every environment is created and destroyed on demand by a lease-managed lifecycle, so nothing runs (and almost nothing costs money: one KMS key at about a dollar a month) when no one is using it. It is workload-agnostic — the platform, not any one application, is the deliverable. All CI/CD runs through GitHub Actions federated with AWS via OIDC; no static cloud keys exist anywhere in the pipeline. It ships a placeholder image built from public source so it applies end to end without private code, and separately deploys an upstream workload for demonstration; that upstream's source and images are never publicly published.
+An always-on ECS/ALB/ClickHouse/Redis stack for this platform would cost money whether or not it is used. An ephemeral, near-zero-idle AWS platform: every environment is created and destroyed on demand by a lease-managed lifecycle, so nothing runs (and almost nothing costs money: one KMS key at about a dollar a month) when no one is using it. It is workload-agnostic — the platform, not any one application, is the deliverable. Every real-AWS access from CI runs through GitHub Actions federated with AWS via OIDC, with no static cloud keys; the LocalStack lane uses the emulator's dummy credentials and assumes no AWS role. It ships a placeholder image built from public source so it applies end to end without private code, and separately deploys an upstream workload for demonstration; that upstream's source and images are never publicly published.
 
 ## Highlights
 
@@ -21,7 +21,7 @@ Most demo infrastructure runs always-on and costs money whether or not anyone is
 - Per-environment lease lifecycle on S3 with ETag compare-and-swap and a two-stage close: stage 1 destroys and verifies with an exclusive claim, stage 2 re-probes task definitions and removes state versions under its own claim.
 - LocalStack CI lane proves apply, Stage 1, and the successful in-job Stage 2 allowance/close path without AWS spend (stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only), using the GitHub Student Developer Pack's LocalStack Student plan.
 - PR checks that must be green are `gates` on every PR and, on repository-owner-authored same-repository PRs, `plan-localstack` and `infracost`. The separate `oidc-smoke.yml` jobs skip fork PRs and runs whose `github.actor` is `dependabot[bot]`; their three `assume-*` jobs stay red on same-repository PRs until P0-3b.
-- KMS-signed private images with local-build attestation: upstream images are built locally from a pinned `git archive` and never built in hosted CI; the separate `sign-images.yml` hosted workflow scans, KMS-signs, and attests the already-pushed digests with Rekor upload disabled.
+- The private-image signing pipeline is designed and implemented, but real-AWS execution is CODE-ONLY until P0-3b: upstream images are built locally from a pinned `git archive` and never built in hosted CI; `sign-images.yml` scans, KMS-signs, and attests the already-pushed digests with Rekor upload disabled.
 - Fail-closed verifier fixture suites: 27 sweeper cases and 48 cleanup-verifier cases cover the pending, hand-back, prune, and CAS-loss paths.
 
 ## System overview
@@ -31,7 +31,7 @@ flowchart LR
     gha["GitHub Actions<br/>workflows"] -->|"OIDC assume"| planReader["plan-reader role<br/>read-only"]
     gha -->|"OIDC assume"| deployer["deployer role"]
     gha -->|"OIDC assume"| publisher["publisher role"]
-    gha -.->|"same workflows, test credentials<br/>no AWS role, emulator target"| localstack["LocalStack dev/CI lane"]
+    gha -.->|"selected workflows, test credentials<br/>no AWS role, emulator target"| localstack["LocalStack dev/CI lane"]
     deployer --> leases[("S3 state bucket<br/>per-env lease objects")]
     deployer --> vpc
     publisher --> ecr[("ECR repos")]
@@ -77,6 +77,7 @@ stateDiagram-v2
     closing --> cleanup_failed: cleanup_failed on any Stage 1 failure or Stage 2 indeterminate or partial failure
     cleanup_failed --> closing: due begin-cleanup below three automatic attempts per generation, or audited begin-cleanup --force-retry
     closing --> closed: sweeper removes and verifies state versions, complete-stage2 records proof and sets closed
+    closed --> open: reopen within retention, generation N plus 1
     closed --> [*]: prune after seven days
 ```
 
