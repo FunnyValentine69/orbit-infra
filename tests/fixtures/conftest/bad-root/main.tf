@@ -41,7 +41,7 @@ resource "aws_s3_bucket" "half" {
 }
 
 resource "aws_s3_bucket_public_access_block" "half" {
-  bucket = aws_s3_bucket.half.id
+  bucket = aws_s3_bucket.half.bucket
 
   block_public_acls       = false
   block_public_policy     = false
@@ -58,7 +58,7 @@ resource "aws_s3_bucket" "database" {
 }
 
 resource "aws_s3_bucket_public_access_block" "database" {
-  bucket = aws_s3_bucket.database.id
+  bucket = aws_s3_bucket.database.bucket
 
   block_public_acls       = true
   block_public_policy     = true

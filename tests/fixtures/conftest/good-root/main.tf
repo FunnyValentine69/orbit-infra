@@ -37,7 +37,7 @@ resource "aws_s3_bucket" "data" {
 }
 
 resource "aws_s3_bucket_public_access_block" "data" {
-  bucket = aws_s3_bucket.data.id
+  bucket = aws_s3_bucket.data.bucket
 
   block_public_acls       = true
   block_public_policy     = true

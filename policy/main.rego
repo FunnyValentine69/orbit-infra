@@ -1,7 +1,12 @@
 # This policy evaluates root-module resources only where Terraform configuration
-# correlation is required. ALB exemptions are structural references, never name
-# based. Planned no-op resources are evaluated because a sibling protection
-# resource can be deleted or weakened while the protected resource is unchanged.
+# correlation is required. S3 protection requires one block with a whole-resource
+# reference plus equal, known planned bucket names; use `.bucket` so Terraform can
+# plan that value. An ALB exemption requires exactly one distinct security-group
+# reference and a planned root ALB instance; when known, its planned attachment
+# list must contain the group's planned ID. A conditional between one planned group and a literal pre-existing
+# group ID remains indistinguishable on a fresh create. Unknown legacy-rule
+# direction is treated as potentially ingress. Planned no-op resources are
+# evaluated because sibling resources can be deleted or weakened independently.
 package main
 
 root_resources := object.get(
@@ -63,12 +68,39 @@ bucket_is_protected(bucket_address) if {
 	some block_change in resource_changes
 	block_change.address == block_address
 	planned(block_change)
+	bucket_target_matches(bucket_address, block_change)
 
 	after := block_change.change.after
 	after.block_public_acls == true
 	after.block_public_policy == true
 	after.ignore_public_acls == true
 	after.restrict_public_buckets == true
+}
+
+bucket_target_matches(bucket_address, block_change) if {
+	some bucket_change in resource_changes
+	bucket_change.address == bucket_address
+	planned(bucket_change)
+
+	bucket_name := object.get(bucket_change.change.after, "bucket", null)
+	is_string(bucket_name)
+	object.get(object.get(bucket_change.change, "after_unknown", {}), "bucket", false) != true
+
+	block_bucket_name := object.get(block_change.change.after, "bucket", null)
+	is_string(block_bucket_name)
+	object.get(object.get(block_change.change, "after_unknown", {}), "bucket", false) != true
+	block_bucket_name == bucket_name
+}
+
+bucket_block_target_invalid(bucket_address) if {
+	blocks := protecting_block_addresses(bucket_address)
+	count(blocks) == 1
+	some block_address in blocks
+
+	some block_change in resource_changes
+	block_change.address == block_address
+	planned(block_change)
+	not bucket_target_matches(bucket_address, block_change)
 }
 
 deny contains msg if {
@@ -99,6 +131,21 @@ deny contains msg if {
 	planned(bucket)
 	not startswith(bucket.address, "module.")
 	not contains(bucket.address, "[")
+	bucket_block_target_invalid(bucket.address)
+
+	msg := sprintf(
+		"%s: public access block target is unknown or does not match at plan time; reference the bucket via .bucket",
+		[bucket.address],
+	)
+}
+
+deny contains msg if {
+	some bucket in resource_changes
+	bucket.type == "aws_s3_bucket"
+	planned(bucket)
+	not startswith(bucket.address, "module.")
+	not contains(bucket.address, "[")
+	not bucket_block_target_invalid(bucket.address)
 	not bucket_is_protected(bucket.address)
 
 	msg := sprintf(
@@ -107,25 +154,71 @@ deny contains msg if {
 	)
 }
 
+load_balancer_group_addresses(load_balancer) := addresses if {
+	addresses := {address |
+		some group in root_resources
+		group.type == "aws_security_group"
+		references := object.get(
+			object.get(object.get(load_balancer, "expressions", {}), "security_groups", {}),
+			"references",
+			[],
+		)
+		some reference in references
+		reference == group.address
+		address := group.address
+	}
+}
+
+load_balancer_instance_matches(configuration_address, instance_address) if {
+	instance_address == configuration_address
+}
+
+load_balancer_instance_matches(configuration_address, instance_address) if {
+	startswith(instance_address, sprintf("%s[", [configuration_address]))
+	endswith(instance_address, "]")
+}
+
+planned_group_id(group_address) := id if {
+	some group_change in resource_changes
+	group_change.address == group_address
+	planned(group_change)
+	object.get(object.get(group_change.change, "after_unknown", {}), "id", false) != true
+	id := object.get(group_change.change.after, "id", null)
+	is_string(id)
+}
+
+planned_group_id_unknown(group_address) if {
+	some group_change in resource_changes
+	group_change.address == group_address
+	planned(group_change)
+	object.get(object.get(group_change.change, "after_unknown", {}), "id", false) == true
+}
+
+load_balancer_attaches_group(load_balancer_change, group_address) if {
+	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "security_groups", false) == true
+	planned_group_id_unknown(group_address)
+}
+
+load_balancer_attaches_group(load_balancer_change, group_address) if {
+	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "security_groups", false) != true
+	security_groups := object.get(load_balancer_change.change.after, "security_groups", null)
+	is_array(security_groups)
+	group_id := planned_group_id(group_address)
+	group_id in security_groups
+}
+
 planned_alb_groups contains address if {
 	some load_balancer in root_resources
 	load_balancer.type == "aws_lb"
+	groups := load_balancer_group_addresses(load_balancer)
+	count(groups) == 1
+	some address in groups
 
 	some load_balancer_change in resource_changes
-	load_balancer_change.address == load_balancer.address
+	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
 	planned(load_balancer_change)
 	object.get(load_balancer_change.change.after, "load_balancer_type", "application") == "application"
-
-	some group in root_resources
-	group.type == "aws_security_group"
-	references := object.get(
-		object.get(object.get(load_balancer, "expressions", {}), "security_groups", {}),
-		"references",
-		[],
-	)
-	some reference in references
-	reference == group.address
-	address := group.address
+	load_balancer_attaches_group(load_balancer_change, address)
 }
 
 is_planned_alb_group(address) if {
@@ -270,11 +363,19 @@ legacy_cidr_unknown(change) if {
 	object.get(object.get(change, "after_unknown", {}), "ipv6_cidr_blocks", false) == true
 }
 
+legacy_potential_ingress(change) if {
+	object.get(change.after, "type", null) == "ingress"
+}
+
+legacy_potential_ingress(change) if {
+	object.get(object.get(change, "after_unknown", {}), "type", false) == true
+}
+
 deny contains msg if {
 	some rule in resource_changes
 	rule.type == "aws_security_group_rule"
 	planned(rule)
-	rule.change.after.type == "ingress"
+	legacy_potential_ingress(rule.change)
 	not rule_is_for_planned_alb(rule.address)
 	legacy_ipv4_open(rule.change.after)
 
@@ -285,7 +386,7 @@ deny contains msg if {
 	some rule in resource_changes
 	rule.type == "aws_security_group_rule"
 	planned(rule)
-	rule.change.after.type == "ingress"
+	legacy_potential_ingress(rule.change)
 	not rule_is_for_planned_alb(rule.address)
 	legacy_ipv6_open(rule.change.after)
 
@@ -296,7 +397,7 @@ deny contains msg if {
 	some rule in resource_changes
 	rule.type == "aws_security_group_rule"
 	planned(rule)
-	rule.change.after.type == "ingress"
+	legacy_potential_ingress(rule.change)
 	not rule_is_for_planned_alb(rule.address)
 	legacy_cidr_unknown(rule.change)
 

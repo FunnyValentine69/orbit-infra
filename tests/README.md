@@ -28,7 +28,7 @@ Run the Conftest regression suite without AWS or LocalStack:
 bash tests/conftest-gate.sh
 ```
 
-The suite requires `conftest verify` to pass all 24 Rego unit tests, accepts
+The suite requires `conftest verify` to pass all 35 Rego unit tests, accepts
 the good plan without reporting `aws_security_group.alb`, and requires the bad
 plan to exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
@@ -36,7 +36,15 @@ plan to exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_security_group_rule.legacy_open`, and
 `aws_default_security_group.default`. It also requires the bad plan not to
 report the protected `aws_s3_bucket.database`. The suite currently reports 14
-cases.
+cases. Bucket protection requires one unambiguous whole-resource reference,
+equal known planned bucket names exposed through `.bucket`, and all four public
+access flags. The ALB exemption requires one distinct group reference and a
+planned root application-ALB instance; known planned attachment IDs must agree,
+while both unknown on a fresh create rely on the single-reference rule. Unknown
+legacy-rule direction is treated as potentially ingress. A conditional between
+one planned group and a literal pre-existing group ID remains an accepted
+plan-time residual because the configuration reference set cannot distinguish
+it.
 
 Fixture provenance: `good-plan.json` and `bad-plan.json` in
 `tests/fixtures/conftest/` are `recorded_from` LocalStack 2026.8.1 with

@@ -253,16 +253,24 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 24
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 35
   Rego unit tests and the 14-case shell suite against fixtures that are
   LOCALSTACK-recorded locally. The root-module policy denies a planned S3
-  bucket without exactly one fully locked public-access block correlated by
-  an exact configuration reference; no-op buckets are evaluated, pure deletes
-  are skipped, and `count`/`for_each` instances fail closed. It also denies
-  `0.0.0.0/0`, `::/0`, or unknown ingress on `aws_security_group`,
+  bucket without exactly one fully locked public-access block whose bucket
+  expression references exactly one whole-resource bucket address and whose
+  known planned `after.bucket` equals the bucket's known planned name; `.bucket`
+  references expose that equality. No-op buckets are evaluated, pure deletes
+  are skipped, and `count`/`for_each` instances fail closed. The policy also
+  denies `0.0.0.0/0`, `::/0`, or unknown ingress on `aws_security_group`,
   `aws_default_security_group`, `aws_vpc_security_group_ingress_rule`, and
-  `aws_security_group_rule` unless a planned `aws_lb` instance structurally
-  references that security group. In `terraform-plan.yml`, the `gates` job
+  `aws_security_group_rule`; unknown legacy-rule direction is treated as
+  potentially ingress. An exemption requires exactly one distinct group
+  reference from a planned root `aws_lb` application instance, including an
+  indexed instance; when known, the ALB's planned `security_groups` list must
+  contain the group's planned `after.id`. A child-module load balancer never exempts a group. On a fresh
+  create, a conditional between one planned group and a literal pre-existing
+  group ID is an accepted plan-time residual because the reference set cannot
+  distinguish it. In `terraform-plan.yml`, the `gates` job
   runs the gate and `plan-localstack` tests the live LocalStack plan: VERIFIED
   in CI on PR #N's final head; run ids in the PR description. In
   `session-apply.yml`, Conftest gates the saved AWS plan before `make apply`;
