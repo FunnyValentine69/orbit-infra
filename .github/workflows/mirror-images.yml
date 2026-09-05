@@ -235,13 +235,13 @@ jobs:
           if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             --type https://github.com/FunnyValentine69/orbit-infra/placeholder-build/v1 \
             "$IMAGE"); then
-            echo "placeholder attestation verification failed" >&2
+            echo "$IMAGE: placeholder attestation verification failed" >&2
             exit 1
           fi
           jq -e -s --arg source_sha "$SOURCE_SHA" '
               any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
             ' <<< "$out" >/dev/null || {
-            echo "no matching placeholder attestation found" >&2
+            echo "$IMAGE: no matching placeholder attestation found" >&2
             exit 1
           }
 
@@ -336,14 +336,14 @@ jobs:
           if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
             "${dest}@${SOURCE_DIGEST}"); then
-            echo "redis mirror attestation verification failed" >&2
+            echo "${dest}@${SOURCE_DIGEST}: redis mirror attestation verification failed" >&2
             exit 1
           fi
           jq -e -s --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
               any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
                 | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
             ' <<< "$out" >/dev/null || {
-            echo "no matching redis mirror attestation found" >&2
+            echo "${dest}@${SOURCE_DIGEST}: no matching redis mirror attestation found" >&2
             exit 1
           }
 
@@ -446,14 +446,14 @@ jobs:
           if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
             --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
             "${dest}@${SOURCE_DIGEST}"); then
-            echo "clickhouse mirror attestation verification failed" >&2
+            echo "${dest}@${SOURCE_DIGEST}: clickhouse mirror attestation verification failed" >&2
             exit 1
           fi
           jq -e -s --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
               any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
                 | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
             ' <<< "$out" >/dev/null || {
-            echo "no matching clickhouse mirror attestation found" >&2
+            echo "${dest}@${SOURCE_DIGEST}: no matching clickhouse mirror attestation found" >&2
             exit 1
           }
 
