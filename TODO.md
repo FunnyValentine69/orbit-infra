@@ -92,7 +92,7 @@
 - [ ] P5-18: `use_lockfile` makes Terraform write the sibling `<state-key>.tflock` object, and on the versioned state bucket its release leaves versions and delete markers that Stage 2's exact-key selectors skip, so a lease can close while lock history remains; include the lock key in Stage 2's deletion set and in the final empty-state verification, with a fixture (Tier-3 P2 on PR #7 head 0aef665)
 - [ ] P5-19: `docs/iam-matrix.md` (re-baseline rule 3) was never created; author the IAM action-condition matrix as a prerequisite of P0-3d; until then the threat model's IAM rows are unvalidated designs
 - [ ] P5-20: some deployer grants are account-wide with no tag condition because AWS documents no condition key (for example `ecs:DeregisterTaskDefinition` in `EcsStarOnly`); evaluate resource-ARN scoping where AWS supports it or a compensating control, and record the residual in the threat model (Tier-2 P1 on the P5-2 PR)
-- [ ] P5-21: apply verifies image signature and lock-file provenance but not scan status or freshness, so a digest signed after passing Trivy stays deployable if a later scan would fail; attest scan results and enforce a freshness window at apply, or document the accepted window (Tier-2 P1 on the P5-2 PR)
+- [ ] P5-21: apply verifies image signature and lock-file provenance but not scan status or freshness, and any eligible main-ref workflow holding the publisher role can sign and attest without the Trivy gate; attest scan results under an independently trusted identity and enforce them (with a freshness window) at apply, or document the accepted main-branch trust (Tier-2 P1s on the P5-2 PR)
 
 ## End-of-project decisions (user, low priority)
 - [ ] Rewrite or keep the institutional author email on the first 20 commits of main
