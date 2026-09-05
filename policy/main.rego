@@ -7,8 +7,12 @@
 # group, ALB attachment, and rule target are all unknown through exact whole-resource
 # and `.id` references, and no managed non-load-balancer resource or root module
 # call may consume the group. Prefix-list ingress fails closed outside this exemption;
-# unknown legacy-rule direction is potentially ingress. Planned no-op resources are evaluated because sibling resources can be deleted
-# or weakened independently. Data-source reads are excluded from every selector.
+# unknown legacy-rule direction is potentially ingress. Terraform plan JSON does not
+# serialize locals, so a fresh-create ALB-group consumer hidden only behind local or
+# other indirection remains undetectable; this repository's root attaches the ALB
+# group only to the ALB, which the live-plan gate checks through direct references.
+# Planned no-op resources are evaluated because sibling resources can be deleted or
+# weakened independently. Data-source reads are excluded from every selector.
 package main
 
 root_resources := [resource |
@@ -34,6 +38,29 @@ deny contains msg if {
 	not valid_plan_document
 
 	msg := "input is not a terraform show -json plan document"
+}
+
+forgotten_resource_type(resource_type) if {
+	resource_type in {
+		"aws_s3_bucket",
+		"aws_s3_bucket_public_access_block",
+		"aws_security_group",
+		"aws_default_security_group",
+		"aws_security_group_rule",
+		"aws_vpc_security_group_ingress_rule",
+	}
+}
+
+forgotten(resource_change) if {
+	"forget" in object.get(object.get(resource_change, "change", {}), "actions", [])
+}
+
+deny contains msg if {
+	some resource_change in resource_changes
+	forgotten_resource_type(resource_change.type)
+	forgotten(resource_change)
+
+	msg := sprintf("%s: forgotten resource protections cannot be verified", [resource_change.address])
 }
 
 planned(resource_change) if {
@@ -209,6 +236,28 @@ load_balancer_instance_matches(configuration_address, instance_address) if {
 	endswith(instance_address, "]")
 }
 
+planned_application_load_balancer(resource_change) if {
+	resource_change.type == "aws_lb"
+	planned(resource_change)
+	object.get(resource_change.change.after, "load_balancer_type", null) == "application"
+	object.get(object.get(resource_change.change, "after_unknown", {}), "load_balancer_type", false) != true
+}
+
+configuration_load_balancer_has_non_application_planned_instance(load_balancer) if {
+	some load_balancer_change in resource_changes
+	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
+	planned(load_balancer_change)
+	not planned_application_load_balancer(load_balancer_change)
+}
+
+configuration_load_balancer_is_only_planned_application(load_balancer) if {
+	load_balancer.type == "aws_lb"
+	some load_balancer_change in resource_changes
+	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
+	planned_application_load_balancer(load_balancer_change)
+	not configuration_load_balancer_has_non_application_planned_instance(load_balancer)
+}
+
 planned_group_id(group_address) := id if {
 	some group_change in resource_changes
 	group_change.address == group_address
@@ -249,9 +298,7 @@ planned_alb_groups contains address if {
 
 	some load_balancer_change in resource_changes
 	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
-	planned(load_balancer_change)
-	object.get(load_balancer_change.change.after, "load_balancer_type", null) == "application"
-	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "load_balancer_type", false) != true
+	planned_application_load_balancer(load_balancer_change)
 	load_balancer_attaches_group(load_balancer, load_balancer_change, address)
 }
 
@@ -279,9 +326,32 @@ security_group_rule_source_reference(resource, path) if {
 	path[count(path) - 2] == "security_groups"
 }
 
+planned_security_group_source_reference(resource_change, path) if {
+	resource_change.type == "aws_security_group"
+	count(path) == 4
+	path[0] in {"ingress", "egress"}
+	is_number(path[1])
+	path[2] == "security_groups"
+	is_number(path[3])
+}
+
+planned_value_consumes_group(group_address) if {
+	group_id := planned_group_id(group_address)
+	some resource_change in resource_changes
+	resource_change.address != group_address
+	planned(resource_change)
+	not group_rule_resource(resource_change)
+	not planned_application_load_balancer(resource_change)
+	walk(resource_change.change.after, [path, value])
+	count(path) > 0
+	is_string(value)
+	value == group_id
+	not planned_security_group_source_reference(resource_change, path)
+}
+
 root_resource_consumes_group(group_address) if {
 	some resource in root_resources
-	resource.type != "aws_lb"
+	not configuration_load_balancer_is_only_planned_application(resource)
 	not group_rule_resource(resource)
 	walk(object.get(resource, "expressions", {}), [path, value])
 	count(path) > 0
@@ -313,6 +383,10 @@ group_has_non_load_balancer_consumer(group_address) if {
 	module_call_consumes_group(group_address)
 }
 
+group_has_non_load_balancer_consumer(group_address) if {
+	planned_value_consumes_group(group_address)
+}
+
 planned_alb_group_shared(address) if {
 	address in planned_alb_groups
 	group_has_non_load_balancer_consumer(address)
@@ -320,6 +394,13 @@ planned_alb_group_shared(address) if {
 
 group_deny_message(group_address, default_message) := msg if {
 	planned_alb_group_shared(group_address)
+	planned_value_consumes_group(group_address)
+	msg := sprintf("%s: ALB group is attached to a non-load-balancer resource by planned value", [group_address])
+}
+
+group_deny_message(group_address, default_message) := msg if {
+	planned_alb_group_shared(group_address)
+	not planned_value_consumes_group(group_address)
 	msg := sprintf("%s: ALB group is shared with a non-load-balancer consumer", [group_address])
 }
 

@@ -1775,3 +1775,232 @@ test_alb_group_referenced_as_egress_source_passes if {
 
 	count(messages) == 0
 }
+
+test_forgotten_bucket_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": []}},
+		"resource_changes": [{
+			"address": "aws_s3_bucket.data",
+			"mode": "managed", "type": "aws_s3_bucket",
+			"change": {"actions": ["forget"], "after": null},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_s3_bucket.data: forgotten resource protections cannot be verified" in messages
+}
+
+test_forgotten_public_access_block_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": []}},
+		"resource_changes": [{
+			"address": "aws_s3_bucket_public_access_block.data",
+			"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+			"change": {"actions": ["forget"], "after": null},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_s3_bucket_public_access_block.data: forgotten resource protections cannot be verified" in messages
+}
+
+test_forgotten_security_group_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": []}},
+		"resource_changes": [{
+			"address": "aws_security_group.service",
+			"mode": "managed", "type": "aws_security_group",
+			"change": {"actions": ["forget"], "after": null},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: forgotten resource protections cannot be verified" in messages
+}
+
+test_alb_group_also_attached_to_network_load_balancer_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_lb.network", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}, "after_unknown": {"id": true}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+			{
+				"address": "aws_lb.network", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "network"}, "after_unknown": {"security_groups": true}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.alb: ALB group is shared with a non-load-balancer consumer" in messages
+}
+
+test_alb_group_also_referenced_by_unknown_type_load_balancer_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_lb.unknown", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}, "after_unknown": {"id": true}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+			{
+				"address": "aws_lb.unknown", "mode": "managed", "type": "aws_lb",
+				"change": {
+					"after": {"load_balancer_type": null},
+					"after_unknown": {"load_balancer_type": true, "security_groups": true},
+				},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.alb: ALB group is shared with a non-load-balancer consumer" in messages
+}
+
+test_known_alb_group_consumed_by_child_module_ecs_planned_value_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+			{
+				"address": "module.api.aws_ecs_service.this", "mode": "managed", "type": "aws_ecs_service",
+				"change": {"after": {"network_configuration": [{"security_groups": ["sg-alb"]}]}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.alb: ALB group is attached to a non-load-balancer resource by planned value" in messages
+}
+
+test_known_alb_group_planned_ingress_source_reference_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{"address": "aws_security_group.backend", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+			{
+				"address": "aws_security_group.backend", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"ingress": [{"security_groups": ["sg-alb"]}]}},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_fresh_create_alb_group_local_indirection_residual_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {
+			"resources": [
+				{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+				{
+					"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+					"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+				},
+			],
+			"module_calls": {"api": {"expressions": {
+				"security_group_ids": {"references": ["local.x"]},
+			}}},
+		}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {
+					"after": {"id": null, "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]},
+					"after_unknown": {"id": true},
+				},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+			{
+				"address": "module.api.aws_ecs_service.this", "mode": "managed", "type": "aws_ecs_service",
+				"change": {
+					"after": {"network_configuration": [{"security_groups": [null]}]},
+					"after_unknown": {"network_configuration": [{"security_groups": [true]}]},
+				},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_known_non_alb_group_planned_value_consumer_keeps_default_deny if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-service", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "module.api.aws_ecs_service.this", "mode": "managed", "type": "aws_ecs_service",
+				"change": {"after": {"network_configuration": [{"security_groups": ["sg-service"]}]}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: non-ALB security group has IPv4 ingress open to 0.0.0.0/0" in messages
+}

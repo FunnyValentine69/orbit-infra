@@ -29,7 +29,7 @@ bash tests/conftest-gate.sh
 ```
 
 The suite first runs fixture hygiene against both committed plans, then
-requires `conftest verify` to pass all 62 Rego unit tests. It accepts the good
+requires `conftest verify` to pass all 71 Rego unit tests. It accepts the good
 plan without reporting `aws_security_group.alb`, and requires the bad plan to
 exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
@@ -43,11 +43,19 @@ equal known planned bucket names exposed through `.bucket`, and all four public
 access flags. Policy selectors accept only managed resources, so data-source
 buckets are ignored and data-source load balancers cannot exempt a managed
 group. Open, unknown, or prefix-list non-ALB ingress is denied because this
-gate cannot prove a managed prefix list safe. The ALB exemption requires one
-distinct group reference and a planned root application-ALB instance; known
-planned attachment IDs must agree, and recursively discovered consumers in root
-managed non-load-balancer resources or root module calls revoke the exemption.
-Rule-definition references and another security group's ingress or egress source do not.
+gate cannot prove a managed prefix list safe. Governed resources whose actions
+contain `forget` are denied because their protections cannot be verified. The
+ALB exemption requires one distinct group reference and a planned root
+application-ALB instance; known planned attachment IDs must agree. Direct
+configuration references from a network, gateway, unknown-type, or unplanned
+`aws_lb`, other root managed resources, or root module calls revoke the
+exemption, as does a matching known group ID anywhere in any managed planned
+resource at any module depth. Planned application ALBs, rule-definition
+resources, and another security group's ingress or egress source are excluded
+from those consumer checks. Terraform plan JSON does not serialize locals, so a
+fresh-create ALB-group consumer hidden only behind local or other indirection
+remains undetectable; this repository's own root attaches the ALB group only to
+the ALB, which the live-plan gate checks through direct references.
 An unknown attachment must reference exactly the group's whole-resource and
 `.id` traversals. A standalone ingress
 rule, including an indexed instance, must also plan a known target equal to the

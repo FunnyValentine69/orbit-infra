@@ -253,7 +253,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 62
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 71
   Rego unit tests and the 17-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The
   root-module policy considers only managed resources and denies a planned S3
@@ -261,7 +261,8 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   expression references exactly one whole-resource bucket address and whose
   known planned `after.bucket` equals the bucket's known planned name; `.bucket`
   references expose that equality. No-op buckets are evaluated, pure deletes
-  are skipped, and `count`/`for_each` instances fail closed. The policy also
+  are skipped, governed `forget` actions are denied because their protections
+  cannot be verified, and `count`/`for_each` instances fail closed. The policy also
   denies `0.0.0.0/0`, `::/0`, unknown CIDR ingress, or non-empty/unknown
   prefix-list ingress on `aws_security_group`, `aws_default_security_group`,
   `aws_vpc_security_group_ingress_rule`, and `aws_security_group_rule`; unknown
@@ -271,10 +272,16 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   managed `aws_lb` application instance, including an indexed instance; when
   known, the ALB's planned `security_groups` list must contain the group's
   planned `after.id`. An unknown attachment's complete reference set must be
-  exactly the group's whole-resource and `.id` traversals, and recursive
-  references from any root managed non-load-balancer resource or root module
-  call revoke the exemption. Rule-definition references and another security
-  group's ingress or egress source are not consumers. A standalone
+  exactly the group's whole-resource and `.id` traversals. Direct configuration
+  references from an `aws_lb` not backed exclusively by known planned application
+  instances, any other root managed non-rule resource, or a root module call revoke
+  the exemption; when the group ID is known, a matching string leaf in any managed
+  planned change at any module depth also revokes it. Planned application ALBs,
+  rule-definition resources, and another security group's ingress or egress source
+  are not consumers. Terraform plan JSON does not serialize locals, so a fresh-create
+  ALB-group consumer hidden only behind local or other indirection remains
+  undetectable; this repository's own root attaches the ALB group only to the ALB,
+  which the live-plan gate checks through direct references. A standalone
   ingress rule, including an indexed instance, must also plan a known
   `security_group_id` equal to that ID, or both the rule target and group ID
   must be unknown through the same exact two-traversal reference set. A
