@@ -96,6 +96,18 @@ make apply TARGET=localstack ENV_ID=dev
 make destroy TARGET=localstack ENV_ID=dev
 ```
 
+## Demo
+
+![Recorded LocalStack demo: status, plan, conftest gate, apply, state list, destroy](docs/assets/demo.gif)
+
+The recording is real output of a real run against LocalStack, produced by `demo/record.sh` from the committed `demo/demo.tape` (vhs). Long steps (plan, apply, destroy) run off-screen and only their summary lines are shown. Reproduce it with LocalStack up, `make bootstrap-apply TARGET=localstack` applied once, and the placeholder image built:
+
+```
+OPERATOR_CIDR=203.0.113.0/24 make demo
+```
+
+`OPERATOR_CIDR` must be a TEST-NET-3 value so no real address is recorded; the wrapper refuses anything else, asserts every step's exit code and the GIF's freshness before replacing `docs/assets/demo.gif`, and always destroys the `demo` environment on exit. Provenance and the hygiene review method are in `docs/assets/DEMO_PROVENANCE.md`.
+
 ## Quickstart (AWS)
 
 See `bootstrap/README.md` for the one-time bootstrap apply sequence. The ALB ingress allowlist is read from the `OPERATOR_CIDR` repository secret; see RUNBOOKS.md to change it. Preview workflows generate the required AWS backend config from bootstrap naming, save the plan, and apply that exact plan non-interactively.
@@ -112,8 +124,10 @@ The reference workload is a private repository, `SuperGokou/happyCoding`, used w
 bootstrap/            one-time Terraform: state bucket, OIDC + roles, KMS, ECR, Budget
 placeholder/          public-source placeholder workload image
 docs/adr/             architecture decision records
+docs/assets/          recorded demo GIF and its provenance
 scripts/              repo hooks (pre-push guard, hook installer)
 tests/                shell-level lifecycle and CI contracts
+demo/                 vhs tape and wrapper that record the LocalStack demo (make demo)
 .github/workflows/    CI: terraform-plan.yml, oidc-smoke.yml,
                       session-apply.yml, session-destroy.yml, sweeper.yml,
                       mirror-images.yml, sign-images.yml
