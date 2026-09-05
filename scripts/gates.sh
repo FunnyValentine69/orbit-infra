@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the policy gates in order (validate -> lint -> test -> no-nat-gateway)
+# Runs the policy gates in order (validate -> lint -> test -> policy-size -> no-nat-gateway -> conftest)
 # and prints a one-line PASS/FAIL summary per gate. Exits non-zero on any
 # failure. CI calls this from Phase 3 onward (terraform-plan.yml).
 set -u
@@ -67,5 +67,7 @@ else
   status=1
 fi
 rm -f "$no_nat_log"
+
+run_gate conftest
 
 exit "$status"

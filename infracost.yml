@@ -1,0 +1,17 @@
+# Infracost GitHub App configuration (https://www.infracost.io/docs/features/config_file/).
+# The project list is pinned: bootstrap and envs/preview are the only deployable roots.
+# The conftest fixture roots under tests/fixtures/conftest/ are deliberately insecure
+# inputs for the policy gate, never deployed, so they are not projects here. An
+# autodetect/exclude_dirs block was tried first and the app evaluated no projects at all.
+# The workflow's own infracost job passes --path envs/preview explicitly and is unaffected.
+version: 0.1
+projects:
+  - path: bootstrap
+    name: bootstrap
+    dependency_paths:
+      - "bootstrap/**"
+  - path: envs/preview
+    name: envs-preview
+    dependency_paths:
+      - "envs/preview/**"
+      - "modules/**"

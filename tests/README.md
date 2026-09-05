@@ -15,6 +15,80 @@ and must be replaced by a recorded response once that backend is available. Neve
 adjust an `authored` fixture to make a predicate pass; record the real
 response instead.
 
+The recorded Conftest plan sidecars carry their recording metadata in
+`tests/fixtures/conftest/PROVENANCE.md`. A `terraform show -json` document
+cannot carry a custom `recorded_from` key, so the recording metadata stays in
+that sidecar.
+
+## Phase 5 Conftest policy gate
+
+Run the Conftest regression suite without AWS or LocalStack:
+
+```
+bash tests/conftest-gate.sh
+```
+
+The suite first runs fixture hygiene against both committed plans, then
+requires `conftest verify` to pass all 85 Rego unit tests. It accepts the good
+plan without reporting `aws_security_group.alb`, and requires the bad plan to
+exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
+`aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
+`aws_security_group.zero_lb`, `aws_vpc_security_group_ingress_rule.open`,
+`aws_security_group_rule.legacy_open`, and
+`aws_default_security_group.default`. It also requires the bad plan not to
+report the protected `aws_s3_bucket.database`. The suite also proves that a
+nested true `*_sensitive` marker and a sensitive output are rejected and
+currently reports 17 cases. Bucket protection requires exactly one fully
+locked planned block targeted through either one unambiguous whole-resource
+configuration reference or an equal known planned bucket name. Reference and
+planned-name correlations are unioned, distinct blocks targeting one bucket are
+ambiguous, and unreferenced planned blocks with unknown or known-unmatched targets
+are denied as unresolvable. Policy selectors accept only managed resources, so data-source
+buckets are ignored and data-source load balancers cannot exempt a managed
+group. Open, unknown, or prefix-list non-ALB ingress is denied because this
+gate cannot prove a managed prefix list safe. Governed resources whose actions
+contain `forget` are denied because their protections cannot be verified. For a
+known ALB-group ID, a forgotten managed non-rule resource whose `change.before`
+contains that ID also revokes the exemption; a fresh-created group has no known
+pre-existing ID to match. The ALB exemption requires one distinct group
+reference and a planned root application-ALB instance; known planned attachment
+IDs must agree. A configuration group address correlates only when exactly one
+planned group instance matches; multiple `count`/`for_each` instances fail
+closed as ambiguous. Direct
+configuration references from a network, gateway, unknown-type, or unplanned
+`aws_lb`, other root managed resources, or root module calls revoke the
+exemption, as does a matching known group ID anywhere in any managed planned
+resource at any module depth. Planned application ALBs and rule-definition
+resources are excluded from those consumer checks. Any configuration reference
+under another security group's `expressions.ingress` or `expressions.egress`,
+whether flattened or nested, is treated as a rule source; planned nested ingress
+and egress `security_groups` source values are likewise excluded. Terraform plan
+JSON does not serialize locals, so a
+fresh-create ALB-group consumer hidden only behind local or other indirection
+remains undetectable; this repository's own root attaches the ALB group only to
+the ALB, which the live-plan gate checks through direct references.
+An unknown attachment must reference exactly the group's whole-resource and
+`.id` traversals. A standalone ingress
+rule, including an indexed instance, must also plan a known target equal to the
+group's known ID, or the rule target and group ID must both be unknown through
+that same exact two-traversal set. Condition references and planned literal or
+mismatched IDs are denied. Unknown legacy-rule direction is treated as
+potentially ingress.
+
+Fixture provenance: `good-plan.json` and `bad-plan.json` in
+`tests/fixtures/conftest/` are `recorded_from` LocalStack 2026.8.1 with
+Terraform 1.16.0 on 2026-09-04 from `good-root/` and `bad-root/` via
+`make record-conftest-fixtures`. Each `terraform show -json` writes to a
+temporary file; `scripts/fixture-hygiene.sh` must accept it before it replaces
+the tracked fixture. The check rejects `prior_state`, true leaves below `*_sensitive` or
+`sensitive_values`, objects marked `"sensitive": true`, non-empty top-level
+`variables` because variables must not be serialized into fixtures,
+non-placeholder 12-digit numbers, IPv4 literals outside
+`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `0.0.0.0/0`, and
+`127.0.0.1`, and email addresses. Fixtures are re-recorded
+from those roots, never edited. The real `envs/preview` plan is never committed
+because it can carry prior state and sensitive values.
+
 Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
 and exact API `rc`/`stdout`/`stderr` responses. The production predicate layer
 consumes the same response shape for recorded and live probes. The suite covers
@@ -48,7 +122,9 @@ and verifies the observed generation, status, and owner arguments. It runs
 jq-level probes extract the live jobs aggregation and timestamp-comparison
 filters from `tests/dispatch-ordering.sh`. It also verifies that policy-size
 remains required by default and moves to the owner-only `plan-localstack` job
-after its health wait. Fork PRs receive the secret-free gates with policy-size
+after its health wait, and that Conftest is installed before the bootstrap-plan
+gate, bootstrap apply, live plan, redacted summary, live-plan gate, and PR
+comment in that order. Fork PRs receive the secret-free gates with policy-size
 explicitly skipped; owner PRs receive those gates plus the LocalStack-backed
 policy-size check. Neither suite starts, stops, or reconfigures LocalStack.
 

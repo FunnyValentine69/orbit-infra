@@ -96,9 +96,11 @@ Each `env_id` will have its own state key and a durable lease with states
 `open → closing → closed | cleanup_failed` and a monotonically increasing
 `generation`; every transition is a compare-and-swap on the object's S3
 ETag, so two writers can never both win. The lease is created only after
-the static gates (runner-CIDR rejection, lint, checkov) and selected-image
+the pre-plan gates (runner-CIDR rejection, lint, checkov) and selected-image
 signature/attestation checks pass, so a rejected config or supply-chain
-mismatch never produces a lease or AWS resources. Its workflow-run owner and
+mismatch never produces a lease or AWS resources. The saved AWS plan is then
+checked by Conftest before apply; this apply-side gate is CODE-ONLY until
+P0-3d. Its workflow-run owner and
 initial manifest containing the deployment mode and all three resolved image
 references are written in the same CAS PUT that opens the generation. Close is two-stage
 because ECS task definitions delete asynchronously (up to 24 hours) while a hosted
@@ -250,7 +252,59 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   27-case fixture suite covers the pending, hand-back, prune, and
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
-  bootstrap resource.
+  bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 85
+  Rego unit tests and the 17-case shell suite against fixtures that are
+  LOCALSTACK-recorded locally and pass recording-hygiene checks. The
+  root-module policy considers only managed resources and denies a planned S3
+  bucket without exactly one fully locked public-access block targeted by either
+  one unambiguous whole-resource configuration reference or an equal known planned
+  bucket name. Reference and planned-name correlations are unioned, so distinct
+  blocks targeting one bucket are ambiguous. An unreferenced planned block with an
+  unknown target or a known name matching no planned bucket is denied as
+  unresolvable. No-op buckets are evaluated, pure deletes
+  are skipped, governed `forget` actions are denied because their protections
+  cannot be verified, and `count`/`for_each` instances fail closed. The policy also
+  denies `0.0.0.0/0`, `::/0`, unknown CIDR ingress, or non-empty/unknown
+  prefix-list ingress on `aws_security_group`, `aws_default_security_group`,
+  `aws_vpc_security_group_ingress_rule`, and `aws_security_group_rule`; unknown
+  legacy-rule direction is treated as potentially ingress. Data-source reads
+  are neither evaluated nor accepted as exemption anchors. An exemption
+  requires exactly one distinct managed group reference from a planned root
+  managed `aws_lb` application instance, including an indexed instance; when
+  known, the ALB's planned `security_groups` list must contain the group's
+  planned `after.id`. A configuration group address correlates only when exactly
+  one planned group instance matches; multiple `count`/`for_each` instances fail
+  closed as ambiguous. An unknown attachment's complete reference set must be
+  exactly the group's whole-resource and `.id` traversals. Direct configuration
+  references from an `aws_lb` not backed exclusively by known planned application
+  instances, any other root managed non-rule resource, or a root module call revoke
+  the exemption; when the group ID is known, a matching string leaf in any managed
+  planned `change.after` at any module depth or in `change.before` for a forgotten
+  managed non-rule resource also revokes it. A fresh-created group has no known
+  pre-existing ID to match. Planned application ALBs and rule-definition resources
+  are not consumers. Any configuration reference
+  below another security group's `expressions.ingress` or `expressions.egress`,
+  whether flattened or nested, is treated as a rule source; planned nested ingress
+  and egress `security_groups` source values are likewise excluded. Terraform plan
+  JSON does not serialize locals, so a fresh-create
+  ALB-group consumer hidden only behind local or other indirection remains
+  undetectable; this repository's own root attaches the ALB group only to the ALB,
+  which the live-plan gate checks through direct references. A standalone
+  ingress rule, including an indexed instance, must also plan a known
+  `security_group_id` equal to that ID, or both the rule target and group ID
+  must be unknown through the same exact two-traversal reference set. A
+  condition reference, planned literal, or mismatch is not exempt. A
+  child-module load balancer never exempts a group. In
+  `terraform-plan.yml`, the `gates` job runs the gate and `plan-localstack`
+  gates both the bootstrap plan before bootstrap apply and the live LocalStack
+  plan before its PR summary comment. The bootstrap state bucket uses `.bucket`
+  and a fully locked public-access block and defines no security groups. The
+  existing static/live-plan paths are VERIFIED in CI on PR #12's prior head;
+  the new bootstrap gate is CODE-ONLY pending host validation. In
+  `session-apply.yml`, Conftest gates the saved AWS plan before `make apply`;
+  the LocalStack target has no saved plan, and this apply-side gate remains
+  CODE-ONLY until P0-3d.
 
 ### SLO
 
