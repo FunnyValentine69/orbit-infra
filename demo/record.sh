@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.."
 
 # --- (0) setup -------------------------------------------------------------
 export TARGET=localstack ENV_ID=demo PREVIEW_ROOT=.preview-runs/demo
+# Terraform colors redirected output; the summary greps need plain text.
+export TF_CLI_ARGS_plan=-no-color TF_CLI_ARGS_apply=-no-color TF_CLI_ARGS_destroy=-no-color
 mkdir -p demo/out docs/assets
 RUN=$(mktemp -d demo/out/run-XXXXXXXX)
 export RUN
