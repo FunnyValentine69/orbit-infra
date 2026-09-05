@@ -87,7 +87,8 @@ job. Pull-request-triggered Terraform plans run against LocalStack instead
 (see ADR 0008), never against real AWS. Locally, the AWS Free Plan's
 IAM Identity Center restriction forced a deviation: bootstrap runs from an
 IAM user (MFA required, keys local-only), used solely for one-time
-bootstrap; CI is unaffected. See ADR 0005.
+bootstrap; CI is unaffected. See ADR 0005 and `docs/THREAT_MODEL.md` for the
+threat-to-control mapping.
 
 ## Environment lifecycle summary
 
@@ -160,9 +161,11 @@ dispatch test proves only GitHub queueing on that target. The preview override
 uses the emulator's versioned state bucket and the same state key as AWS;
 `session-apply` therefore runs Stage 2 immediately after successful Stage 1 and
 records `in_job:true` before closing the lease. The nightly sweeper refuses
-LocalStack because a later runner cannot recover that emulator. Lease CAS,
-lifecycle refusals, generation increments, and two-environment state isolation
-are proved locally against one emulator by `tests/localstack-concurrency.sh`.
+LocalStack because a later runner cannot recover that emulator. Lifecycle
+refusals, generation increments, and two-environment state isolation are
+proved locally against one emulator by `tests/localstack-concurrency.sh`; the
+CAS-loss path (a stale writer refused after a concurrent ETag change) is
+fixture-verified by `tests/cleanup-verifier.sh`.
 See ADR 0006. The post-merge dispatch ran as run 33825140591 (main 9b253b6);
 in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED in CI. The nightly AWS sweeper
 remains CODE-ONLY until P0-3b.

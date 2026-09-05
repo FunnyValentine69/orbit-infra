@@ -161,7 +161,7 @@ Pinned tool versions and checksums: `tools.lock`.
 | Scheduled drift detection on persistent resources | planned |
 | Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
 | Observability: CloudWatch logs, two alarms, one written SLO | done |
-| ADRs, runbooks, threat model | in progress |
+| ADRs, runbooks, threat model | documents done; controls carry their own labels, mostly CODE-ONLY until P0-3d |
 
 ## Status
 
@@ -172,6 +172,7 @@ See `STATE.md` for current phase and in-progress work.
 - `ARCHITECTURE.md` — system design and decisions
 - `RUNBOOKS.md` — operational procedures
 - `docs/adr/` — architecture decision records
+- `docs/THREAT_MODEL.md` — STRIDE-lite threats, controls, evidence labels, residual risk
 - `STATE.md` — current phase and evidence status
 - `TODO.md` — task tracking and follow-ups
 - `tests/README.md` — fixture provenance and test suite contracts
