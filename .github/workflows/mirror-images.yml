@@ -206,14 +206,16 @@ jobs:
           if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog "$IMAGE" >/dev/null 2>&1; then
             echo "placeholder signature already exists"
           else
-            cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" "$IMAGE"
+            cosign sign --yes --tlog-upload=false --use-signing-config=false \
+              --key "awskms:///${KMS_KEY_ARN}" "$IMAGE"
           fi
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog "$IMAGE" >/dev/null
 
           attestation_matches=false
           if attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type custom "$IMAGE" 2>/dev/null)" && \
-             jq -e --arg source_sha "$SOURCE_SHA" '
+            --type https://github.com/FunnyValentine69/orbit-infra/placeholder-build/v1 \
+            "$IMAGE" 2>/dev/null)" && \
+             jq -e -s --arg source_sha "$SOURCE_SHA" '
                any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
              ' <<< "$attestations" >/dev/null; then
             attestation_matches=true
@@ -224,15 +226,24 @@ jobs:
             predicate_file=$(mktemp)
             printf '{"source_sha":"%s","built_on":"%s"}\n' \
               "$SOURCE_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$predicate_file"
-            cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
-              --type custom --predicate "$predicate_file" "$IMAGE"
+            cosign attest --yes --tlog-upload=false --use-signing-config=false \
+              --key "awskms:///${KMS_KEY_ARN}" \
+              --type https://github.com/FunnyValentine69/orbit-infra/placeholder-build/v1 \
+              --predicate "$predicate_file" "$IMAGE"
             rm -f "$predicate_file"
           fi
-          cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type custom "$IMAGE" 2>/dev/null \
-            | jq -e --arg source_sha "$SOURCE_SHA" '
-                any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
-              ' >/dev/null
+          if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type https://github.com/FunnyValentine69/orbit-infra/placeholder-build/v1 \
+            "$IMAGE"); then
+            echo "$IMAGE: placeholder attestation verification failed" >&2
+            exit 1
+          fi
+          jq -e -s --arg source_sha "$SOURCE_SHA" '
+              any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
+            ' <<< "$out" >/dev/null || {
+            echo "$IMAGE: no matching placeholder attestation found" >&2
+            exit 1
+          }
 
       # --- mirrors: private ECR, KMS-signed with --tlog-upload=false (ADR 0007) ---
 
@@ -292,7 +303,8 @@ jobs:
             "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
             echo "already signed"
           else
-            cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+            cosign sign --yes --tlog-upload=false --use-signing-config=false \
+              --key "awskms:///${KMS_KEY_ARN}" \
               "${dest}@${SOURCE_DIGEST}"
           fi
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
@@ -300,9 +312,9 @@ jobs:
 
           attestation_matches=false
           if attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
             "${dest}@${SOURCE_DIGEST}" 2>/dev/null)" && \
-             jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+             jq -e -s --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
                any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
                  | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
              ' <<< "$attestations" >/dev/null; then
@@ -314,19 +326,26 @@ jobs:
             predicate_file="$(mktemp)"
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
               "$SOURCE_IMAGE" "$SOURCE_DIGEST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$predicate_file"
-            cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
-              --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            cosign attest --yes --tlog-upload=false --use-signing-config=false \
+              --key "awskms:///${KMS_KEY_ARN}" \
+              --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
               --predicate "$predicate_file" \
               "${dest}@${SOURCE_DIGEST}"
             rm -f "$predicate_file"
           fi
-          cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-            "${dest}@${SOURCE_DIGEST}" 2>/dev/null \
-            | jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
-                any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
-                  | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
-              ' >/dev/null
+          if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
+            "${dest}@${SOURCE_DIGEST}"); then
+            echo "${dest}@${SOURCE_DIGEST}: redis mirror attestation verification failed" >&2
+            exit 1
+          fi
+          jq -e -s --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+              any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
+            ' <<< "$out" >/dev/null || {
+            echo "${dest}@${SOURCE_DIGEST}: no matching redis mirror attestation found" >&2
+            exit 1
+          }
 
       - name: Verify redis mirror signature
         env:
@@ -394,7 +413,8 @@ jobs:
             "${dest}@${SOURCE_DIGEST}" >/dev/null 2>&1; then
             echo "already signed"
           else
-            cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+            cosign sign --yes --tlog-upload=false --use-signing-config=false \
+              --key "awskms:///${KMS_KEY_ARN}" \
               "${dest}@${SOURCE_DIGEST}"
           fi
           cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
@@ -402,9 +422,9 @@ jobs:
 
           attestation_matches=false
           if attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
             "${dest}@${SOURCE_DIGEST}" 2>/dev/null)" && \
-             jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+             jq -e -s --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
                any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
                  | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
              ' <<< "$attestations" >/dev/null; then
@@ -416,19 +436,26 @@ jobs:
             predicate_file="$(mktemp)"
             printf '{"source_ref":"%s","source_digest":"%s","mirrored_at":"%s"}\n' \
               "$SOURCE_IMAGE" "$SOURCE_DIGEST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$predicate_file"
-            cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
-              --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
+            cosign attest --yes --tlog-upload=false --use-signing-config=false \
+              --key "awskms:///${KMS_KEY_ARN}" \
+              --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
               --predicate "$predicate_file" \
               "${dest}@${SOURCE_DIGEST}"
             rm -f "$predicate_file"
           fi
-          cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-            --type https://github.com/FunnyValentine69/orbit-infra/attestations/mirror/v1 \
-            "${dest}@${SOURCE_DIGEST}" 2>/dev/null \
-            | jq -e --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
-                any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
-                  | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
-              ' >/dev/null
+          if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+            --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
+            "${dest}@${SOURCE_DIGEST}"); then
+            echo "${dest}@${SOURCE_DIGEST}: clickhouse mirror attestation verification failed" >&2
+            exit 1
+          fi
+          jq -e -s --arg source_ref "$SOURCE_IMAGE" --arg source_digest "$SOURCE_DIGEST" '
+              any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
+                | $predicate.source_ref == $source_ref and $predicate.source_digest == $source_digest) catch false)
+            ' <<< "$out" >/dev/null || {
+            echo "${dest}@${SOURCE_DIGEST}: no matching clickhouse mirror attestation found" >&2
+            exit 1
+          }
 
       - name: Verify clickhouse mirror signature
         env:

@@ -179,8 +179,9 @@ key as the private upstream images, always with `--tlog-upload=false` and
 verification through the exported public key; no private-ECR reference is
 sent to Rekor. Private upstream images are built locally, never in hosted CI,
 from a `git archive` of the pinned, verified upstream commit — never a working
-tree. Each private upstream image gets a syft SBOM artifact and a fail-closed
-Trivy scan; the placeholder and mirror images get their own Trivy scans in
+tree. Each private upstream image gets a syft SBOM attestation (never published
+as an Actions artifact, ADR 0007 amendment 2026-09-04) and a fail-closed Trivy
+scan; the placeholder and mirror images get their own Trivy scans in
 mirror-images.yml. Every scan explicitly selects the deployed
 `linux/arm64` image and blocks (`exit-code: 1`) on its own severity set: the
 private upstream images on CRITICAL, the placeholder and mirrors on

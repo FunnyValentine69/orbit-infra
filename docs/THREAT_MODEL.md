@@ -26,7 +26,7 @@ flowchart LR
   end
   subgraph aws["AWS account"]
     subgraph roles["CI roles, no permissions boundary"]
-      plan["Plan reader"]
+      plan["Plan reader, account-wide ReadOnlyAccess"]
       deployer["Deployer"]
       publisher["Publisher"]
     end
@@ -51,17 +51,19 @@ flowchart LR
   token -->|"STS AssumeRoleWithWebIdentity, main only"| deployer
   token -->|"STS AssumeRoleWithWebIdentity, main only"| publisher
   deployer -->|"apply and destroy"| private
+  deployer -->|"create and destroy"| public
   deployer -->|"state and lease"| state
   publisher -->|"push"| ecr
   publisher -->|"sign"| kms
   plan -->|"read only"| state
+  plan -->|"account-wide read (ReadOnlyAccess), subject to the deny policy"| storage
   alb -->|"HTTP, no TLS"| ecs
   ecs -->|"private"| endpoints
   endpoints --> data
   endpoints --> ecr
 ```
 
-The boundaries are the internet-facing ALB, GitHub-to-AWS federation, the ALB handoff from the public subnets to the private subnet, and the private endpoint paths to storage and image services. The private-subnet and endpoint topology is implemented in [`modules/network/main.tf`](../modules/network/main.tf) and [`envs/preview/main.tf`](../envs/preview/main.tf), as recorded in [ADR 0002](adr/0002-private-subnets-endpoints-no-nat.md). Real security-group packet enforcement remains `CODE-ONLY`.
+The boundaries are the internet-facing ALB, GitHub-to-AWS federation, the ALB handoff from the public subnets to the private subnet, and the private endpoint paths to storage and image services. The deployer's control-plane reach creates and destroys the VPC, subnets, ALB, security groups, ECS, Cloud Map, Secrets Manager entries, and the data bucket. The plan-reader's read surface is account-wide across every AWS service's `Describe*`, `List*`, and `Get*` actions where the `plan_reader_readonly` `ReadOnlyAccess` attachment in [`bootstrap/roles.tf`](../bootstrap/roles.tf) grants them, scoped down only by `plan_reader_deny`: `s3:GetObject` and `s3:GetObjectVersion` outside `envs/preview/*` and `bootstrap/*` state objects; `s3:ListBucket` outside the state bucket; `s3:ListBucket` and `s3:ListBucketVersions` on the state bucket unless the prefix is `envs/preview`, `envs/preview/*`, `bootstrap`, or `bootstrap/*`, and when the prefix is missing; `secretsmanager:GetSecretValue`; `ssm:GetParameter`, `ssm:GetParameters`, `ssm:GetParametersByPath`, and `ssm:GetParameterHistory`; `kms:Decrypt`; and `lambda:GetFunction`, `lambda:GetFunctionConfiguration`, `lambda:GetLayerVersion`, and `lambda:GetLayerVersionByArn`. The private-subnet and endpoint topology is implemented in [`modules/network/main.tf`](../modules/network/main.tf) and [`envs/preview/main.tf`](../envs/preview/main.tf), as recorded in [ADR 0002](adr/0002-private-subnets-endpoints-no-nat.md). Real security-group packet enforcement remains `CODE-ONLY`.
 
 ## Threats and controls
 
@@ -106,7 +108,7 @@ The boundaries are the internet-facing ALB, GitHub-to-AWS federation, the ALB ha
 | P5-22 | Real-AWS security-group packet enforcement for the preview ALB has never been exercised; P0-3d applies bootstrap only and does not create the ALB. | A real-AWS preview ingress test (a source outside the operator CIDR must be refused) can only run after P0-3d, and no item tracked it. | [`../TODO.md`](../TODO.md) |
 | [ADR 0004](adr/0004-ingress-cidr-allowlist-no-tls.md) | Sources inside the operator CIDR reach an unauthenticated service over plaintext HTTP. | The project has no domain or application authentication layer and accepts this limited preview posture. | [ADR 0004](adr/0004-ingress-cidr-allowlist-no-tls.md) |
 | [ADR 0005](adr/0005-oidc-roles-split-by-purpose.md) | Any eligible main-ref workflow can attempt to assume any of the three CI roles; the publisher role's ECR push and KMS sign grants are therefore reachable by any such workflow. | The solo-repository design currently relies on main-branch protection instead of per-workflow subjects. | [ADR 0005](adr/0005-oidc-roles-split-by-purpose.md) |
-| [ADR 0007](adr/0007-signing-modes-and-disclosure.md) | Private-image signatures and attestations have no public transparency-log record. | The project accepts private-key-backed verification to avoid publishing private image references. | [ADR 0007](adr/0007-signing-modes-and-disclosure.md) |
+| [ADR 0007](adr/0007-signing-modes-and-disclosure.md) | Private-image signatures and attestations have no public transparency-log record, and upstream SBOMs are no longer published as Actions artifacts. | The project accepts verification through the exported KMS public key to avoid publishing private image references; the SBOM artifact change is recorded in the ADR 0007 amendment dated 2026-09-04. | [ADR 0007](adr/0007-signing-modes-and-disclosure.md) |
 
 ## Out of scope
 

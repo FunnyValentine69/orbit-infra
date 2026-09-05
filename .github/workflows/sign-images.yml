@@ -189,19 +189,43 @@ jobs:
 
             trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1 "${image}@${digest}"
 
+            # SBOM stays private; re-runs skip only an attestation with a matching package inventory (ADR 0007 amendment 2026-09-04).
+            new_inv=$(jq -c '[.packages[] | (.name + "@" + (.versionInfo // ""))] | sort' "${name}-sbom.spdx.json")
+            if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type spdxjson "${image}@${digest}" 2>/dev/null \
+              | jq -e -s --argjson new_inv "$new_inv" 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $p | ($p | type == "object" and has("spdxVersion") and has("SPDXID")) and (([$p.packages[]? | (.name + "@" + (.versionInfo // ""))] | sort) == $new_inv)) catch false)' >/dev/null; then
+              echo "${repository}: SBOM attestation with matching inventory already exists"
+            else
+              cosign attest --yes --tlog-upload=false --use-signing-config=false \
+                --key "awskms:///${KMS_KEY_ARN}" \
+                --type spdxjson --predicate "${name}-sbom.spdx.json" \
+                "${image}@${digest}"
+            fi
+            if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type spdxjson "${image}@${digest}"); then
+              echo "${repository}: SBOM attestation verification failed" >&2
+              exit 1
+            fi
+            jq -e -s 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) | type == "object" and has("spdxVersion") and has("SPDXID")) catch false)' <<< "$out" >/dev/null || {
+              echo "${repository}: no SBOM attestation found" >&2
+              exit 1
+            }
+
             if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               "${image}@${digest}" >/dev/null 2>&1; then
               echo "${repository}: signature already exists"
             else
-              cosign sign --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+              cosign sign --yes --tlog-upload=false --use-signing-config=false \
+                --key "awskms:///${KMS_KEY_ARN}" \
                 "${image}@${digest}"
             fi
             cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               "${image}@${digest}" >/dev/null
 
             if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-              --type custom "${image}@${digest}" 2>/dev/null \
-              | jq -e --arg upstream_sha "$UPSTREAM_SHA" \
+              --type https://github.com/FunnyValentine69/orbit-infra/local-build/v1 \
+              "${image}@${digest}" 2>/dev/null \
+              | jq -e -s --arg upstream_sha "$UPSTREAM_SHA" \
                 --arg upstream_archive_sha256 "$UPSTREAM_ARCHIVE_SHA256" \
                 --arg repo_build_inputs_sha256 "$REPO_BUILD_INPUTS_SHA256" \
                 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
@@ -214,26 +238,28 @@ jobs:
               printf '{"predicateType":"https://github.com/FunnyValentine69/orbit-infra/local-build/v1","upstream_sha":"%s","upstream_archive_sha256":"%s","repo_build_inputs_sha256":"%s","built_on":"%s"}\n' \
                 "${UPSTREAM_SHA}" "${UPSTREAM_ARCHIVE_SHA256}" "${REPO_BUILD_INPUTS_SHA256}" "${built_on}" > "${predicate_file}"
 
-              cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
-                --type custom \
+              cosign attest --yes --tlog-upload=false --use-signing-config=false \
+                --key "awskms:///${KMS_KEY_ARN}" \
+                --type https://github.com/FunnyValentine69/orbit-infra/local-build/v1 \
                 --predicate "${predicate_file}" \
                 "${image}@${digest}"
               rm -f "$predicate_file"
             fi
-            cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-              --type custom "${image}@${digest}" 2>/dev/null \
-              | jq -e --arg upstream_sha "$UPSTREAM_SHA" \
+            if ! out=$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type https://github.com/FunnyValentine69/orbit-infra/local-build/v1 \
+              "${image}@${digest}"); then
+              echo "${repository}: build attestation verification failed" >&2
+              exit 1
+            fi
+            jq -e -s --arg upstream_sha "$UPSTREAM_SHA" \
                 --arg upstream_archive_sha256 "$UPSTREAM_ARCHIVE_SHA256" \
                 --arg repo_build_inputs_sha256 "$REPO_BUILD_INPUTS_SHA256" \
                 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
                   | $predicate.upstream_sha == $upstream_sha
                   and $predicate.upstream_archive_sha256 == $upstream_archive_sha256
-                  and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)' >/dev/null
+                  and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)' \
+                <<< "$out" >/dev/null || {
+              echo "${repository}: no matching build attestation found" >&2
+              exit 1
+            }
           done
-
-      - name: Upload SBOMs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: upstream-sboms-${{ inputs.upstream_sha }}
-          path: '*-sbom.spdx.json'
-          if-no-files-found: error
