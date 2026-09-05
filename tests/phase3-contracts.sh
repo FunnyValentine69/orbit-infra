@@ -528,10 +528,10 @@ def assert_conftest_install(steps, job_label):
 
 
 plan = yaml.safe_load(Path(sys.argv[1]).read_text())
-for job_name in ("gates", "plan-localstack"):
-    assert_conftest_install(plan["jobs"][job_name]["steps"], f"terraform-plan {job_name} job")
+assert_conftest_install(plan["jobs"]["gates"]["steps"], "terraform-plan gates job")
 
 plan_steps = plan["jobs"]["plan-localstack"]["steps"]
+plan_install_index = assert_conftest_install(plan_steps, "terraform-plan plan-localstack job")
 summary_index = one_index(
     plan_steps,
     lambda step: step.get("name") == "Redacted plan summary",
@@ -543,8 +543,8 @@ conftest_index = one_index(
     and step.get("run") == "conftest test --policy policy/ /tmp/plan.json",
     "LocalStack Conftest policy gate in terraform-plan plan-localstack job",
 )
-if not summary_index < conftest_index:
-    raise SystemExit("terraform-plan must run Conftest after rendering the LocalStack plan JSON")
+if not plan_install_index < summary_index < conftest_index:
+    raise SystemExit("terraform-plan must install Conftest before rendering and gating the LocalStack plan JSON")
 
 apply = yaml.safe_load(Path(sys.argv[2]).read_text())
 apply_steps = apply["jobs"]["apply"]["steps"]

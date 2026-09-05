@@ -5,6 +5,13 @@ has_message(messages, address) if {
 	contains(message, address)
 }
 
+test_non_plan_document_denies if {
+	messages := deny with input as {}
+
+	count(messages) == 1
+	"input is not a terraform show -json plan document" in messages
+}
+
 test_protected_bucket_passes if {
 	messages := deny with input as {
 		"configuration": {"root_module": {"resources": [
@@ -31,6 +38,35 @@ test_protected_bucket_passes if {
 	}
 
 	count(messages) == 0
+}
+
+test_child_module_bucket_denies_even_with_protecting_block if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"module_calls": {"x": {"module": {"resources": [
+			{"address": "module.x.aws_s3_bucket.y", "type": "aws_s3_bucket"},
+			{
+				"address": "module.x.aws_s3_bucket_public_access_block.y",
+				"type": "aws_s3_bucket_public_access_block",
+				"expressions": {"bucket": {"references": ["module.x.aws_s3_bucket.y"]}},
+			},
+		]}}}}},
+		"resource_changes": [
+			{"address": "module.x.aws_s3_bucket.y", "type": "aws_s3_bucket", "change": {"after": {}}},
+			{
+				"address": "module.x.aws_s3_bucket_public_access_block.y",
+				"type": "aws_s3_bucket_public_access_block",
+				"change": {"after": {
+					"block_public_acls": true,
+					"block_public_policy": true,
+					"ignore_public_acls": true,
+					"restrict_public_buckets": true,
+				}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"module.x.aws_s3_bucket.y: child-module bucket correlation unsupported; declare the bucket at the root or extend the policy" in messages
 }
 
 test_bucket_without_public_access_block_denies if {
@@ -316,6 +352,27 @@ test_open_modern_ingress_rule_denies if {
 	has_message(messages, "aws_vpc_security_group_ingress_rule.open")
 }
 
+test_open_ipv6_modern_ingress_rule_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "type": "aws_security_group"},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.open_ipv6",
+				"type": "aws_vpc_security_group_ingress_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_vpc_security_group_ingress_rule.open_ipv6",
+			"type": "aws_vpc_security_group_ingress_rule",
+			"change": {"after": {"cidr_ipv4": null, "cidr_ipv6": "::/0"}},
+		}],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_vpc_security_group_ingress_rule.open_ipv6")
+}
+
 test_open_modern_rule_attached_to_planned_alb_group_passes if {
 	messages := deny with input as {
 		"configuration": {"root_module": {"resources": [
@@ -364,6 +421,51 @@ test_open_legacy_ingress_rule_denies if {
 
 	count(messages) == 1
 	has_message(messages, "aws_security_group_rule.legacy_open")
+}
+
+test_open_ipv6_legacy_ingress_rule_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "type": "aws_security_group"},
+			{
+				"address": "aws_security_group_rule.legacy_open_ipv6",
+				"type": "aws_security_group_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group_rule.legacy_open_ipv6",
+			"type": "aws_security_group_rule",
+			"change": {"after": {"type": "ingress", "cidr_blocks": [], "ipv6_cidr_blocks": ["::/0"]}},
+		}],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_security_group_rule.legacy_open_ipv6")
+}
+
+test_unknown_cidr_on_legacy_ingress_rule_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "type": "aws_security_group"},
+			{
+				"address": "aws_security_group_rule.legacy_unknown",
+				"type": "aws_security_group_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group_rule.legacy_unknown",
+			"type": "aws_security_group_rule",
+			"change": {
+				"after": {"type": "ingress", "cidr_blocks": null, "ipv6_cidr_blocks": []},
+				"after_unknown": {"cidr_blocks": true},
+			},
+		}],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_security_group_rule.legacy_unknown")
 }
 
 test_default_security_group_with_open_ingress_denies if {

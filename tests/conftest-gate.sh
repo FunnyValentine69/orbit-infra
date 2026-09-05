@@ -32,7 +32,7 @@ if ! good_output="$(conftest test --policy "$POLICY" "$FIXTURES/good-plan.json" 
 fi
 pass "good plan passes"
 
-if grep -Fq 'aws_security_group.alb' <<< "$good_output"; then
+if grep -Eq 'aws_security_group\.alb([^A-Za-z0-9_]|$)' <<< "$good_output"; then
   fail "good plan output named the planned ALB security group"
 fi
 pass "good plan does not report the planned ALB security group"
@@ -56,13 +56,14 @@ for address in \
   aws_vpc_security_group_ingress_rule.open \
   aws_security_group_rule.legacy_open \
   aws_default_security_group.default; do
-  if ! grep -Fq "$address" <<< "$bad_output"; then
+  address_pattern="${address//./\\.}"
+  if ! grep -Eq "${address_pattern}([^A-Za-z0-9_]|$)" <<< "$bad_output"; then
     fail "bad plan output did not name $address: $bad_output"
   fi
   pass "bad plan reports $address"
 done
 
-if grep -Fq 'aws_s3_bucket.database' <<< "$bad_output"; then
+if grep -Eq 'aws_s3_bucket\.database([^A-Za-z0-9_]|$)' <<< "$bad_output"; then
   fail "bad plan output named protected aws_s3_bucket.database"
 fi
 pass "bad plan does not report aws_s3_bucket.database"

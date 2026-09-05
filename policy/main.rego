@@ -12,6 +12,17 @@ root_resources := object.get(
 
 resource_changes := object.get(input, "resource_changes", [])
 
+valid_plan_document if {
+	is_array(input.resource_changes)
+	input.configuration.root_module != null
+}
+
+deny contains msg if {
+	not valid_plan_document
+
+	msg := "input is not a terraform show -json plan document"
+}
+
 planned(resource_change) if {
 	resource_change.change.after != null
 }
@@ -58,6 +69,18 @@ bucket_is_protected(bucket_address) if {
 	after.block_public_policy == true
 	after.ignore_public_acls == true
 	after.restrict_public_buckets == true
+}
+
+deny contains msg if {
+	some bucket in resource_changes
+	bucket.type == "aws_s3_bucket"
+	planned(bucket)
+	startswith(bucket.address, "module.")
+
+	msg := sprintf(
+		"%s: child-module bucket correlation unsupported; declare the bucket at the root or extend the policy",
+		[bucket.address],
+	)
 }
 
 deny contains msg if {
