@@ -189,6 +189,20 @@ jobs:
 
             trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1 "${image}@${digest}"
 
+            # SBOM travels only as an attestation on the private image (ADR 0007 amendment 2026-09-04); it is never published as an Actions artifact.
+            if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type spdxjson "${image}@${digest}" 2>/dev/null \
+              | jq -e 'length > 0' >/dev/null; then
+              echo "${repository}: SBOM attestation already exists"
+            else
+              cosign attest --yes --tlog-upload=false --key "awskms:///${KMS_KEY_ARN}" \
+                --type spdxjson --predicate "${name}-sbom.spdx.json" \
+                "${image}@${digest}"
+            fi
+            cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type spdxjson "${image}@${digest}" 2>/dev/null \
+              | jq -e 'length > 0' >/dev/null
+
             if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               "${image}@${digest}" >/dev/null 2>&1; then
               echo "${repository}: signature already exists"
@@ -230,10 +244,3 @@ jobs:
                   and $predicate.upstream_archive_sha256 == $upstream_archive_sha256
                   and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)' >/dev/null
           done
-
-      - name: Upload SBOMs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: upstream-sboms-${{ inputs.upstream_sha }}
-          path: '*-sbom.spdx.json'
-          if-no-files-found: error

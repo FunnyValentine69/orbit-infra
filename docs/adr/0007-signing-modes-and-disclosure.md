@@ -79,3 +79,16 @@ commit SHA, `upstream_archive_sha256`, `repo_build_inputs_sha256`, and the
 signing date — no hostname or
 account identifier, and no claim of CI build provenance, since these
 images were never built in CI.
+
+## Amendment 2026-09-04: SBOM artifacts
+
+The Tier-3 review of PR #10 found that the `sign-images` workflow previously
+uploaded the upstream SBOMs as GitHub Actions artifacts. In a public repository,
+those artifacts disclosed private image references and dependency inventories,
+contradicting this ADR's non-disclosure rule. The upload step is removed. The
+workflow now attests each generated SPDX SBOM to its private image with
+`cosign attest --type spdxjson` under the KMS key, with transparency-log upload
+disabled. Operators retrieve it with
+`cosign verify-attestation --type spdxjson --key <exported public key>
+--insecure-ignore-tlog <image@digest>`. This path remains `CODE-ONLY` until
+P0-3d.
