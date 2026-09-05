@@ -1,8 +1,8 @@
 # STATE
 
 ```
-LOCATION   Phase 5 P5-2 in review as PR #N (branch docs/p5-2-threat-model); next packet P5-3 (stretch) then P5-4 remainder
-STATE      LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge run 33825140591 from main 9b253b6); stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only; the nightly AWS sweeper is CODE-ONLY until P0-3b; threat model in PR #N, residual risk keyed to TODO and ADRs; IAM matrix P5-19 outstanding; follow-ups P5-12 to P5-21 filed
+LOCATION   Phase 5 P5-2 in review as PR #10 (branch docs/p5-2-threat-model); next packet P5-3 (stretch) then P5-4 remainder
+STATE      LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge run 33825140591 from main 9b253b6); stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only; the nightly AWS sweeper is CODE-ONLY until P0-3b; threat model in PR #10, residual risk keyed to TODO and ADRs; IAM matrix P5-19 outstanding; follow-ups P5-12 to P5-21 filed
 NEXT       P5-3 Conftest/OPA stretch, then P5-4 demo link and /publish check (needs the user); P5-1, P5-x, P5-5..P5-11 deferred until P0-3b; P5-12..P5-21 open, P5-19 gates P0-3d
 ```
 
