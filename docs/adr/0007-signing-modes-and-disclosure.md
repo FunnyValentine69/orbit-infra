@@ -17,11 +17,11 @@ Every private-ECR image is signed and attested with an asymmetric AWS KMS
 key (`awskms://`, the one accepted standing cost, roughly $1/month), using
 `--tlog-upload=false` and verification through the exported public key rather
 than Rekor. This rule includes the public-source placeholder, the private
-upstream images, and the Redis/ClickHouse mirrors. The placeholder's custom
-CI-build predicate carries only its source commit and build date. The private
-images' `local-build/v1` predicate carries only the upstream commit SHA, the
-upstream archive hash, the repository-owned build-input hash, and the build
-date; it does not claim CI build
+upstream images, and the Redis/ClickHouse mirrors. The placeholder's
+`placeholder-build/v1` predicate carries only its source commit and build
+date. The private images' `local-build/v1` predicate carries only the
+upstream commit SHA, the upstream archive hash, the repository-owned
+build-input hash, and the build date; it does not claim CI build
 provenance. No predicate carries a hostname or account identifier. Cosign's
 version is pinned in `tools.lock` and checked before signing. Each SBOM, scan,
 signature, and attestation is handled independently on a re-run. Every Trivy
@@ -74,13 +74,13 @@ recorded alongside them. Signing is a separate, later step:
 `.github/workflows/sign-images.yml` (`workflow_dispatch` only) signs the
 already-pushed images with the same asymmetric KMS key described above
 (`--tlog-upload=false`, verified via the exported public key), and
-attests a `local-build/v1` custom predicate carrying only the upstream
+attests a `local-build/v1` predicate carrying only the upstream
 commit SHA, `upstream_archive_sha256`, `repo_build_inputs_sha256`, and the
 signing date — no hostname or
 account identifier, and no claim of CI build provenance, since these
 images were never built in CI.
 
-## Amendment 2026-09-04: SBOM artifacts
+## Amendment 2026-09-04: SBOM artifacts and cosign 3.1.3 compatibility
 
 The Tier-3 review of PR #10 found that the `sign-images` workflow previously
 uploaded the upstream SBOMs as GitHub Actions artifacts. In a public repository,
@@ -92,3 +92,16 @@ disabled. Operators retrieve it with
 `cosign verify-attestation --type spdxjson --key <exported public key>
 --insecure-ignore-tlog <image@digest>`. This path remains `CODE-ONLY` until
 P0-3d.
+
+Cosign 3.1.3 requires `--use-signing-config=false` alongside
+`--tlog-upload=false`. It also wraps `--type custom` predicates, so the project
+now attests with explicit predicate-type URIs:
+
+- `https://github.com/FunnyValentine69/orbit-infra/local-build/v1`
+- `https://github.com/FunnyValentine69/orbit-infra/placeholder-build/v1`
+- `https://github.com/FunnyValentine69/orbit-infra/mirror/v1`
+
+Verification uses `jq -s` over the per-line DSSE envelopes emitted by
+`cosign verify-attestation`. Both facts were found by the PR #11 Tier 1 review
+and reproduced against a local registry with a file key. The KMS path remains
+`CODE-ONLY` until P0-3d.
