@@ -333,6 +333,29 @@ load_balancer_instance_matches(configuration_address, instance_address) if {
 	endswith(instance_address, "]")
 }
 
+planned_group_instance_addresses(configuration_address) := addresses if {
+	addresses := {instance_address |
+		some group_change in resource_changes
+		group_change.type == "aws_security_group"
+		planned(group_change)
+		load_balancer_instance_matches(configuration_address, group_change.address)
+		instance_address := group_change.address
+	}
+}
+
+single_planned_group_instance_address(configuration_address) := instance_address if {
+	addresses := planned_group_instance_addresses(configuration_address)
+	count(addresses) == 1
+	some instance_address in addresses
+}
+
+group_configuration_address(group_address) := configuration_address if {
+	some group in root_resources
+	group.type == "aws_security_group"
+	group_address == single_planned_group_instance_address(group.address)
+	configuration_address := group.address
+}
+
 planned_application_load_balancer(resource_change) if {
 	resource_change.type == "aws_lb"
 	planned(resource_change)
@@ -371,13 +394,13 @@ planned_group_id_unknown(group_address) if {
 	object.get(object.get(group_change.change, "after_unknown", {}), "id", false) == true
 }
 
-load_balancer_attaches_group(load_balancer, load_balancer_change, group_address) if {
+load_balancer_attaches_group(load_balancer, load_balancer_change, configuration_group_address, group_address) if {
 	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "security_groups", false) == true
 	planned_group_id_unknown(group_address)
-	expression_references_exactly_group(load_balancer, "security_groups", group_address)
+	expression_references_exactly_group(load_balancer, "security_groups", configuration_group_address)
 }
 
-load_balancer_attaches_group(load_balancer, load_balancer_change, group_address) if {
+load_balancer_attaches_group(load_balancer, load_balancer_change, configuration_group_address, group_address) if {
 	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
 	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "security_groups", false) != true
 	security_groups := object.get(load_balancer_change.change.after, "security_groups", null)
@@ -391,21 +414,24 @@ planned_alb_groups contains address if {
 	load_balancer.type == "aws_lb"
 	groups := load_balancer_group_addresses(load_balancer)
 	count(groups) == 1
-	some address in groups
+	some configuration_group_address in groups
+	address := single_planned_group_instance_address(configuration_group_address)
 
 	some load_balancer_change in resource_changes
 	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
 	planned_application_load_balancer(load_balancer_change)
-	load_balancer_attaches_group(load_balancer, load_balancer_change, address)
+	load_balancer_attaches_group(load_balancer, load_balancer_change, configuration_group_address, address)
 }
 
 reference_targets_group(reference, group_address) if {
-	reference == group_address
+	configuration_address := group_configuration_address(group_address)
+	reference == configuration_address
 }
 
 reference_targets_group(reference, group_address) if {
+	configuration_address := group_configuration_address(group_address)
 	is_string(reference)
-	startswith(reference, sprintf("%s.", [group_address]))
+	startswith(reference, sprintf("%s.", [configuration_address]))
 }
 
 group_rule_resource(resource) if {
@@ -443,6 +469,21 @@ planned_value_consumes_group(group_address) if {
 	is_string(value)
 	value == group_id
 	not planned_security_group_source_reference(resource_change, path)
+}
+
+# A fresh-create group has no known planned ID, so it cannot have a
+# pre-existing forgotten consumer whose before value can match that ID.
+forgotten_planned_value_consumes_group(group_address) if {
+	group_id := planned_group_id(group_address)
+	some resource_change in resource_changes
+	resource_change.address != group_address
+	forgotten(resource_change)
+	not group_rule_resource(resource_change)
+	not planned_application_load_balancer(resource_change)
+	walk(object.get(object.get(resource_change, "change", {}), "before", {}), [path, value])
+	count(path) > 0
+	is_string(value)
+	value == group_id
 }
 
 root_resource_consumes_group(group_address) if {
@@ -483,24 +524,60 @@ group_has_non_load_balancer_consumer(group_address) if {
 	planned_value_consumes_group(group_address)
 }
 
+group_has_non_load_balancer_consumer(group_address) if {
+	forgotten_planned_value_consumes_group(group_address)
+}
+
 planned_alb_group_shared(address) if {
 	address in planned_alb_groups
 	group_has_non_load_balancer_consumer(address)
 }
 
+group_instance_correlation_ambiguous(group_address) if {
+	some group in root_resources
+	group.type == "aws_security_group"
+	addresses := planned_group_instance_addresses(group.address)
+	count(addresses) > 1
+	group_address in addresses
+
+	some load_balancer in root_resources
+	load_balancer.type == "aws_lb"
+	groups := load_balancer_group_addresses(load_balancer)
+	count(groups) == 1
+	group.address in groups
+	configuration_load_balancer_is_only_planned_application(load_balancer)
+}
+
 group_deny_message(group_address, default_message) := msg if {
+	group_instance_correlation_ambiguous(group_address)
+	msg := sprintf("%s: indexed group instances cannot be unambiguously correlated", [group_address])
+}
+
+group_deny_message(group_address, default_message) := msg if {
+	not group_instance_correlation_ambiguous(group_address)
 	planned_alb_group_shared(group_address)
+	forgotten_planned_value_consumes_group(group_address)
+	msg := sprintf("%s: ALB group is attached to a forgotten non-load-balancer resource", [group_address])
+}
+
+group_deny_message(group_address, default_message) := msg if {
+	not group_instance_correlation_ambiguous(group_address)
+	planned_alb_group_shared(group_address)
+	not forgotten_planned_value_consumes_group(group_address)
 	planned_value_consumes_group(group_address)
 	msg := sprintf("%s: ALB group is attached to a non-load-balancer resource by planned value", [group_address])
 }
 
 group_deny_message(group_address, default_message) := msg if {
+	not group_instance_correlation_ambiguous(group_address)
 	planned_alb_group_shared(group_address)
+	not forgotten_planned_value_consumes_group(group_address)
 	not planned_value_consumes_group(group_address)
 	msg := sprintf("%s: ALB group is shared with a non-load-balancer consumer", [group_address])
 }
 
 group_deny_message(group_address, default_message) := default_message if {
+	not group_instance_correlation_ambiguous(group_address)
 	not planned_alb_group_shared(group_address)
 }
 
@@ -621,7 +698,7 @@ referenced_group_addresses(rule_address) := addresses if {
 	}
 }
 
-rule_target_matches_group(rule, rule_change, group_address) if {
+rule_target_matches_group(rule, rule_change, configuration_group_address, group_address) if {
 	load_balancer_instance_matches(rule.address, rule_change.address)
 	object.get(object.get(rule_change.change, "after_unknown", {}), "security_group_id", false) != true
 	rule_group_id := object.get(rule_change.change.after, "security_group_id", null)
@@ -630,10 +707,10 @@ rule_target_matches_group(rule, rule_change, group_address) if {
 	rule_group_id == group_id
 }
 
-rule_target_matches_group(rule, rule_change, group_address) if {
+rule_target_matches_group(rule, rule_change, configuration_group_address, group_address) if {
 	object.get(object.get(rule_change.change, "after_unknown", {}), "security_group_id", false) == true
 	planned_group_id_unknown(group_address)
-	expression_references_exactly_group(rule, "security_group_id", group_address)
+	expression_references_exactly_group(rule, "security_group_id", configuration_group_address)
 }
 
 rule_planned_alb_group(rule_change) := group_address if {
@@ -641,9 +718,10 @@ rule_planned_alb_group(rule_change) := group_address if {
 	load_balancer_instance_matches(rule.address, rule_change.address)
 	groups := referenced_group_addresses(rule_change.address)
 	count(groups) == 1
-	some group_address in groups
+	some configuration_group_address in groups
+	group_address := single_planned_group_instance_address(configuration_group_address)
 	group_address in planned_alb_groups
-	rule_target_matches_group(rule, rule_change, group_address)
+	rule_target_matches_group(rule, rule_change, configuration_group_address, group_address)
 }
 
 rule_is_for_planned_alb(rule_change) if {

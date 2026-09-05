@@ -2263,3 +2263,203 @@ test_default_security_group_ingress_reference_to_alb_group_is_a_consumer if {
 	count(messages) == 1
 	"aws_security_group.alb: ALB group is shared with a non-load-balancer consumer" in messages
 }
+
+test_known_alb_group_forgotten_instance_before_value_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+			{
+				"address": "module.api.aws_instance.forgotten[0]", "mode": "managed", "type": "aws_instance",
+				"change": {
+					"actions": ["forget"],
+					"before": {"vpc_security_group_ids": ["sg-alb"]},
+					"after": null,
+				},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.alb: ALB group is attached to a forgotten non-load-balancer resource" in messages
+}
+
+test_forgotten_security_group_rule_before_value_does_not_revoke_alb_exemption if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+			{
+				"address": "module.rules.aws_security_group_rule.forgotten[\"http\"]",
+				"mode": "managed", "type": "aws_security_group_rule",
+				"change": {
+					"actions": ["forget"],
+					"before": {"security_group_id": "sg-alb"},
+					"after": null,
+				},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"module.rules.aws_security_group_rule.forgotten[\"http\"]: forgotten resource protections cannot be verified" in messages
+	not has_message(messages, "aws_security_group.alb")
+}
+
+test_forgotten_resource_without_group_id_keeps_alb_exemption if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+			{
+				"address": "module.api.aws_instance.forgotten[0]", "mode": "managed", "type": "aws_instance",
+				"change": {
+					"actions": ["forget"],
+					"before": {"vpc_security_group_ids": ["sg-other"]},
+					"after": null,
+				},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_single_indexed_alb_group_instance_with_rule_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.http",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb[0]", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb-0", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb-0"]}},
+			},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.http[0]",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"change": {"after": {"security_group_id": "sg-alb-0", "cidr_ipv4": "0.0.0.0/0"}},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_multiple_indexed_alb_group_instances_deny_as_ambiguous if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb[0]", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb-0", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_security_group.alb[1]", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb-1", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {
+					"load_balancer_type": "application",
+					"security_groups": ["sg-alb-0", "sg-alb-1"],
+				}},
+			},
+		],
+	}
+
+	count(messages) == 2
+	"aws_security_group.alb[0]: indexed group instances cannot be unambiguously correlated" in messages
+	"aws_security_group.alb[1]: indexed group instances cannot be unambiguously correlated" in messages
+}
+
+test_known_alb_group_forgotten_scalar_before_value_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+			{
+				"address": "aws_network_interface.leftover", "mode": "managed", "type": "aws_network_interface",
+				"change": {
+					"actions": ["forget"],
+					"before": {"security_group_id": "sg-alb"},
+					"after": null,
+				},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.alb: ALB group is attached to a forgotten non-load-balancer resource" in messages
+}

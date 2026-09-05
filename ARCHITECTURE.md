@@ -253,7 +253,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 79
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 85
   Rego unit tests and the 17-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The
   root-module policy considers only managed resources and denies a planned S3
@@ -273,13 +273,17 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   requires exactly one distinct managed group reference from a planned root
   managed `aws_lb` application instance, including an indexed instance; when
   known, the ALB's planned `security_groups` list must contain the group's
-  planned `after.id`. An unknown attachment's complete reference set must be
+  planned `after.id`. A configuration group address correlates only when exactly
+  one planned group instance matches; multiple `count`/`for_each` instances fail
+  closed as ambiguous. An unknown attachment's complete reference set must be
   exactly the group's whole-resource and `.id` traversals. Direct configuration
   references from an `aws_lb` not backed exclusively by known planned application
   instances, any other root managed non-rule resource, or a root module call revoke
   the exemption; when the group ID is known, a matching string leaf in any managed
-  planned change at any module depth also revokes it. Planned application ALBs
-  and rule-definition resources are not consumers. Any configuration reference
+  planned `change.after` at any module depth or in `change.before` for a forgotten
+  managed non-rule resource also revokes it. A fresh-created group has no known
+  pre-existing ID to match. Planned application ALBs and rule-definition resources
+  are not consumers. Any configuration reference
   below another security group's `expressions.ingress` or `expressions.egress`,
   whether flattened or nested, is treated as a rule source; planned nested ingress
   and egress `security_groups` source values are likewise excluded. Terraform plan

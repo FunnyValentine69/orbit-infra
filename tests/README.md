@@ -29,7 +29,7 @@ bash tests/conftest-gate.sh
 ```
 
 The suite first runs fixture hygiene against both committed plans, then
-requires `conftest verify` to pass all 79 Rego unit tests. It accepts the good
+requires `conftest verify` to pass all 85 Rego unit tests. It accepts the good
 plan without reporting `aws_security_group.alb`, and requires the bad plan to
 exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
@@ -47,9 +47,14 @@ are denied as unresolvable. Policy selectors accept only managed resources, so d
 buckets are ignored and data-source load balancers cannot exempt a managed
 group. Open, unknown, or prefix-list non-ALB ingress is denied because this
 gate cannot prove a managed prefix list safe. Governed resources whose actions
-contain `forget` are denied because their protections cannot be verified. The
-ALB exemption requires one distinct group reference and a planned root
-application-ALB instance; known planned attachment IDs must agree. Direct
+contain `forget` are denied because their protections cannot be verified. For a
+known ALB-group ID, a forgotten managed non-rule resource whose `change.before`
+contains that ID also revokes the exemption; a fresh-created group has no known
+pre-existing ID to match. The ALB exemption requires one distinct group
+reference and a planned root application-ALB instance; known planned attachment
+IDs must agree. A configuration group address correlates only when exactly one
+planned group instance matches; multiple `count`/`for_each` instances fail
+closed as ambiguous. Direct
 configuration references from a network, gateway, unknown-type, or unplanned
 `aws_lb`, other root managed resources, or root module calls revoke the
 exemption, as does a matching known group ID anywhere in any managed planned

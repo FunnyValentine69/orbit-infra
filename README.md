@@ -155,13 +155,17 @@ their protections cannot be verified. Open, unknown, or prefix-list non-ALB
 ingress is denied because this gate cannot prove a managed prefix list safe;
 unknown legacy-rule direction is treated as potentially ingress. An ALB exemption
 requires exactly one distinct managed security-group reference and a planned root
-managed application-ALB instance, with known planned attachment IDs agreeing.
+managed application-ALB instance, with known planned attachment IDs agreeing. A
+configuration group address correlates only when exactly one planned group
+instance matches; multiple `count`/`for_each` instances fail closed as ambiguous.
 Direct configuration references from an `aws_lb` not backed exclusively by known
 planned application instances, any other root managed non-rule resource, or a root
 module call revoke the exemption. For a group with a known planned ID, a matching
-string leaf anywhere in any managed planned change at any module depth also
-revokes it. Planned application ALBs and security-group rule resources are excluded
-from those consumer checks. Any configuration reference under another security
+string leaf anywhere in any managed planned `change.after` at any module depth,
+or in `change.before` for a forgotten managed non-rule resource, also revokes it.
+A fresh-created group has no known pre-existing ID to match. Planned application
+ALBs and security-group rule resources are excluded from those consumer checks.
+Any configuration reference under another security
 group's `expressions.ingress` or `expressions.egress`, whether flattened or nested,
 is treated as a rule source rather than a consumer; planned nested ingress or egress
 `security_groups` source values are likewise excluded. When an ALB attachment is
