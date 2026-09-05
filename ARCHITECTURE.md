@@ -253,7 +253,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 35
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 40
   Rego unit tests and the 14-case shell suite against fixtures that are
   LOCALSTACK-recorded locally. The root-module policy denies a planned S3
   bucket without exactly one fully locked public-access block whose bucket
@@ -272,7 +272,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   group ID is an accepted plan-time residual because the reference set cannot
   distinguish it. In `terraform-plan.yml`, the `gates` job
   runs the gate and `plan-localstack` tests the live LocalStack plan: VERIFIED
-  in CI on PR #N's final head; run ids in the PR description. In
+  in CI on PR #12's final head; run ids in the PR description. In
   `session-apply.yml`, Conftest gates the saved AWS plan before `make apply`;
   the LocalStack target has no saved plan, and this apply-side gate remains
   CODE-ONLY until P0-3d.

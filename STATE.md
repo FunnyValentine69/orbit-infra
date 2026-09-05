@@ -1,7 +1,7 @@
 # STATE
 
 ```
-LOCATION   Phase 5 P5-3 in review as PR #N (feat/p5-3-conftest-gate); P5-4 publish-ready check done; next: demo link (user), then the P0-3b decision gate
+LOCATION   Phase 5 P5-3 in review as PR #12 (feat/p5-3-conftest-gate); P5-4 publish-ready check done; next: demo link (user), then the P0-3b decision gate
 STATE      LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge run 33825140591 from main 9b253b6); stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only; the nightly AWS sweeper is CODE-ONLY until P0-3b; conftest gate on the PR plan and in scripts/gates.sh, saved-AWS-plan gate CODE-ONLY until P0-3d; follow-ups P5-12 to P5-23 filed
 NEXT       record the demo link (user); decide P0-3b (paid plan) which gates P5-1, P5-x, P5-5..P5-11, P5-22 and every CODE-ONLY item; P5-12..P5-21, P5-23 open
 ```
