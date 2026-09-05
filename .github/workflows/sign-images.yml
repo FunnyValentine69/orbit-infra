@@ -192,7 +192,7 @@ jobs:
             # SBOM travels only as an attestation on the private image (ADR 0007 amendment 2026-09-04); it is never published as an Actions artifact.
             if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               --type spdxjson "${image}@${digest}" 2>/dev/null \
-              | jq -e -s 'length > 0' >/dev/null; then
+              | jq -e -s 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) | type == "object" and has("spdxVersion") and has("SPDXID")) catch false)' >/dev/null; then
               echo "${repository}: SBOM attestation already exists"
             else
               cosign attest --yes --tlog-upload=false --use-signing-config=false \
@@ -205,7 +205,7 @@ jobs:
               echo "${repository}: SBOM attestation verification failed" >&2
               exit 1
             fi
-            jq -e -s 'length > 0' <<< "$out" >/dev/null || {
+            jq -e -s 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) | type == "object" and has("spdxVersion") and has("SPDXID")) catch false)' <<< "$out" >/dev/null || {
               echo "${repository}: no SBOM attestation found" >&2
               exit 1
             }

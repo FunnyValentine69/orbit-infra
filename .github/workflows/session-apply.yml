@@ -441,7 +441,7 @@ jobs:
             local attestations
             if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               --type https://github.com/FunnyValentine69/orbit-infra/local-build/v1 \
-              "$image" 2>/dev/null)" || \
+              "$image")" || \
                ! jq -e -s --arg upstream_sha "$UPSTREAM_SHA" \
                  --arg upstream_archive_sha256 "$UPSTREAM_ARCHIVE_SHA256" \
                  --arg repo_build_inputs_sha256 "$REPO_BUILD_INPUTS_SHA256" '
@@ -450,7 +450,7 @@ jobs:
                      and $predicate.upstream_archive_sha256 == $upstream_archive_sha256
                      and $predicate.repo_build_inputs_sha256 == $repo_build_inputs_sha256) catch false)
                  ' <<< "$attestations" >/dev/null; then
-              echo "$label has no custom attestation matching upstream.lock" >&2
+              echo "$label has no matching build attestation (local-build/v1)" >&2
               return 1
             fi
           }
@@ -459,11 +459,11 @@ jobs:
             local attestations
             if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               --type https://github.com/FunnyValentine69/orbit-infra/placeholder-build/v1 \
-              "$image" 2>/dev/null)" || \
+              "$image")" || \
                ! jq -e -s --arg source_sha "$PLACEHOLDER_SOURCE_SHA" '
                    any(.[]; try ((.payload | @base64d | fromjson | .predicate).source_sha == $source_sha) catch false)
                  ' <<< "$attestations" >/dev/null; then
-              echo "api_image has no custom attestation matching mirror-images.lock" >&2
+              echo "api_image has no matching placeholder attestation (placeholder-build/v1)" >&2
               return 1
             fi
           }
@@ -475,7 +475,7 @@ jobs:
             local attestations
             if ! attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               --type https://github.com/FunnyValentine69/orbit-infra/mirror/v1 \
-              "$image" 2>/dev/null)" || \
+              "$image")" || \
                ! jq -e -s --arg source_ref "$source_ref" --arg source_digest "$source_digest" '
                    any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $predicate
                      | $predicate.source_ref == $source_ref

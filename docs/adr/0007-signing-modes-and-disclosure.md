@@ -89,8 +89,12 @@ contradicting this ADR's non-disclosure rule. The upload step is removed. The
 workflow now attests each generated SPDX SBOM to its private image with
 `cosign attest --type spdxjson` under the KMS key, with transparency-log upload
 disabled. Operators retrieve it with
-`cosign verify-attestation --type spdxjson --key <exported public key>
---insecure-ignore-tlog <image@digest>`. This path remains `CODE-ONLY` until
+`cosign verify-attestation --key <exported public key>
+--insecure-ignore-tlog --type spdxjson <image@digest> | jq -s '[.[] | .payload |
+@base64d | fromjson | select(.predicateType == "https://spdx.dev/Document") |
+.predicate] | last' > <name>.spdx.json`. Multiple newline-delimited DSSE
+envelopes are possible; this command decodes them and keeps the last matching
+SPDX JSON predicate. This path remains `CODE-ONLY` until
 P0-3d.
 
 Cosign 3.1.3 requires `--use-signing-config=false` alongside
