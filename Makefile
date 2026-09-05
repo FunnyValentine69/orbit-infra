@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test test-concurrency lint validate conftest record-conftest-fixtures check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend check-localstack-read localstack-state-list localstack-show-json localstack-output placeholder-build check-placeholder-image check-vhs demo print-preview-root lease-list lease-get close
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test test-concurrency lint validate conftest record-conftest-fixtures check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend check-localstack-read localstack-state-list localstack-show-json localstack-output placeholder-build check-placeholder-image check-vhs demo print-preview-root print-target lease-list lease-get close
 
 TARGET ?=
 # preflight and terraform must check the same account and region
@@ -280,6 +280,9 @@ check-vhs:
 
 print-preview-root:
 	@printf '%s\n' "$(PREVIEW_ROOT)"
+
+print-target:
+	@printf '%s\n' "$(TARGET)"
 
 # Records docs/assets/demo.gif from demo/demo.tape against LocalStack. Local, on-demand only.
 # Usage: OPERATOR_CIDR=203.0.113.0/24 make demo
