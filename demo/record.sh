@@ -75,8 +75,8 @@ cat "$RUN/versions.txt"
 
 # --- (2) cleanup trap --------------------------------------------------------
 cleanup() {
-	set +e
 	local rc=$?
+	set +e
 	if ! make destroy >"$RUN/cleanup.log" 2>&1; then
 		echo "demo: cleanup destroy failed (see $RUN/cleanup.log)" >&2
 		if [ "$rc" -eq 0 ]; then rc=1; fi
