@@ -17,6 +17,23 @@ die() {
 	exit 1
 }
 
+# Prints the demo environment's state list. Exits 0 with no output when the
+# backend has no state object yet (terraform reports "No state file was found");
+# any other terraform failure is propagated with its stderr.
+state_list() {
+	local out err rc
+	err=$(mktemp)
+	if out=$("${LS_ENV[@]}" env TF_DATA_DIR=.terraform-localstack terraform -chdir=.preview-runs/demo state list 2>"$err"); then
+		rc=0
+	else
+		rc=$?
+		if grep -q 'No state file was found' "$err"; then out=""; rc=0; else cat "$err" >&2; fi
+	fi
+	rm -f "$err"
+	printf '%s' "$out"
+	return "$rc"
+}
+
 [ "$(make print-preview-root)" = ".preview-runs/demo" ] || die "PREVIEW_ROOT did not propagate to nested make (got: $(make print-preview-root))"
 
 # --- (1) preflight -----------------------------------------------------------
@@ -36,16 +53,14 @@ make render-localstack-backend >/dev/null
 
 "${LS_ENV[@]}" env TF_DATA_DIR=.terraform-localstack terraform -chdir=.preview-runs/demo init -reconfigure -input=false >"$RUN/preflight-init.log" 2>&1 || die "terraform init failed (see $RUN/preflight-init.log)"
 
-if ! existing=$("${LS_ENV[@]}" env TF_DATA_DIR=.terraform-localstack terraform -chdir=.preview-runs/demo state list 2>"$RUN/preflight-state.err"); then
-	die "$(cat "$RUN/preflight-state.err")"
-fi
+existing=$(state_list) || die "terraform state list failed"
 [ -z "$existing" ] || die "environment demo already has state; run make destroy TARGET=localstack ENV_ID=demo first"
 
 # --- (2) cleanup trap --------------------------------------------------------
 cleanup() {
 	local rc=$?
 	make destroy >"$RUN/cleanup.log" 2>&1 || echo "demo: cleanup destroy failed (see $RUN/cleanup.log)" >&2
-	"${LS_ENV[@]}" env TF_DATA_DIR=.terraform-localstack terraform -chdir=.preview-runs/demo state list >>"$RUN/cleanup.log" 2>&1 || true
+	state_list >>"$RUN/cleanup.log" 2>&1 || true
 	exit "$rc"
 }
 trap cleanup EXIT
@@ -60,9 +75,7 @@ vhs "$RUN/demo.tape"
 
 # --- (4) failure injection ----------------------------------------------------
 if [ "${DEMO_INJECT_FAIL:-}" = post-apply ]; then
-	if ! live=$("${LS_ENV[@]}" env TF_DATA_DIR=.terraform-localstack terraform -chdir=.preview-runs/demo state list 2>&1); then
-		die "injection expected live state but found none"
-	fi
+	live=$(state_list) || die "state list failed"
 	[ -n "$live" ] || die "injection expected live state but found none"
 	echo "$live" | head -n 5
 	echo "demo: injected failure after apply"
@@ -85,8 +98,7 @@ grep -q '^Plan:' "$RUN/plan.log" || die "plan.log missing 'Plan:' line"
 grep -q 'Apply complete' "$RUN/apply.log" || die "apply.log missing 'Apply complete'"
 grep -q 'Destroy complete' "$RUN/destroy.log" || die "destroy.log missing 'Destroy complete'"
 
-final=$("${LS_ENV[@]}" env TF_DATA_DIR=.terraform-localstack terraform -chdir=.preview-runs/demo state list 2>"$RUN/final-state.err") || die "$(cat "$RUN/final-state.err")"
-[ -z "$final" ] || die "state list not empty after destroy"
+[ -z "$(state_list)" ] || die "state is not empty after the recorded destroy"
 
 [ -s "$RUN/demo.gif" ] || die "demo.gif missing or empty"
 
