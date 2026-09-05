@@ -253,7 +253,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 18
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 24
   Rego unit tests and the 14-case shell suite against fixtures that are
   LOCALSTACK-recorded locally. The root-module policy denies a planned S3
   bucket without exactly one fully locked public-access block correlated by

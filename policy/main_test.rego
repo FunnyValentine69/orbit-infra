@@ -40,6 +40,39 @@ test_protected_bucket_passes if {
 	count(messages) == 0
 }
 
+test_indexed_bucket_instance_denies_even_with_protecting_block if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_s3_bucket.data", "type": "aws_s3_bucket"},
+			{
+				"address": "aws_s3_bucket_public_access_block.data",
+				"type": "aws_s3_bucket_public_access_block",
+				"expressions": {"bucket": {"references": ["aws_s3_bucket.data"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_s3_bucket.data[0]",
+				"type": "aws_s3_bucket",
+				"change": {"actions": ["create"], "after": {}},
+			},
+			{
+				"address": "aws_s3_bucket_public_access_block.data[0]",
+				"type": "aws_s3_bucket_public_access_block",
+				"change": {"actions": ["create"], "after": {
+					"block_public_acls": true,
+					"block_public_policy": true,
+					"ignore_public_acls": true,
+					"restrict_public_buckets": true,
+				}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_s3_bucket.data[0]: S3 bucket instance correlation unsupported" in messages
+}
+
 test_child_module_bucket_denies_even_with_protecting_block if {
 	messages := deny with input as {
 		"configuration": {"root_module": {"module_calls": {"x": {"module": {"resources": [
