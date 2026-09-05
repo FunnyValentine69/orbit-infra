@@ -29,3 +29,8 @@ volume/
 upstream/
 .upstream-context/
 .DS_Store
+
+# Local tooling and Python artefacts
+.claude/
+.venv/
+__pycache__/
