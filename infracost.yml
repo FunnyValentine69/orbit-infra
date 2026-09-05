@@ -1,0 +1,10 @@
+# Infracost GitHub App configuration (https://www.infracost.io/docs/features/config_file/).
+# The app auto-detects every Terraform root in the repository. The conftest fixture
+# roots under tests/fixtures/conftest/ are deliberately insecure inputs for the policy
+# gate, never deployed, so they are excluded from project detection. The repository
+# workflow's own infracost job passes --path envs/preview explicitly and is unaffected.
+version: 0.1
+autodetect:
+  exclude_dirs:
+    - tests/fixtures/conftest/good-root
+    - tests/fixtures/conftest/bad-root
