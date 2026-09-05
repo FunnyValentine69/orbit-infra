@@ -116,7 +116,12 @@ awk -v d="$duration" 'BEGIN { if (d+0 < 30 || d+0 > 120) exit 1 }' || die "demo.
 frames=$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$RUN/demo.gif")
 [ "$frames" -gt 0 ] || die "demo.gif has no frames"
 
-! grep -q DEMO-FAIL "$RUN/demo.txt" || die "DEMO-FAIL marker found in demo.txt"
+grep -q 'Plan: ' "$RUN/demo.txt" || die "demo.txt missing 'Plan: ' line"
+grep -q 'Apply complete' "$RUN/demo.txt" || die "demo.txt missing 'Apply complete'"
+grep -q 'Destroy complete' "$RUN/demo.txt" || die "demo.txt missing 'Destroy complete'"
+grep -q 'PASS: conftest-gate suite' "$RUN/demo.txt" || die "demo.txt missing 'PASS: conftest-gate suite'"
+grep -q '^aws_' "$RUN/demo.txt" || die "demo.txt missing state list output (no line starting with aws_)"
+grep -qi 'localstack' "$RUN/demo.txt" || die "demo.txt missing localstack status output"
 
 # --- (6) publish ---------------------------------------------------------------
 mv "$RUN/demo.gif" docs/assets/demo.gif
