@@ -29,24 +29,29 @@ bash tests/conftest-gate.sh
 ```
 
 The suite first runs fixture hygiene against both committed plans, then
-requires `conftest verify` to pass all 46 Rego unit tests. It accepts the good
+requires `conftest verify` to pass all 58 Rego unit tests. It accepts the good
 plan without reporting `aws_security_group.alb`, and requires the bad plan to
 exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
 `aws_security_group.zero_lb`, `aws_vpc_security_group_ingress_rule.open`,
 `aws_security_group_rule.legacy_open`, and
 `aws_default_security_group.default`. It also requires the bad plan not to
-report the protected `aws_s3_bucket.database`. The suite currently reports 15
+report the protected `aws_s3_bucket.database`. The suite also proves that a
+nested true `*_sensitive` marker is rejected and currently reports 16
 cases. Bucket protection requires one unambiguous whole-resource reference,
 equal known planned bucket names exposed through `.bucket`, and all four public
 access flags. Policy selectors accept only managed resources, so data-source
 buckets are ignored and data-source load balancers cannot exempt a managed
-group. The ALB exemption requires one distinct group reference and a planned
-root application-ALB instance; known planned attachment IDs must agree. A
-standalone ingress rule must also plan a known target equal to the group's
-known ID, or the rule target and group ID must both be unknown on a fresh
-create through the single reference. A conditional that plans to a literal ID
-is denied. Unknown legacy-rule direction is treated as potentially ingress.
+group. Open, unknown, or prefix-list non-ALB ingress is denied because this
+gate cannot prove a managed prefix list safe. The ALB exemption requires one
+distinct group reference and a planned root application-ALB instance; known
+planned attachment IDs must agree, while an unknown attachment must reference
+exactly the group's whole-resource and `.id` traversals. A standalone ingress
+rule, including an indexed instance, must also plan a known target equal to the
+group's known ID, or the rule target and group ID must both be unknown through
+that same exact two-traversal set. Condition references and planned literal or
+mismatched IDs are denied. Unknown legacy-rule direction is treated as
+potentially ingress.
 
 Fixture provenance: `good-plan.json` and `bad-plan.json` in
 `tests/fixtures/conftest/` are `recorded_from` LocalStack 2026.8.1 with

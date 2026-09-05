@@ -29,6 +29,22 @@ for fixture in good-plan.json bad-plan.json; do
 done
 pass "recorded plans pass fixture hygiene"
 
+sensitive_fixture="$(mktemp)"
+trap 'rm -f "$sensitive_fixture"' EXIT
+printf '%s\n' '{"resource_changes":[{"change":{"after":{"password":"x"},"after_sensitive":{"password":true}}}]}' > "$sensitive_fixture"
+
+set +e
+sensitive_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" "$sensitive_fixture" 2>&1)"
+sensitive_rc=$?
+set -e
+if [ "$sensitive_rc" -ne 1 ]; then
+  fail "nested true sensitive marker must exit 1, got $sensitive_rc: $sensitive_output"
+fi
+if ! grep -Fq 'a *_sensitive value is true' <<< "$sensitive_output"; then
+  fail "nested true sensitive marker did not report the sensitive message: $sensitive_output"
+fi
+pass "nested true sensitive marker is rejected"
+
 if ! verify_output="$(conftest verify --policy "$POLICY" 2>&1)"; then
   fail "conftest verify failed: $verify_output"
 fi

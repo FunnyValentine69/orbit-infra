@@ -22,7 +22,7 @@ if jq -e 'has("prior_state")' "$fixture" >/dev/null; then
   fail "top-level prior_state is present"
 fi
 
-if jq -e '[.. | objects | to_entries[] | select(.key | test("_sensitive$")) | .value] | flatten | any(. == true)' "$fixture" >/dev/null; then
+if jq -e '[.. | objects | to_entries[] | select(.key | test("_sensitive$")) | .value | .. | select(. == true)] | any' "$fixture" >/dev/null; then
   fail "a *_sensitive value is true"
 fi
 

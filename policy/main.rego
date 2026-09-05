@@ -4,9 +4,9 @@
 # plan that value. An ALB exemption requires exactly one distinct security-group
 # reference and a planned root ALB instance; known attachment and rule target IDs
 # must match the group's known planned ID. Fresh creates are exempt only when the
-# group, ALB attachment, and rule target are all unknown through one unambiguous
-# group reference. Unknown legacy-rule direction is treated as potentially ingress.
-# Planned no-op resources are evaluated because sibling resources can be deleted
+# group, ALB attachment, and rule target are all unknown through exact whole-resource
+# and `.id` references. Prefix-list ingress fails closed outside this exemption;
+# unknown legacy-rule direction is potentially ingress. Planned no-op resources are evaluated because sibling resources can be deleted
 # or weakened independently. Data-source reads are excluded from every selector.
 package main
 
@@ -186,6 +186,19 @@ load_balancer_group_addresses(load_balancer) := addresses if {
 	}
 }
 
+expression_references_exactly_group(resource, expression_name, group_address) if {
+	references := object.get(
+		object.get(object.get(resource, "expressions", {}), expression_name, {}),
+		"references",
+		[],
+	)
+	is_array(references)
+	{reference | some reference in references} == {
+		group_address,
+		sprintf("%s.id", [group_address]),
+	}
+}
+
 load_balancer_instance_matches(configuration_address, instance_address) if {
 	instance_address == configuration_address
 }
@@ -211,12 +224,14 @@ planned_group_id_unknown(group_address) if {
 	object.get(object.get(group_change.change, "after_unknown", {}), "id", false) == true
 }
 
-load_balancer_attaches_group(load_balancer_change, group_address) if {
+load_balancer_attaches_group(load_balancer, load_balancer_change, group_address) if {
 	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "security_groups", false) == true
 	planned_group_id_unknown(group_address)
+	expression_references_exactly_group(load_balancer, "security_groups", group_address)
 }
 
-load_balancer_attaches_group(load_balancer_change, group_address) if {
+load_balancer_attaches_group(load_balancer, load_balancer_change, group_address) if {
+	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
 	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "security_groups", false) != true
 	security_groups := object.get(load_balancer_change.change.after, "security_groups", null)
 	is_array(security_groups)
@@ -236,7 +251,7 @@ planned_alb_groups contains address if {
 	planned(load_balancer_change)
 	object.get(load_balancer_change.change.after, "load_balancer_type", null) == "application"
 	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "load_balancer_type", false) != true
-	load_balancer_attaches_group(load_balancer_change, address)
+	load_balancer_attaches_group(load_balancer, load_balancer_change, address)
 }
 
 is_planned_alb_group(address) if {
@@ -270,6 +285,27 @@ inline_cidr_unknown(change) if {
 	has_unknown_leaf(value)
 }
 
+inline_prefix_list_unverifiable(change) if {
+	some ingress in object.get(change.after, "ingress", [])
+	prefix_list_ids := object.get(ingress, "prefix_list_ids", [])
+	is_array(prefix_list_ids)
+	count(prefix_list_ids) > 0
+}
+
+inline_prefix_list_unverifiable(change) if {
+	ingress_unknown := object.get(object.get(change, "after_unknown", {}), "ingress", false)
+	ingress_unknown == true
+}
+
+inline_prefix_list_unverifiable(change) if {
+	ingress_unknown := object.get(object.get(change, "after_unknown", {}), "ingress", false)
+	ingress_unknown != true
+	walk(ingress_unknown, [path, value])
+	count(path) > 0
+	path[count(path) - 1] == "prefix_list_ids"
+	has_unknown_leaf(value)
+}
+
 deny contains msg if {
 	some group in resource_changes
 	group.type in {"aws_security_group", "aws_default_security_group"}
@@ -300,10 +336,23 @@ deny contains msg if {
 	msg := sprintf("%s: non-ALB security group ingress CIDR is unknown at plan time", [group.address])
 }
 
+deny contains msg if {
+	some group in resource_changes
+	group.type in {"aws_security_group", "aws_default_security_group"}
+	planned(group)
+	not is_planned_alb_group(group.address)
+	inline_prefix_list_unverifiable(group.change)
+
+	msg := sprintf(
+		"%s: non-ALB security group prefix-list ingress cannot be proven safe by this gate",
+		[group.address],
+	)
+}
+
 referenced_group_addresses(rule_address) := addresses if {
 	addresses := {address |
 		some rule in root_resources
-		rule.address == rule_address
+		load_balancer_instance_matches(rule.address, rule_address)
 
 		some group in root_resources
 		group.type == "aws_security_group"
@@ -318,7 +367,8 @@ referenced_group_addresses(rule_address) := addresses if {
 	}
 }
 
-rule_target_matches_group(rule_change, group_address) if {
+rule_target_matches_group(rule, rule_change, group_address) if {
+	load_balancer_instance_matches(rule.address, rule_change.address)
 	object.get(object.get(rule_change.change, "after_unknown", {}), "security_group_id", false) != true
 	rule_group_id := object.get(rule_change.change.after, "security_group_id", null)
 	is_string(rule_group_id)
@@ -326,17 +376,20 @@ rule_target_matches_group(rule_change, group_address) if {
 	rule_group_id == group_id
 }
 
-rule_target_matches_group(rule_change, group_address) if {
+rule_target_matches_group(rule, rule_change, group_address) if {
 	object.get(object.get(rule_change.change, "after_unknown", {}), "security_group_id", false) == true
 	planned_group_id_unknown(group_address)
+	expression_references_exactly_group(rule, "security_group_id", group_address)
 }
 
 rule_is_for_planned_alb(rule_change) if {
+	some rule in root_resources
+	load_balancer_instance_matches(rule.address, rule_change.address)
 	groups := referenced_group_addresses(rule_change.address)
 	count(groups) == 1
 	some group_address in groups
 	is_planned_alb_group(group_address)
-	rule_target_matches_group(rule_change, group_address)
+	rule_target_matches_group(rule, rule_change, group_address)
 }
 
 standalone_cidr_unknown(change) if {
@@ -345,6 +398,16 @@ standalone_cidr_unknown(change) if {
 
 standalone_cidr_unknown(change) if {
 	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "cidr_ipv6", false))
+}
+
+standalone_prefix_list_unverifiable(change) if {
+	prefix_list_id := object.get(change.after, "prefix_list_id", null)
+	is_string(prefix_list_id)
+	prefix_list_id != ""
+}
+
+standalone_prefix_list_unverifiable(change) if {
+	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "prefix_list_id", false))
 }
 
 deny contains msg if {
@@ -377,6 +440,19 @@ deny contains msg if {
 	msg := sprintf("%s: non-ALB ingress rule CIDR is unknown at plan time", [rule.address])
 }
 
+deny contains msg if {
+	some rule in resource_changes
+	rule.type == "aws_vpc_security_group_ingress_rule"
+	planned(rule)
+	not rule_is_for_planned_alb(rule)
+	standalone_prefix_list_unverifiable(rule.change)
+
+	msg := sprintf(
+		"%s: non-ALB ingress rule prefix-list ingress cannot be proven safe by this gate",
+		[rule.address],
+	)
+}
+
 legacy_ipv4_open(after) if {
 	some cidr in object.get(after, "cidr_blocks", [])
 	cidr == "0.0.0.0/0"
@@ -393,6 +469,16 @@ legacy_cidr_unknown(change) if {
 
 legacy_cidr_unknown(change) if {
 	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "ipv6_cidr_blocks", false))
+}
+
+legacy_prefix_list_unverifiable(change) if {
+	prefix_list_ids := object.get(change.after, "prefix_list_ids", [])
+	is_array(prefix_list_ids)
+	count(prefix_list_ids) > 0
+}
+
+legacy_prefix_list_unverifiable(change) if {
+	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "prefix_list_ids", false))
 }
 
 legacy_potential_ingress(change) if {
@@ -434,4 +520,18 @@ deny contains msg if {
 	legacy_cidr_unknown(rule.change)
 
 	msg := sprintf("%s: non-ALB legacy ingress rule CIDR is unknown at plan time", [rule.address])
+}
+
+deny contains msg if {
+	some rule in resource_changes
+	rule.type == "aws_security_group_rule"
+	planned(rule)
+	legacy_potential_ingress(rule.change)
+	not rule_is_for_planned_alb(rule)
+	legacy_prefix_list_unverifiable(rule.change)
+
+	msg := sprintf(
+		"%s: non-ALB legacy ingress rule prefix-list ingress cannot be proven safe by this gate",
+		[rule.address],
+	)
 }

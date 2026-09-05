@@ -1133,12 +1133,12 @@ test_fresh_create_rule_and_single_alb_group_both_unknown_passes if {
 			{
 				"address": "aws_lb.public",
 				"mode": "managed", "type": "aws_lb",
-				"expressions": {"security_groups": {"references": ["aws_security_group.alb"]}},
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
 			},
 			{
 				"address": "aws_vpc_security_group_ingress_rule.http",
 				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
-				"expressions": {"security_group_id": {"references": ["aws_security_group.alb"]}},
+				"expressions": {"security_group_id": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
 			},
 		]}},
 		"resource_changes": [
@@ -1249,4 +1249,339 @@ test_data_source_load_balancer_does_not_exempt_managed_group if {
 
 	count(messages) == 1
 	has_message(messages, "aws_security_group.service")
+}
+
+test_unknown_load_balancer_attachment_with_condition_reference_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": [
+					"var.x",
+					"aws_security_group.alb",
+					"aws_security_group.alb.id",
+				]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb",
+				"mode": "managed", "type": "aws_security_group",
+				"change": {
+					"after": {"ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]},
+					"after_unknown": {"id": true},
+				},
+			},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"change": {
+					"after": {"load_balancer_type": "application"},
+					"after_unknown": {"security_groups": true},
+				},
+			},
+		],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_security_group.alb")
+}
+
+test_unknown_rule_target_with_condition_reference_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.http",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"expressions": {"security_group_id": {"references": [
+					"var.x",
+					"aws_security_group.alb",
+					"aws_security_group.alb.id",
+				]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb",
+				"mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"ingress": []}, "after_unknown": {"id": true}},
+			},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.http",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"change": {
+					"after": {"security_group_id": null, "cidr_ipv4": "0.0.0.0/0"},
+					"after_unknown": {"security_group_id": true},
+				},
+			},
+		],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_vpc_security_group_ingress_rule.http")
+}
+
+test_inline_prefix_list_ingress_on_non_alb_group_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service",
+			"mode": "managed", "type": "aws_security_group",
+			"change": {"after": {"ingress": [{
+				"cidr_blocks": [],
+				"ipv6_cidr_blocks": [],
+				"prefix_list_ids": ["pl-open"],
+			}]}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: non-ALB security group prefix-list ingress cannot be proven safe by this gate" in messages
+}
+
+test_inline_prefix_list_ingress_on_planned_alb_group_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb",
+				"mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": [{
+					"cidr_blocks": [],
+					"ipv6_cidr_blocks": [],
+					"prefix_list_ids": ["pl-open"],
+				}]}},
+			},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_modern_prefix_list_ingress_on_non_alb_group_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.prefix",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_vpc_security_group_ingress_rule.prefix",
+			"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+			"change": {"after": {
+				"security_group_id": "sg-service",
+				"cidr_ipv4": null,
+				"cidr_ipv6": null,
+				"prefix_list_id": "pl-open",
+			}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_vpc_security_group_ingress_rule.prefix: non-ALB ingress rule prefix-list ingress cannot be proven safe by this gate" in messages
+}
+
+test_legacy_prefix_list_ingress_on_non_alb_group_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_security_group_rule.prefix",
+				"mode": "managed", "type": "aws_security_group_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group_rule.prefix",
+			"mode": "managed", "type": "aws_security_group_rule",
+			"change": {"after": {
+				"security_group_id": "sg-service",
+				"type": "ingress",
+				"cidr_blocks": [],
+				"ipv6_cidr_blocks": [],
+				"prefix_list_ids": ["pl-open"],
+			}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group_rule.prefix: non-ALB legacy ingress rule prefix-list ingress cannot be proven safe by this gate" in messages
+}
+
+test_unknown_inline_prefix_list_ingress_on_non_alb_group_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service",
+			"mode": "managed", "type": "aws_security_group",
+			"change": {
+				"after": {"ingress": [{
+					"cidr_blocks": [],
+					"ipv6_cidr_blocks": [],
+					"prefix_list_ids": [],
+				}]},
+				"after_unknown": {"ingress": [{"prefix_list_ids": [true]}]},
+			},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: non-ALB security group prefix-list ingress cannot be proven safe by this gate" in messages
+}
+
+test_empty_inline_prefix_list_with_private_cidr_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service",
+			"mode": "managed", "type": "aws_security_group",
+			"change": {"after": {"ingress": [{
+				"cidr_blocks": ["10.0.0.0/8"],
+				"ipv6_cidr_blocks": [],
+				"prefix_list_ids": [],
+			}]}},
+		}],
+	}
+
+	count(messages) == 0
+}
+
+test_indexed_rule_attached_to_planned_alb_group_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.http",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb",
+				"mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"id": "sg-alb", "ingress": []}},
+			},
+			{
+				"address": "aws_lb.public",
+				"mode": "managed", "type": "aws_lb",
+				"change": {"after": {"load_balancer_type": "application", "security_groups": ["sg-alb"]}},
+			},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.http[0]",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"change": {"after": {"security_group_id": "sg-alb", "cidr_ipv4": "0.0.0.0/0"}},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_indexed_rule_on_non_alb_group_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.http",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_vpc_security_group_ingress_rule.http[0]",
+			"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+			"change": {"after": {"security_group_id": "sg-service", "cidr_ipv4": "0.0.0.0/0"}},
+		}],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_vpc_security_group_ingress_rule.http[0]")
+}
+
+test_unknown_prefix_list_id_on_modern_rule_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_vpc_security_group_ingress_rule.unknown_prefix",
+				"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_vpc_security_group_ingress_rule.unknown_prefix",
+			"mode": "managed", "type": "aws_vpc_security_group_ingress_rule",
+			"change": {
+				"after": {"cidr_ipv4": null, "cidr_ipv6": null, "prefix_list_id": null},
+				"after_unknown": {"prefix_list_id": true},
+			},
+		}],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_vpc_security_group_ingress_rule.unknown_prefix")
+}
+
+test_unknown_prefix_list_ids_on_legacy_rule_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_security_group_rule.unknown_prefix",
+				"mode": "managed", "type": "aws_security_group_rule",
+				"expressions": {"security_group_id": {"references": ["aws_security_group.service"]}},
+			},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group_rule.unknown_prefix",
+			"mode": "managed", "type": "aws_security_group_rule",
+			"change": {
+				"after": {"type": "ingress", "cidr_blocks": [], "ipv6_cidr_blocks": [], "prefix_list_ids": null},
+				"after_unknown": {"prefix_list_ids": true},
+			},
+		}],
+	}
+
+	count(messages) == 1
+	has_message(messages, "aws_security_group_rule.unknown_prefix")
 }

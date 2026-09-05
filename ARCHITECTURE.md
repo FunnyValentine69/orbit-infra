@@ -253,8 +253,8 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 46
-  Rego unit tests and the 15-case shell suite against fixtures that are
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 58
+  Rego unit tests and the 16-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The
   root-module policy considers only managed resources and denies a planned S3
   bucket without exactly one fully locked public-access block whose bucket
@@ -262,18 +262,21 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   known planned `after.bucket` equals the bucket's known planned name; `.bucket`
   references expose that equality. No-op buckets are evaluated, pure deletes
   are skipped, and `count`/`for_each` instances fail closed. The policy also
-  denies `0.0.0.0/0`, `::/0`, or unknown ingress on `aws_security_group`,
-  `aws_default_security_group`, `aws_vpc_security_group_ingress_rule`, and
-  `aws_security_group_rule`; unknown legacy-rule direction is treated as
-  potentially ingress. Data-source reads are neither evaluated nor accepted
-  as exemption anchors. An exemption requires exactly one distinct managed
-  group reference from a planned root managed `aws_lb` application instance,
-  including an indexed instance; when known, the ALB's planned
-  `security_groups` list must contain the group's planned `after.id`. A
-  standalone ingress rule must also plan a known `security_group_id` equal to
-  that ID, or both the rule target and group ID must be unknown on a fresh
-  create through the single reference. A planned literal or mismatch is not
-  exempt. A child-module load balancer never exempts a group. In
+  denies `0.0.0.0/0`, `::/0`, unknown CIDR ingress, or non-empty/unknown
+  prefix-list ingress on `aws_security_group`, `aws_default_security_group`,
+  `aws_vpc_security_group_ingress_rule`, and `aws_security_group_rule`; unknown
+  legacy-rule direction is treated as potentially ingress. Data-source reads
+  are neither evaluated nor accepted as exemption anchors. An exemption
+  requires exactly one distinct managed group reference from a planned root
+  managed `aws_lb` application instance, including an indexed instance; when
+  known, the ALB's planned `security_groups` list must contain the group's
+  planned `after.id`. An unknown attachment's complete reference set must be
+  exactly the group's whole-resource and `.id` traversals. A standalone
+  ingress rule, including an indexed instance, must also plan a known
+  `security_group_id` equal to that ID, or both the rule target and group ID
+  must be unknown through the same exact two-traversal reference set. A
+  condition reference, planned literal, or mismatch is not exempt. A
+  child-module load balancer never exempts a group. In
   `terraform-plan.yml`, the `gates` job runs the gate and `plan-localstack`
   gates both the bootstrap plan before bootstrap apply and the live LocalStack
   plan before its PR summary comment. The bootstrap state bucket uses `.bucket`
