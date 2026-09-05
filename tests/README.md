@@ -28,7 +28,7 @@ Run the Conftest regression suite without AWS or LocalStack:
 bash tests/conftest-gate.sh
 ```
 
-The suite requires `conftest verify` to pass all 35 Rego unit tests, accepts
+The suite requires `conftest verify` to pass all 40 Rego unit tests, accepts
 the good plan without reporting `aws_security_group.alb`, and requires the bad
 plan to exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,

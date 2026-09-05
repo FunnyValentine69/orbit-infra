@@ -8,7 +8,7 @@ re-record both plans with `make record-conftest-fixtures` instead.
 - Terraform version: `1.16.0` (`terraform version`; also embedded as `.terraform_version` in both plan JSON files, format_version `1.2`)
 - Recording date: `2026-09-04` (re-recorded)
 - Branch: `feat/p5-3-conftest-gate`
-- Source commit: `63a9439`
+- Source commit: `46e1cdd`
 - Note: re-recorded because `good-root`/`bad-root` were updated to reference
   their S3 buckets via `.bucket` (instead of the prior form) with explicit
   bucket names; envs/preview/main.tf and bootstrap/state.tf were updated the

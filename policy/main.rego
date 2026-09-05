@@ -32,6 +32,16 @@ planned(resource_change) if {
 	resource_change.change.after != null
 }
 
+has_unknown_leaf(x) if {
+	x == true
+}
+
+has_unknown_leaf(x) if {
+	walk(x, [path, value])
+	count(path) > 0
+	value == true
+}
+
 referenced_bucket_addresses(block) := addresses if {
 	addresses := {address |
 		some bucket in root_resources
@@ -217,7 +227,8 @@ planned_alb_groups contains address if {
 	some load_balancer_change in resource_changes
 	load_balancer_instance_matches(load_balancer.address, load_balancer_change.address)
 	planned(load_balancer_change)
-	object.get(load_balancer_change.change.after, "load_balancer_type", "application") == "application"
+	object.get(load_balancer_change.change.after, "load_balancer_type", null) == "application"
+	object.get(object.get(load_balancer_change.change, "after_unknown", {}), "load_balancer_type", false) != true
 	load_balancer_attaches_group(load_balancer_change, address)
 }
 
@@ -246,10 +257,10 @@ inline_cidr_unknown(change) if {
 	ingress_unknown := object.get(object.get(change, "after_unknown", {}), "ingress", false)
 	ingress_unknown != true
 	walk(ingress_unknown, [path, value])
-	value == true
 	count(path) > 0
 	field := path[count(path) - 1]
 	field in {"cidr_blocks", "ipv6_cidr_blocks"}
+	has_unknown_leaf(value)
 }
 
 deny contains msg if {
@@ -308,11 +319,11 @@ rule_is_for_planned_alb(rule_address) if {
 }
 
 standalone_cidr_unknown(change) if {
-	object.get(object.get(change, "after_unknown", {}), "cidr_ipv4", false) == true
+	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "cidr_ipv4", false))
 }
 
 standalone_cidr_unknown(change) if {
-	object.get(object.get(change, "after_unknown", {}), "cidr_ipv6", false) == true
+	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "cidr_ipv6", false))
 }
 
 deny contains msg if {
@@ -356,11 +367,11 @@ legacy_ipv6_open(after) if {
 }
 
 legacy_cidr_unknown(change) if {
-	object.get(object.get(change, "after_unknown", {}), "cidr_blocks", false) == true
+	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "cidr_blocks", false))
 }
 
 legacy_cidr_unknown(change) if {
-	object.get(object.get(change, "after_unknown", {}), "ipv6_cidr_blocks", false) == true
+	has_unknown_leaf(object.get(object.get(change, "after_unknown", {}), "ipv6_cidr_blocks", false))
 }
 
 legacy_potential_ingress(change) if {

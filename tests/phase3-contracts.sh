@@ -528,7 +528,15 @@ def assert_conftest_install(steps, job_label):
 
 
 plan = yaml.safe_load(Path(sys.argv[1]).read_text())
-assert_conftest_install(plan["jobs"]["gates"]["steps"], "terraform-plan gates job")
+gates_steps = plan["jobs"]["gates"]["steps"]
+gates_install_index = assert_conftest_install(gates_steps, "terraform-plan gates job")
+run_gates_index = one_index(
+    gates_steps,
+    lambda step: step.get("name") == "Run gates",
+    "Run gates in terraform-plan gates job",
+)
+if not gates_install_index < run_gates_index:
+    raise SystemExit("terraform-plan gates job must install Conftest before Run gates")
 
 plan_steps = plan["jobs"]["plan-localstack"]["steps"]
 plan_install_index = assert_conftest_install(plan_steps, "terraform-plan plan-localstack job")
