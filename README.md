@@ -106,7 +106,7 @@ The recording is real output of a real run against LocalStack, produced by `demo
 OPERATOR_CIDR=203.0.113.0/24 make demo
 ```
 
-`OPERATOR_CIDR` must be a TEST-NET-3 value so no real address is recorded; the wrapper refuses anything else, asserts every step's exit code and the GIF's freshness before replacing `docs/assets/demo.gif`, and always destroys the `demo` environment on exit. Provenance and the hygiene review method are in `docs/assets/DEMO_PROVENANCE.md`.
+`OPERATOR_CIDR` must be a TEST-NET-3 value so no real address is recorded; the wrapper refuses anything else, asserts every step's exit code and the GIF's freshness before replacing `docs/assets/demo.gif`, and, once preflight has passed, always destroys the `demo` environment on exit (a run refused in preflight touches nothing). Provenance and the hygiene review method are in `docs/assets/DEMO_PROVENANCE.md`.
 
 ## Quickstart (AWS)
 
