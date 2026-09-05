@@ -34,3 +34,5 @@ upstream/
 .claude/
 .venv/
 __pycache__/
+
+demo/out/
