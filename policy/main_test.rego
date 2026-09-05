@@ -2004,3 +2004,262 @@ test_known_non_alb_group_planned_value_consumer_keeps_default_deny if {
 	count(messages) == 1
 	"aws_security_group.service: non-ALB security group has IPv4 ingress open to 0.0.0.0/0" in messages
 }
+
+test_literal_block_targeting_referenced_bucket_makes_target_ambiguous if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_s3_bucket.data", "mode": "managed", "type": "aws_s3_bucket"},
+			{
+				"address": "aws_s3_bucket_public_access_block.referenced",
+				"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+				"expressions": {"bucket": {"references": ["aws_s3_bucket.data.bucket", "aws_s3_bucket.data"]}},
+			},
+			{
+				"address": "aws_s3_bucket_public_access_block.literal",
+				"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+				"expressions": {"bucket": {"constant_value": "planned-data"}},
+			},
+		]}},
+		"resource_changes": [
+			{"address": "aws_s3_bucket.data", "mode": "managed", "type": "aws_s3_bucket", "change": {"after": {"bucket": "planned-data"}}},
+			{
+				"address": "aws_s3_bucket_public_access_block.referenced",
+				"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+				"change": {"after": {
+					"bucket": "planned-data",
+					"block_public_acls": true,
+					"block_public_policy": true,
+					"ignore_public_acls": true,
+					"restrict_public_buckets": true,
+				}},
+			},
+			{
+				"address": "aws_s3_bucket_public_access_block.literal",
+				"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+				"change": {"after": {
+					"bucket": "planned-data",
+					"block_public_acls": false,
+					"block_public_policy": false,
+					"ignore_public_acls": false,
+					"restrict_public_buckets": false,
+				}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_s3_bucket.data: planned S3 bucket must have exactly one unambiguous planned public access block with all four protections enabled" in messages
+}
+
+test_unknown_unreferenced_public_access_block_target_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [{
+			"address": "aws_s3_bucket_public_access_block.literal",
+			"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+			"expressions": {"bucket": {}},
+		}]}},
+		"resource_changes": [{
+			"address": "aws_s3_bucket_public_access_block.literal",
+			"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+			"change": {
+				"after": {
+					"bucket": null,
+					"block_public_acls": true,
+					"block_public_policy": true,
+					"ignore_public_acls": true,
+					"restrict_public_buckets": true,
+				},
+				"after_unknown": {"bucket": true},
+			},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_s3_bucket_public_access_block.literal: unresolvable public-access-block target" in messages
+}
+
+test_known_unreferenced_public_access_block_targeting_unplanned_bucket_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [{
+			"address": "aws_s3_bucket_public_access_block.literal",
+			"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+			"expressions": {"bucket": {"constant_value": "unmanaged-bucket"}},
+		}]}},
+		"resource_changes": [{
+			"address": "aws_s3_bucket_public_access_block.literal",
+			"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+			"change": {"after": {
+				"bucket": "unmanaged-bucket",
+				"block_public_acls": true,
+				"block_public_policy": true,
+				"ignore_public_acls": true,
+				"restrict_public_buckets": true,
+			}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_s3_bucket_public_access_block.literal: unresolvable public-access-block target" in messages
+}
+
+test_fresh_alb_group_flattened_ingress_source_reference_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_security_group.backend", "mode": "managed", "type": "aws_security_group",
+				"expressions": {"ingress": {"references": ["aws_security_group.alb.id", "aws_security_group.alb"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {
+					"actions": ["create"],
+					"after": {"id": null, "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]},
+					"after_unknown": {"id": true},
+				},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"actions": ["create"], "after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_fresh_alb_group_flattened_egress_source_reference_passes if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_security_group.backend", "mode": "managed", "type": "aws_security_group",
+				"expressions": {"egress": {"references": ["aws_security_group.alb.id", "aws_security_group.alb"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {
+					"actions": ["create"],
+					"after": {"id": null, "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]},
+					"after_unknown": {"id": true},
+				},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"actions": ["create"], "after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+		],
+	}
+
+	count(messages) == 0
+}
+
+test_fresh_alb_group_other_security_group_attribute_reference_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_security_group.backend", "mode": "managed", "type": "aws_security_group",
+				"expressions": {"tags": {"references": ["aws_security_group.alb.id", "aws_security_group.alb"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {
+					"actions": ["create"],
+					"after": {"id": null, "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]},
+					"after_unknown": {"id": true},
+				},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"actions": ["create"], "after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.alb: ALB group is shared with a non-load-balancer consumer" in messages
+}
+
+test_block_referencing_one_bucket_named_for_another_denies_both if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_s3_bucket.a", "mode": "managed", "type": "aws_s3_bucket"},
+			{"address": "aws_s3_bucket.b", "mode": "managed", "type": "aws_s3_bucket"},
+			{
+				"address": "aws_s3_bucket_public_access_block.mixed",
+				"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+				"expressions": {"bucket": {"references": ["aws_s3_bucket.a.bucket", "aws_s3_bucket.a"]}},
+			},
+		]}},
+		"resource_changes": [
+			{"address": "aws_s3_bucket.a", "mode": "managed", "type": "aws_s3_bucket", "change": {"after": {"bucket": "planned-a"}}},
+			{"address": "aws_s3_bucket.b", "mode": "managed", "type": "aws_s3_bucket", "change": {"after": {"bucket": "planned-b"}}},
+			{
+				"address": "aws_s3_bucket_public_access_block.mixed",
+				"mode": "managed", "type": "aws_s3_bucket_public_access_block",
+				"change": {"after": {
+					"bucket": "planned-b",
+					"block_public_acls": true,
+					"block_public_policy": true,
+					"ignore_public_acls": true,
+					"restrict_public_buckets": true,
+				}},
+			},
+		],
+	}
+
+	has_message(messages, "aws_s3_bucket.a: public access block aws_s3_bucket_public_access_block.mixed targets more than one bucket; correlation is ambiguous")
+	has_message(messages, "aws_s3_bucket.b: public access block aws_s3_bucket_public_access_block.mixed targets more than one bucket; correlation is ambiguous")
+}
+
+test_default_security_group_ingress_reference_to_alb_group_is_a_consumer if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group"},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"expressions": {"security_groups": {"references": ["aws_security_group.alb", "aws_security_group.alb.id"]}},
+			},
+			{
+				"address": "aws_default_security_group.default", "mode": "managed", "type": "aws_default_security_group",
+				"expressions": {"ingress": {"references": ["aws_security_group.alb.id", "aws_security_group.alb"]}},
+			},
+		]}},
+		"resource_changes": [
+			{
+				"address": "aws_security_group.alb", "mode": "managed", "type": "aws_security_group",
+				"change": {
+					"actions": ["create"],
+					"after": {"id": null, "ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]},
+					"after_unknown": {"id": true},
+				},
+			},
+			{
+				"address": "aws_lb.public", "mode": "managed", "type": "aws_lb",
+				"change": {"actions": ["create"], "after": {"load_balancer_type": "application"}, "after_unknown": {"security_groups": true}},
+			},
+		],
+	}
+
+	count(messages) == 1
+	"aws_security_group.alb: ALB group is shared with a non-load-balancer consumer" in messages
+}

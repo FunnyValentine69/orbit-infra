@@ -253,14 +253,16 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 71
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 79
   Rego unit tests and the 17-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The
   root-module policy considers only managed resources and denies a planned S3
-  bucket without exactly one fully locked public-access block whose bucket
-  expression references exactly one whole-resource bucket address and whose
-  known planned `after.bucket` equals the bucket's known planned name; `.bucket`
-  references expose that equality. No-op buckets are evaluated, pure deletes
+  bucket without exactly one fully locked public-access block targeted by either
+  one unambiguous whole-resource configuration reference or an equal known planned
+  bucket name. Reference and planned-name correlations are unioned, so distinct
+  blocks targeting one bucket are ambiguous. An unreferenced planned block with an
+  unknown target or a known name matching no planned bucket is denied as
+  unresolvable. No-op buckets are evaluated, pure deletes
   are skipped, governed `forget` actions are denied because their protections
   cannot be verified, and `count`/`for_each` instances fail closed. The policy also
   denies `0.0.0.0/0`, `::/0`, unknown CIDR ingress, or non-empty/unknown
@@ -276,9 +278,12 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   references from an `aws_lb` not backed exclusively by known planned application
   instances, any other root managed non-rule resource, or a root module call revoke
   the exemption; when the group ID is known, a matching string leaf in any managed
-  planned change at any module depth also revokes it. Planned application ALBs,
-  rule-definition resources, and another security group's ingress or egress source
-  are not consumers. Terraform plan JSON does not serialize locals, so a fresh-create
+  planned change at any module depth also revokes it. Planned application ALBs
+  and rule-definition resources are not consumers. Any configuration reference
+  below another security group's `expressions.ingress` or `expressions.egress`,
+  whether flattened or nested, is treated as a rule source; planned nested ingress
+  and egress `security_groups` source values are likewise excluded. Terraform plan
+  JSON does not serialize locals, so a fresh-create
   ALB-group consumer hidden only behind local or other indirection remains
   undetectable; this repository's own root attaches the ALB group only to the ALB,
   which the live-plan gate checks through direct references. A standalone

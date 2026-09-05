@@ -29,7 +29,7 @@ bash tests/conftest-gate.sh
 ```
 
 The suite first runs fixture hygiene against both committed plans, then
-requires `conftest verify` to pass all 71 Rego unit tests. It accepts the good
+requires `conftest verify` to pass all 79 Rego unit tests. It accepts the good
 plan without reporting `aws_security_group.alb`, and requires the bad plan to
 exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
@@ -38,9 +38,12 @@ exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_default_security_group.default`. It also requires the bad plan not to
 report the protected `aws_s3_bucket.database`. The suite also proves that a
 nested true `*_sensitive` marker and a sensitive output are rejected and
-currently reports 17 cases. Bucket protection requires one unambiguous whole-resource reference,
-equal known planned bucket names exposed through `.bucket`, and all four public
-access flags. Policy selectors accept only managed resources, so data-source
+currently reports 17 cases. Bucket protection requires exactly one fully
+locked planned block targeted through either one unambiguous whole-resource
+configuration reference or an equal known planned bucket name. Reference and
+planned-name correlations are unioned, distinct blocks targeting one bucket are
+ambiguous, and unreferenced planned blocks with unknown or known-unmatched targets
+are denied as unresolvable. Policy selectors accept only managed resources, so data-source
 buckets are ignored and data-source load balancers cannot exempt a managed
 group. Open, unknown, or prefix-list non-ALB ingress is denied because this
 gate cannot prove a managed prefix list safe. Governed resources whose actions
@@ -50,9 +53,12 @@ application-ALB instance; known planned attachment IDs must agree. Direct
 configuration references from a network, gateway, unknown-type, or unplanned
 `aws_lb`, other root managed resources, or root module calls revoke the
 exemption, as does a matching known group ID anywhere in any managed planned
-resource at any module depth. Planned application ALBs, rule-definition
-resources, and another security group's ingress or egress source are excluded
-from those consumer checks. Terraform plan JSON does not serialize locals, so a
+resource at any module depth. Planned application ALBs and rule-definition
+resources are excluded from those consumer checks. Any configuration reference
+under another security group's `expressions.ingress` or `expressions.egress`,
+whether flattened or nested, is treated as a rule source; planned nested ingress
+and egress `security_groups` source values are likewise excluded. Terraform plan
+JSON does not serialize locals, so a
 fresh-create ALB-group consumer hidden only behind local or other indirection
 remains undetectable; this repository's own root attaches the ALB group only to
 the ALB, which the live-plan gate checks through direct references.

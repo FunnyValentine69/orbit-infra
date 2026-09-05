@@ -1,7 +1,10 @@
 # This policy evaluates root-module resources only where Terraform configuration
-# correlation is required. S3 protection requires one block with a whole-resource
-# reference plus equal, known planned bucket names; use `.bucket` so Terraform can
-# plan that value. An ALB exemption requires exactly one distinct security-group
+# correlation is required. S3 protection requires one block correlated by a
+# whole-resource reference or an equal, known planned bucket name. Distinct blocks
+# targeting the same bucket are ambiguous, and an unreferenced block with an unknown
+# or unmatched target is denied because the gate cannot verify what it weakens; use
+# `.bucket` so Terraform can plan that value. An ALB exemption requires exactly one
+# distinct security-group
 # reference and a planned root ALB instance; known attachment and rule target IDs
 # must match the group's known planned ID. Fresh creates are exempt only when the
 # group, ALB attachment, and rule target are all unknown through exact whole-resource
@@ -22,6 +25,14 @@ root_resources := [resource |
 		[],
 	)
 	resource.mode == "managed"
+]
+
+configured_resources := [resource |
+	walk(object.get(input, "configuration", {}), [_, resource])
+	is_object(resource)
+	object.get(resource, "mode", null) == "managed"
+	is_string(object.get(resource, "address", null))
+	is_string(object.get(resource, "type", null))
 ]
 
 resource_changes := [resource_change |
@@ -79,7 +90,7 @@ has_unknown_leaf(x) if {
 
 referenced_bucket_addresses(block) := addresses if {
 	addresses := {address |
-		some bucket in root_resources
+		some bucket in configured_resources
 		bucket.type == "aws_s3_bucket"
 
 		references := object.get(
@@ -93,15 +104,48 @@ referenced_bucket_addresses(block) := addresses if {
 	}
 }
 
+configured_block_referenced_bucket_addresses(block_change) := addresses if {
+	addresses := {address |
+		some block in configured_resources
+		block.type == "aws_s3_bucket_public_access_block"
+		load_balancer_instance_matches(block.address, block_change.address)
+		some address in referenced_bucket_addresses(block)
+	}
+}
+
+known_planned_bucket_name(resource_change) := bucket_name if {
+	planned(resource_change)
+	bucket_name := object.get(resource_change.change.after, "bucket", null)
+	is_string(bucket_name)
+	object.get(object.get(resource_change.change, "after_unknown", {}), "bucket", false) != true
+}
+
+block_targets_bucket_by_planned_value(block_change, bucket_address) if {
+	block_bucket_name := known_planned_bucket_name(block_change)
+	some bucket_change in resource_changes
+	bucket_change.type == "aws_s3_bucket"
+	bucket_change.address == bucket_address
+	bucket_name := known_planned_bucket_name(bucket_change)
+	block_bucket_name == bucket_name
+}
+
+block_targets_bucket(block_change, bucket_address) if {
+	referenced_buckets := configured_block_referenced_bucket_addresses(block_change)
+	count(referenced_buckets) == 1
+	bucket_address in referenced_buckets
+}
+
+block_targets_bucket(block_change, bucket_address) if {
+	block_targets_bucket_by_planned_value(block_change, bucket_address)
+}
+
 protecting_block_addresses(bucket_address) := addresses if {
 	addresses := {address |
-		some block in root_resources
-		block.type == "aws_s3_bucket_public_access_block"
-
-		referenced_buckets := referenced_bucket_addresses(block)
-		count(referenced_buckets) == 1
-		bucket_address in referenced_buckets
-		address := block.address
+		some block_change in resource_changes
+		block_change.type == "aws_s3_bucket_public_access_block"
+		planned(block_change)
+		block_targets_bucket(block_change, bucket_address)
+		address := block_change.address
 	}
 }
 
@@ -125,16 +169,69 @@ bucket_is_protected(bucket_address) if {
 bucket_target_matches(bucket_address, block_change) if {
 	some bucket_change in resource_changes
 	bucket_change.address == bucket_address
-	planned(bucket_change)
-
-	bucket_name := object.get(bucket_change.change.after, "bucket", null)
-	is_string(bucket_name)
-	object.get(object.get(bucket_change.change, "after_unknown", {}), "bucket", false) != true
-
-	block_bucket_name := object.get(block_change.change.after, "bucket", null)
-	is_string(block_bucket_name)
-	object.get(object.get(block_change.change, "after_unknown", {}), "bucket", false) != true
+	bucket_name := known_planned_bucket_name(bucket_change)
+	block_bucket_name := known_planned_bucket_name(block_change)
 	block_bucket_name == bucket_name
+}
+
+block_has_planned_value_target(block_change) if {
+	some bucket_change in resource_changes
+	block_targets_bucket_by_planned_value(block_change, bucket_change.address)
+}
+
+deny contains msg if {
+	some block_change in resource_changes
+	block_change.type == "aws_s3_bucket_public_access_block"
+	planned(block_change)
+
+	referenced_buckets := configured_block_referenced_bucket_addresses(block_change)
+	count(referenced_buckets) == 0
+	not block_has_planned_value_target(block_change)
+
+	msg := sprintf("%s: unresolvable public-access-block target", [block_change.address])
+}
+
+block_reference_target_addresses(block_change) := addresses if {
+	referenced := configured_block_referenced_bucket_addresses(block_change)
+	count(referenced) == 1
+	addresses := {address |
+		some address in referenced
+		some bucket_change in resource_changes
+		bucket_change.type == "aws_s3_bucket"
+		bucket_change.address == address
+	}
+}
+
+block_reference_target_addresses(block_change) := set() if {
+	count(configured_block_referenced_bucket_addresses(block_change)) != 1
+}
+
+block_planned_value_target_addresses(block_change) := addresses if {
+	addresses := {address |
+		some bucket_change in resource_changes
+		bucket_change.type == "aws_s3_bucket"
+		block_targets_bucket_by_planned_value(block_change, bucket_change.address)
+		address := bucket_change.address
+	}
+}
+
+block_target_bucket_addresses(block_change) := addresses if {
+	addresses := block_reference_target_addresses(block_change) | block_planned_value_target_addresses(block_change)
+}
+
+deny contains msg if {
+	some block_change in resource_changes
+	block_change.type == "aws_s3_bucket_public_access_block"
+	planned(block_change)
+
+	addresses := block_target_bucket_addresses(block_change)
+	count(addresses) > 1
+	some bucket_address in addresses
+
+	msg := sprintf(
+		"%s: public access block %s targets more than one bucket; correlation is ambiguous",
+		[bucket_address, block_change.address],
+	)
 }
 
 bucket_block_target_invalid(bucket_address) if {
@@ -321,9 +418,8 @@ group_rule_resource(resource) if {
 
 security_group_rule_source_reference(resource, path) if {
 	resource.type == "aws_security_group"
-	count(path) >= 3
+	count(path) > 0
 	path[0] in {"ingress", "egress"}
-	path[count(path) - 2] == "security_groups"
 }
 
 planned_security_group_source_reference(resource_change, path) if {
