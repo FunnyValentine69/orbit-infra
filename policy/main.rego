@@ -5,7 +5,8 @@
 # reference and a planned root ALB instance; known attachment and rule target IDs
 # must match the group's known planned ID. Fresh creates are exempt only when the
 # group, ALB attachment, and rule target are all unknown through exact whole-resource
-# and `.id` references. Prefix-list ingress fails closed outside this exemption;
+# and `.id` references, and no managed non-load-balancer resource or root module
+# call may consume the group. Prefix-list ingress fails closed outside this exemption;
 # unknown legacy-rule direction is potentially ingress. Planned no-op resources are evaluated because sibling resources can be deleted
 # or weakened independently. Data-source reads are excluded from every selector.
 package main
@@ -254,8 +255,81 @@ planned_alb_groups contains address if {
 	load_balancer_attaches_group(load_balancer, load_balancer_change, address)
 }
 
+reference_targets_group(reference, group_address) if {
+	reference == group_address
+}
+
+reference_targets_group(reference, group_address) if {
+	is_string(reference)
+	startswith(reference, sprintf("%s.", [group_address]))
+}
+
+group_rule_resource(resource) if {
+	resource.type in {
+		"aws_security_group_rule",
+		"aws_vpc_security_group_ingress_rule",
+		"aws_vpc_security_group_egress_rule",
+	}
+}
+
+security_group_rule_source_reference(resource, path) if {
+	resource.type == "aws_security_group"
+	count(path) >= 3
+	path[0] in {"ingress", "egress"}
+	path[count(path) - 2] == "security_groups"
+}
+
+root_resource_consumes_group(group_address) if {
+	some resource in root_resources
+	resource.type != "aws_lb"
+	not group_rule_resource(resource)
+	walk(object.get(resource, "expressions", {}), [path, value])
+	count(path) > 0
+	path[count(path) - 1] == "references"
+	is_array(value)
+	some reference in value
+	reference_targets_group(reference, group_address)
+	not security_group_rule_source_reference(resource, path)
+}
+
+module_call_consumes_group(group_address) if {
+	root_module := object.get(object.get(input, "configuration", {}), "root_module", {})
+	module_calls := object.get(root_module, "module_calls", {})
+	is_object(module_calls)
+	some _, module_call in module_calls
+	walk(object.get(module_call, "expressions", {}), [path, value])
+	count(path) > 0
+	path[count(path) - 1] == "references"
+	is_array(value)
+	some reference in value
+	reference_targets_group(reference, group_address)
+}
+
+group_has_non_load_balancer_consumer(group_address) if {
+	root_resource_consumes_group(group_address)
+}
+
+group_has_non_load_balancer_consumer(group_address) if {
+	module_call_consumes_group(group_address)
+}
+
+planned_alb_group_shared(address) if {
+	address in planned_alb_groups
+	group_has_non_load_balancer_consumer(address)
+}
+
+group_deny_message(group_address, default_message) := msg if {
+	planned_alb_group_shared(group_address)
+	msg := sprintf("%s: ALB group is shared with a non-load-balancer consumer", [group_address])
+}
+
+group_deny_message(group_address, default_message) := default_message if {
+	not planned_alb_group_shared(group_address)
+}
+
 is_planned_alb_group(address) if {
 	address in planned_alb_groups
+	not group_has_non_load_balancer_consumer(address)
 }
 
 inline_ipv4_open(after) if {
@@ -313,7 +387,7 @@ deny contains msg if {
 	not is_planned_alb_group(group.address)
 	inline_ipv4_open(group.change.after)
 
-	msg := sprintf("%s: non-ALB security group has IPv4 ingress open to 0.0.0.0/0", [group.address])
+	msg := group_deny_message(group.address, sprintf("%s: non-ALB security group has IPv4 ingress open to 0.0.0.0/0", [group.address]))
 }
 
 deny contains msg if {
@@ -323,7 +397,7 @@ deny contains msg if {
 	not is_planned_alb_group(group.address)
 	inline_ipv6_open(group.change.after)
 
-	msg := sprintf("%s: non-ALB security group has IPv6 ingress open to ::/0", [group.address])
+	msg := group_deny_message(group.address, sprintf("%s: non-ALB security group has IPv6 ingress open to ::/0", [group.address]))
 }
 
 deny contains msg if {
@@ -333,7 +407,7 @@ deny contains msg if {
 	not is_planned_alb_group(group.address)
 	inline_cidr_unknown(group.change)
 
-	msg := sprintf("%s: non-ALB security group ingress CIDR is unknown at plan time", [group.address])
+	msg := group_deny_message(group.address, sprintf("%s: non-ALB security group ingress CIDR is unknown at plan time", [group.address]))
 }
 
 deny contains msg if {
@@ -343,9 +417,12 @@ deny contains msg if {
 	not is_planned_alb_group(group.address)
 	inline_prefix_list_unverifiable(group.change)
 
-	msg := sprintf(
-		"%s: non-ALB security group prefix-list ingress cannot be proven safe by this gate",
-		[group.address],
+	msg := group_deny_message(
+		group.address,
+		sprintf(
+			"%s: non-ALB security group prefix-list ingress cannot be proven safe by this gate",
+			[group.address],
+		),
 	)
 }
 
@@ -382,14 +459,37 @@ rule_target_matches_group(rule, rule_change, group_address) if {
 	expression_references_exactly_group(rule, "security_group_id", group_address)
 }
 
-rule_is_for_planned_alb(rule_change) if {
+rule_planned_alb_group(rule_change) := group_address if {
 	some rule in root_resources
 	load_balancer_instance_matches(rule.address, rule_change.address)
 	groups := referenced_group_addresses(rule_change.address)
 	count(groups) == 1
 	some group_address in groups
-	is_planned_alb_group(group_address)
+	group_address in planned_alb_groups
 	rule_target_matches_group(rule, rule_change, group_address)
+}
+
+rule_is_for_planned_alb(rule_change) if {
+	group_address := rule_planned_alb_group(rule_change)
+	not group_has_non_load_balancer_consumer(group_address)
+}
+
+rule_is_for_shared_planned_alb(rule_change) if {
+	group_address := rule_planned_alb_group(rule_change)
+	group_has_non_load_balancer_consumer(group_address)
+}
+
+rule_deny_message(rule_change, default_message) := msg if {
+	rule_is_for_shared_planned_alb(rule_change)
+	group_address := rule_planned_alb_group(rule_change)
+	msg := sprintf(
+		"%s: ALB group %s is shared with a non-load-balancer consumer",
+		[rule_change.address, group_address],
+	)
+}
+
+rule_deny_message(rule_change, default_message) := default_message if {
+	not rule_is_for_shared_planned_alb(rule_change)
 }
 
 standalone_cidr_unknown(change) if {
@@ -417,7 +517,7 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	rule.change.after.cidr_ipv4 == "0.0.0.0/0"
 
-	msg := sprintf("%s: non-ALB ingress rule is open to 0.0.0.0/0", [rule.address])
+	msg := rule_deny_message(rule, sprintf("%s: non-ALB ingress rule is open to 0.0.0.0/0", [rule.address]))
 }
 
 deny contains msg if {
@@ -427,7 +527,7 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	rule.change.after.cidr_ipv6 == "::/0"
 
-	msg := sprintf("%s: non-ALB ingress rule is open to ::/0", [rule.address])
+	msg := rule_deny_message(rule, sprintf("%s: non-ALB ingress rule is open to ::/0", [rule.address]))
 }
 
 deny contains msg if {
@@ -437,7 +537,7 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	standalone_cidr_unknown(rule.change)
 
-	msg := sprintf("%s: non-ALB ingress rule CIDR is unknown at plan time", [rule.address])
+	msg := rule_deny_message(rule, sprintf("%s: non-ALB ingress rule CIDR is unknown at plan time", [rule.address]))
 }
 
 deny contains msg if {
@@ -447,9 +547,12 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	standalone_prefix_list_unverifiable(rule.change)
 
-	msg := sprintf(
-		"%s: non-ALB ingress rule prefix-list ingress cannot be proven safe by this gate",
-		[rule.address],
+	msg := rule_deny_message(
+		rule,
+		sprintf(
+			"%s: non-ALB ingress rule prefix-list ingress cannot be proven safe by this gate",
+			[rule.address],
+		),
 	)
 }
 
@@ -497,7 +600,7 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	legacy_ipv4_open(rule.change.after)
 
-	msg := sprintf("%s: non-ALB legacy ingress rule is open to 0.0.0.0/0", [rule.address])
+	msg := rule_deny_message(rule, sprintf("%s: non-ALB legacy ingress rule is open to 0.0.0.0/0", [rule.address]))
 }
 
 deny contains msg if {
@@ -508,7 +611,7 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	legacy_ipv6_open(rule.change.after)
 
-	msg := sprintf("%s: non-ALB legacy ingress rule is open to ::/0", [rule.address])
+	msg := rule_deny_message(rule, sprintf("%s: non-ALB legacy ingress rule is open to ::/0", [rule.address]))
 }
 
 deny contains msg if {
@@ -519,7 +622,7 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	legacy_cidr_unknown(rule.change)
 
-	msg := sprintf("%s: non-ALB legacy ingress rule CIDR is unknown at plan time", [rule.address])
+	msg := rule_deny_message(rule, sprintf("%s: non-ALB legacy ingress rule CIDR is unknown at plan time", [rule.address]))
 }
 
 deny contains msg if {
@@ -530,8 +633,11 @@ deny contains msg if {
 	not rule_is_for_planned_alb(rule)
 	legacy_prefix_list_unverifiable(rule.change)
 
-	msg := sprintf(
-		"%s: non-ALB legacy ingress rule prefix-list ingress cannot be proven safe by this gate",
-		[rule.address],
+	msg := rule_deny_message(
+		rule,
+		sprintf(
+			"%s: non-ALB legacy ingress rule prefix-list ingress cannot be proven safe by this gate",
+			[rule.address],
+		),
 	)
 }

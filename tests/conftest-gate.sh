@@ -29,8 +29,24 @@ for fixture in good-plan.json bad-plan.json; do
 done
 pass "recorded plans pass fixture hygiene"
 
+output_sensitive_fixture="$(mktemp)"
 sensitive_fixture="$(mktemp)"
-trap 'rm -f "$sensitive_fixture"' EXIT
+trap 'rm -f "$output_sensitive_fixture" "$sensitive_fixture"' EXIT
+
+printf '%s\n' '{"planned_values":{"outputs":{"token":{"sensitive":true,"value":"x"}}}}' > "$output_sensitive_fixture"
+
+set +e
+output_sensitive_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" "$output_sensitive_fixture" 2>&1)"
+output_sensitive_rc=$?
+set -e
+if [ "$output_sensitive_rc" -ne 1 ]; then
+  fail "sensitive output must exit 1, got $output_sensitive_rc: $output_sensitive_output"
+fi
+if ! grep -Fq 'an object has "sensitive": true' <<< "$output_sensitive_output"; then
+  fail "sensitive output did not report the sensitive message: $output_sensitive_output"
+fi
+pass "sensitive output is rejected"
+
 printf '%s\n' '{"resource_changes":[{"change":{"after":{"password":"x"},"after_sensitive":{"password":true}}}]}' > "$sensitive_fixture"
 
 set +e

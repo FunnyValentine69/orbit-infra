@@ -22,8 +22,16 @@ if jq -e 'has("prior_state")' "$fixture" >/dev/null; then
   fail "top-level prior_state is present"
 fi
 
-if jq -e '[.. | objects | to_entries[] | select(.key | test("_sensitive$")) | .value | .. | select(. == true)] | any' "$fixture" >/dev/null; then
-  fail "a *_sensitive value is true"
+if jq -e '[.. | objects | to_entries[] | select(.key == "sensitive_values" or (.key | test("_sensitive$"))) | .value | .. | select(. == true)] | any' "$fixture" >/dev/null; then
+  fail "a *_sensitive value is true or sensitive_values has a true leaf"
+fi
+
+if jq -e '[.. | objects | select(has("sensitive") and .sensitive == true)] | any' "$fixture" >/dev/null; then
+  fail 'an object has "sensitive": true'
+fi
+
+if jq -e 'has("variables") and (.variables | type == "object" and length > 0)' "$fixture" >/dev/null; then
+  fail "variables must not be serialized into fixtures"
 fi
 
 while IFS= read -r account_id; do

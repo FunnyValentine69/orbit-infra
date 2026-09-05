@@ -253,8 +253,8 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 58
-  Rego unit tests and the 16-case shell suite against fixtures that are
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 62
+  Rego unit tests and the 17-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The
   root-module policy considers only managed resources and denies a planned S3
   bucket without exactly one fully locked public-access block whose bucket
@@ -271,7 +271,10 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   managed `aws_lb` application instance, including an indexed instance; when
   known, the ALB's planned `security_groups` list must contain the group's
   planned `after.id`. An unknown attachment's complete reference set must be
-  exactly the group's whole-resource and `.id` traversals. A standalone
+  exactly the group's whole-resource and `.id` traversals, and recursive
+  references from any root managed non-load-balancer resource or root module
+  call revoke the exemption. Rule-definition references and another security
+  group's ingress or egress source are not consumers. A standalone
   ingress rule, including an indexed instance, must also plan a known
   `security_group_id` equal to that ID, or both the rule target and group ID
   must be unknown through the same exact two-traversal reference set. A

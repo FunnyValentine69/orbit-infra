@@ -29,7 +29,7 @@ bash tests/conftest-gate.sh
 ```
 
 The suite first runs fixture hygiene against both committed plans, then
-requires `conftest verify` to pass all 58 Rego unit tests. It accepts the good
+requires `conftest verify` to pass all 62 Rego unit tests. It accepts the good
 plan without reporting `aws_security_group.alb`, and requires the bad plan to
 exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
@@ -37,16 +37,19 @@ exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_security_group_rule.legacy_open`, and
 `aws_default_security_group.default`. It also requires the bad plan not to
 report the protected `aws_s3_bucket.database`. The suite also proves that a
-nested true `*_sensitive` marker is rejected and currently reports 16
-cases. Bucket protection requires one unambiguous whole-resource reference,
+nested true `*_sensitive` marker and a sensitive output are rejected and
+currently reports 17 cases. Bucket protection requires one unambiguous whole-resource reference,
 equal known planned bucket names exposed through `.bucket`, and all four public
 access flags. Policy selectors accept only managed resources, so data-source
 buckets are ignored and data-source load balancers cannot exempt a managed
 group. Open, unknown, or prefix-list non-ALB ingress is denied because this
 gate cannot prove a managed prefix list safe. The ALB exemption requires one
 distinct group reference and a planned root application-ALB instance; known
-planned attachment IDs must agree, while an unknown attachment must reference
-exactly the group's whole-resource and `.id` traversals. A standalone ingress
+planned attachment IDs must agree, and recursively discovered consumers in root
+managed non-load-balancer resources or root module calls revoke the exemption.
+Rule-definition references and another security group's ingress or egress source do not.
+An unknown attachment must reference exactly the group's whole-resource and
+`.id` traversals. A standalone ingress
 rule, including an indexed instance, must also plan a known target equal to the
 group's known ID, or the rule target and group ID must both be unknown through
 that same exact two-traversal set. Condition references and planned literal or
@@ -58,8 +61,10 @@ Fixture provenance: `good-plan.json` and `bad-plan.json` in
 Terraform 1.16.0 on 2026-09-04 from `good-root/` and `bad-root/` via
 `make record-conftest-fixtures`. Each `terraform show -json` writes to a
 temporary file; `scripts/fixture-hygiene.sh` must accept it before it replaces
-the tracked fixture. The check rejects `prior_state`, true `*_sensitive`
-values, non-placeholder 12-digit numbers, IPv4 literals outside
+the tracked fixture. The check rejects `prior_state`, true leaves below `*_sensitive` or
+`sensitive_values`, objects marked `"sensitive": true`, non-empty top-level
+`variables` because variables must not be serialized into fixtures,
+non-placeholder 12-digit numbers, IPv4 literals outside
 `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `0.0.0.0/0`, and
 `127.0.0.1`, and email addresses. Fixtures are re-recorded
 from those roots, never edited. The real `envs/preview` plan is never committed
