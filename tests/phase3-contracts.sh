@@ -540,6 +540,39 @@ if not gates_install_index < run_gates_index:
 
 plan_steps = plan["jobs"]["plan-localstack"]["steps"]
 plan_install_index = assert_conftest_install(plan_steps, "terraform-plan plan-localstack job")
+bootstrap_gate_index = one_index(
+    plan_steps,
+    lambda step: step.get("name") == "Conftest policy gate on the bootstrap plan",
+    "bootstrap Conftest policy gate in terraform-plan plan-localstack job",
+)
+bootstrap_gate = plan_steps[bootstrap_gate_index]
+bootstrap_gate_run = bootstrap_gate.get("run", "")
+for required in (
+    "cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf",
+    "env -u AWS_PROFILE -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN terraform -chdir=bootstrap init -reconfigure -input=false",
+    'env -u AWS_PROFILE -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN terraform -chdir=bootstrap plan -input=false -out=/tmp/bootstrap.tfplan -var "target=localstack" -var budget_email=unused',
+    "env -u AWS_PROFILE -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN terraform -chdir=bootstrap show -json /tmp/bootstrap.tfplan > /tmp/bootstrap-plan.json",
+    "conftest test --policy policy/ /tmp/bootstrap-plan.json",
+    "rm -f bootstrap/backend_override.tf /tmp/bootstrap.tfplan",
+    "trap cleanup EXIT",
+):
+    if required not in bootstrap_gate_run:
+        raise SystemExit(f"bootstrap Conftest gate is missing {required!r}")
+for key, value in {
+    "AWS_ENDPOINT_URL": "http://localhost:4566",
+    "AWS_ACCESS_KEY_ID": "test",
+    "AWS_SECRET_ACCESS_KEY": "test",
+    "AWS_DEFAULT_REGION": "us-east-1",
+    "AWS_EC2_METADATA_DISABLED": "true",
+    "TF_DATA_DIR": ".terraform-localstack",
+}.items():
+    if str(bootstrap_gate.get("env", {}).get(key, "")).lower() != value:
+        raise SystemExit(f"bootstrap Conftest gate env {key} must be {value}")
+bootstrap_apply_index = one_index(
+    plan_steps,
+    lambda step: step.get("run") == "make bootstrap-apply TARGET=localstack",
+    "LocalStack bootstrap apply in terraform-plan plan-localstack job",
+)
 terraform_plan_index = one_index(
     plan_steps,
     lambda step: step.get("name") == "Terraform plan (LocalStack)",
@@ -561,9 +594,17 @@ comment_index = one_index(
     lambda step: step.get("name") == "Post or update PR plan comment",
     "PR plan comment in terraform-plan plan-localstack job",
 )
-if not plan_install_index < terraform_plan_index < summary_index < conftest_index < comment_index:
+if not (
+    plan_install_index
+    < bootstrap_gate_index
+    < bootstrap_apply_index
+    < terraform_plan_index
+    < summary_index
+    < conftest_index
+    < comment_index
+):
     raise SystemExit(
-        "terraform-plan must install Conftest, plan, summarize, gate, then comment in that order"
+        "terraform-plan must install Conftest, gate bootstrap, apply bootstrap, plan, summarize, gate the live plan, then comment in that order"
     )
 
 apply = yaml.safe_load(Path(sys.argv[2]).read_text())

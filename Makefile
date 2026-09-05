@@ -223,14 +223,17 @@ record-conftest-fixtures:
 		root="tests/fixtures/conftest/$${name}-root"; \
 		plan_file="$$root/plan.tfplan"; \
 		output_file="tests/fixtures/conftest/$${name}-plan.json"; \
+		temp_file="$$(mktemp "$${TMPDIR:-/tmp}/orbit-conftest-$${name}.XXXXXX")" || exit $$?; \
 		rc=0; \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
 			terraform -chdir="$$root" init -input=false -upgrade=false && \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
 			terraform -chdir="$$root" plan -input=false -out=plan.tfplan && \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
-			terraform -chdir="$$root" show -json plan.tfplan > "$$output_file" || rc=$$?; \
-		rm -f "$$plan_file"; \
+			terraform -chdir="$$root" show -json plan.tfplan > "$$temp_file" || rc=$$?; \
+		if [ "$$rc" -eq 0 ]; then scripts/fixture-hygiene.sh "$$temp_file" || rc=$$?; fi; \
+		if [ "$$rc" -eq 0 ]; then mv "$$temp_file" "$$output_file" || rc=$$?; fi; \
+		rm -f "$$plan_file" "$$temp_file"; \
 		[ "$$rc" -eq 0 ] || exit "$$rc"; \
 	done
 

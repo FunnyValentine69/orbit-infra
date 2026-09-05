@@ -2,20 +2,27 @@
 # correlation is required. S3 protection requires one block with a whole-resource
 # reference plus equal, known planned bucket names; use `.bucket` so Terraform can
 # plan that value. An ALB exemption requires exactly one distinct security-group
-# reference and a planned root ALB instance; when known, its planned attachment
-# list must contain the group's planned ID. A conditional between one planned group and a literal pre-existing
-# group ID remains indistinguishable on a fresh create. Unknown legacy-rule
-# direction is treated as potentially ingress. Planned no-op resources are
-# evaluated because sibling resources can be deleted or weakened independently.
+# reference and a planned root ALB instance; known attachment and rule target IDs
+# must match the group's known planned ID. Fresh creates are exempt only when the
+# group, ALB attachment, and rule target are all unknown through one unambiguous
+# group reference. Unknown legacy-rule direction is treated as potentially ingress.
+# Planned no-op resources are evaluated because sibling resources can be deleted
+# or weakened independently. Data-source reads are excluded from every selector.
 package main
 
-root_resources := object.get(
-	object.get(object.get(input, "configuration", {}), "root_module", {}),
-	"resources",
-	[],
-)
+root_resources := [resource |
+	some resource in object.get(
+		object.get(object.get(input, "configuration", {}), "root_module", {}),
+		"resources",
+		[],
+	)
+	resource.mode == "managed"
+]
 
-resource_changes := object.get(input, "resource_changes", [])
+resource_changes := [resource_change |
+	some resource_change in object.get(input, "resource_changes", [])
+	resource_change.mode == "managed"
+]
 
 valid_plan_document if {
 	is_array(input.resource_changes)
@@ -311,11 +318,25 @@ referenced_group_addresses(rule_address) := addresses if {
 	}
 }
 
-rule_is_for_planned_alb(rule_address) if {
-	groups := referenced_group_addresses(rule_address)
+rule_target_matches_group(rule_change, group_address) if {
+	object.get(object.get(rule_change.change, "after_unknown", {}), "security_group_id", false) != true
+	rule_group_id := object.get(rule_change.change.after, "security_group_id", null)
+	is_string(rule_group_id)
+	group_id := planned_group_id(group_address)
+	rule_group_id == group_id
+}
+
+rule_target_matches_group(rule_change, group_address) if {
+	object.get(object.get(rule_change.change, "after_unknown", {}), "security_group_id", false) == true
+	planned_group_id_unknown(group_address)
+}
+
+rule_is_for_planned_alb(rule_change) if {
+	groups := referenced_group_addresses(rule_change.address)
 	count(groups) == 1
 	some group_address in groups
 	is_planned_alb_group(group_address)
+	rule_target_matches_group(rule_change, group_address)
 }
 
 standalone_cidr_unknown(change) if {
@@ -330,7 +351,7 @@ deny contains msg if {
 	some rule in resource_changes
 	rule.type == "aws_vpc_security_group_ingress_rule"
 	planned(rule)
-	not rule_is_for_planned_alb(rule.address)
+	not rule_is_for_planned_alb(rule)
 	rule.change.after.cidr_ipv4 == "0.0.0.0/0"
 
 	msg := sprintf("%s: non-ALB ingress rule is open to 0.0.0.0/0", [rule.address])
@@ -340,7 +361,7 @@ deny contains msg if {
 	some rule in resource_changes
 	rule.type == "aws_vpc_security_group_ingress_rule"
 	planned(rule)
-	not rule_is_for_planned_alb(rule.address)
+	not rule_is_for_planned_alb(rule)
 	rule.change.after.cidr_ipv6 == "::/0"
 
 	msg := sprintf("%s: non-ALB ingress rule is open to ::/0", [rule.address])
@@ -350,7 +371,7 @@ deny contains msg if {
 	some rule in resource_changes
 	rule.type == "aws_vpc_security_group_ingress_rule"
 	planned(rule)
-	not rule_is_for_planned_alb(rule.address)
+	not rule_is_for_planned_alb(rule)
 	standalone_cidr_unknown(rule.change)
 
 	msg := sprintf("%s: non-ALB ingress rule CIDR is unknown at plan time", [rule.address])
@@ -387,7 +408,7 @@ deny contains msg if {
 	rule.type == "aws_security_group_rule"
 	planned(rule)
 	legacy_potential_ingress(rule.change)
-	not rule_is_for_planned_alb(rule.address)
+	not rule_is_for_planned_alb(rule)
 	legacy_ipv4_open(rule.change.after)
 
 	msg := sprintf("%s: non-ALB legacy ingress rule is open to 0.0.0.0/0", [rule.address])
@@ -398,7 +419,7 @@ deny contains msg if {
 	rule.type == "aws_security_group_rule"
 	planned(rule)
 	legacy_potential_ingress(rule.change)
-	not rule_is_for_planned_alb(rule.address)
+	not rule_is_for_planned_alb(rule)
 	legacy_ipv6_open(rule.change.after)
 
 	msg := sprintf("%s: non-ALB legacy ingress rule is open to ::/0", [rule.address])
@@ -409,7 +430,7 @@ deny contains msg if {
 	rule.type == "aws_security_group_rule"
 	planned(rule)
 	legacy_potential_ingress(rule.change)
-	not rule_is_for_planned_alb(rule.address)
+	not rule_is_for_planned_alb(rule)
 	legacy_cidr_unknown(rule.change)
 
 	msg := sprintf("%s: non-ALB legacy ingress rule CIDR is unknown at plan time", [rule.address])

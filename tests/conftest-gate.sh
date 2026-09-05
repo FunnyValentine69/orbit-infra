@@ -22,6 +22,13 @@ for fixture in good-plan.json bad-plan.json; do
   fi
 done
 
+for fixture in good-plan.json bad-plan.json; do
+  if ! hygiene_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" "$FIXTURES/$fixture" 2>&1)"; then
+    fail "$fixture failed fixture hygiene: $hygiene_output"
+  fi
+done
+pass "recorded plans pass fixture hygiene"
+
 if ! verify_output="$(conftest verify --policy "$POLICY" 2>&1)"; then
   fail "conftest verify failed: $verify_output"
 fi

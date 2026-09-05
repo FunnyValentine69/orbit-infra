@@ -253,9 +253,10 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 40
-  Rego unit tests and the 14-case shell suite against fixtures that are
-  LOCALSTACK-recorded locally. The root-module policy denies a planned S3
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 46
+  Rego unit tests and the 15-case shell suite against fixtures that are
+  LOCALSTACK-recorded locally and pass recording-hygiene checks. The
+  root-module policy considers only managed resources and denies a planned S3
   bucket without exactly one fully locked public-access block whose bucket
   expression references exactly one whole-resource bucket address and whose
   known planned `after.bucket` equals the bucket's known planned name; `.bucket`
@@ -264,15 +265,21 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   denies `0.0.0.0/0`, `::/0`, or unknown ingress on `aws_security_group`,
   `aws_default_security_group`, `aws_vpc_security_group_ingress_rule`, and
   `aws_security_group_rule`; unknown legacy-rule direction is treated as
-  potentially ingress. An exemption requires exactly one distinct group
-  reference from a planned root `aws_lb` application instance, including an
-  indexed instance; when known, the ALB's planned `security_groups` list must
-  contain the group's planned `after.id`. A child-module load balancer never exempts a group. On a fresh
-  create, a conditional between one planned group and a literal pre-existing
-  group ID is an accepted plan-time residual because the reference set cannot
-  distinguish it. In `terraform-plan.yml`, the `gates` job
-  runs the gate and `plan-localstack` tests the live LocalStack plan: VERIFIED
-  in CI on PR #12's final head; run ids in the PR description. In
+  potentially ingress. Data-source reads are neither evaluated nor accepted
+  as exemption anchors. An exemption requires exactly one distinct managed
+  group reference from a planned root managed `aws_lb` application instance,
+  including an indexed instance; when known, the ALB's planned
+  `security_groups` list must contain the group's planned `after.id`. A
+  standalone ingress rule must also plan a known `security_group_id` equal to
+  that ID, or both the rule target and group ID must be unknown on a fresh
+  create through the single reference. A planned literal or mismatch is not
+  exempt. A child-module load balancer never exempts a group. In
+  `terraform-plan.yml`, the `gates` job runs the gate and `plan-localstack`
+  gates both the bootstrap plan before bootstrap apply and the live LocalStack
+  plan before its PR summary comment. The bootstrap state bucket uses `.bucket`
+  and a fully locked public-access block and defines no security groups. The
+  existing static/live-plan paths are VERIFIED in CI on PR #12's prior head;
+  the new bootstrap gate is CODE-ONLY pending host validation. In
   `session-apply.yml`, Conftest gates the saved AWS plan before `make apply`;
   the LocalStack target has no saved plan, and this apply-side gate remains
   CODE-ONLY until P0-3d.

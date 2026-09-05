@@ -156,6 +156,27 @@ jobs:
           echo "LocalStack did not become healthy in time" >&2
           exit 1
 
+      - name: Conftest policy gate on the bootstrap plan
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: 'true'
+          TF_DATA_DIR: .terraform-localstack
+        run: |
+          cleanup() {
+            rm -f bootstrap/backend_override.tf /tmp/bootstrap.tfplan
+          }
+          trap cleanup EXIT
+          cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
+          env -u AWS_PROFILE -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN terraform -chdir=bootstrap init -reconfigure -input=false
+          env -u AWS_PROFILE -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN terraform -chdir=bootstrap plan -input=false -out=/tmp/bootstrap.tfplan -var "target=localstack" -var budget_email=unused
+          env -u AWS_PROFILE -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN terraform -chdir=bootstrap show -json /tmp/bootstrap.tfplan > /tmp/bootstrap-plan.json
+          conftest test --policy policy/ /tmp/bootstrap-plan.json
+          cleanup
+          trap - EXIT
+
       - name: Apply bootstrap (LocalStack)
         run: make bootstrap-apply TARGET=localstack
 
