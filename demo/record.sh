@@ -36,14 +36,14 @@ state_list() {
 	return "$rc"
 }
 
-[ "$(make print-preview-root)" = ".preview-runs/demo" ] || die "PREVIEW_ROOT did not propagate to nested make (got: $(make print-preview-root))"
+[ "$(make print-preview-root)" = ".preview-runs/demo" ] || die "PREVIEW_ROOT did not propagate to nested make or print-preview-root failed (got: $(make print-preview-root))"
 
 # --- (1) preflight -----------------------------------------------------------
 command -v vhs >/dev/null || die "vhs is required"
 command -v ffprobe >/dev/null || die "ffprobe is required"
 command -v ffmpeg >/dev/null || die "ffmpeg is required"
 
-[[ "${OPERATOR_CIDR:-}" =~ ^203\.0\.113\. ]] || die "set OPERATOR_CIDR to a TEST-NET-3 value, e.g. OPERATOR_CIDR=203.0.113.0/24 make demo"
+[[ "${OPERATOR_CIDR:-}" =~ ^203\.0\.113\.[0-9]{1,3}(/[0-9]{1,2})?$ ]] || die "set OPERATOR_CIDR to a TEST-NET-3 value, e.g. OPERATOR_CIDR=203.0.113.0/24 make demo"
 
 curl -sf localhost:4566/_localstack/health >/dev/null || die "LocalStack is not reachable on localhost:4566"
 
@@ -61,8 +61,20 @@ existing=$(state_list) || die "terraform state list failed"
 # --- (2) cleanup trap --------------------------------------------------------
 cleanup() {
 	local rc=$?
-	make destroy >"$RUN/cleanup.log" 2>&1 || echo "demo: cleanup destroy failed (see $RUN/cleanup.log)" >&2
-	state_list >>"$RUN/cleanup.log" 2>&1 || true
+	if ! make destroy >"$RUN/cleanup.log" 2>&1; then
+		echo "demo: cleanup destroy failed (see $RUN/cleanup.log)" >&2
+		if [ "$rc" -eq 0 ]; then rc=1; fi
+	fi
+	if left=$(state_list 2>>"$RUN/cleanup.log"); then
+		if [ -n "$left" ]; then
+			printf '%s\n' "$left" >>"$RUN/cleanup.log"
+			echo "demo: cleanup left state behind (see $RUN/cleanup.log)" >&2
+			if [ "$rc" -eq 0 ]; then rc=1; fi
+		fi
+	else
+		echo "demo: cleanup state check failed (see $RUN/cleanup.log)" >&2
+		if [ "$rc" -eq 0 ]; then rc=1; fi
+	fi
 	exit "$rc"
 }
 trap cleanup EXIT
@@ -95,12 +107,19 @@ need "$([ -f "$RUN/apply.rc" ] && cat "$RUN/apply.rc")" "apply.rc missing"
 [ "$(cat "$RUN/apply.rc")" = "0" ] || die "apply.rc was not 0"
 need "$([ -f "$RUN/destroy.rc" ] && cat "$RUN/destroy.rc")" "destroy.rc missing"
 [ "$(cat "$RUN/destroy.rc")" = "0" ] || die "destroy.rc was not 0"
+need "$([ -f "$RUN/status.rc" ] && cat "$RUN/status.rc")" "status.rc missing"
+[ "$(cat "$RUN/status.rc")" = "0" ] || die "status.rc was not 0"
+need "$([ -f "$RUN/conftest.rc" ] && cat "$RUN/conftest.rc")" "conftest.rc missing"
+[ "$(cat "$RUN/conftest.rc")" = "0" ] || die "conftest.rc was not 0"
+
+[ -f "$RUN/env.ok" ] && [ "$(cat "$RUN/env.ok")" = "1" ] || die "RUN did not reach the recorded shell"
 
 grep -q '^Plan:' "$RUN/plan.log" || die "plan.log missing 'Plan:' line"
 grep -q 'Apply complete' "$RUN/apply.log" || die "apply.log missing 'Apply complete'"
 grep -q 'Destroy complete' "$RUN/destroy.log" || die "destroy.log missing 'Destroy complete'"
 
-[ -z "$(state_list)" ] || die "state is not empty after the recorded destroy"
+after=$(state_list) || die "terraform state list failed after the recorded destroy"
+[ -z "$after" ] || die "state is not empty after the recorded destroy"
 
 [ -s "$RUN/demo.gif" ] || die "demo.gif missing or empty"
 
@@ -122,6 +141,7 @@ grep -q 'Destroy complete' "$RUN/demo.txt" || die "demo.txt missing 'Destroy com
 grep -q 'PASS: conftest-gate suite' "$RUN/demo.txt" || die "demo.txt missing 'PASS: conftest-gate suite'"
 grep -q '^aws_' "$RUN/demo.txt" || die "demo.txt missing state list output (no line starting with aws_)"
 grep -qi 'localstack' "$RUN/demo.txt" || die "demo.txt missing localstack status output"
+grep -qE '\b(ecs|elbv2|s3)\b.*(running|available)' "$RUN/demo.txt" || die "demo.txt lacks a LocalStack service row"
 
 # --- (6) publish ---------------------------------------------------------------
 mv "$RUN/demo.gif" docs/assets/demo.gif

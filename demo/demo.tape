@@ -18,6 +18,9 @@ Show
 # DEMO-SECTION status
 Type `make localstack-status 2>&1 | grep -E 'localstack|Service|\b(ec2|ecs|elbv2|s3|iam|logs|secretsmanager|sns|servicediscovery)\b'` Enter Wait
 Sleep 2.5s
+Hide
+Type `echo $? > "$RUN/status.rc"; clear` Enter Wait
+Show
 
 # DEMO-SECTION plan
 Hide
@@ -29,7 +32,7 @@ Sleep 2.5s
 Type `make conftest 2>&1 | tail -n 3` Enter Wait
 Sleep 2.5s
 Hide
-Type `clear` Enter Wait
+Type `echo $? > "$RUN/conftest.rc"; clear` Enter Wait
 Show
 
 # DEMO-SECTION apply
