@@ -16,7 +16,34 @@ adjust an `authored` fixture to make a predicate pass; record the real
 response instead.
 
 The recorded Conftest plan sidecars carry their recording metadata in
-`tests/fixtures/conftest/PROVENANCE.md`.
+`tests/fixtures/conftest/PROVENANCE.md`. A `terraform show -json` document
+cannot carry a custom `recorded_from` key, so the recording metadata stays in
+that sidecar.
+
+## Phase 5 Conftest policy gate
+
+Run the Conftest regression suite without AWS or LocalStack:
+
+```
+bash tests/conftest-gate.sh
+```
+
+The suite requires `conftest verify` to pass all 18 Rego unit tests, accepts
+the good plan without reporting `aws_security_group.alb`, and requires the bad
+plan to exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
+`aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
+`aws_security_group.zero_lb`, `aws_vpc_security_group_ingress_rule.open`,
+`aws_security_group_rule.legacy_open`, and
+`aws_default_security_group.default`. It also requires the bad plan not to
+report the protected `aws_s3_bucket.database`. The suite currently reports 14
+cases.
+
+Fixture provenance: `good-plan.json` and `bad-plan.json` in
+`tests/fixtures/conftest/` are `recorded_from` LocalStack 2026.8.1 with
+Terraform 1.16.0 on 2026-09-04 from `good-root/` and `bad-root/` via
+`make record-conftest-fixtures`. Fixtures are re-recorded from those roots,
+never edited. The real `envs/preview` plan is never committed because it can
+carry prior state and sensitive values.
 
 Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
 and exact API `rc`/`stdout`/`stderr` responses. The production predicate layer

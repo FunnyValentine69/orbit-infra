@@ -96,9 +96,11 @@ Each `env_id` will have its own state key and a durable lease with states
 `open → closing → closed | cleanup_failed` and a monotonically increasing
 `generation`; every transition is a compare-and-swap on the object's S3
 ETag, so two writers can never both win. The lease is created only after
-the static gates (runner-CIDR rejection, lint, checkov) and selected-image
+the pre-plan gates (runner-CIDR rejection, lint, checkov) and selected-image
 signature/attestation checks pass, so a rejected config or supply-chain
-mismatch never produces a lease or AWS resources. Its workflow-run owner and
+mismatch never produces a lease or AWS resources. The saved AWS plan is then
+checked by Conftest before apply; this apply-side gate is CODE-ONLY until
+P0-3d. Its workflow-run owner and
 initial manifest containing the deployment mode and all three resolved image
 references are written in the same CAS PUT that opens the generation. Close is two-stage
 because ECS task definitions delete asynchronously (up to 24 hours) while a hosted
@@ -250,7 +252,22 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   27-case fixture suite covers the pending, hand-back, prune, and
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
-  bootstrap resource.
+  bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 18
+  Rego unit tests and the 14-case shell suite against fixtures that are
+  LOCALSTACK-recorded locally. The root-module policy denies a planned S3
+  bucket without exactly one fully locked public-access block correlated by
+  an exact configuration reference; no-op buckets are evaluated, pure deletes
+  are skipped, and `count`/`for_each` instances fail closed. It also denies
+  `0.0.0.0/0`, `::/0`, or unknown ingress on `aws_security_group`,
+  `aws_default_security_group`, `aws_vpc_security_group_ingress_rule`, and
+  `aws_security_group_rule` unless a planned `aws_lb` instance structurally
+  references that security group. In `terraform-plan.yml`, the `gates` job
+  runs the gate and `plan-localstack` tests the live LocalStack plan: VERIFIED
+  in CI on PR #N's final head; run ids in the PR description. In
+  `session-apply.yml`, Conftest gates the saved AWS plan before `make apply`;
+  the LocalStack target has no saved plan, and this apply-side gate remains
+  CODE-ONLY until P0-3d.
 
 ### SLO
 

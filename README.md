@@ -132,13 +132,16 @@ Local, pre-CI policy gates (`.tflint.hcl`, `.checkov.yaml` at repo root):
 make validate     # terraform init -backend=false + validate, every module/env
 make lint         # terraform fmt -check, tflint --recursive, checkov
 make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
+make conftest     # conftest verify + the 14-case recorded-plan regression suite
 make test-concurrency TARGET=localstack OPERATOR_CIDR=10.255.255.255/32  # two live environments on one already-running emulator
-scripts/gates.sh  # runs all four above (validate, lint, test, no-nat-gateway), PASS/FAIL summary; CI calls this from Phase 3 onward
+scripts/gates.sh  # validate -> lint -> test -> policy-size -> no-nat-gateway -> conftest, with a PASS/FAIL summary
 ```
 
 The live concurrency target, its LocalStack-free SIGTERM/process-group test, and the nonce-bound post-merge GitHub dispatch-ordering test are documented in `tests/README.md`; none starts, stops, or reconfigures LocalStack.
 
 `scripts/gates.sh` also requires the `policy-size` gate by default: it renders a LocalStack plan of `bootstrap/` and requires every planned IAM policy document to be plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone with `bootstrap/policy-size-check.sh`. The secret-free PR gates set `GATES_POLICY_SIZE=skip`; the owner-only `plan-localstack` job runs the check after LocalStack is healthy.
+
+Conftest denies planned public S3 buckets and open or unknown non-ALB ingress; the ALB exemption requires a planned load balancer to structurally reference the security group. The gate in `gates` and enforcement on the live `plan-localstack` PR plan are VERIFIED in CI on PR #N's final head; run ids in the PR description, while `session-apply` gating of the saved AWS plan before `make apply` is CODE-ONLY until P0-3d.
 
 CI: `terraform-plan.yml` runs static gates on every pull request. Its LocalStack plan and Infracost comment jobs run only for the repository owner's own same-repository pull requests; no AWS credentials are involved.
 
@@ -153,7 +156,7 @@ Pinned tool versions and checksums: `tools.lock`.
 | OIDC-federated Actions, no static AWS keys | in progress |
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
-| Policy gates: tflint + checkov on every plan | done |
+| Policy gates: tflint + checkov + conftest (public S3, open non-ALB ingress) on every PR plan; conftest also gates the saved AWS plan before apply | done (apply-side gate CODE-ONLY until P0-3d) |
 | Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
 | SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
 | In-job LocalStack Stage 2 | LOCALSTACK-VERIFIED in CI (run 33825140591) |
@@ -176,3 +179,7 @@ See `STATE.md` for current phase and in-progress work.
 - `STATE.md` — current phase and evidence status
 - `TODO.md` — task tracking and follow-ups
 - `tests/README.md` — fixture provenance and test suite contracts
+
+## License
+
+MIT, see LICENSE.
