@@ -15,6 +15,9 @@ and must be replaced by a recorded response once that backend is available. Neve
 adjust an `authored` fixture to make a predicate pass; record the real
 response instead.
 
+The recorded Conftest plan sidecars carry their recording metadata in
+`tests/fixtures/conftest/PROVENANCE.md`.
+
 Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
 and exact API `rc`/`stdout`/`stderr` responses. The production predicate layer
 consumes the same response shape for recorded and live probes. The suite covers

@@ -151,9 +151,9 @@ the publisher role.
 Also in this amendment: the F4 `AuthorizeSecurityGroupIngress`/
 `AuthorizeSecurityGroupEgress`/`Revoke*` statements are now allowed via
 two paths — an `aws:RequestTag/Project`-conditioned path scoped to the
-`security-group-rule` resource type (for the separate
-`aws_vpc_security_group_ingress_rule`/`egress_rule` resources in
-`envs/preview/main.tf`, which set `tags =`) and an
+`security-group-rule` resource type, retained for a future migration from
+inline rules to separate `aws_vpc_security_group_ingress_rule`/
+`aws_vpc_security_group_egress_rule` resources, and an
 `ec2:ResourceTag/Project`-conditioned path scoped to the pre-existing
 `security-group*` resource (for the inline `ingress`/`egress` blocks in
 `modules/network/main.tf` and `envs/preview/main.tf`, which issue

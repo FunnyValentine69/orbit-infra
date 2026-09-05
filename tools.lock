@@ -9,6 +9,7 @@ infracost 2.16.2
 cosign 3.1.3
 syft 1.51.1
 gitleaks 8.30.1
+conftest 0.69.0
 session-manager-plugin 1.2.835.0
 orbstack 2.2.3
 
@@ -22,3 +23,7 @@ infracost 134117d5ea0dc2a7f9a20f2b9206a3bc63d7425ed9281d04f5dd9e88b728f82a
 cosign 0a945ba6dbde67cfc2a079b21e74875e2cbd3dcd46b190a64878fb7c08a84431
 syft 953c3f99e76db3f63362fd035cf428ff75173ea858e86e321dd5eefacb210e57
 gitleaks ea543daa28d39acc7af3aab4491ef53d62c0402b540d087008ff4dce7e2484b3
+conftest f41dbda68a6932878f6b26a976256eb415b179f552fd81e10966b0ee39c1bb9f
+
+# CI release-archive checksums (linux x86_64); verified once against the release's checksums.txt on 2026-09-04
+conftest 96fc2fbf11f0afde51256647127e6f00a64ce839a4d9a0a1aef2426c0e6f4b3f

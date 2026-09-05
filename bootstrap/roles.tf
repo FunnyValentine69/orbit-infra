@@ -493,10 +493,10 @@ data "aws_iam_policy_document" "deployer_ec2" {
   }
 
   # F4: AuthorizeSecurityGroupIngress/Egress create the security-group-rule
-  # resource and support tag-on-create per the table, but ONLY the two
-  # separate-resource rules (aws_vpc_security_group_ingress_rule/
-  # egress_rule in envs/preview/main.tf, which set `tags =`) exercise
-  # this path; the request-tag condition never matches for those calls.
+  # resource and support tag-on-create per the table. No separate rule
+  # resources currently exist in envs/preview/main.tf; these grants are
+  # retained for a future migration to aws_vpc_security_group_ingress_rule/
+  # aws_vpc_security_group_egress_rule resources that set `tags =`.
   # The RequestTag path stays scoped to the security-group-rule resource
   # type and is paired with the CreateAction values added to
   # Ec2CreateTagsForCreateActions above, per F4.

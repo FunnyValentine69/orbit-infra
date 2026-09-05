@@ -48,6 +48,10 @@ jobs:
         id: checkov-version
         run: echo "version=$(scripts/tool-version.sh checkov)" >> "$GITHUB_OUTPUT"
 
+      - name: Read conftest version from tools.lock
+        id: conftest-version
+        run: echo "version=$(scripts/tool-version.sh conftest)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -61,6 +65,23 @@ jobs:
 
       - name: Install checkov
         run: pip install checkov==${{ steps.checkov-version.outputs.version }}
+
+      - name: Install conftest
+        env:
+          CONFTEST_VERSION: ${{ steps.conftest-version.outputs.version }}
+        run: |
+          version="$CONFTEST_VERSION"
+          archive="conftest_${version}_Linux_x86_64.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/open-policy-agent/conftest/releases/download/v${version}/${archive}"
+          expected="$(scripts/tool-ci-digest.sh conftest)"
+          actual="$(sha256sum "$archive" | awk '{print $1}')"
+          if [ "$actual" != "$expected" ]; then
+            echo "conftest archive checksum mismatch" >&2
+            exit 1
+          fi
+          tar -xzf "$archive" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+          conftest --version
 
       - name: tflint --init
         run: tflint --init
@@ -88,11 +109,32 @@ jobs:
         id: tf-version
         run: echo "version=$(scripts/tool-version.sh terraform)" >> "$GITHUB_OUTPUT"
 
+      - name: Read conftest version from tools.lock
+        id: conftest-version
+        run: echo "version=$(scripts/tool-version.sh conftest)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ steps.tf-version.outputs.version }}
           terraform_wrapper: false
+
+      - name: Install conftest
+        env:
+          CONFTEST_VERSION: ${{ steps.conftest-version.outputs.version }}
+        run: |
+          version="$CONFTEST_VERSION"
+          archive="conftest_${version}_Linux_x86_64.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/open-policy-agent/conftest/releases/download/v${version}/${archive}"
+          expected="$(scripts/tool-ci-digest.sh conftest)"
+          actual="$(sha256sum "$archive" | awk '{print $1}')"
+          if [ "$actual" != "$expected" ]; then
+            echo "conftest archive checksum mismatch" >&2
+            exit 1
+          fi
+          tar -xzf "$archive" conftest
+          sudo install -m 0755 conftest /usr/local/bin/conftest
+          conftest --version
 
       - name: Start LocalStack
         uses: LocalStack/setup-localstack@7c8a0cb3405bc58be4c8f763f812aa000bc46303 # v0.3.2
@@ -157,6 +199,9 @@ jobs:
             grep -E '^Plan: ' /tmp/plan-stdout.txt || true
           } | sed -E 's/[0-9]{12}/************/g' > /tmp/plan-summary.md
           cat /tmp/plan-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Conftest policy gate on the LocalStack plan
+        run: conftest test --policy policy/ /tmp/plan.json
 
       - name: Remove local plan file
         if: always()

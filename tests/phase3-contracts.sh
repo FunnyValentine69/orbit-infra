@@ -484,4 +484,105 @@ if [ "$(cat "$workflow_exec_root/sweep-args.log")" != "env contract" ]; then
   exit 1
 fi
 
+# P5-3: Conftest is checksum-pinned in both PR jobs and in session apply;
+# each rendered plan is gated before its consumer can apply or report success.
+python3 - "$plan_workflow" "$apply_workflow" <<'PY_CONFTST'
+from pathlib import Path
+import sys
+import yaml
+
+
+def one_index(steps, predicate, label):
+    matches = [index for index, step in enumerate(steps) if predicate(step)]
+    if len(matches) != 1:
+        raise SystemExit(f"expected one {label}, found {len(matches)}")
+    return matches[0]
+
+
+def assert_conftest_install(steps, job_label):
+    version_index = one_index(
+        steps,
+        lambda step: step.get("name") == "Read conftest version from tools.lock"
+        and "scripts/tool-version.sh conftest" in step.get("run", ""),
+        f"conftest version read in {job_label}",
+    )
+    install_index = one_index(
+        steps,
+        lambda step: step.get("name") == "Install conftest",
+        f"conftest install in {job_label}",
+    )
+    install_run = steps[install_index].get("run", "")
+    for required in (
+        "scripts/tool-ci-digest.sh conftest",
+        "sha256sum",
+        "conftest_${version}_Linux_x86_64.tar.gz",
+        'if [ "$actual" != "$expected" ]',
+        "sudo install -m 0755 conftest /usr/local/bin/conftest",
+        "conftest --version",
+    ):
+        if required not in install_run:
+            raise SystemExit(f"{job_label} conftest install is missing {required!r}")
+    if not version_index < install_index:
+        raise SystemExit(f"{job_label} must read the conftest version before installing it")
+    return install_index
+
+
+plan = yaml.safe_load(Path(sys.argv[1]).read_text())
+for job_name in ("gates", "plan-localstack"):
+    assert_conftest_install(plan["jobs"][job_name]["steps"], f"terraform-plan {job_name} job")
+
+plan_steps = plan["jobs"]["plan-localstack"]["steps"]
+summary_index = one_index(
+    plan_steps,
+    lambda step: step.get("name") == "Redacted plan summary",
+    "redacted plan summary in terraform-plan plan-localstack job",
+)
+conftest_index = one_index(
+    plan_steps,
+    lambda step: step.get("name") == "Conftest policy gate on the LocalStack plan"
+    and step.get("run") == "conftest test --policy policy/ /tmp/plan.json",
+    "LocalStack Conftest policy gate in terraform-plan plan-localstack job",
+)
+if not summary_index < conftest_index:
+    raise SystemExit("terraform-plan must run Conftest after rendering the LocalStack plan JSON")
+
+apply = yaml.safe_load(Path(sys.argv[2]).read_text())
+apply_steps = apply["jobs"]["apply"]["steps"]
+apply_install_index = assert_conftest_install(apply_steps, "session-apply apply job")
+saved_plan_index = one_index(
+    apply_steps,
+    lambda step: step.get("name") == "Terraform plan (AWS)",
+    "saved AWS plan in session-apply apply job",
+)
+saved_plan_gate_index = one_index(
+    apply_steps,
+    lambda step: step.get("name") == "Conftest policy gate on the saved plan"
+    and "terraform -chdir=envs/preview show -json tfplan.bin" in step.get("run", "")
+    and "conftest test --policy policy/" in step.get("run", ""),
+    "saved-plan Conftest policy gate in session-apply apply job",
+)
+apply_index = one_index(
+    apply_steps,
+    lambda step: step.get("name") == "Terraform apply"
+    and "make apply" in step.get("run", ""),
+    "Terraform apply in session-apply apply job",
+)
+if not apply_install_index < saved_plan_index < saved_plan_gate_index < apply_index:
+    raise SystemExit("session-apply must install Conftest and gate the saved Terraform plan before make apply")
+PY_CONFTST
+
+grep -Fqx 'run_gate conftest' "$REPO_ROOT/scripts/gates.sh" || {
+  echo "scripts/gates.sh must run the conftest gate" >&2
+  exit 1
+}
+for required_lock_line in \
+  'conftest 0.69.0' \
+  'conftest f41dbda68a6932878f6b26a976256eb415b179f552fd81e10966b0ee39c1bb9f' \
+  'conftest 96fc2fbf11f0afde51256647127e6f00a64ce839a4d9a0a1aef2426c0e6f4b3f'; do
+  grep -Fqx "$required_lock_line" "$REPO_ROOT/tools.lock" || {
+    echo "tools.lock is missing: $required_lock_line" >&2
+    exit 1
+  }
+done
+
 echo "PASS: phase3 shell contracts"
