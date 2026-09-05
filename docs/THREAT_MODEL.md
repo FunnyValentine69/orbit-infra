@@ -56,14 +56,14 @@ flowchart LR
   publisher -->|"push"| ecr
   publisher -->|"sign"| kms
   plan -->|"read only"| state
-  plan -->|"reads any resource"| private
+  plan -->|"account-wide read (ReadOnlyAccess), subject to the deny policy"| storage
   alb -->|"HTTP, no TLS"| ecs
   ecs -->|"private"| endpoints
   endpoints --> data
   endpoints --> ecr
 ```
 
-The boundaries are the internet-facing ALB, GitHub-to-AWS federation, the ALB handoff from the public subnets to the private subnet, and the private endpoint paths to storage and image services. The deployer's control-plane reach creates and destroys the VPC, subnets, ALB, security groups, ECS, Cloud Map, Secrets Manager entries, and the data bucket. The plan-reader has account-wide read through the `plan_reader_readonly` `ReadOnlyAccess` attachment in [`bootstrap/roles.tf`](../bootstrap/roles.tf), subject to its explicit deny policy. The private-subnet and endpoint topology is implemented in [`modules/network/main.tf`](../modules/network/main.tf) and [`envs/preview/main.tf`](../envs/preview/main.tf), as recorded in [ADR 0002](adr/0002-private-subnets-endpoints-no-nat.md). Real security-group packet enforcement remains `CODE-ONLY`.
+The boundaries are the internet-facing ALB, GitHub-to-AWS federation, the ALB handoff from the public subnets to the private subnet, and the private endpoint paths to storage and image services. The deployer's control-plane reach creates and destroys the VPC, subnets, ALB, security groups, ECS, Cloud Map, Secrets Manager entries, and the data bucket. The plan-reader's read surface is account-wide across every AWS service's `Describe*`, `List*`, and `Get*` actions where the `plan_reader_readonly` `ReadOnlyAccess` attachment in [`bootstrap/roles.tf`](../bootstrap/roles.tf) grants them, scoped down only by `plan_reader_deny`: `s3:GetObject` and `s3:GetObjectVersion` outside `envs/preview/*` and `bootstrap/*` state objects; `s3:ListBucket` outside the state bucket; `s3:ListBucket` and `s3:ListBucketVersions` on the state bucket unless the prefix is `envs/preview`, `envs/preview/*`, `bootstrap`, or `bootstrap/*`, and when the prefix is missing; `secretsmanager:GetSecretValue`; `ssm:GetParameter`, `ssm:GetParameters`, `ssm:GetParametersByPath`, and `ssm:GetParameterHistory`; `kms:Decrypt`; and `lambda:GetFunction`, `lambda:GetFunctionConfiguration`, `lambda:GetLayerVersion`, and `lambda:GetLayerVersionByArn`. The private-subnet and endpoint topology is implemented in [`modules/network/main.tf`](../modules/network/main.tf) and [`envs/preview/main.tf`](../envs/preview/main.tf), as recorded in [ADR 0002](adr/0002-private-subnets-endpoints-no-nat.md). Real security-group packet enforcement remains `CODE-ONLY`.
 
 ## Threats and controls
 

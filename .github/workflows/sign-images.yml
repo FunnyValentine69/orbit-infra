@@ -189,11 +189,12 @@ jobs:
 
             trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1 "${image}@${digest}"
 
-            # SBOM travels only as an attestation on the private image (ADR 0007 amendment 2026-09-04); it is never published as an Actions artifact.
+            # SBOM stays private; re-runs skip only an attestation with a matching package inventory (ADR 0007 amendment 2026-09-04).
+            new_inv=$(jq -c '[.packages[] | (.name + "@" + (.versionInfo // ""))] | sort' "${name}-sbom.spdx.json")
             if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               --type spdxjson "${image}@${digest}" 2>/dev/null \
-              | jq -e -s 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) | type == "object" and has("spdxVersion") and has("SPDXID")) catch false)' >/dev/null; then
-              echo "${repository}: SBOM attestation already exists"
+              | jq -e -s --argjson new_inv "$new_inv" 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $p | ($p | type == "object" and has("spdxVersion") and has("SPDXID")) and (([$p.packages[]? | (.name + "@" + (.versionInfo // ""))] | sort) == $new_inv)) catch false)' >/dev/null; then
+              echo "${repository}: SBOM attestation with matching inventory already exists"
             else
               cosign attest --yes --tlog-upload=false --use-signing-config=false \
                 --key "awskms:///${KMS_KEY_ARN}" \

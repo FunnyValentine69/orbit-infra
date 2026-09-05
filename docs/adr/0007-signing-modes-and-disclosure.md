@@ -22,14 +22,19 @@ upstream images, and the Redis/ClickHouse mirrors. The placeholder's
 date. The private images' `local-build/v1` predicate carries only the
 upstream commit SHA, the upstream archive hash, the repository-owned
 build-input hash, and the build date; it does not claim CI build
-provenance. No predicate carries a hostname or account identifier. Cosign's
-version is pinned in `tools.lock` and checked before signing. Each SBOM, scan,
-signature, and attestation is handled independently on a re-run. Every Trivy
-scan explicitly selects the deployed `linux/arm64` image: the action-based
-mirror scans set `TRIVY_PLATFORM=linux/arm64`, and the direct CLI scan uses
-`--platform linux/arm64`. The placeholder and each mirrored digest must pass
-its Trivy scan before that digest is signed or attested, so a first-run scan
-failure cannot publish trust metadata for the failed digest.
+provenance. The project's `local-build/v1`, `placeholder-build/v1`, and
+`mirror/v1` provenance predicates carry no hostname or account identifier.
+The SPDX SBOM predicate may contain the private image reference and dependency
+inventory that syft records. It is therefore stored only as a KMS-signed
+attestation on the private image, never uploaded to Rekor or published as an
+Actions artifact. Cosign's version is pinned in `tools.lock` and checked before
+signing. Each SBOM, scan, signature, and attestation is handled independently
+on a re-run. Every Trivy scan explicitly selects the deployed `linux/arm64`
+image: the action-based mirror scans set `TRIVY_PLATFORM=linux/arm64`, and the
+direct CLI scan uses `--platform linux/arm64`. The placeholder and each
+mirrored digest must pass its Trivy scan before that digest is signed or
+attested, so a first-run scan failure cannot publish trust metadata for the
+failed digest.
 
 Before `session-apply.yml` opens a lease, it exports the KMS public key and
 verifies all three selected image signatures without contacting Rekor. It then
