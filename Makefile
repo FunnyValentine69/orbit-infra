@@ -206,7 +206,7 @@ test:
 	@for d in modules/*/; do \
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \
-			terraform -chdir="$$d" init -backend=false -input=false >/dev/null && \
+			terraform -chdir="$$d" init -backend=false -input=false -lockfile=readonly >/dev/null && \
 			terraform -chdir="$$d" test || exit 1; \
 		fi; \
 	done
@@ -236,7 +236,7 @@ record-conftest-fixtures:
 		temp_file="$$(mktemp "$${TMPDIR:-/tmp}/orbit-conftest-$${name}.XXXXXX")" || exit $$?; \
 		rc=0; \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
-			terraform -chdir="$$root" init -input=false -upgrade=false && \
+			terraform -chdir="$$root" init -input=false -upgrade=false -lockfile=readonly && \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
 			terraform -chdir="$$root" plan -input=false -out=plan.tfplan && \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
@@ -256,10 +256,10 @@ validate:
 	terraform -chdir=bootstrap validate
 	@for d in modules/*/; do \
 		echo "== terraform validate: $$d =="; \
-		terraform -chdir="$$d" init -backend=false -input=false >/dev/null && \
+		terraform -chdir="$$d" init -backend=false -input=false -lockfile=readonly >/dev/null && \
 		terraform -chdir="$$d" validate || exit 1; \
 	done
-	terraform -chdir=envs/preview init -backend=false -input=false >/dev/null
+	terraform -chdir=envs/preview init -backend=false -input=false -lockfile=readonly >/dev/null
 	terraform -chdir=envs/preview validate
 
 lint:
