@@ -45,7 +45,7 @@ bootstrap-lint:
 iam-matrix-plan:
 	@plan_json="$$(mktemp "$${TMPDIR:-/tmp}/orbit-iam-matrix.XXXXXX")"; \
 	trap 'rm -f "$$plan_json"' EXIT; \
-	POLICY_SIZE_PLAN_JSON_OUT="$$plan_json" bootstrap/policy-size-check.sh; \
+	POLICY_SIZE_PLAN_JSON_OUT="$$plan_json" bootstrap/policy-size-check.sh && \
 	bash tests/iam-matrix-contracts.sh "$$plan_json"
 
 # LocalStack applies are disposable; real AWS keeps the interactive confirmation

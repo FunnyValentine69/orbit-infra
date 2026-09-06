@@ -19,8 +19,8 @@ if [ -e bootstrap/backend_override.tf ]; then
 fi
 
 tmp_dir="$(mktemp -d)"
-cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
 trap 'rm -f bootstrap/backend_override.tf; rm -rf "$tmp_dir"' EXIT
+cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
 
 export TF_DATA_DIR="${POLICY_SIZE_TF_DATA_DIR:-.terraform-localstack}"
 if ! terraform -chdir=bootstrap init -reconfigure -input=false >"$tmp_dir/init.log" 2>&1; then

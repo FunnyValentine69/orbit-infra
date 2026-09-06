@@ -1,13 +1,14 @@
 # IAM action-condition matrix
 
-This is the executable P0-3d specification for the ten bootstrap permission documents, their principal bindings, the three GitHub OIDC trust documents, and the KMS signing-key resource policy. It records policy evaluation cases; it does not claim AWS enforcement has run. The first seven cells of every statement row and every binding row are generated from the post-bootstrap-apply LocalStack plan and are drift-locked by `tests/iam-matrix-contracts.sh`. Empty-string and null `permissions_boundary` values are both canonicalised as `none` by `scripts/iam-matrix-inventory.sh`.
+This is the executable P0-3d specification for the ten bootstrap permission documents, their principal bindings, the three GitHub OIDC trust documents, and the KMS signing-key resource policy. It records policy evaluation cases; it does not claim AWS enforcement has run. The first seven cells of every statement row, and all five cells of every binding row, are generated from the post-bootstrap-apply LocalStack plan and are drift-locked by `tests/iam-matrix-contracts.sh`. Empty-string and null `permissions_boundary` values are both canonicalised as `none` by `scripts/iam-matrix-inventory.sh`.
 
-Generator commit: `record at PR creation`. Canonical regeneration:
+Generator commit: `3f744c7` (the commit that added `scripts/iam-matrix-inventory.sh`; the cells below were generated from a plan rendered at that commit). Canonical regeneration:
 
 ```bash
 make bootstrap-apply TARGET=localstack
-bash scripts/iam-matrix-inventory.sh <post-apply-plan.json>
-bash tests/iam-matrix-contracts.sh <post-apply-plan.json>
+POLICY_SIZE_PLAN_JSON_OUT=<plan.json> bootstrap/policy-size-check.sh
+bash scripts/iam-matrix-inventory.sh <plan.json>
+bash tests/iam-matrix-contracts.sh <plan.json>
 ```
 
 Only the inventory and binding cells are generated. Cases, threat-model mappings, evidence, evidence ceilings, and the execution protocol are reviewed by hand.
