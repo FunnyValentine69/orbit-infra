@@ -150,11 +150,15 @@ bash tests/iam-matrix-contracts.sh
 Source mode requires exactly 85 statement rows and 13 binding rows. It verifies
 source Sid and document order, all seven condition-operator truth tables and
 their prescribed decisions, and exactly one unambiguous `expect <decision>`
-clause in every executable case. It checks same-action
+clause in every ordinary executable case. Every executable non-KMS `:absent`
+variant must omit the tested key: single-condition rows state that no entry is
+passed, while multi-condition rows pass only the other satisfying keys. The
+wrong-audience trust variant uses its exact conditional provider form and is
+`CODE-ONLY`; a bare `N/A(...)` is rejected. Source mode also checks same-action
 `resource:nonmatching` cases for every resource-scoped Allow, permits an exact
 `N/A(<reason>)` body only for the documented non-executable shapes (including
-trust `aud`/`sub` absent variants, the provider-level wrong-audience case, the
-unobtainable mutable-name subject, and full-type wildcards such as
+trust `aud`/`sub` absent variants, the unobtainable mutable-name subject, and
+full-type wildcards such as
 `hostedzone/*`), rejects unquoted glob characters in simulator option arguments, and validates `stringList` handling for multivalued KMS aliases.
 From comment-stripped HCL and canonical matrix
 resources it derives same-role Action and conservative Resource overlap across
@@ -173,13 +177,13 @@ complete, anchored boundary-assignment counts, so comments and quoted decoys do
 not count. Fixture hygiene scans regular files plus symlink target strings and
 rejects links that resolve outside the IAM fixture directory. Evidence-label
 syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
-validated mechanically. The `arn-real-account`,
+validated mechanically. The `absent-key-passed`, `arn-real-account`,
 `allow-masked-negative-missing`, `masked-negative-missing`,
 `masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
 `masked-form-whole-document`, `trust-absent-executable`,
-`trust-mutable-name-executable`, `unquoted-wildcard`, and
-`uncommented-extra-sid` mutations must print the `FAIL:` line for the contract
-they kill; `commented-sid-ignored` must pass.
+`trust-mutable-name-executable`, `unquoted-wildcard`,
+`uncommented-extra-sid`, and `wrong-audience-bare-na` mutations must print the
+`FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
 
 After bootstrap has been applied to LocalStack, render and compare plan mode
 through the one hardened render path:

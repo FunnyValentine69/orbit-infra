@@ -15,9 +15,9 @@ The recursive-key-order case is also generated in the temporary directory by
 reordering a multi-key Condition in `base-plan.json`; its inventory output must
 remain byte-identical to the original fixture.
 
-The masked-negative, statement-isolation, trust-absence, mutable-subject,
-shell-quoting, and commented-Sid cases are `authored` mutations generated in a
-per-run temporary directory by
+The `absent-key-passed`, masked-negative, statement-isolation, trust-absence,
+`wrong-audience-bare-na`, mutable-subject, shell-quoting, and commented-Sid
+cases are `authored` mutations generated in a per-run temporary directory by
 `tests/iam-matrix-contracts.sh`. The commented and uncommented Sid mutations use
 scratch copies under `IAM_MATRIX_REPO_ROOT`; committed Terraform source is not
 modified.

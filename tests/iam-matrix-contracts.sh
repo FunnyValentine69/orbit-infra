@@ -141,13 +141,16 @@ binding_rows = []
 for line_no, line in enumerate(text.splitlines(), 1):
     if not line.startswith("| `"):
         continue
-    cells = re.findall(r"`([^`]*)`", line)
+    table_line = line.replace(r"; \| case:", "; case:")
+    if r"\|" in table_line:
+        fail(f"misplaced escaped pipe inside table cell at line {line_no}")
+    cells = re.findall(r"`([^`]*)`", table_line)
     if len(cells) == 10 and cells[0].startswith(("aws_", "trust:")):
-        if line.count("|") != 11:
+        if table_line.count("|") != 11:
             fail(f"bare pipe inside statement table cell at line {line_no}")
         statement_rows.append((line_no, cells))
     elif len(cells) == 5 and cells[0] in {"inline", "attachment", "role"}:
-        if line.count("|") != 6:
+        if table_line.count("|") != 6:
             fail(f"bare pipe inside binding table cell at line {line_no}")
         binding_rows.append((line_no, cells))
 
@@ -398,6 +401,13 @@ decision_keyword_pattern = re.compile(
     r"(?<![A-Za-z0-9_])(allowed|implicitDeny|explicitDeny|not denied by this statement)(?![A-Za-z0-9_])"
 )
 na_body_pattern = re.compile(r"N/A\([^()\s](?:[^()]*[^()\s])?\)")
+wrong_audience_prefix = "N/A when the provider's ClientIDList is exactly [sts.amazonaws.com]"
+wrong_audience_body = (
+    wrong_audience_prefix
+    + " (bootstrap-managed provider; a wrong-audience token is rejected by the provider); "
+    "otherwise executable: request a token with audience set to another registered client ID and attempt "
+    "sts assume-role-with-web-identity; expect AccessDenied; CODE-ONLY"
+)
 masked_attribution = r"(?:ReadOnlyAccess|[A-Za-z0-9]+ in [A-Za-z0-9_.:]+)"
 masked_attribution_note_pattern = re.compile(
     rf" \(isolated statement; principal simulation is masked by {masked_attribution}\)$"
@@ -406,7 +416,7 @@ masked_form_pattern = re.compile(
     r"^aws iam simulate-custom-policy --policy-input-list "
     r"'<a policy document containing only the (?P<isolated_sid>[A-Za-z0-9_]+) statement>' "
     r"--action-names [^;]+ --resource-arns [^;]+"
-    r"(?: --context-entries [^;]+|; no --context-entries); "
+    r"(?: --context-entries [^;]+(?:; [^;]+ omitted)?|; no --context-entries); "
     r"expect implicitDeny \(isolated statement; principal simulation is masked by "
     rf"(?P<attribution>{masked_attribution})\)$"
 )
@@ -464,10 +474,15 @@ def reject_unquoted_glob_characters(body, line_no, case_id):
             index += 1
 
 
+def trust_wrong_audience_required(document, case_id):
+    return document.startswith("trust:") and case_id.endswith(
+        ":token.actions.githubusercontent.com:aud:non-matching"
+    )
+
+
 def trust_na_required(document, case_id):
     return document.startswith("trust:") and (
         case_id.endswith(":absent")
-        or case_id.endswith(":token.actions.githubusercontent.com:aud:non-matching")
         or case_id.endswith(":token.actions.githubusercontent.com:sub:mutable-name")
     )
 
@@ -686,6 +701,18 @@ for line_no, cells in statement_rows:
     case_decisions = {}
     for case_id in case_ids:
         body = entries_by_id[case_id]
+        wrong_audience_required = trust_wrong_audience_required(document, case_id)
+        if wrong_audience_required:
+            if body != wrong_audience_body:
+                fail(
+                    f"wrong-audience trust case must use conditional provider form at line {line_no}: "
+                    f"{case_id}"
+                )
+            reject_unquoted_glob_characters(body, line_no, case_id)
+            case_decisions[case_id] = "implicitDeny"
+            continue
+        if body.startswith(wrong_audience_prefix):
+            fail(f"conditional wrong-audience form is not allowed at line {line_no}: {case_id}")
         case_is_na = bool(na_body_pattern.fullmatch(body))
         if "N/A(" in body and not case_is_na:
             fail(f"N/A case body must be exactly N/A(<reason>) at line {line_no}: {case_id}")
@@ -768,6 +795,45 @@ for line_no, cells in statement_rows:
                             f"truth-table decision mismatch at line {line_no}: "
                             f"{required} must expect {expected_decision}"
                         )
+                    if (
+                        variant == "absent"
+                        and not document.startswith("trust:")
+                        and condition_key != "kms:ResourceAliases"
+                    ):
+                        body = entries_by_id[required]
+                        condition_key_count = sum(
+                            len(values)
+                            for values in condition.values()
+                            if isinstance(values, dict)
+                        )
+                        if condition_key_count > 1:
+                            expected_omission = (
+                                "--context-entries <other keys at satisfying values only>; "
+                                f"{condition_key} omitted"
+                            )
+                        else:
+                            expected_omission = (
+                                "--context-entries omitted "
+                                f"(no entry for {condition_key})"
+                            )
+                        context_segments = re.findall(
+                            r"(?<!no )--context-entries ([^;]+)", body
+                        )
+                        tested_key_in_value = any(
+                            condition_key in segment
+                            and segment != f"omitted (no entry for {condition_key})"
+                            for segment in context_segments
+                        )
+                        if (
+                            expected_omission not in body
+                            or f"{condition_key}:absent" in body
+                            or f"{condition_key}=absent" in body
+                            or tested_key_in_value
+                        ):
+                            fail(
+                                f"absent variant passes tested condition key at line {line_no}: "
+                                f"{required}"
+                            )
                     if condition_key == "kms:ResourceAliases":
                         expected_context = {
                             "one-matching": "--context-entries ContextKeyName=kms:ResourceAliases,ContextKeyValues=alias/nonmatching-one,alias/orbit-infra-79s5rw-signing,alias/nonmatching-two,ContextKeyType=stringList",
@@ -1281,6 +1347,48 @@ elif mutation == "masked-form-on-unmasked-row":
         raise SystemExit("masked-form-on-unmasked-row mutation anchor mismatch")
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
+elif mutation == "absent-key-passed":
+    line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:s3:prefix:absent"
+    body = (
+        "aws iam simulate-custom-policy --policy-input-list "
+        "'<a policy document containing only the ListStatePrefixes statement>' "
+        "--action-names <each row Action value> --resource-arns matching row resources "
+        "--context-entries s3:prefix:absent; expect implicitDeny "
+        "(isolated statement; principal simulation is masked by ReadOnlyAccess)"
+    )
+    cells[7], count = re.subn(
+        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        f"{case_id} => {body}",
+        cells[7],
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit("absent-key-passed mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "wrong-audience-bare-na":
+    line = next(line for line in source.splitlines() if line.startswith("| `trust:plan_reader`"))
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:trust:plan_reader:trust:plan_reader#0:ALL:token.actions.githubusercontent.com:aud:non-matching"
+    bare_na = "N/A(a wrong-audience token is rejected before trust evaluation)"
+    cells[7], case_count = re.subn(
+        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        f"{case_id} => {bare_na}",
+        cells[7],
+        count=1,
+    )
+    cells[9], evidence_count = re.subn(
+        rf"{re.escape(case_id)}=[^;]+",
+        f"{case_id}={bare_na}",
+        cells[9],
+        count=1,
+    )
+    if case_count != 1 or evidence_count != 1:
+        raise SystemExit("wrong-audience-bare-na mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
 elif mutation == "trust-absent-executable":
     line = next(line for line in source.splitlines() if line.startswith("| `trust:plan_reader`"))
     cells = re.findall(r"`([^`]*)`", line)
@@ -1386,6 +1494,12 @@ PY_MUTATE_DOC
     "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc masked-form-on-unmasked-row masked-form-on-unmasked-row)"
   expect_fail masked-form-on-unmasked-row "masked negative form is not allowed" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc wrong-audience-bare-na wrong-audience-bare-na)"
+  expect_fail wrong-audience-bare-na "wrong-audience trust case must use conditional provider form" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc absent-key-passed absent-key-passed)"
+  expect_fail absent-key-passed "absent variant passes tested condition key" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc trust-absent-executable trust-absent-executable)"
   expect_fail trust-absent-executable "trust case must be N/A" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc trust-mutable-name-executable trust-mutable-name-executable)"
