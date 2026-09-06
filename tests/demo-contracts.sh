@@ -51,7 +51,7 @@ init_generator_clone() {
     cd "$destination"
     git init -q
     git add -A
-    git -c user.name=t -c user.email=t@example.com commit -q -m x
+    git -c user.name=t -c user.email=t@localhost commit -q -m x
   )
 }
 
@@ -423,11 +423,11 @@ for generator_case in committed-record committed-module staged-preview uncommitt
   case "$generator_case" in
     committed-record)
       printf '%s\n' '# mutation' >> "$clone/demo/record.sh"
-      (cd "$clone" && git add -A && git -c user.name=t -c user.email=t@example.com commit -q -m mutation)
+      (cd "$clone" && git add -A && git -c user.name=t -c user.email=t@localhost commit -q -m mutation)
       ;;
     committed-module)
       printf '%s\n' '# mutation' >> "$clone/modules/network/main.tf"
-      (cd "$clone" && git add -A && git -c user.name=t -c user.email=t@example.com commit -q -m mutation)
+      (cd "$clone" && git add -A && git -c user.name=t -c user.email=t@localhost commit -q -m mutation)
       ;;
     staged-preview)
       printf '%s\n' '# mutation' >> "$clone/envs/preview/main.tf"
@@ -752,7 +752,7 @@ cp -R "$lifecycle_template" "$real_git_source"
   cd "$real_git_source"
   git init -q
   git add -A
-  git -c user.name=t -c user.email=t@example.com commit -q -m x
+  git -c user.name=t -c user.email=t@localhost commit -q -m x
 )
 git clone -q "$real_git_source" "$real_git_repo"
 printf '%s\n' mutation > "$real_git_repo/demo/untracked.txt"
