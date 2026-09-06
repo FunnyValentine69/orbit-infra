@@ -565,6 +565,7 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '          post_apply) [ ! -e .fake-live ] || { [ -e .fake-destroyed ] || echo aws_live.example; } ;;' \
     '          nostate) echo "No state file was found" >&2; exit 1 ;;' \
     '          nostate-plus-error) printf "%s\n" "No state file was found" "Error: backend unavailable" >&2; exit 1 ;;' \
+    '          nostate-plus-stdout) echo "aws_live.example"; echo "No state file was found" >&2; exit 1 ;;' \
     '        esac' \
     '        ;;' \
     '      *" version "*) echo "Terraform v6.6.6-fake" ;;' \
@@ -789,6 +790,7 @@ lifecycle_failures_ok=1
 for lifecycle_case in \
   'preflight-leftover||normal|leftover||none|environment demo already has state' \
   'preflight-nostate-plus-error||normal|nostate-plus-error||none|terraform state list failed' \
+  'preflight-nostate-plus-stdout||normal|nostate-plus-stdout||none|terraform state list failed' \
   'preflight-versions|ttyd_empty|normal|empty||none|tool version capture incomplete' \
   'preflight-render-nonregular||normal|empty||stale-symlink|non-regular terraform input in execution root: stale.tfstate.tf' \
   'preflight-render-missing||normal|empty||missing-source|execution root differs from envs/preview: migration.tfstate.tf' \

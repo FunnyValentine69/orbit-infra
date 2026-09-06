@@ -72,11 +72,10 @@ state_list() {
     rc=0
   else
     rc=$?
-    if awk '
+    if [ -z "$out" ] && awk '
       NF { count++; if ($0 != "No state file was found") bad=1 }
       END { exit (bad || count != 1) }
     ' "$err"; then
-      out=""
       rc=0
     else
       cat "$err" >&2
