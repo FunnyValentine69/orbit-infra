@@ -33,9 +33,17 @@ die() {
 }
 
 guard() {
+  local assignment name value
   [ "${DEMO_BOUNDARY:-}" = 1 ] || \
     die "run make demo; demo/record.sh must be started through demo/env.sh"
-  cidr_in_test_net_3 "${OPERATOR_CIDR:-}" || \
+  for assignment in $DEMO_ENV_FIXED; do
+    name=${assignment%%=*}
+    value=${assignment#*=}
+    [ "${!name-}" = "$value" ] || \
+      die "constructed environment differs from DEMO_ENV_FIXED: $name"
+  done
+  [ -n "${OPERATOR_CIDR:-}" ] || die "OPERATOR_CIDR unset"
+  cidr_in_test_net_3 "$OPERATOR_CIDR" || \
     die "set OPERATOR_CIDR to a network within 203.0.113.0/24 with prefix /24 to /32, e.g. OPERATOR_CIDR=203.0.113.0/24 make demo"
 }
 
@@ -64,7 +72,10 @@ state_list() {
     rc=0
   else
     rc=$?
-    if grep -q 'No state file was found' "$err"; then
+    if awk '
+      NF { count++; if ($0 != "No state file was found") bad=1 }
+      END { exit (bad || count != 1) }
+    ' "$err"; then
       out=""
       rc=0
     else
@@ -93,8 +104,16 @@ assert_execution_root() {
   destination_list="$RUN/destination-terraform-inputs.bin"
   find envs/preview -maxdepth 1 -type f -print0 > "$source_list" || \
     die "could not inspect envs/preview"
-  find "$PREVIEW_ROOT" -maxdepth 1 -type f -print0 > "$destination_list" || \
+  find "$PREVIEW_ROOT" -maxdepth 1 ! -type d ! -name . -print0 > "$destination_list" || \
     die "could not inspect $PREVIEW_ROOT"
+
+  while IFS= read -r -d '' destination; do
+    name=${destination##*/}
+    terraform_input_name "$name" || continue
+    if [ ! -f "$destination" ] || [ -L "$destination" ]; then
+      die "non-regular terraform input in execution root: $name"
+    fi
+  done < "$destination_list"
 
   while IFS= read -r -d '' source; do
     name=${source##*/}

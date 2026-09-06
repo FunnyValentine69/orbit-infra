@@ -112,6 +112,33 @@ else
   fail_case "environment exact constructed allowlist" "$env_output"
 fi
 
+refusal_bin="$environment_root/refusal-bin"
+refusal_calls="$environment_root/refusal.calls"
+mkdir -p "$refusal_bin"
+: > "$refusal_calls"
+printf '%s\n' '#!/bin/sh' \
+  "printf '%s\\n' env >> '$refusal_calls'" \
+  'exit 0' > "$refusal_bin/env"
+chmod +x "$refusal_bin/env"
+set +e
+refusal_output="$(
+  /usr/bin/env -i \
+    PATH="$refusal_bin:$PATH" \
+    HOME="$environment_root/home" \
+    TMPDIR="$environment_root" \
+    TERM=xterm-contract \
+    OPERATOR_CIDR=203.0.113.0/24 \
+      /bin/bash -p "$REPO_ROOT/demo/env.sh" env EXTRA=1 bash -c true 2>&1
+)"
+refusal_rc=$?
+set -e
+if [ "$refusal_rc" -ne 0 ] && [ ! -s "$refusal_calls" ] && \
+   grep -Fq 'demo/env.sh: only "env" is accepted as an argument' <<< "$refusal_output"; then
+  pass_case "environment arbitrary command refusal before downstream calls"
+else
+  fail_case "environment arbitrary command refusal before downstream calls" "$refusal_output"
+fi
+
 makeflags_ok=1
 for makeflags in n t q i k -kn; do
   set +e
@@ -275,6 +302,35 @@ validate_provenance() {
   fi
 }
 
+provenance_matches_manifest() {
+  local doc=$1
+  local manifest=$2
+  local mapping key field expected actual count
+  for mapping in \
+    'recorded_from|recorded_from' \
+    'recorded_on|recorded_on' \
+    'generator_commit|generator commit' \
+    'recorder|recorder' \
+    'command|command' \
+    'environment|environment' \
+    'plan_apply_destroy|plan / apply / destroy' \
+    'artifact|artifact' \
+    'artifact_sha256|artifact sha256'; do
+    IFS='|' read -r key field <<< "$mapping"
+    count="$(grep -Fc "| $field |" "$doc")"
+    if [ "$count" -ne 1 ]; then
+      echo "required provenance row count $field: $count" >&2
+      return 1
+    fi
+    expected="$(sed -n "s/^${key}=//p" "$manifest")"
+    actual="$(field_value "$field" "$doc")"
+    if [ "$actual" != "$expected" ]; then
+      echo "provenance row differs from run manifest: $field" >&2
+      return 1
+    fi
+  done
+}
+
 if provenance_output="$(validate_provenance "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" \
   "$REPO_ROOT/docs/assets/demo.gif" 2>&1)"; then
   pass_case "provenance committed artifact rows"
@@ -433,51 +489,55 @@ fake_bin="$tmp_dir/fake-bin"
 mkdir -p "$fake_bin"
 # General lifecycle cases model an empty Git result; the real-Git case below
 # exercises the shipped generator predicate against an actual scratch clone.
-for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum; do
+for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum date; do
   printf '%s\n' '#!/usr/bin/env bash' \
     'set -euo pipefail' \
     'tool=${0##*/}' \
-    'printf "%s %s\n" "$tool" "$*" >> "${FAKE_CALL_LOG:?}"' \
+    'FAKE_FAIL=; IFS= read -r FAKE_FAIL < .fake-fail || :' \
+    'FAKE_VHS_MODE=normal; IFS= read -r FAKE_VHS_MODE < .fake-vhs-mode || :' \
+    'FAKE_TF_STATE=empty; IFS= read -r FAKE_TF_STATE < .fake-tf-state || :' \
+    'FAKE_DURATION=44.44; IFS= read -r FAKE_DURATION < .fake-duration || :' \
+    'printf "%s %s\n" "$tool" "$*" >> .fake-calls.log' \
     'case "$tool" in' \
     '  vhs)' \
-    '    if [ "$*" = --version ]; then echo "vhs 0.11.0"; exit 0; fi' \
-    '    [ "${FAKE_FAIL:-}" != record ] || exit 1' \
+    '    if [ "$*" = --version ]; then echo "vhs 9.9.9-fake"; exit 0; fi' \
+    '    [ "$FAKE_FAIL" != record ] || exit 1' \
     '    while IFS= read -r step; do' \
     '      [ -n "$step" ] || continue' \
-    '      [ "${FAKE_VHS_MODE:-}" != rc_missing ] || { [ "$step" != plan ] || continue; }' \
+    '      [ "$FAKE_VHS_MODE" != rc_missing ] || { [ "$step" != plan ] || continue; }' \
     '      rc=0' \
-    '      if [ "${FAKE_VHS_MODE:-}" = rc_nonzero ] && [ "$step" = plan ]; then rc=1; fi' \
+    '      if [ "$FAKE_VHS_MODE" = rc_nonzero ] && [ "$step" = plan ]; then rc=1; fi' \
     '      printf "%s\n" "$rc" > "$RUN/$step.rc"' \
     '    done < <(awk '\''/^# DEMO-SECTION / { print $3 }'\'' "$RUN/demo.tape")' \
     '    printf "%s\n" "localstack | s3 | running" > "$RUN/status.log"' \
-    '    printf "%s\n" "Plan: 59 to add, 0 to change, 0 to destroy." > "$RUN/plan.log"' \
+    '    printf "%s\n" "Plan: 3 to add, 0 to change, 0 to destroy." > "$RUN/plan.log"' \
     '    printf "%s\n" "PASS: conftest-gate suite" > "$RUN/conftest.log"' \
-    '    printf "%s\n" "Apply complete! Resources: 59 added, 0 changed, 0 destroyed." > "$RUN/apply.log"' \
+    '    printf "%s\n" "Apply complete! Resources: 3 added, 0 changed, 0 destroyed." > "$RUN/apply.log"' \
     '    printf "%s\n" "aws_ecs_cluster.this" > "$RUN/statelist.log"' \
-    '    printf "%s\n" "Destroy complete! Resources: 59 destroyed." > "$RUN/destroy.log"' \
+    '    printf "%s\n" "Destroy complete! Resources: 3 destroyed." > "$RUN/destroy.log"' \
     '    printf "%s\n" 1 > "$RUN/env.ok"' \
-    '    printf "%s\n" "localstack | s3 | running" "Plan: 59 to add, 0 to change, 0 to destroy." "PASS: conftest-gate suite" "Apply complete! Resources: 59 added, 0 changed, 0 destroyed." "aws_ecs_cluster.this" "Destroy complete! Resources: 59 destroyed." > "$RUN/demo.txt"' \
-    '    [ "${FAKE_VHS_MODE:-}" != hygiene_path ] || printf "%s\n" /Users/example >> "$RUN/demo.txt"' \
-    '    printf "%s\n" GIF > "$RUN/demo.gif"' \
+    '    printf "%s\n" "localstack | s3 | running" "Plan: 3 to add, 0 to change, 0 to destroy." "PASS: conftest-gate suite" "Apply complete! Resources: 3 added, 0 changed, 0 destroyed." "aws_ecs_cluster.this" "Destroy complete! Resources: 3 destroyed." > "$RUN/demo.txt"' \
+    '    [ "$FAKE_VHS_MODE" != hygiene_path ] || printf "%s\n" /Users/example >> "$RUN/demo.txt"' \
+    '    printf "%s\n" DISTINCTIVE_FAKE_GIF_PAYLOAD_20260906 > "$RUN/demo.gif"' \
     '    touch -t 203001010000 "$RUN/demo.gif"' \
-    '    if [ "${FAKE_VHS_MODE:-}" = stale ]; then touch -t 200001010000 "$RUN/demo.gif"; fi' \
-    '    if [ "${FAKE_STATE_MODE:-}" = post_apply ]; then touch "${FAKE_LIVE_MARKER:?}"; fi' \
+    '    if [ "$FAKE_VHS_MODE" = stale ]; then touch -t 200001010000 "$RUN/demo.gif"; fi' \
+    '    if [ "$FAKE_TF_STATE" = post_apply ]; then touch .fake-live; fi' \
     '    ;;' \
     '  ffprobe)' \
-    '    case "$*" in *format=duration*) printf "%s\n" "${FAKE_DURATION:-31.72}" ;; *) printf "%s\n" 793 ;; esac' \
+    '    case "$*" in *format=duration*) printf "%s\n" "$FAKE_DURATION" ;; *) printf "%s\n" 987 ;; esac' \
     '    ;;' \
     '  ffmpeg)' \
-    '    if [ "$1" = -version ]; then echo "ffmpeg version 9.0.1"; exit 0; fi' \
-    '    [ "${FAKE_FAIL:-}" != inspect_decode ]' \
+    '    if [ "$1" = -version ]; then echo "ffmpeg version 7.7.7-fake build"; exit 0; fi' \
+    '    [ "$FAKE_FAIL" != inspect_decode ]' \
     '    ;;' \
     '  ttyd)' \
-    '    [ "${FAKE_FAIL:-}" != ttyd_empty ] || exit 0' \
-    '    echo "ttyd version 1.7.7"' \
+    '    [ "$FAKE_FAIL" != ttyd_empty ] || exit 0' \
+    '    echo "ttyd version 8.8.8-fake"' \
     '    ;;' \
     '  curl)' \
-    '    case "$*" in *-s\ localhost*) echo '\''{"version":"2026.8.1"}'\'' ;; *) : ;; esac' \
+    '    case "$*" in *-s\ localhost*) echo '\''{"version":"5.5.5-fake"}'\'' ;; *) : ;; esac' \
     '    ;;' \
-    '  jq) echo "2026.8.1" ;;' \
+    '  jq) echo "5.5.5-fake" ;;' \
     '  make)' \
     '    case " $* " in' \
     '      *" render-localstack-backend "*)' \
@@ -491,21 +551,23 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '        printf "%s\n" generated > "$PREVIEW_ROOT/backend_override.tf"' \
     '        ;;' \
     '      *" destroy "*)' \
-    '        touch "${FAKE_DESTROY_MARKER:?}"' \
-    '        [ "${FAKE_FAIL:-}" != teardown_destroy ] || exit 1' \
+    '        touch .fake-destroyed' \
+    '        [ "$FAKE_FAIL" != teardown_destroy ] || exit 1' \
     '        ;;' \
     '    esac' \
     '    ;;' \
     '  terraform)' \
     '    case " $* " in' \
     '      *" state list "*)' \
-    '        case "${FAKE_STATE_MODE:-empty}" in' \
+    '        case "$FAKE_TF_STATE" in' \
     '          leftover) echo aws_leftover.example ;;' \
-    '          teardown_nonempty) [ ! -e "${FAKE_DESTROY_MARKER:?}" ] || echo aws_leftover.example ;;' \
-    '          post_apply) [ ! -e "${FAKE_LIVE_MARKER:?}" ] || { [ -e "${FAKE_DESTROY_MARKER:?}" ] || echo aws_live.example; } ;;' \
+    '          teardown_nonempty) [ ! -e .fake-destroyed ] || echo aws_leftover.example ;;' \
+    '          post_apply) [ ! -e .fake-live ] || { [ -e .fake-destroyed ] || echo aws_live.example; } ;;' \
+    '          nostate) echo "No state file was found" >&2; exit 1 ;;' \
+    '          nostate-plus-error) printf "%s\n" "No state file was found" "Error: backend unavailable" >&2; exit 1 ;;' \
     '        esac' \
     '        ;;' \
-    '      *" version "*) echo "Terraform v1.16.0" ;;' \
+    '      *" version "*) echo "Terraform v6.6.6-fake" ;;' \
     '    esac' \
     '    ;;' \
     '  docker|aws) : ;;' \
@@ -513,11 +575,15 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    case "$*" in' \
     '      "status --porcelain --untracked-files=all --"*) printf "%s" "${FAKE_GIT_STATUS:-}" ;;' \
     '      "ls-files --others --ignored --exclude-standard -z --"*) printf "%s" "${FAKE_GIT_IGNORED:-}" ;;' \
-    '      "rev-parse --short=7 HEAD") echo abcdef0 ;;' \
+    '      "rev-parse --short=7 HEAD") echo abc1234 ;;' \
     '      *) echo "unexpected fake git call: $*" >&2; exit 2 ;;' \
     '    esac' \
     '    ;;' \
     '  shasum) /usr/bin/shasum "$@" ;;' \
+    '  date)' \
+    '    [ "$*" = "-u +%F" ] || { echo "unexpected fake date call: $*" >&2; exit 2; }' \
+    '    echo 2099-12-31' \
+    '    ;;' \
     'esac' > "$fake_bin/$tool"
   chmod +x "$fake_bin/$tool"
 done
@@ -530,19 +596,23 @@ run_lifecycle() {
   local state_mode=$4
   local inject=$5
   local mutation=$6
-  local case_root repo call_log destroy_marker live_marker before after output rc run_dir
+  local case_root repo call_log before after output rc run_dir
+  local fake_duration rewrite_key record_next
   case_root="$tmp_dir/lifecycle-$name"
   repo="$case_root/repo"
   mkdir -p "$case_root"
   cp -R "$lifecycle_template" "$repo"
-  call_log="$case_root/calls.log"
-  destroy_marker="$case_root/destroyed"
-  live_marker="$case_root/live"
+  call_log="$repo/.fake-calls.log"
+  fake_duration=${FAKE_CASE_DURATION:-44.44}
   : > "$call_log"
+  printf '%s\n' "$fake_fail" > "$repo/.fake-fail"
+  printf '%s\n' "$vhs_mode" > "$repo/.fake-vhs-mode"
+  printf '%s\n' "$state_mode" > "$repo/.fake-tf-state"
+  printf '%s\n' "$fake_duration" > "$repo/.fake-duration"
   case "$mutation" in
-    stale-destination)
+    stale-symlink)
       mkdir -p "$repo/.preview-runs/demo"
-      printf '%s\n' stale > "$repo/.preview-runs/demo/stale.tfstate.tf"
+      ln -s /dev/null "$repo/.preview-runs/demo/stale.tfstate.tf"
       ;;
     missing-source)
       printf '%s\n' source > "$repo/envs/preview/migration.tfstate.tf"
@@ -550,6 +620,16 @@ run_lifecycle() {
     missing-field)
       awk '!/^\| artifact sha256 \|/' "$repo/docs/assets/DEMO_PROVENANCE.md" > "$case_root/doc"
       cp "$case_root/doc" "$repo/docs/assets/DEMO_PROVENANCE.md"
+      ;;
+    delete-rewrite-*)
+      rewrite_key=${mutation#delete-rewrite-}
+      record_next="$case_root/record.next"
+      awk -v key="$rewrite_key" '
+        $1 == "rewrite_provenance_row" && $2 == key { removed++; next }
+        { print }
+        END { if (removed != 1) exit 1 }
+      ' "$repo/demo/record.sh" > "$record_next"
+      mv "$record_next" "$repo/demo/record.sh"
       ;;
   esac
   before="$(shasum -a 256 "$repo/docs/assets/demo.gif" "$repo/docs/assets/DEMO_PROVENANCE.md")"
@@ -560,17 +640,9 @@ run_lifecycle() {
     HOME="$case_root/home" \
     TMPDIR="$case_root" \
     TERM=xterm \
-    OPERATOR_CIDR=203.0.113.0/24 \
+    OPERATOR_CIDR=203.0.113.128/25 \
     DEMO_INJECT_FAIL="$inject" \
-      bash -p demo/env.sh env \
-        FAKE_CALL_LOG="$call_log" \
-        FAKE_FAIL="$fake_fail" \
-        FAKE_VHS_MODE="$vhs_mode" \
-        FAKE_STATE_MODE="$state_mode" \
-        FAKE_DURATION="${FAKE_CASE_DURATION:-31.72}" \
-        FAKE_DESTROY_MARKER="$destroy_marker" \
-        FAKE_LIVE_MARKER="$live_marker" \
-        bash demo/record.sh 2>&1
+      bash -p demo/env.sh 2>&1
   )"
   rc=$?
   set -e
@@ -588,14 +660,14 @@ run_lifecycle() {
 
 boundary_root="$tmp_dir/lifecycle-boundary"
 cp -R "$lifecycle_template" "$boundary_root"
-boundary_calls="$tmp_dir/lifecycle-boundary.calls"
+boundary_calls="$boundary_root/.fake-calls.log"
 : > "$boundary_calls"
 boundary_before="$(shasum -a 256 "$boundary_root/docs/assets/demo.gif" \
   "$boundary_root/docs/assets/DEMO_PROVENANCE.md")"
 set +e
 boundary_output="$(cd "$boundary_root" && PATH="$fake_bin:$PATH" \
-  TF_VAR_api_image=ambient AWS_REGION=eu-west-1 AWS_PROFILE=ambient \
-  FAKE_CALL_LOG="$boundary_calls" bash demo/record.sh 2>&1)"
+  TF_VAR_api_image=ambient AWS_REGION=eu-west-1 \
+  bash demo/record.sh 2>&1)"
 boundary_rc=$?
 set -e
 boundary_after="$(shasum -a 256 "$boundary_root/docs/assets/demo.gif" \
@@ -608,11 +680,68 @@ else
   fail_case "lifecycle boundary direct invocation has zero tool calls" "$boundary_output"
 fi
 
+fixed_mismatch_root="$tmp_dir/lifecycle-fixed-mismatch"
+cp -R "$lifecycle_template" "$fixed_mismatch_root"
+fixed_mismatch_calls="$fixed_mismatch_root/.fake-calls.log"
+: > "$fixed_mismatch_calls"
+fixed_env_args=()
+for assignment in $DEMO_ENV_FIXED; do
+  fixed_env_args+=("$assignment")
+done
+set +e
+fixed_mismatch_output="$(
+  cd "$fixed_mismatch_root"
+  /usr/bin/env -i \
+    PATH="$fake_bin:$PATH" \
+    HOME="$fixed_mismatch_root/home" \
+    TMPDIR="$fixed_mismatch_root" \
+    TERM=xterm \
+    OPERATOR_CIDR=203.0.113.128/25 \
+    "${fixed_env_args[@]}" \
+    TF_WORKSPACE=qa \
+      bash demo/record.sh 2>&1
+)"
+fixed_mismatch_rc=$?
+set -e
+if [ "$fixed_mismatch_rc" -ne 0 ] && [ ! -s "$fixed_mismatch_calls" ] && \
+   grep -Fq 'constructed environment differs from DEMO_ENV_FIXED: TF_WORKSPACE' \
+     <<< "$fixed_mismatch_output"; then
+  pass_case "lifecycle fixed environment mismatch before tool calls"
+else
+  fail_case "lifecycle fixed environment mismatch before tool calls" "$fixed_mismatch_output"
+fi
+
+make_demo_root="$tmp_dir/make-demo-unset"
+cp -R "$lifecycle_template" "$make_demo_root"
+cp "$REPO_ROOT/Makefile" "$make_demo_root/Makefile"
+make_demo_calls="$make_demo_root/.fake-calls.log"
+: > "$make_demo_calls"
+real_make="$(command -v make)"
+set +e
+make_demo_output="$(
+  cd "$make_demo_root"
+  env -u OPERATOR_CIDR \
+    PATH="$fake_bin:$PATH" \
+    HOME="$make_demo_root/home" \
+    TMPDIR="$make_demo_root" \
+    TERM=xterm \
+      "$real_make" demo 2>&1
+)"
+make_demo_rc=$?
+set -e
+if [ "$make_demo_rc" -ne 0 ] && \
+   ! grep -q '^curl ' "$make_demo_calls" && \
+   grep -Fq 'demo: OPERATOR_CIDR unset' <<< "$make_demo_output"; then
+  pass_case "make demo skips CIDR auto-detect and guard refuses unset"
+else
+  fail_case "make demo skips CIDR auto-detect and guard refuses unset" "$make_demo_output"
+fi
+
 real_git_bin="$tmp_dir/real-git-bin"
 real_git_source="$tmp_dir/lifecycle-real-git-source"
 real_git_root="$tmp_dir/lifecycle-real-git"
 real_git_repo="$real_git_root/repo"
-real_git_calls="$real_git_root/calls.log"
+real_git_calls="$real_git_repo/.fake-calls.log"
 mkdir -p "$real_git_bin" "$real_git_root"
 for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws shasum; do
   ln -s "$fake_bin/$tool" "$real_git_bin/$tool"
@@ -627,6 +756,10 @@ cp -R "$lifecycle_template" "$real_git_source"
 git clone -q "$real_git_source" "$real_git_repo"
 printf '%s\n' mutation > "$real_git_repo/demo/untracked.txt"
 : > "$real_git_calls"
+printf '\n' > "$real_git_repo/.fake-fail"
+printf '%s\n' normal > "$real_git_repo/.fake-vhs-mode"
+printf '%s\n' empty > "$real_git_repo/.fake-tf-state"
+printf '%s\n' 44.44 > "$real_git_repo/.fake-duration"
 real_git_before="$(shasum -a 256 "$real_git_repo/docs/assets/demo.gif" \
   "$real_git_repo/docs/assets/DEMO_PROVENANCE.md")"
 set +e
@@ -636,15 +769,8 @@ real_git_output="$(
   HOME="$real_git_root/home" \
   TMPDIR="$real_git_root" \
   TERM=xterm \
-  OPERATOR_CIDR=203.0.113.0/24 \
-    bash -p demo/env.sh env \
-      FAKE_CALL_LOG="$real_git_calls" \
-      FAKE_FAIL= \
-      FAKE_VHS_MODE=normal \
-      FAKE_STATE_MODE=empty \
-      FAKE_DESTROY_MARKER="$real_git_root/destroyed" \
-      FAKE_LIVE_MARKER="$real_git_root/live" \
-      bash demo/record.sh 2>&1
+  OPERATOR_CIDR=203.0.113.128/25 \
+    bash -p demo/env.sh 2>&1
 )"
 real_git_rc=$?
 set -e
@@ -662,8 +788,9 @@ fi
 lifecycle_failures_ok=1
 for lifecycle_case in \
   'preflight-leftover||normal|leftover||none|environment demo already has state' \
+  'preflight-nostate-plus-error||normal|nostate-plus-error||none|terraform state list failed' \
   'preflight-versions|ttyd_empty|normal|empty||none|tool version capture incomplete' \
-  'preflight-render-unexpected||normal|empty||stale-destination|execution root differs from envs/preview: stale.tfstate.tf' \
+  'preflight-render-nonregular||normal|empty||stale-symlink|non-regular terraform input in execution root: stale.tfstate.tf' \
   'preflight-render-missing||normal|empty||missing-source|execution root differs from envs/preview: migration.tfstate.tf' \
   'record|record|normal|empty||none|vhs failed' \
   'assert-rc-nonzero||rc_nonzero|empty||none|plan.rc was not 0' \
@@ -711,6 +838,10 @@ for lifecycle_case in \
   else
     [ "$destroy_calls" -eq 1 ] && [ "$teardown_lines" -eq 1 ] || case_ok=0
   fi
+  if [ "$name" = preflight-render-nonregular ] && \
+     grep -Eq '^terraform .* init' "$LIFECYCLE_CALLS"; then
+    case_ok=0
+  fi
   if [ "$case_ok" -eq 1 ]; then
     pass_case "lifecycle $name"
   else
@@ -718,6 +849,18 @@ for lifecycle_case in \
     fail_case "lifecycle $name" "unexpected lifecycle or teardown count"
   fi
 done
+
+run_lifecycle state-nostate '' normal nostate '' none
+nostate_state_calls="$(grep -c '^terraform .* state list$' "$LIFECYCLE_CALLS" || true)"
+if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$nostate_state_calls" -eq 3 ] && \
+   grep -Fq 'teardown:ok' "$LIFECYCLE_RUN/lifecycle.log" && \
+   grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
+  pass_case "lifecycle no-state-only diagnostic is empty in preflight and teardown"
+else
+  lifecycle_failures_ok=0
+  fail_case "lifecycle no-state-only diagnostic is empty in preflight and teardown" \
+    "$LIFECYCLE_OUTPUT"
+fi
 
 run_lifecycle success '' normal empty '' none
 success_order="$(awk -F: '$1 == "teardown" { teardown=NR } $1 == "publish" { publish=NR }
@@ -732,11 +875,14 @@ if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$LIFECYCLE_BEFORE" != "$LIFECYCLE_AFTER" ] &&
    [ "$success_order" = ok ] && [ "$teardown_lines" -eq 1 ] && \
    cmp -s "$expected_lifecycle" "$LIFECYCLE_RUN/lifecycle.log" && \
    validate_provenance "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
-     "$LIFECYCLE_REPO/docs/assets/demo.gif" >/dev/null 2>&1; then
-  pass_case "lifecycle success publishes only after one successful teardown"
+     "$LIFECYCLE_REPO/docs/assets/demo.gif" >/dev/null 2>&1 && \
+   provenance_matches_manifest "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
+     "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1; then
+  pass_case "lifecycle success publishes every run-derived provenance row after teardown"
 else
   lifecycle_failures_ok=0
-  fail_case "lifecycle success publishes only after one successful teardown" "$LIFECYCLE_OUTPUT"
+  fail_case "lifecycle success publishes every run-derived provenance row after teardown" \
+    "$LIFECYCLE_OUTPUT"
 fi
 if [ -s "$LIFECYCLE_CALLS" ] && \
    ! grep '^curl ' "$LIFECYCLE_CALLS" | grep -vF 'localhost:4566' >/dev/null; then
@@ -745,6 +891,25 @@ else
   lifecycle_failures_ok=0
   fail_case "lifecycle fake-only curl network boundary"
 fi
+
+rewrite_deletion_ok=1
+for rewrite_key in recorded_from recorded_on generator_commit recorder command environment \
+  plan_apply_destroy artifact artifact_sha256; do
+  run_lifecycle "rewrite-deleted-$rewrite_key" '' normal empty '' \
+    "delete-rewrite-$rewrite_key"
+  if [ "$LIFECYCLE_RC" -ne 0 ] || \
+     provenance_matches_manifest "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
+       "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1; then
+    rewrite_deletion_ok=0
+  fi
+done
+if [ "$rewrite_deletion_ok" -eq 1 ]; then
+  pass_case "lifecycle provenance exact-row deletion mutation table (9 mappings)"
+else
+  lifecycle_failures_ok=0
+  fail_case "lifecycle provenance exact-row deletion mutation table (9 mappings)"
+fi
+
 if [ "$lifecycle_failures_ok" -eq 1 ]; then
   echo "PASS: demo contract group lifecycle"
 else

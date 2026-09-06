@@ -95,8 +95,10 @@ check-placeholder-image:
 # prevent_destroy = true and this state must never be torn down via make.
 
 # envs/preview: TARGET and ENV_ID are both required for plan/apply/destroy.
+ifeq (,$(filter demo,$(MAKECMDGOALS)))
 OPERATOR_CIDR ?= $(shell curl -sf --max-time 5 https://checkip.amazonaws.com | awk '{print $$1"/32"}')
 OPERATOR_CIDR := $(OPERATOR_CIDR)
+endif
 
 check-operator-cidr:
 	@if [ -z "$$OPERATOR_CIDR" ]; then echo "OPERATOR_CIDR auto-detect failed; pass OPERATOR_CIDR=<cidr>" >&2; exit 1; fi

@@ -11,14 +11,17 @@ cd -- "$script_dir/.."
 # shellcheck source=demo/lib.sh
 source demo/lib.sh
 
+if [ "$#" -eq 0 ]; then
+  set -- bash demo/record.sh
+elif [ "$#" -ne 1 ] || [ "$1" != env ]; then
+  echo 'demo/env.sh: only "env" is accepted as an argument' >&2
+  exit 1
+fi
+
 first_makeflag=${MAKEFLAGS%%[[:space:]]*}
 if [[ "$first_makeflag" =~ ^-?[[:alpha:]]*[ikntq][[:alpha:]]*$ ]]; then
   echo "demo: refusing MAKEFLAGS='${MAKEFLAGS:-}' (-i/-k/-n/-t/-q); run make demo directly" >&2
   exit 1
-fi
-
-if [ "$#" -eq 0 ]; then
-  set -- bash demo/record.sh
 fi
 
 env_args=()
