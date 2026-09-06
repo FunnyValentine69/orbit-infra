@@ -398,16 +398,20 @@ decision_keyword_pattern = re.compile(
     r"(?<![A-Za-z0-9_])(allowed|implicitDeny|explicitDeny|not denied by this statement)(?![A-Za-z0-9_])"
 )
 na_body_pattern = re.compile(r"N/A\([^()\s](?:[^()]*[^()\s])?\)")
-masked_attribution = r"(ReadOnlyAccess|[A-Za-z0-9]+ in [A-Za-z0-9_.:]+)"
+masked_attribution = r"(?:ReadOnlyAccess|[A-Za-z0-9]+ in [A-Za-z0-9_.:]+)"
 masked_attribution_note_pattern = re.compile(
-    rf" \(isolated; principal simulation is masked by {masked_attribution}\)$"
+    rf" \(isolated statement; principal simulation is masked by {masked_attribution}\)$"
 )
 masked_form_pattern = re.compile(
-    r"^aws iam simulate-custom-policy --policy-input-list <this document only> "
+    r"^aws iam simulate-custom-policy --policy-input-list "
+    r"'<a policy document containing only the (?P<isolated_sid>[A-Za-z0-9_]+) statement>' "
     r"--action-names [^;]+ --resource-arns [^;]+"
     r"(?: --context-entries [^;]+|; no --context-entries); "
-    r"expect implicitDeny \(isolated; principal simulation is masked by "
-    rf"{masked_attribution}\)$"
+    r"expect implicitDeny \(isolated statement; principal simulation is masked by "
+    rf"(?P<attribution>{masked_attribution})\)$"
+)
+shell_argument_option_pattern = re.compile(
+    r"--(?:resource-arns|action-names|context-entries)\b"
 )
 
 
@@ -418,7 +422,9 @@ def masked_form_match(body):
         "--policy-input-list ",
         "--action-names ",
         "--resource-arns ",
+        "containing only the ",
         "expect implicitDeny",
+        "isolated statement;",
         "principal simulation is masked by ",
     )
     context_forms = body.count("--context-entries ") + body.count("no --context-entries")
@@ -431,10 +437,38 @@ def masked_form_match(body):
     return match
 
 
+def reject_unquoted_glob_characters(body, line_no, case_id):
+    for option_match in shell_argument_option_pattern.finditer(body):
+        if re.search(r"(?:^|\s)no\s+$", body[:option_match.start()]):
+            continue
+        index = option_match.end()
+        while index < len(body) and body[index].isspace():
+            index += 1
+        in_single_quote = False
+        in_double_quote = False
+        while index < len(body):
+            character = body[index]
+            if character == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+            elif character == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+            elif character in "*?" and not in_single_quote:
+                fail(
+                    f"option argument contains unquoted glob character at line {line_no}: "
+                    f"{case_id} {option_match.group(0)}"
+                )
+            elif not in_single_quote and not in_double_quote and (
+                character == ";" or body.startswith(" --", index)
+            ):
+                break
+            index += 1
+
+
 def trust_na_required(document, case_id):
     return document.startswith("trust:") and (
         case_id.endswith(":absent")
         or case_id.endswith(":token.actions.githubusercontent.com:aud:non-matching")
+        or case_id.endswith(":token.actions.githubusercontent.com:sub:mutable-name")
     )
 
 
@@ -656,6 +690,7 @@ for line_no, cells in statement_rows:
         if "N/A(" in body and not case_is_na:
             fail(f"N/A case body must be exactly N/A(<reason>) at line {line_no}: {case_id}")
         if not case_is_na:
+            reject_unquoted_glob_characters(body, line_no, case_id)
             case_decisions[case_id] = parse_case_decision(body, line_no, case_id)
 
     covering = covering_statements(document, key) if effect == "Allow" else []
@@ -773,7 +808,7 @@ for line_no, cells in statement_rows:
                 or principal_call not in body
             ):
                 fail(f"policy source ARN does not match binding at line {line_no}: {case_id}")
-            fallback = "or an isolated simulate-custom-policy with only this document"
+            fallback = f"or an isolated simulate-custom-policy containing only the {key} statement"
             if "simulate-custom-policy" in body:
                 if body.count("simulate-custom-policy") != 1 or fallback not in body:
                     fail(f"principal policy case has invalid custom-policy fallback at line {line_no}: {case_id}")
@@ -840,8 +875,10 @@ for line_no, cells in statement_rows:
             required_masked_case_ids.append(case_id)
             masked_row_sids.add(key)
             if form_match is None:
-                fail(f"masked negative must use isolated custom policy at line {line_no}: {case_id}")
-            attribution = form_match.group(1)
+                fail(f"masked negative must use isolated statement custom policy at line {line_no}: {case_id}")
+            if form_match.group("isolated_sid") != key:
+                fail(f"masked negative policy must contain only the row Sid statement at line {line_no}: {case_id}")
+            attribution = form_match.group("attribution")
             if attribution not in covering_set:
                 fail(
                     f"masked negative attribution is not a covering same-role statement or managed policy "
@@ -1141,6 +1178,11 @@ elif mutation == "missing-resource-variant":
     if source.count(target) != 2:
         raise SystemExit(f"expected two resource variant occurrences, found {source.count(target)}")
     source = source.replace(target, target.rsplit(":", 1)[0] + ":omitted")
+elif mutation == "unquoted-wildcard":
+    target = "--resource-arns '*'"
+    if source.count(target) != 6:
+        raise SystemExit(f"expected six quoted boundary wildcards, found {source.count(target)}")
+    source = source.replace(target, "--resource-arns *", 1)
 elif mutation == "masked-negative-missing":
     line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
     cells = re.findall(r"`([^`]*)`", line)
@@ -1183,15 +1225,28 @@ elif mutation == "allow-masked-negative-missing":
         raise SystemExit("allow-masked-negative-missing mutation anchor mismatch")
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
+elif mutation == "masked-form-whole-document":
+    line = next(line for line in source.splitlines() if "| `EnvDataBucketLifecycle` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    target = (
+        "--policy-input-list '<a policy document containing only the "
+        "EnvDataBucketLifecycle statement>'"
+    )
+    if cells[7].count(target) != 1:
+        raise SystemExit("masked-form-whole-document mutation anchor mismatch")
+    cells[7] = cells[7].replace(target, "--policy-input-list <this document only>", 1)
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
 elif mutation == "masked-negative-wrong-sid":
     line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
     cells = re.findall(r"`([^`]*)`", line)
     case_id = "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:s3:prefix:non-matching"
     body = (
-        "aws iam simulate-custom-policy --policy-input-list <this document only> "
+        "aws iam simulate-custom-policy --policy-input-list "
+        "'<a policy document containing only the ListStatePrefixes statement>' "
         "--action-names <each row Action value> --resource-arns matching row resources "
         "--context-entries <s3:prefix non-matching with every other condition key satisfying>; "
-        "expect implicitDeny (isolated; principal simulation is masked by DenySecretsAndParams "
+        "expect implicitDeny (isolated statement; principal simulation is masked by DenySecretsAndParams "
         "in aws_iam_role_policy.plan_reader_deny)"
     )
     cells[7], count = re.subn(
@@ -1209,10 +1264,11 @@ elif mutation == "masked-form-on-unmasked-row":
     cells = re.findall(r"`([^`]*)`", line)
     case_id = "case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching"
     body = (
-        "aws iam simulate-custom-policy --policy-input-list <this document only> "
+        "aws iam simulate-custom-policy --policy-input-list "
+        "'<a policy document containing only the EcrVerificationPull statement>' "
         "--action-names <each row Action value> --resource-arns same-type resource outside every row Resource pattern "
         "--context-entries <every condition key satisfying>; "
-        "expect implicitDeny (isolated; principal simulation is masked by DenyMutatingOwnControlRoles "
+        "expect implicitDeny (isolated statement; principal simulation is masked by DenyMutatingOwnControlRoles "
         "in aws_iam_policy.deployer_guard)"
     )
     cells[7], count = re.subn(
@@ -1244,6 +1300,23 @@ elif mutation == "trust-absent-executable":
     )
     if case_count != 1 or evidence_count != 1:
         raise SystemExit("trust-absent-executable mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "trust-mutable-name-executable":
+    line = next(line for line in source.splitlines() if line.startswith("| `trust:plan_reader`"))
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:trust:plan_reader:trust:plan_reader#0:ALL:token.actions.githubusercontent.com:sub:mutable-name"
+    reason = (
+        "N/A(GitHub issues only the configured immutable-ID subject form for this repository and a re-signed "
+        "token is impossible; no mutable-name token can be obtained)"
+    )
+    old_case = f"{case_id} => {reason}"
+    old_evidence = f"{case_id}={reason}"
+    if cells[7].count(old_case) != 1 or cells[9].count(old_evidence) != 1:
+        raise SystemExit("trust-mutable-name-executable mutation anchor mismatch")
+    body = "deliberate plan-reader STS attempt with a mutable-name subject; expect implicitDeny"
+    cells[7] = cells[7].replace(old_case, f"{case_id} => {body}", 1)
+    cells[9] = cells[9].replace(old_evidence, f"{case_id}=CODE-ONLY", 1)
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
 elif mutation == "kms-string-context":
@@ -1297,10 +1370,16 @@ PY_MUTATE_DOC
   expect_fail na-embedded-in-executable "N/A case body must be exactly" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc missing-resource-variant missing-resource-variant)"
   expect_fail missing-resource-variant "missing required resource-scope variant" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc unquoted-wildcard unquoted-wildcard)"
+  expect_fail unquoted-wildcard "option argument contains unquoted glob character" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc masked-negative-missing masked-negative-missing)"
-  expect_fail masked-negative-missing "masked negative must use isolated custom policy" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  expect_fail masked-negative-missing "masked negative must use isolated statement custom policy" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc allow-masked-negative-missing allow-masked-negative-missing)"
-  expect_fail allow-masked-negative-missing "masked negative must use isolated custom policy" \
+  expect_fail allow-masked-negative-missing "masked negative must use isolated statement custom policy" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc masked-form-whole-document masked-form-whole-document)"
+  expect_fail masked-form-whole-document "masked negative must use isolated statement custom policy" \
     "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc masked-negative-wrong-sid masked-negative-wrong-sid)"
   expect_fail masked-negative-wrong-sid "masked negative attribution is not a covering same-role statement or managed policy" \
@@ -1309,6 +1388,9 @@ PY_MUTATE_DOC
   expect_fail masked-form-on-unmasked-row "masked negative form is not allowed" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc trust-absent-executable trust-absent-executable)"
   expect_fail trust-absent-executable "trust case must be N/A" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc trust-mutable-name-executable trust-mutable-name-executable)"
+  expect_fail trust-mutable-name-executable "trust case must be N/A" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc kms-string-context kms-string-context)"
   expect_fail kms-string-context "kms:ResourceAliases context is not a stringList fixture" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
 

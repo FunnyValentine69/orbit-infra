@@ -153,15 +153,17 @@ their prescribed decisions, and exactly one unambiguous `expect <decision>`
 clause in every executable case. It checks same-action
 `resource:nonmatching` cases for every resource-scoped Allow, permits an exact
 `N/A(<reason>)` body only for the documented non-executable shapes (including
-trust `aud`/`sub` absent variants, the provider-level wrong-audience case, and
-full-type wildcards such as `hostedzone/*`), and validates `stringList` handling
-for multivalued KMS aliases. From comment-stripped HCL and canonical matrix
+trust `aud`/`sub` absent variants, the provider-level wrong-audience case, the
+unobtainable mutable-name subject, and full-type wildcards such as
+`hostedzone/*`), rejects unquoted glob characters in simulator option arguments, and validates `stringList` handling for multivalued KMS aliases.
+From comment-stripped HCL and canonical matrix
 resources it derives same-role Action and conservative Resource overlap across
 every other Allow or Deny, including same-document statements. The attached
 `ReadOnlyAccess` policy is modeled as covering every `Describe*`, `Get*`, and
-`List*` action on `*`. The exact isolated masked-negative form is required on
-all and only the resulting 66 negative cases across 26 Sids; attribution must
-identify a covering source Sid and document or `ReadOnlyAccess`. Every other
+`List*` action on `*`. The exact isolated single-statement masked-negative form
+is required on all and only the resulting 66 negative cases across 26 Sids;
+the isolated policy must name the row Sid, and attribution must identify a
+covering source Sid and document or `ReadOnlyAccess`. Every other
 executable non-boundary identity case uses principal simulation with its exact
 bound-role ARN. Every account-bearing ARN must use the deliberate LocalStack
 placeholder account `000000000000`, making the real-account render substitution
@@ -174,8 +176,10 @@ syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
 validated mechanically. The `arn-real-account`,
 `allow-masked-negative-missing`, `masked-negative-missing`,
 `masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
-`trust-absent-executable`, and `uncommented-extra-sid` mutations must print the
-`FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
+`masked-form-whole-document`, `trust-absent-executable`,
+`trust-mutable-name-executable`, `unquoted-wildcard`, and
+`uncommented-extra-sid` mutations must print the `FAIL:` line for the contract
+they kill; `commented-sid-ignored` must pass.
 
 After bootstrap has been applied to LocalStack, render and compare plan mode
 through the one hardened render path:
