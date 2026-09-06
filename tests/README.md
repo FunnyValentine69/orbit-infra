@@ -83,9 +83,8 @@ temporary file; `scripts/fixture-hygiene.sh` must accept it before it replaces
 the tracked fixture. The check rejects `prior_state`, true leaves below `*_sensitive` or
 `sensitive_values`, objects marked `"sensitive": true`, non-empty top-level
 `variables` because variables must not be serialized into fixtures,
-non-placeholder 12-digit numbers, IPv4 literals outside
-`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `0.0.0.0/0`, and
-`127.0.0.1`, and email addresses. Fixtures are re-recorded
+non-placeholder 12-digit numbers, IPv4 literals outside the documented
+RFC 1918, unspecified-address, and loopback allowances, and email addresses. Fixtures are re-recorded
 from those roots, never edited. The real `envs/preview` plan is never committed
 because it can carry prior state and sensitive values.
 
@@ -127,6 +126,16 @@ gate, bootstrap apply, live plan, redacted summary, live-plan gate, and PR
 comment in that order. Fork PRs receive the secret-free gates with policy-size
 explicitly skipped; owner PRs receive those gates plus the LocalStack-backed
 policy-size check. Neither suite starts, stops, or reconfigures LocalStack.
+
+## Demo recording contracts
+
+Run the recorder regression suite without LocalStack, vhs, ffprobe, or network access:
+
+```
+bash tests/demo-contracts.sh
+```
+
+Its four groups cover the exact constructed environment and `MAKEFLAGS` refusals; transaction lifecycle failures, teardown-before-publish ordering, and fake-only network calls; the six tape steps and fail-closed timing parser; and CIDR containment, artifact/provenance integrity, and generator drift. Negative generator cases use temporary Git repositories and cover committed, staged or unstaged, untracked, and ignored Terraform-consumable changes while permitting ignored recorder output and Terraform caches. The provenance commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a shallow checkout fails with `generator commit unreachable; fetch full history`. The suite is chained from `tests/phase3-contracts.sh` after the IAM matrix contract.
 
 Run the process-group signal test directly without LocalStack:
 
@@ -272,7 +281,7 @@ With one already-running LocalStack, an applied LocalStack bootstrap, and the
 ARM64 placeholder image present, run:
 
 ```
-make test-concurrency TARGET=localstack OPERATOR_CIDR=10.255.255.255/32
+make test-concurrency TARGET=localstack OPERATOR_CIDR=203.0.113.0/24
 ```
 
 `tests/localstack-concurrency.sh` generates a distinctive `cca...1`/`cca...2`

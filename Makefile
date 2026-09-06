@@ -295,4 +295,4 @@ print-target:
 # Records docs/assets/demo.gif from demo/demo.tape against LocalStack. Local, on-demand only.
 # Usage: OPERATOR_CIDR=203.0.113.0/24 make demo
 demo: check-vhs
-	env -u PREVIEW_ROOT -u TARGET -u ENV_ID -u PLAN_FILE bash demo/record.sh
+	bash -p demo/env.sh
