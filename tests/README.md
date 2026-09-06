@@ -155,18 +155,24 @@ clause in every executable case. It checks same-action
 `N/A(<reason>)` body only for the documented non-executable shapes (including
 trust `aud`/`sub` absent variants, the provider-level wrong-audience case, and
 full-type wildcards such as `hostedzone/*`), and validates `stringList` handling
-for multivalued KMS aliases. From comment-stripped HCL it derives same-role,
-cross-document Deny Action coverage and requires the exact isolated
-masked-negative form on all and only the resulting 21 negative cases; the
-attributed Sid and document must identify a covering source Deny. Every other
+for multivalued KMS aliases. From comment-stripped HCL and canonical matrix
+resources it derives same-role Action and conservative Resource overlap across
+every other Allow or Deny, including same-document statements. The attached
+`ReadOnlyAccess` policy is modeled as covering every `Describe*`, `Get*`, and
+`List*` action on `*`. The exact isolated masked-negative form is required on
+all and only the resulting 66 negative cases across 26 Sids; attribution must
+identify a covering source Sid and document or `ReadOnlyAccess`. Every other
 executable non-boundary identity case uses principal simulation with its exact
-bound-role ARN. Boundary cases use custom simulation; live KMS cases name their
-exact execution role ARN. The same HCL comment stripper protects Sid inventory
-and complete, anchored boundary-assignment counts, so comments and quoted
-decoys do not count. Fixture hygiene scans regular files plus symlink target
-strings and rejects links that resolve outside the IAM fixture directory.
-Evidence-label syntax is checked, but the labels are recorded P0-3d facts whose
-truth cannot be validated mechanically. The `masked-negative-missing`,
+bound-role ARN. Every account-bearing ARN must use the deliberate LocalStack
+placeholder account `000000000000`, making the real-account render substitution
+total. Boundary cases use custom simulation; live KMS cases name their exact
+execution role ARN. The same HCL comment stripper protects Sid inventory and
+complete, anchored boundary-assignment counts, so comments and quoted decoys do
+not count. Fixture hygiene scans regular files plus symlink target strings and
+rejects links that resolve outside the IAM fixture directory. Evidence-label
+syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
+validated mechanically. The `arn-real-account`,
+`allow-masked-negative-missing`, `masked-negative-missing`,
 `masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
 `trust-absent-executable`, and `uncommented-extra-sid` mutations must print the
 `FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.

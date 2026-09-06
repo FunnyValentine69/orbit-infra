@@ -78,6 +78,7 @@ fi
 [ -x "$GENERATOR" ] || fail "IAM matrix generator is missing or not executable"
 
 python3 - "$DOC" "$REPO_ROOT" <<'PY_SOURCE'
+import fnmatch
 import json
 from pathlib import Path
 import re
@@ -91,6 +92,13 @@ def fail(message):
 doc_path = Path(sys.argv[1])
 repo_root = Path(sys.argv[2])
 text = doc_path.read_text()
+
+account_bearing_arn_pattern = re.compile(
+    r"arn:[^:`\s]+:[^:`\s]*:[^:`\s]*:([0-9]{12}):"
+)
+for account_match in account_bearing_arn_pattern.finditer(text):
+    if account_match.group(1) != "000000000000":
+        fail("account-bearing ARN must use placeholder account 000000000000")
 
 required_legend = (
     "`CODE-ONLY`",
@@ -308,7 +316,15 @@ for _, cells in statement_rows:
     rows_by_document.setdefault(cells[0], []).append(cells[1])
 
 source_actions_by_statement = {}
-source_denies_by_document = {}
+source_effects_by_statement = {}
+matrix_resources_by_statement = {}
+for _, cells in statement_rows:
+    if cells[0] not in core_documents:
+        continue
+    try:
+        matrix_resources_by_statement[(cells[0], cells[1])] = json.loads(cells[5])
+    except json.JSONDecodeError as exc:
+        fail(f"invalid canonical Resource JSON for {cells[0]}:{cells[1]}: {exc}")
 for address in core_documents:
     name = address.split(".", 1)[1]
     block = policy_blocks.get(name)
@@ -340,8 +356,7 @@ for address in core_documents:
         if not actions:
             fail(f"source statement has an empty Action array for {address}: {sid_match.group(1)}")
         source_actions_by_statement[(address, sid_match.group(1))] = actions
-        if effect_match.group(1) == "Deny":
-            source_denies_by_document.setdefault(address, []).append((sid_match.group(1), actions))
+        source_effects_by_statement[(address, sid_match.group(1))] = effect_match.group(1)
 
 kms_block = kms_blocks.get("signing_key")
 if kms_block is None:
@@ -383,15 +398,16 @@ decision_keyword_pattern = re.compile(
     r"(?<![A-Za-z0-9_])(allowed|implicitDeny|explicitDeny|not denied by this statement)(?![A-Za-z0-9_])"
 )
 na_body_pattern = re.compile(r"N/A\([^()\s](?:[^()]*[^()\s])?\)")
+masked_attribution = r"(ReadOnlyAccess|[A-Za-z0-9]+ in [A-Za-z0-9_.:]+)"
 masked_attribution_note_pattern = re.compile(
-    r" \(isolated; principal simulation is masked by ([A-Za-z0-9]+) "
-    r"in ([A-Za-z0-9_.:]+)\)$"
+    rf" \(isolated; principal simulation is masked by {masked_attribution}\)$"
 )
 masked_form_pattern = re.compile(
     r"^aws iam simulate-custom-policy --policy-input-list <this document only> "
-    r"--action-names [^;]+ --resource-arns [^;]+ --context-entries [^;]+; "
+    r"--action-names [^;]+ --resource-arns [^;]+"
+    r"(?: --context-entries [^;]+|; no --context-entries); "
     r"expect implicitDeny \(isolated; principal simulation is masked by "
-    r"([A-Za-z0-9]+) in ([A-Za-z0-9_.:]+)\)$"
+    rf"{masked_attribution}\)$"
 )
 
 
@@ -402,11 +418,15 @@ def masked_form_match(body):
         "--policy-input-list ",
         "--action-names ",
         "--resource-arns ",
-        "--context-entries ",
         "expect implicitDeny",
         "principal simulation is masked by ",
     )
-    if match is None or any(body.count(token) != 1 for token in required_tokens):
+    context_forms = body.count("--context-entries ") + body.count("no --context-entries")
+    if (
+        match is None
+        or any(body.count(token) != 1 for token in required_tokens)
+        or context_forms != 1
+    ):
         return None
     return match
 
@@ -419,7 +439,9 @@ def trust_na_required(document, case_id):
 
 
 def negative_variant(case_id):
-    return case_id.endswith((":non-matching", ":absent", ":resource:nonmatching"))
+    return case_id.endswith(
+        (":non-matching", ":none-matching", ":absent", ":resource:nonmatching")
+    )
 
 
 def case_entries(cases):
@@ -495,21 +517,112 @@ for _, cells in binding_rows:
         bound_roles[f"aws_iam_policy.{name}"] = role
 
 
-def covering_denies(document, key):
+def wildcard_patterns_overlap(first, second):
+    if first == "*" or second == "*":
+        return True
+    if fnmatch.fnmatchcase(first, second) or fnmatch.fnmatchcase(second, first):
+        return True
+    if not any(char in first for char in "*?") or not any(char in second for char in "*?"):
+        return False
+    first_arn = first.split(":", 5)
+    second_arn = second.split(":", 5)
+    if len(first_arn) == 6 and len(second_arn) == 6 and first_arn[:3] != second_arn[:3]:
+        return False
+    first_prefix = re.split(r"[*?]", first, maxsplit=1)[0]
+    second_prefix = re.split(r"[*?]", second, maxsplit=1)[0]
+    if not (first_prefix.startswith(second_prefix) or second_prefix.startswith(first_prefix)):
+        return False
+    first_suffix = re.split(r"[*?]", first)[-1]
+    second_suffix = re.split(r"[*?]", second)[-1]
+    if (
+        first_suffix
+        and second_suffix
+        and not (first_suffix.endswith(second_suffix) or second_suffix.endswith(first_suffix))
+    ):
+        return False
+    return True
+
+
+def action_sets_overlap(first, second):
+    return any(
+        wildcard_patterns_overlap(first_action.lower(), second_action.lower())
+        for first_action in first
+        for second_action in second
+    )
+
+
+def resource_sets_overlap(current, other):
+    current_patterns = current.get("Resource", ["*"])
+    if not isinstance(current_patterns, list):
+        current_patterns = [current_patterns]
+    if "Resource" in other:
+        other_patterns = other["Resource"]
+        if not isinstance(other_patterns, list):
+            other_patterns = [other_patterns]
+        return any(
+            wildcard_patterns_overlap(current_pattern, other_pattern)
+            for current_pattern in current_patterns
+            for other_pattern in other_patterns
+        )
+
+    excluded_patterns = other.get("NotResource", [])
+    if not isinstance(excluded_patterns, list):
+        excluded_patterns = [excluded_patterns]
+
+    def wholly_excluded(pattern):
+        return any(
+            excluded == "*"
+            or pattern == excluded
+            or (
+                not any(char in pattern for char in "*?")
+                and fnmatch.fnmatchcase(pattern, excluded)
+            )
+            for excluded in excluded_patterns
+        )
+
+    return not all(wholly_excluded(pattern) for pattern in current_patterns)
+
+
+readonly_roles = {
+    cells[2]
+    for _, cells in binding_rows
+    if cells[0] == "attachment"
+    and cells[1] == "aws_iam_role_policy_attachment.plan_reader_readonly"
+    and cells[3] == "arn:aws:iam::aws:policy/ReadOnlyAccess"
+}
+if readonly_roles != {"orbit-infra-79s5rw-plan-reader"}:
+    fail("ReadOnlyAccess binding must attach exactly to the plan-reader role")
+
+
+def covering_statements(document, key):
     role = source_bound_roles.get(document)
     row_actions = source_actions_by_statement.get((document, key))
-    if role is None or row_actions is None:
+    row_resources = matrix_resources_by_statement.get((document, key))
+    if role is None or row_actions is None or row_resources is None:
         return []
     covering = []
-    for deny_document, deny_statements in source_denies_by_document.items():
-        if deny_document == document or source_bound_roles.get(deny_document) != role:
+    for (other_document, other_sid), other_actions in source_actions_by_statement.items():
+        if (other_document, other_sid) == (document, key):
             continue
-        for deny_sid, deny_actions in deny_statements:
-            if row_actions <= deny_actions:
-                covering.append((deny_sid, deny_document))
+        if source_bound_roles.get(other_document) != role:
+            continue
+        if source_effects_by_statement.get((other_document, other_sid)) not in {"Allow", "Deny"}:
+            continue
+        other_resources = matrix_resources_by_statement[(other_document, other_sid)]
+        if action_sets_overlap(row_actions, other_actions) and resource_sets_overlap(
+            row_resources, other_resources
+        ):
+            covering.append(f"{other_sid} in {other_document}")
+    if bound_roles.get(document) in readonly_roles and any(
+        action.split(":", 1)[-1].lower().startswith(("describe", "get", "list"))
+        for action in row_actions
+    ):
+        covering.append("ReadOnlyAccess")
     return covering
 
 
+required_masked_case_ids = []
+masked_row_sids = set()
 for line_no, cells in statement_rows:
     document, key, effect, _, _, _, condition_text, cases, _, evidence = cells
     if not cases:
@@ -545,7 +658,7 @@ for line_no, cells in statement_rows:
         if not case_is_na:
             case_decisions[case_id] = parse_case_decision(body, line_no, case_id)
 
-    covering = covering_denies(document, key) if effect == "Allow" else []
+    covering = covering_statements(document, key) if effect == "Allow" else []
     covering_set = set(covering)
     masked_validations = []
     masked_simulator_case_ids = set()
@@ -724,18 +837,25 @@ for line_no, cells in statement_rows:
 
     for case_id, form_match, requires_mask in masked_validations:
         if requires_mask:
+            required_masked_case_ids.append(case_id)
+            masked_row_sids.add(key)
             if form_match is None:
                 fail(f"masked negative must use isolated custom policy at line {line_no}: {case_id}")
-            attribution = (form_match.group(1), form_match.group(2))
+            attribution = form_match.group(1)
             if attribution not in covering_set:
                 fail(
-                    f"masked negative attribution is not a covering Deny at line {line_no}: "
-                    f"{case_id} names {attribution[0]} in {attribution[1]}"
+                    f"masked negative attribution is not a covering same-role statement or managed policy "
+                    f"at line {line_no}: {case_id} names {attribution}"
                 )
         elif form_match is not None or "masked by" in entries_by_id[case_id]:
             fail(f"masked negative form is not allowed at line {line_no}: {case_id}")
 
 print("PASS: IAM matrix source rows, truth-table cases, bindings, and evidence label syntax")
+print(
+    f"PASS: IAM matrix masked negatives ({len(required_masked_case_ids)} cases; Sids: "
+    + ", ".join(sorted(masked_row_sids))
+    + ")"
+)
 
 checks = (
     (
@@ -961,6 +1081,13 @@ elif mutation == "wrong-role-arn":
     )
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
+elif mutation == "arn-real-account":
+    account_id = "".join(("123456", "789012"))
+    placeholder = "arn:aws:iam::000000000000:"
+    replacement = f"arn:aws:iam::{account_id}:"
+    if source.count(placeholder) < 1:
+        raise SystemExit("arn-real-account mutation anchor mismatch")
+    source = source.replace(placeholder, replacement, 1)
 elif mutation == "na-executable-case":
     line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
     cells = re.findall(r"`([^`]*)`", line)
@@ -1035,6 +1162,27 @@ elif mutation == "masked-negative-missing":
         raise SystemExit("masked-negative-missing mutation anchor mismatch")
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
+elif mutation == "allow-masked-negative-missing":
+    line = next(line for line in source.splitlines() if "| `ListStateBucket` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:aws_iam_policy.deployer_state:ListStateBucket:ALL:s3:prefix:non-matching"
+    body = (
+        "aws iam simulate-principal-policy --policy-source-arn "
+        "arn:aws:iam::000000000000:role/orbit-infra-79s5rw-deployer "
+        "--action-names <each row Action value> --resource-arns matching row resources; "
+        "--context-entries s3:prefix:non-matching with every other condition key satisfying; "
+        "expect implicitDeny"
+    )
+    cells[7], count = re.subn(
+        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        f"{case_id} => {body}",
+        cells[7],
+        count=1,
+    )
+    if count != 1 or "simulate-custom-policy" not in source[source.index(line):source.index(line) + len(line)]:
+        raise SystemExit("allow-masked-negative-missing mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
 elif mutation == "masked-negative-wrong-sid":
     line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
     cells = re.findall(r"`([^`]*)`", line)
@@ -1057,18 +1205,18 @@ elif mutation == "masked-negative-wrong-sid":
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
 elif mutation == "masked-form-on-unmasked-row":
-    line = next(line for line in source.splitlines() if "| `ListStateBucket` |" in line)
+    line = next(line for line in source.splitlines() if "| `EcrVerificationPull` |" in line)
     cells = re.findall(r"`([^`]*)`", line)
-    case_id = "case:aws_iam_policy.deployer_state:ListStateBucket:ALL:s3:prefix:non-matching"
+    case_id = "case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching"
     body = (
         "aws iam simulate-custom-policy --policy-input-list <this document only> "
-        "--action-names <each row Action value> --resource-arns matching row resources "
-        "--context-entries <s3:prefix non-matching with every other condition key satisfying>; "
+        "--action-names <each row Action value> --resource-arns same-type resource outside every row Resource pattern "
+        "--context-entries <every condition key satisfying>; "
         "expect implicitDeny (isolated; principal simulation is masked by DenyMutatingOwnControlRoles "
         "in aws_iam_policy.deployer_guard)"
     )
     cells[7], count = re.subn(
-        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        rf"{re.escape(case_id)} => .*$",
         f"{case_id} => {body}",
         cells[7],
         count=1,
@@ -1136,6 +1284,9 @@ PY_MUTATE_DOC
   expect_fail custom-policy-on-principal-row "policy source ARN does not match binding" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc wrong-role-arn wrong-role-arn)"
   expect_fail wrong-role-arn "policy source ARN does not match binding" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc arn-real-account arn-real-account)"
+  expect_fail arn-real-account "account-bearing ARN must use placeholder account 000000000000" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc na-executable-case na-executable-case)"
   expect_fail na-executable-case "N/A is not allowed" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc na-resource-not-wildcard na-resource-not-wildcard)"
@@ -1148,8 +1299,12 @@ PY_MUTATE_DOC
   expect_fail missing-resource-variant "missing required resource-scope variant" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc masked-negative-missing masked-negative-missing)"
   expect_fail masked-negative-missing "masked negative must use isolated custom policy" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc allow-masked-negative-missing allow-masked-negative-missing)"
+  expect_fail allow-masked-negative-missing "masked negative must use isolated custom policy" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc masked-negative-wrong-sid masked-negative-wrong-sid)"
-  expect_fail masked-negative-wrong-sid "masked negative attribution is not a covering Deny" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  expect_fail masked-negative-wrong-sid "masked negative attribution is not a covering same-role statement or managed policy" \
+    "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc masked-form-on-unmasked-row masked-form-on-unmasked-row)"
   expect_fail masked-form-on-unmasked-row "masked negative form is not allowed" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc trust-absent-executable trust-absent-executable)"
