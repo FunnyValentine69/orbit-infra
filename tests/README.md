@@ -139,6 +139,48 @@ keeps running, sends SIGTERM to the concurrency script, and requires the
 descendant to be gone after the exit trap targets the recorded process group
 and reaps the recorded worker.
 
+## IAM action-condition matrix
+
+Run source mode without LocalStack:
+
+```
+bash tests/iam-matrix-contracts.sh
+```
+
+Source mode requires exactly 85 statement rows and 13 binding rows, verifies
+source Sid and document order, all seven condition-operator truth tables,
+per-condition variants, Deny protected-resource cases, evidence labels, the
+complete preview-to-wrapper-to-service boundary chain, the Makefile target,
+and public-repository hygiene. It also runs every authored negative fixture;
+each mutation must print the `FAIL:` line for the contract it kills.
+
+After bootstrap has been applied to LocalStack, render and compare plan mode
+through the one hardened render path:
+
+```
+make iam-matrix-plan
+```
+
+For an already-rendered post-apply plan, run
+`bash tests/iam-matrix-contracts.sh <post-apply-plan.json>`. Plan mode compares
+Effect, Principal or NotPrincipal, Action or NotAction, Resource or
+NotResource, Condition, all bindings, and all three trust documents exactly.
+String and array policy fields canonicalise identically. A pre-apply plan whose
+trust policies are unknown fails with the apply-first diagnostic.
+
+The slim plan and hygiene inputs in `tests/fixtures/iam-matrix/` are `authored`;
+their sidecar is `tests/fixtures/iam-matrix/PROVENANCE.md`. The email-address
+and second-account-id cases store safe fragments and assemble the rejected
+value only in the temporary test directory.
+
+`tests/policy-size-contracts.sh` has two groups, both running from a per-run
+temporary copy of the policy-size script and bootstrap Terraform files so
+concurrent suites never write to or delete the repository override. The
+existing-override group requires immediate refusal, zero Terraform invocations,
+and a present, byte-identical sentinel. The no-existing-override group exercises
+init, plan, and show failures plus success, requires cleanup after every path,
+and verifies that `POLICY_SIZE_PLAN_JSON_OUT` receives the rendered plan.
+
 ## Phase 5 sweeper fixtures
 
 Run the Stage 2 regression suite without AWS or LocalStack:

@@ -3,12 +3,23 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
+isolated_repo="$tmp_dir/repo"
+mkdir -p "$isolated_repo/bootstrap"
+cp "$REPO_ROOT/bootstrap/policy-size-check.sh" "$isolated_repo/bootstrap/"
+cp "$REPO_ROOT"/bootstrap/*.tf "$isolated_repo/bootstrap/"
+cp "$REPO_ROOT/bootstrap/localstack.backend_override.tf.example" "$isolated_repo/bootstrap/"
+override_file="$isolated_repo/bootstrap/backend_override.tf"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
 
 mkdir -p "$tmp_dir/bin"
 cat > "$tmp_dir/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+printf '%s\n' "$*" >> "${FAKE_TERRAFORM_CALL_LOG:?}"
 
 case "$*" in
   *" init "*|*" init") stage=init ;;
@@ -27,13 +38,46 @@ if [ "$stage" = "${FAKE_TERRAFORM_FAIL_STAGE:?}" ]; then
 fi
 
 if [ "$stage" = show ]; then
-  echo '{"planned_values":{"root_module":{"resources":[]}}}'
+  cat "${FAKE_TERRAFORM_PLAN_JSON:?}"
 fi
 EOF
 chmod +x "$tmp_dir/bin/terraform"
 
-# The real policy-size script and its cleanup run; only Terraform is replaced
-# so each failure path is deterministic and does not require LocalStack.
+# Group 1: an operator-owned override is an immediate refusal. Terraform must
+# not run, and the sentinel must remain present and byte-identical.
+sentinel="$tmp_dir/backend-override-sentinel.tf"
+printf '%s\n' '# sentinel: operator-owned override' > "$sentinel"
+cp "$sentinel" "$override_file"
+terraform_call_log="$tmp_dir/terraform-calls.log"
+: > "$terraform_call_log"
+set +e
+override_output="$(
+  PATH="$tmp_dir/bin:$PATH" \
+    FAKE_TERRAFORM_CALL_LOG="$terraform_call_log" \
+    FAKE_TERRAFORM_FAIL_STAGE=none \
+    FAKE_TERRAFORM_PLAN_JSON="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+    POLICY_SIZE_TF_DATA_DIR="$tmp_dir/policy-size-tfdata" \
+    "$isolated_repo/bootstrap/policy-size-check.sh" 2>&1
+)"
+override_rc=$?
+set -e
+if [ "$override_rc" -eq 0 ] || \
+   ! grep -Fq 'bootstrap/backend_override.tf already exists; refusing to overwrite or remove it' <<< "$override_output"; then
+  echo "policy-size must refuse an existing backend override immediately: $override_output" >&2
+  exit 1
+fi
+if [ -s "$terraform_call_log" ]; then
+  echo "policy-size must make zero Terraform calls when an override exists" >&2
+  exit 1
+fi
+if [ ! -f "$override_file" ] || ! cmp -s "$sentinel" "$override_file"; then
+  echo "policy-size must leave the existing override byte-identical and present" >&2
+  exit 1
+fi
+rm -f "$override_file"
+
+# Group 2: with no existing override, the real script and cleanup run; only
+# Terraform is replaced so each path is deterministic without LocalStack.
 for failure_case in \
   "init|init diagnostic" \
   "plan|plan diagnostic" \
@@ -43,9 +87,11 @@ for failure_case in \
   set +e
   policy_output="$(
     PATH="$tmp_dir/bin:$PATH" \
+      FAKE_TERRAFORM_CALL_LOG="$terraform_call_log" \
       FAKE_TERRAFORM_FAIL_STAGE="$failure_stage" \
+      FAKE_TERRAFORM_PLAN_JSON="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
       POLICY_SIZE_TF_DATA_DIR="$tmp_dir/policy-size-tfdata" \
-      "$REPO_ROOT/bootstrap/policy-size-check.sh" 2>&1
+      "$isolated_repo/bootstrap/policy-size-check.sh" 2>&1
   )"
   policy_rc=$?
   set -e
@@ -58,7 +104,37 @@ for failure_case in \
     echo "policy-size connection failures must name the LocalStack endpoint contract: $policy_output" >&2
     exit 1
   fi
+  if [ -e "$override_file" ]; then
+    echo "policy-size must remove its temporary override after $failure_stage failure" >&2
+    exit 1
+  fi
 done
+
+rendered_plan="$tmp_dir/rendered-plan.json"
+set +e
+success_output="$(
+  PATH="$tmp_dir/bin:$PATH" \
+    FAKE_TERRAFORM_CALL_LOG="$terraform_call_log" \
+    FAKE_TERRAFORM_FAIL_STAGE=none \
+    FAKE_TERRAFORM_PLAN_JSON="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+    POLICY_SIZE_TF_DATA_DIR="$tmp_dir/policy-size-tfdata" \
+    POLICY_SIZE_PLAN_JSON_OUT="$rendered_plan" \
+    "$isolated_repo/bootstrap/policy-size-check.sh" 2>&1
+)"
+success_rc=$?
+set -e
+if [ "$success_rc" -ne 0 ] || ! grep -Fq 'PASS: aws_iam_policy.task_boundary' <<< "$success_output"; then
+  echo "policy-size success path must validate the complete authored plan: $success_output" >&2
+  exit 1
+fi
+if [ -e "$override_file" ]; then
+  echo "policy-size must remove its temporary override after success" >&2
+  exit 1
+fi
+if ! cmp -s "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$rendered_plan"; then
+  echo "POLICY_SIZE_PLAN_JSON_OUT must copy the rendered plan before cleanup" >&2
+  exit 1
+fi
 
 # Exercise the real gates script in an isolated tree. The fakes replace the
 # expensive/external commands while preserving the default and skip behavior.
@@ -110,4 +186,4 @@ if [ -z "$health_line" ] || [ -z "$policy_size_line" ] || [ "$policy_size_line" 
   exit 1
 fi
 
-echo "PASS: policy-size contracts"
+echo "PASS: policy-size contracts (2 groups: existing override, no existing override)"

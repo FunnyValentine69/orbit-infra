@@ -316,6 +316,7 @@ evaluated (no metric data pipeline), so alarm state stays `INSUFFICIENT_DATA`.
 
 ## Decisions
 
+- [IAM action-condition matrix](docs/iam-matrix.md) — executable P0-3d specification for permission, trust, KMS, and binding evidence
 - [ADR 0001 — Ephemeral over always-on](docs/adr/0001-ephemeral-over-always-on.md)
 - [ADR 0002 — Private subnets, endpoints, no NAT](docs/adr/0002-private-subnets-endpoints-no-nat.md)
 - [ADR 0003 — Workload-agnostic contract](docs/adr/0003-workload-agnostic-contract.md)
