@@ -200,7 +200,7 @@ inject_check() {
   if [ "${DEMO_INJECT_FAIL:-}" = post-apply ]; then
     live=$(state_list) || die "state list failed"
     [ -n "$live" ] || die "injection expected live state but found none"
-    printf '%s\n' "$live" | head -n 5
+    printf '%s\n' "$live" | sed -n '1,5p'
     die "injected failure after apply"
   fi
   phase_ok
