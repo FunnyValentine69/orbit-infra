@@ -19,8 +19,21 @@ if [ -e bootstrap/backend_override.tf ] || [ -L bootstrap/backend_override.tf ];
 fi
 
 tmp_dir="$(mktemp -d)"
-trap 'rm -f bootstrap/backend_override.tf; rm -rf "$tmp_dir"' EXIT
-cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
+override_created=0
+# Invoked indirectly by the EXIT trap below.
+# shellcheck disable=SC2329
+cleanup() {
+  if [ "$override_created" = 1 ]; then
+    rm -f bootstrap/backend_override.tf
+  fi
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+if ! ( set -o noclobber; cat bootstrap/localstack.backend_override.tf.example > bootstrap/backend_override.tf ); then
+  echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2
+  exit 1
+fi
+override_created=1
 
 export TF_DATA_DIR="${POLICY_SIZE_TF_DATA_DIR:-.terraform-localstack}"
 if ! terraform -chdir=bootstrap init -reconfigure -input=false >"$tmp_dir/init.log" 2>&1; then

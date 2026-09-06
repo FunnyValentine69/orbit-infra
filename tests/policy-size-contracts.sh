@@ -14,6 +14,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+atomic_override_copy='( set -o noclobber; cat bootstrap/localstack.backend_override.tf.example > bootstrap/backend_override.tf )'
+if ! grep -Fq "$atomic_override_copy" "$isolated_repo/bootstrap/policy-size-check.sh"; then
+  echo "policy-size override copy must use a noclobber subshell" >&2
+  exit 1
+fi
+echo "PASS: structural noclobber override creation"
+
 mkdir -p "$tmp_dir/bin"
 cat > "$tmp_dir/bin/terraform" <<'EOF'
 #!/usr/bin/env bash

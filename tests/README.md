@@ -149,14 +149,20 @@ bash tests/iam-matrix-contracts.sh
 
 Source mode requires exactly 85 statement rows and 13 binding rows. It verifies
 source Sid and document order, all seven condition-operator truth tables and
-their prescribed decisions, same-action `resource:nonmatching` cases for every
-resource-scoped Allow, `stringList` handling for multivalued KMS aliases, exact
-bound-role ARNs, the permitted `N/A` shapes, and Deny protected-resource cases.
-It strips HCL comments before checking the complete boundary chain and scans
-the matrix plus every IAM fixture for public-repository hygiene. Evidence-label
-syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
-validated mechanically. Every authored mutation must print the `FAIL:` line
-for the contract it kills.
+their prescribed decisions, and exactly one unambiguous `expect <decision>`
+clause in every executable case. It checks same-action
+`resource:nonmatching` cases for every resource-scoped Allow, permits an exact
+`N/A(<reason>)` body only for the documented non-executable shapes (including
+full-type wildcards such as `hostedzone/*`), validates `stringList` handling
+for multivalued KMS aliases, and requires every executable non-boundary
+identity case to use principal simulation with its exact bound-role ARN.
+Boundary cases use custom simulation; live KMS cases name their exact execution
+role ARN. It strips HCL comments before counting only complete, anchored
+boundary assignments, so quoted decoys do not count. Fixture hygiene scans
+regular files plus symlink target strings and rejects links that resolve outside
+the IAM fixture directory. Evidence-label syntax is checked, but the labels are
+recorded P0-3d facts whose truth cannot be validated mechanically. Every
+authored mutation must print the `FAIL:` line for the contract it kills.
 
 After bootstrap has been applied to LocalStack, render and compare plan mode
 through the one hardened render path:
@@ -190,6 +196,10 @@ sentinel remains byte-identical and the link remains present with its target
 string unchanged. The no-existing-override group exercises
 init, plan, and show failures plus success, requires cleanup after every path,
 and verifies that `POLICY_SIZE_PLAN_JSON_OUT` receives the rendered plan.
+A structural contract also requires the override copy to run in a
+`set -o noclobber` subshell. This proves the create itself refuses a file that
+appears after the fast pre-check, without attempting to schedule that race in
+the test.
 
 ## Phase 5 sweeper fixtures
 

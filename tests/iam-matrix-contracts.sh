@@ -27,11 +27,44 @@ scan_hygiene() {
   fi
 }
 
+scan_hygiene_text() {
+  local input="$1"
+  local matches
+  matches="$(
+    printf '%s\n' "$input" \
+      | sed 's/000000000000//g' \
+      | grep -nE '[0-9]{12}|/Users/|203\.0\.113|([0-9]{1,3}\.){3}[0-9]{1,3}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
+      || true
+  )"
+  if [ -n "$matches" ]; then
+    echo "FAIL: IAM matrix hygiene rejected public-repository data" >&2
+    return 1
+  fi
+}
+
 scan_fixture_hygiene() {
   [ -d "$FIXTURES" ] || fail "IAM matrix fixture directory not found: $FIXTURES"
   while IFS= read -r fixture; do
-    scan_hygiene "$fixture"
-  done < <(find "$FIXTURES" -type f -print | sort)
+    if [ -L "$fixture" ]; then
+      local link_target
+      link_target="$(readlink "$fixture")"
+      scan_hygiene_text "$link_target"
+      if ! python3 - "$FIXTURES" "$fixture" <<'PY_SYMLINK'
+from pathlib import Path
+import sys
+
+fixture_root = Path(sys.argv[1]).resolve()
+resolved_target = Path(sys.argv[2]).resolve(strict=False)
+if resolved_target != fixture_root and fixture_root not in resolved_target.parents:
+    raise SystemExit(1)
+PY_SYMLINK
+      then
+        fail "IAM matrix fixture symlink points outside fixture directory: ${fixture#"$FIXTURES"/}"
+      fi
+    else
+      scan_hygiene "$fixture"
+    fi
+  done < <(find "$FIXTURES" \( -type f -o -type l \) -print | sort)
 }
 
 if [ "${IAM_MATRIX_HYGIENE_ONLY:-0}" = 1 ]; then
@@ -84,7 +117,8 @@ for effect, operator, variants in truth_rows:
     if literal not in text:
         fail(f"condition truth table is missing {effect} {operator}")
 resource_truth_rows = (
-    "| `Allow` | `Resource cell is not *` | `resource:nonmatching=implicitDeny` |",
+    "| `Allow` | `Resource cell is not * and has no full-type wildcard` | `resource:nonmatching=implicitDeny` |",
+    "| `Allow` | `Resource pattern is a full-type wildcard` | `resource:nonmatching=N/A(non-empty reason)` |",
     "| `Allow` | `Resource cell is * and Condition is none (negative case)` | `none:non-resource=N/A(non-empty reason)` |",
     "| `Deny` | `Resource cell is * (positive case)` | `none:non-protected-resource=N/A(non-empty reason)` |",
 )
@@ -213,13 +247,21 @@ variant_table = {
     ("Allow", "StringLike"): (("matching", "allowed"), ("non-matching", "implicitDeny"), ("absent", "implicitDeny")),
     ("Allow", "ForAnyValue:StringEquals"): (("one-matching", "allowed"), ("none-matching", "implicitDeny"), ("absent", "implicitDeny")),
     ("Allow", "ArnLike"): (("matching", "allowed"), ("non-matching", "implicitDeny"), ("absent", "implicitDeny")),
-    ("Deny", "StringNotLike"): (("outside-set", "explicitDeny"), ("inside-set", "not denied"), ("absent", "explicitDeny")),
-    ("Deny", "Null"): (("absent", "explicitDeny"), ("present", "not denied")),
-    ("Deny", "StringNotEquals"): (("different", "explicitDeny"), ("equal", "not denied"), ("absent", "explicitDeny")),
+    ("Deny", "StringNotLike"): (("outside-set", "explicitDeny"), ("inside-set", "not denied by this statement"), ("absent", "explicitDeny")),
+    ("Deny", "Null"): (("absent", "explicitDeny"), ("present", "not denied by this statement")),
+    ("Deny", "StringNotEquals"): (("different", "explicitDeny"), ("equal", "not denied by this statement"), ("absent", "explicitDeny")),
 }
 case_pattern = re.compile(r"case:[^ ;=)]+")
 case_entry_pattern = re.compile(r"(case:[^ ;=)]+) => ")
-decision_pattern = re.compile(r"\bexpect (allowed|implicitDeny|explicitDeny|not denied)\b")
+evidence_entry_pattern = re.compile(r"(case:[^ ;=)]+)=")
+decision_clause_pattern = re.compile(
+    r"(?<![A-Za-z0-9_])expect (allowed|implicitDeny|explicitDeny|not denied by this statement)(?![A-Za-z0-9_])"
+)
+expect_marker_pattern = re.compile(r"(?<![A-Za-z0-9_])expect\s+")
+decision_keyword_pattern = re.compile(
+    r"(?<![A-Za-z0-9_])(allowed|implicitDeny|explicitDeny|not denied by this statement)(?![A-Za-z0-9_])"
+)
+na_body_pattern = re.compile(r"N/A\([^()\s](?:[^()]*[^()\s])?\)")
 
 
 def case_entries(cases):
@@ -229,6 +271,58 @@ def case_entries(cases):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(cases)
         entries[match.group(1)] = cases[match.end():end].removesuffix("; ")
     return entries
+
+
+def evidence_entries(evidence):
+    matches = list(evidence_entry_pattern.finditer(evidence))
+    entries = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(evidence)
+        entries.append(evidence[match.start():end].removesuffix("; "))
+    return entries
+
+
+def parse_case_decision(body, line_no, case_id):
+    clauses = list(decision_clause_pattern.finditer(body))
+    expect_markers = list(expect_marker_pattern.finditer(body))
+    if (
+        len(clauses) != 1
+        or len(expect_markers) != 1
+        or clauses[0].start() != expect_markers[0].start()
+    ):
+        fail(
+            f"case body must contain exactly one expect <decision> clause at line {line_no}: "
+            f"{case_id}"
+        )
+    decision = clauses[0].group(1)
+    contradictory = [
+        keyword
+        for keyword in decision_keyword_pattern.findall(body)
+        if keyword != decision
+    ]
+    if contradictory:
+        fail(
+            f"contradictory decision keyword at line {line_no}: {case_id} "
+            f"expects {decision} but also contains {contradictory[0]}"
+        )
+    return decision
+
+
+def has_full_type_wildcard(resource):
+    if not isinstance(resource, dict):
+        return False
+    patterns = resource.get("Resource", [])
+    if not isinstance(patterns, list):
+        patterns = [patterns]
+    for pattern in patterns:
+        if not isinstance(pattern, str):
+            continue
+        arn_parts = pattern.split(":", 5)
+        if len(arn_parts) != 6 or arn_parts[0] != "arn" or arn_parts[2] == "s3":
+            continue
+        if re.fullmatch(r"[^/*:]+/\*", arn_parts[5]):
+            return True
+    return False
 
 
 bound_roles = {}
@@ -256,16 +350,25 @@ for line_no, cells in statement_rows:
         fail(f"duplicate case id in Cases cell at line {line_no}")
     if evidence_ids != case_ids:
         fail(f"Evidence does not list every case id in order at line {line_no}")
-    evidence_entries = evidence.split("; ")
-    if len(evidence_entries) != len(case_ids):
+    parsed_evidence_entries = evidence_entries(evidence)
+    if len(parsed_evidence_entries) != len(case_ids):
         fail(f"Evidence entry count differs from Cases at line {line_no}")
     try:
         resource = json.loads(cells[5])
     except json.JSONDecodeError:
         resource = None
     is_star_resource = resource == {"Resource": ["*"]}
+    full_type_wildcard = has_full_type_wildcard(resource)
+    case_decisions = {}
+    for case_id in case_ids:
+        body = entries_by_id[case_id]
+        case_is_na = bool(na_body_pattern.fullmatch(body))
+        if "N/A(" in body and not case_is_na:
+            fail(f"N/A case body must be exactly N/A(<reason>) at line {line_no}: {case_id}")
+        if not case_is_na:
+            case_decisions[case_id] = parse_case_decision(body, line_no, case_id)
 
-    for entry, case_id in zip(evidence_entries, case_ids):
+    for entry, case_id in zip(parsed_evidence_entries, case_ids):
         if not entry.startswith(case_id + "="):
             fail(f"Evidence case id mismatch at line {line_no}: {case_id}")
         label = entry[len(case_id) + 1:]
@@ -278,9 +381,13 @@ for line_no, cells in statement_rows:
             effect == "Deny"
             and is_star_resource
             and case_id.endswith(":ALL:none:non-protected-resource")
+        ) or (
+            effect == "Allow"
+            and full_type_wildcard
+            and case_id.endswith(":ALL:resource:nonmatching")
         )
-        case_is_na = entries_by_id[case_id].startswith("N/A(")
-        label_is_na = bool(re.fullmatch(r"N/A\(.+\)", label))
+        case_is_na = bool(na_body_pattern.fullmatch(entries_by_id[case_id]))
+        label_is_na = bool(na_body_pattern.fullmatch(label))
         if case_is_na or label_is_na:
             if not na_allowed:
                 fail(f"N/A is not allowed for executable case at line {line_no}: {case_id}")
@@ -309,8 +416,7 @@ for line_no, cells in statement_rows:
                     required = f"case:{document}:{key}:ALL:{condition_key}:{variant}"
                     if required not in case_ids:
                         fail(f"missing required condition variant at line {line_no}: {required}")
-                    decision_match = decision_pattern.search(entries_by_id[required])
-                    observed_decision = decision_match.group(1) if decision_match else None
+                    observed_decision = case_decisions.get(required)
                     if observed_decision != expected_decision:
                         fail(
                             f"truth-table decision mismatch at line {line_no}: "
@@ -329,29 +435,78 @@ for line_no, cells in statement_rows:
         if "simulate-principal-policy" in cases or "--policy-source-arn" in cases:
             fail(f"task boundary must not use a principal policy source at line {line_no}")
         for case_id, body in entries_by_id.items():
-            if not body.startswith("N/A(") and "aws iam simulate-custom-policy" not in body:
+            if not na_body_pattern.fullmatch(body) and "aws iam simulate-custom-policy" not in body:
                 fail(f"task boundary case must use simulate-custom-policy at line {line_no}: {case_id}")
         outside_boundary = f"case:{document}:{key}:ALL:none:outside-boundary"
         if outside_boundary not in entries_by_id:
             fail(f"task boundary row lacks the boundary-cap case at line {line_no}: {outside_boundary}")
         if "--action-names s3:ListAllMyBuckets" not in entries_by_id[outside_boundary]:
             fail(f"task boundary cap case must retain s3:ListAllMyBuckets at line {line_no}: {outside_boundary}")
+        if case_decisions.get(outside_boundary) != "implicitDeny":
+            fail(f"boundary-cap decision mismatch at line {line_no}: {outside_boundary} must expect implicitDeny")
+        in_boundary = f"case:{document}:{key}:ALL:none:in-boundary"
+        if in_boundary not in entries_by_id:
+            fail(f"task boundary row lacks the in-scope positive case at line {line_no}: {in_boundary}")
+        if case_decisions.get(in_boundary) != "allowed":
+            fail(f"boundary in-scope decision mismatch at line {line_no}: {in_boundary} must expect allowed")
     elif document in bound_roles:
         expected_arn = f"arn:aws:iam::000000000000:role/{bound_roles[document]}"
         for case_id, body in entries_by_id.items():
-            if "simulate-principal-policy" not in body:
+            if na_body_pattern.fullmatch(body):
                 continue
             source_arns = re.findall(r"--policy-source-arn ([^ ;]+)", body)
-            if source_arns != [expected_arn]:
+            principal_call = f"aws iam simulate-principal-policy --policy-source-arn {expected_arn}"
+            if (
+                body.count("aws iam simulate-principal-policy") != 1
+                or source_arns != [expected_arn]
+                or principal_call not in body
+            ):
                 fail(f"policy source ARN does not match binding at line {line_no}: {case_id}")
+            fallback = "or an isolated simulate-custom-policy with only this document"
+            if "simulate-custom-policy" in body:
+                if body.count("simulate-custom-policy") != 1 or fallback not in body:
+                    fail(f"principal policy case has invalid custom-policy fallback at line {line_no}: {case_id}")
+                if body.index(fallback) < body.index(principal_call):
+                    fail(f"principal policy custom-policy fallback precedes principal call at line {line_no}: {case_id}")
+
+    if document == "aws_kms_key.signing":
+        kms_roles = {
+            "plan-reader-describe": "orbit-infra-79s5rw-plan-reader",
+            "plan-reader-public-key": "orbit-infra-79s5rw-plan-reader",
+            "deployer-sign": "orbit-infra-79s5rw-deployer",
+            "plan-reader-sign": "orbit-infra-79s5rw-plan-reader",
+            "publisher-sign-verify": "orbit-infra-79s5rw-publisher",
+            "canonical-policy": "orbit-infra-79s5rw-plan-reader",
+        }
+        for case_id, body in entries_by_id.items():
+            variant = case_id.rsplit(":", 1)[1]
+            expected_role = kms_roles.get(variant)
+            if expected_role is None:
+                fail(f"KMS case has no exact execution role mapping at line {line_no}: {case_id}")
+            expected_arn = f"arn:aws:iam::000000000000:role/{expected_role}"
+            role_arns = re.findall(r"arn:aws:iam::000000000000:role/[^ ;,]+", body)
+            if "aws kms " not in body or role_arns != [expected_arn]:
+                fail(f"KMS case must name its exact execution role ARN at line {line_no}: {case_id}")
+
+    if effect == "Allow" and document in core_documents and condition_text == "none":
+        positive_variant = "in-boundary" if document == "aws_iam_policy.task_boundary" else "matching"
+        positive = f"case:{document}:{key}:ALL:none:{positive_variant}"
+        if positive not in entries_by_id:
+            fail(f"unconditional Allow row lacks its positive case at line {line_no}: {positive}")
+        if case_decisions.get(positive) != "allowed":
+            fail(f"unconditional Allow decision mismatch at line {line_no}: {positive} must expect allowed")
 
     if effect == "Allow" and document in core_documents and resource is not None and not is_star_resource:
         required = f"case:{document}:{key}:ALL:resource:nonmatching"
         if required not in case_ids:
             fail(f"missing required resource-scope variant at line {line_no}: {required}")
         resource_case = entries_by_id[required]
-        decision_match = decision_pattern.search(resource_case)
-        if decision_match is None or decision_match.group(1) != "implicitDeny":
+        resource_case_is_na = bool(na_body_pattern.fullmatch(resource_case))
+        if resource_case_is_na:
+            if not full_type_wildcard:
+                fail(f"N/A is not allowed for executable case at line {line_no}: {required}")
+            continue
+        if case_decisions.get(required) != "implicitDeny":
             fail(f"resource-scope decision mismatch at line {line_no}: {required} must expect implicitDeny")
         for required_text in (
             "--action-names <each row Action value>",
@@ -366,12 +521,15 @@ for line_no, cells in statement_rows:
         protected = f"case:{document}:{key}:ALL:none:protected-resource"
         if protected not in case_ids:
             fail(f"Deny row lacks protected-resource case at line {line_no}: {protected}")
+        if case_decisions.get(protected) != "explicitDeny":
+            fail(f"Deny protected-resource decision mismatch at line {line_no}: {protected} must expect explicitDeny")
 
 print("PASS: IAM matrix source rows, truth-table cases, bindings, and evidence label syntax")
 PY_SOURCE
 
 python3 - "$REPO_ROOT" <<'PY_WIRING'
 from pathlib import Path
+import re
 import sys
 
 
@@ -437,15 +595,39 @@ def strip_hcl_comments(source):
 
 
 checks = (
-    (root / "modules/ecs-service/main.tf", "permissions_boundary = var.permissions_boundary_arn", 2, "ecs-service role boundary links"),
-    (root / "envs/preview/main.tf", "permissions_boundary_arn = local.task_boundary_arn", 4, "preview boundary call sites"),
-    (root / "modules/redis/main.tf", "permissions_boundary_arn = var.permissions_boundary_arn", 1, "Redis boundary forwarding links"),
-    (root / "modules/clickhouse/main.tf", "permissions_boundary_arn = var.permissions_boundary_arn", 1, "ClickHouse boundary forwarding links"),
+    (
+        root / "modules/ecs-service/main.tf",
+        r"^\s*permissions_boundary\s*=\s*var\.permissions_boundary_arn\s*$",
+        2,
+        "ecs-service role boundary links",
+    ),
+    (
+        root / "envs/preview/main.tf",
+        r"^\s*permissions_boundary_arn\s*=\s*local\.task_boundary_arn\s*$",
+        4,
+        "preview boundary call sites",
+    ),
+    (
+        root / "modules/redis/main.tf",
+        r"^\s*permissions_boundary_arn\s*=\s*var\.permissions_boundary_arn\s*$",
+        1,
+        "Redis boundary forwarding links",
+    ),
+    (
+        root / "modules/clickhouse/main.tf",
+        r"^\s*permissions_boundary_arn\s*=\s*var\.permissions_boundary_arn\s*$",
+        1,
+        "ClickHouse boundary forwarding links",
+    ),
 )
-for path, needle, expected, label in checks:
+for path, assignment_pattern, expected, label in checks:
     if not path.is_file():
         fail(f"boundary source file missing: {path.relative_to(root)}")
-    actual = strip_hcl_comments(path.read_text()).count(needle)
+    source = strip_hcl_comments(path.read_text())
+    actual = sum(
+        1 for line in source.splitlines()
+        if re.fullmatch(assignment_pattern, line)
+    )
     if actual != expected:
         fail(f"expected {expected} {label}, found {actual}")
 
@@ -594,6 +776,37 @@ elif mutation == "decision-reversed":
     cells[7] = cells[7].replace("expect allowed", "expect implicitDeny", 1)
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
+elif mutation == "decision-contradictory":
+    line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    cells[7] = cells[7].replace(
+        "expect allowed",
+        "expect allowed; contradictory outcome keyword explicitDeny",
+        1,
+    )
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "decision-resource-reversed":
+    line = next(line for line in source.splitlines() if "| `ReadStateObjects` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:resource:nonmatching"
+    cells[7], count = re.subn(
+        rf"({re.escape(case_id)} => .*?)expect implicitDeny",
+        r"\1expect allowed",
+        cells[7],
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit(f"decision-resource-reversed mutation count was {count}")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "custom-policy-on-principal-row":
+    line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    principal = "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::000000000000:role/orbit-infra-79s5rw-plan-reader"
+    cells[7] = cells[7].replace(principal, "aws iam simulate-custom-policy <wrong-policy>", 1)
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
 elif mutation == "wrong-role-arn":
     line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
     cells = re.findall(r"`([^`]*)`", line)
@@ -613,6 +826,42 @@ elif mutation == "na-executable-case":
         f"{case_id} => N/A(executable case mislabeled)",
         cells[7],
         count=1,
+    )
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "na-resource-not-wildcard":
+    line = next(line for line in source.splitlines() if "| `ReadStateObjects` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:resource:nonmatching"
+    cells[7], case_count = re.subn(
+        rf"{re.escape(case_id)} => .*$",
+        f"{case_id} => N/A(non-wildcard resource mislabeled)",
+        cells[7],
+        count=1,
+    )
+    old_evidence = f"{case_id}=CODE-ONLY"
+    new_evidence = f"{case_id}=N/A(non-wildcard resource mislabeled)"
+    if case_count != 1 or cells[9].count(old_evidence) != 1:
+        raise SystemExit("na-resource-not-wildcard mutation anchor mismatch")
+    cells[9] = cells[9].replace(old_evidence, new_evidence, 1)
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "na-with-trailing-instructions":
+    line = next(line for line in source.splitlines() if "| `DenySecretsAndParams` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    reason = "N/A(Resource * leaves no non-protected resource of the same action type)"
+    if cells[7].count(reason) != 1:
+        raise SystemExit("na-with-trailing-instructions mutation anchor mismatch")
+    cells[7] = cells[7].replace(reason, reason + "; execute an extra probe", 1)
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "na-embedded-in-executable":
+    line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    cells[7] = cells[7].replace(
+        "expect allowed",
+        "expect allowed; N/A(embedded executable marker)",
+        1,
     )
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
@@ -651,10 +900,22 @@ PY_MUTATE_DOC
   expect_fail evidence-omits-case "Evidence does not list every case id" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc decision-reversed decision-reversed)"
   expect_fail decision-reversed "truth-table decision mismatch" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc decision-contradictory decision-contradictory)"
+  expect_fail decision-contradictory "contradictory decision keyword" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc decision-resource-reversed decision-resource-reversed)"
+  expect_fail decision-resource-reversed "resource-scope decision mismatch" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc custom-policy-on-principal-row custom-policy-on-principal-row)"
+  expect_fail custom-policy-on-principal-row "policy source ARN does not match binding" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc wrong-role-arn wrong-role-arn)"
   expect_fail wrong-role-arn "policy source ARN does not match binding" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc na-executable-case na-executable-case)"
   expect_fail na-executable-case "N/A is not allowed" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc na-resource-not-wildcard na-resource-not-wildcard)"
+  expect_fail na-resource-not-wildcard "N/A is not allowed" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc na-with-trailing-instructions na-with-trailing-instructions)"
+  expect_fail na-with-trailing-instructions "N/A case body must be exactly" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc na-embedded-in-executable na-embedded-in-executable)"
+  expect_fail na-embedded-in-executable "N/A case body must be exactly" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc missing-resource-variant missing-resource-variant)"
   expect_fail missing-resource-variant "missing required resource-scope variant" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc kms-string-context kms-string-context)"
@@ -785,6 +1046,14 @@ PY_COMMENT_SOURCE
   mutate_source_once "$source_root/modules/clickhouse/main.tf" "permissions_boundary_arn = var.permissions_boundary_arn"
   expect_fail clickhouse-forwarding "expected 1 ClickHouse boundary forwarding links, found 0" "${child_env[@]}" IAM_MATRIX_REPO_ROOT="$source_root" "$0"
 
+  source_root="$fixture_tmp/wiring-quoted-decoy"
+  make_source_root "$source_root"
+  mutate_source_once "$source_root/modules/redis/main.tf" "permissions_boundary_arn = var.permissions_boundary_arn"
+  printf '%s\n' 'decoy = "permissions_boundary_arn = var.permissions_boundary_arn"' \
+    >>"$source_root/modules/redis/main.tf"
+  expect_fail wiring-quoted-decoy "expected 1 Redis boundary forwarding links, found 0" \
+    "${child_env[@]}" IAM_MATRIX_REPO_ROOT="$source_root" "$0"
+
   IAM_MATRIX_DOC="$FIXTURES/hygiene-immutable-subject.md" IAM_MATRIX_HYGIENE_ONLY=1 "$0" >/dev/null
   echo "PASS: positive fixture immutable-ID-subject hygiene"
 
@@ -801,6 +1070,19 @@ PY_COMMENT_SOURCE
   # shellcheck disable=SC2016
   printf '| `000000000000` | `%s%s` |\n' "$account_left" "$account_right" >"$fixture_tmp/hygiene-second-account.md"
   expect_fail hygiene-second-account "IAM matrix hygiene rejected" env IAM_MATRIX_DOC="$fixture_tmp/hygiene-second-account.md" IAM_MATRIX_HYGIENE_ONLY=1 "$0"
+
+  hygiene_symlink_dir="$fixture_tmp/hygiene-symlink-account"
+  mkdir -p "$hygiene_symlink_dir"
+  ln -s "../$account_left$account_right.json" "$hygiene_symlink_dir/account-link.json"
+  expect_fail hygiene-symlink-account "IAM matrix hygiene rejected" \
+    env IAM_MATRIX_FIXTURES="$hygiene_symlink_dir" IAM_MATRIX_HYGIENE_ONLY=1 "$0"
+
+  outside_symlink_dir="$fixture_tmp/symlink-outside-fixture-directory"
+  mkdir -p "$outside_symlink_dir"
+  printf '%s\n' safe >"$fixture_tmp/outside-fixture.txt"
+  ln -s ../outside-fixture.txt "$outside_symlink_dir/outside-link.txt"
+  expect_fail symlink-outside-fixture-directory "fixture symlink points outside fixture directory" \
+    env IAM_MATRIX_FIXTURES="$outside_symlink_dir" IAM_MATRIX_HYGIENE_ONLY=1 "$0"
 
   hygiene_fixture_dir="$fixture_tmp/hygiene-fixture-directory"
   mkdir -p "$hygiene_fixture_dir"
