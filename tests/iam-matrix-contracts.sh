@@ -174,6 +174,60 @@ if row_document_order != expected_documents:
     fail("statement row document order does not match section order")
 
 
+def strip_hcl_comments(source):
+    output = []
+    index = 0
+    in_string = False
+    escaped = False
+    line_comment = False
+    block_comment = False
+    while index < len(source):
+        char = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+                output.append(char)
+            index += 1
+            continue
+        if block_comment:
+            if char == "*" and following == "/":
+                block_comment = False
+                index += 2
+            else:
+                if char == "\n":
+                    output.append(char)
+                index += 1
+            continue
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            output.append(char)
+            index += 1
+        elif char == "#":
+            line_comment = True
+            index += 1
+        elif char == "/" and following == "/":
+            line_comment = True
+            index += 2
+        elif char == "/" and following == "*":
+            block_comment = True
+            index += 2
+        else:
+            output.append(char)
+            index += 1
+    return "".join(output)
+
+
 def hcl_blocks(source, kind, name_pattern):
     start_pattern = re.compile(
         rf'^\s*{re.escape(kind)}\s+"{re.escape(name_pattern)}"\s+"([^"]+)"\s*{{',
@@ -198,14 +252,63 @@ def hcl_blocks(source, kind, name_pattern):
     return blocks
 
 
-roles_source = (repo_root / "bootstrap/roles.tf").read_text()
-kms_source = (repo_root / "bootstrap/kms.tf").read_text()
+def hcl_statement_blocks(source):
+    start_pattern = re.compile(r"^\s*statement\s*{", re.MULTILINE)
+    blocks = []
+    for match in start_pattern.finditer(source):
+        depth = 0
+        end = None
+        for index in range(match.start(), len(source)):
+            char = source[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end is None:
+            fail("unterminated HCL statement block")
+        blocks.append(source[match.start():end])
+    return blocks
+
+
+roles_source = strip_hcl_comments((repo_root / "bootstrap/roles.tf").read_text())
+kms_source = strip_hcl_comments((repo_root / "bootstrap/kms.tf").read_text())
 policy_blocks = hcl_blocks(roles_source, "data", "aws_iam_policy_document")
 kms_blocks = hcl_blocks(kms_source, "data", "aws_iam_policy_document")
+inline_policy_resources = hcl_blocks(roles_source, "resource", "aws_iam_role_policy")
+attachment_resources = hcl_blocks(roles_source, "resource", "aws_iam_role_policy_attachment")
+source_bound_roles = {}
+for name, block in inline_policy_resources.items():
+    role_match = re.search(r"^\s*role\s*=\s*aws_iam_role\.([A-Za-z0-9_]+)\.name", block, re.MULTILINE)
+    policy_match = re.search(
+        r"^\s*policy\s*=\s*data\.aws_iam_policy_document\.([A-Za-z0-9_]+)\.json",
+        block,
+        re.MULTILINE,
+    )
+    if role_match is None or policy_match is None or policy_match.group(1) != name:
+        fail(f"unsupported inline policy binding in source: aws_iam_role_policy.{name}")
+    source_bound_roles[f"aws_iam_role_policy.{name}"] = role_match.group(1)
+for name, block in attachment_resources.items():
+    role_match = re.search(r"^\s*role\s*=\s*aws_iam_role\.([A-Za-z0-9_]+)\.name", block, re.MULTILINE)
+    policy_match = re.search(
+        r"^\s*policy_arn\s*=\s*aws_iam_policy\.([A-Za-z0-9_]+)\.arn",
+        block,
+        re.MULTILINE,
+    )
+    if policy_match is None:
+        continue
+    if role_match is None or policy_match.group(1) != name:
+        fail(f"unsupported managed policy binding in source: aws_iam_role_policy_attachment.{name}")
+    source_bound_roles[f"aws_iam_policy.{name}"] = role_match.group(1)
+
 rows_by_document = {}
 for _, cells in statement_rows:
     rows_by_document.setdefault(cells[0], []).append(cells[1])
 
+source_actions_by_statement = {}
+source_denies_by_document = {}
 for address in core_documents:
     name = address.split(".", 1)[1]
     block = policy_blocks.get(name)
@@ -221,6 +324,24 @@ for address in core_documents:
         fail(f"source Sid missing from matrix for {address}: {missing[0]}")
     if doc_keys != source_sids:
         fail(f"Sid order or multiplicity differs for {address}")
+    for statement in hcl_statement_blocks(block):
+        sid_match = re.search(r'^\s*sid\s*=\s*"([^"]+)"', statement, re.MULTILINE)
+        effect_match = re.search(r'^\s*effect\s*=\s*"([^"]+)"', statement, re.MULTILINE)
+        if sid_match is None or effect_match is None:
+            continue
+        actions_match = re.search(
+            r"^\s*actions\s*=\s*\[(.*?)\]",
+            statement,
+            re.MULTILINE | re.DOTALL,
+        )
+        if actions_match is None:
+            fail(f"source statement has no literal Action array for {address}: {sid_match.group(1)}")
+        actions = frozenset(re.findall(r'"([^"]+)"', actions_match.group(1)))
+        if not actions:
+            fail(f"source statement has an empty Action array for {address}: {sid_match.group(1)}")
+        source_actions_by_statement[(address, sid_match.group(1))] = actions
+        if effect_match.group(1) == "Deny":
+            source_denies_by_document.setdefault(address, []).append((sid_match.group(1), actions))
 
 kms_block = kms_blocks.get("signing_key")
 if kms_block is None:
@@ -262,6 +383,43 @@ decision_keyword_pattern = re.compile(
     r"(?<![A-Za-z0-9_])(allowed|implicitDeny|explicitDeny|not denied by this statement)(?![A-Za-z0-9_])"
 )
 na_body_pattern = re.compile(r"N/A\([^()\s](?:[^()]*[^()\s])?\)")
+masked_attribution_note_pattern = re.compile(
+    r" \(isolated; principal simulation is masked by ([A-Za-z0-9]+) "
+    r"in ([A-Za-z0-9_.:]+)\)$"
+)
+masked_form_pattern = re.compile(
+    r"^aws iam simulate-custom-policy --policy-input-list <this document only> "
+    r"--action-names [^;]+ --resource-arns [^;]+ --context-entries [^;]+; "
+    r"expect implicitDeny \(isolated; principal simulation is masked by "
+    r"([A-Za-z0-9]+) in ([A-Za-z0-9_.:]+)\)$"
+)
+
+
+def masked_form_match(body):
+    match = masked_form_pattern.fullmatch(body)
+    required_tokens = (
+        "aws iam simulate-custom-policy",
+        "--policy-input-list ",
+        "--action-names ",
+        "--resource-arns ",
+        "--context-entries ",
+        "expect implicitDeny",
+        "principal simulation is masked by ",
+    )
+    if match is None or any(body.count(token) != 1 for token in required_tokens):
+        return None
+    return match
+
+
+def trust_na_required(document, case_id):
+    return document.startswith("trust:") and (
+        case_id.endswith(":absent")
+        or case_id.endswith(":token.actions.githubusercontent.com:aud:non-matching")
+    )
+
+
+def negative_variant(case_id):
+    return case_id.endswith((":non-matching", ":absent", ":resource:nonmatching"))
 
 
 def case_entries(cases):
@@ -283,8 +441,10 @@ def evidence_entries(evidence):
 
 
 def parse_case_decision(body, line_no, case_id):
-    clauses = list(decision_clause_pattern.finditer(body))
-    expect_markers = list(expect_marker_pattern.finditer(body))
+    attribution_note = masked_attribution_note_pattern.search(body)
+    decision_text = body[:attribution_note.start()] if attribution_note else body
+    clauses = list(decision_clause_pattern.finditer(decision_text))
+    expect_markers = list(expect_marker_pattern.finditer(decision_text))
     if (
         len(clauses) != 1
         or len(expect_markers) != 1
@@ -297,7 +457,7 @@ def parse_case_decision(body, line_no, case_id):
     decision = clauses[0].group(1)
     contradictory = [
         keyword
-        for keyword in decision_keyword_pattern.findall(body)
+        for keyword in decision_keyword_pattern.findall(decision_text)
         if keyword != decision
     ]
     if contradictory:
@@ -333,6 +493,23 @@ for _, cells in binding_rows:
     elif kind == "attachment" and address != "aws_iam_role_policy_attachment.plan_reader_readonly":
         name = address.rsplit(".", 1)[1]
         bound_roles[f"aws_iam_policy.{name}"] = role
+
+
+def covering_denies(document, key):
+    role = source_bound_roles.get(document)
+    row_actions = source_actions_by_statement.get((document, key))
+    if role is None or row_actions is None:
+        return []
+    covering = []
+    for deny_document, deny_statements in source_denies_by_document.items():
+        if deny_document == document or source_bound_roles.get(deny_document) != role:
+            continue
+        for deny_sid, deny_actions in deny_statements:
+            if row_actions <= deny_actions:
+                covering.append((deny_sid, deny_document))
+    return covering
+
+
 for line_no, cells in statement_rows:
     document, key, effect, _, _, _, condition_text, cases, _, evidence = cells
     if not cases:
@@ -368,11 +545,32 @@ for line_no, cells in statement_rows:
         if not case_is_na:
             case_decisions[case_id] = parse_case_decision(body, line_no, case_id)
 
+    covering = covering_denies(document, key) if effect == "Allow" else []
+    covering_set = set(covering)
+    masked_validations = []
+    masked_simulator_case_ids = set()
+    for case_id in case_ids:
+        body = entries_by_id[case_id]
+        form_match = masked_form_match(body)
+        requires_mask = (
+            bool(covering)
+            and negative_variant(case_id)
+            and case_decisions.get(case_id) == "implicitDeny"
+        )
+        if form_match is not None or "masked by" in body:
+            masked_simulator_case_ids.add(case_id)
+        masked_validations.append((case_id, form_match, requires_mask))
+
     for entry, case_id in zip(parsed_evidence_entries, case_ids):
         if not entry.startswith(case_id + "="):
             fail(f"Evidence case id mismatch at line {line_no}: {case_id}")
         label = entry[len(case_id) + 1:]
-        na_allowed = (
+        trust_na = trust_na_required(document, case_id)
+        case_is_na = bool(na_body_pattern.fullmatch(entries_by_id[case_id]))
+        label_is_na = bool(na_body_pattern.fullmatch(label))
+        if trust_na and (not case_is_na or not label_is_na):
+            fail(f"trust case must be N/A at line {line_no}: {case_id}")
+        na_allowed = trust_na or (
             effect == "Allow"
             and is_star_resource
             and condition_text == "none"
@@ -386,8 +584,6 @@ for line_no, cells in statement_rows:
             and full_type_wildcard
             and case_id.endswith(":ALL:resource:nonmatching")
         )
-        case_is_na = bool(na_body_pattern.fullmatch(entries_by_id[case_id]))
-        label_is_na = bool(na_body_pattern.fullmatch(label))
         if case_is_na or label_is_na:
             if not na_allowed:
                 fail(f"N/A is not allowed for executable case at line {line_no}: {case_id}")
@@ -416,6 +612,8 @@ for line_no, cells in statement_rows:
                     required = f"case:{document}:{key}:ALL:{condition_key}:{variant}"
                     if required not in case_ids:
                         fail(f"missing required condition variant at line {line_no}: {required}")
+                    if trust_na_required(document, required):
+                        continue
                     observed_decision = case_decisions.get(required)
                     if observed_decision != expected_decision:
                         fail(
@@ -452,7 +650,7 @@ for line_no, cells in statement_rows:
     elif document in bound_roles:
         expected_arn = f"arn:aws:iam::000000000000:role/{bound_roles[document]}"
         for case_id, body in entries_by_id.items():
-            if na_body_pattern.fullmatch(body):
+            if na_body_pattern.fullmatch(body) or case_id in masked_simulator_case_ids:
                 continue
             source_arns = re.findall(r"--policy-source-arn ([^ ;]+)", body)
             principal_call = f"aws iam simulate-principal-policy --policy-source-arn {expected_arn}"
@@ -524,106 +722,51 @@ for line_no, cells in statement_rows:
         if case_decisions.get(protected) != "explicitDeny":
             fail(f"Deny protected-resource decision mismatch at line {line_no}: {protected} must expect explicitDeny")
 
+    for case_id, form_match, requires_mask in masked_validations:
+        if requires_mask:
+            if form_match is None:
+                fail(f"masked negative must use isolated custom policy at line {line_no}: {case_id}")
+            attribution = (form_match.group(1), form_match.group(2))
+            if attribution not in covering_set:
+                fail(
+                    f"masked negative attribution is not a covering Deny at line {line_no}: "
+                    f"{case_id} names {attribution[0]} in {attribution[1]}"
+                )
+        elif form_match is not None or "masked by" in entries_by_id[case_id]:
+            fail(f"masked negative form is not allowed at line {line_no}: {case_id}")
+
 print("PASS: IAM matrix source rows, truth-table cases, bindings, and evidence label syntax")
-PY_SOURCE
-
-python3 - "$REPO_ROOT" <<'PY_WIRING'
-from pathlib import Path
-import re
-import sys
-
-
-def fail(message):
-    raise SystemExit(f"FAIL: {message}")
-
-
-root = Path(sys.argv[1])
-
-
-def strip_hcl_comments(source):
-    output = []
-    index = 0
-    in_string = False
-    escaped = False
-    line_comment = False
-    block_comment = False
-    while index < len(source):
-        char = source[index]
-        following = source[index + 1] if index + 1 < len(source) else ""
-        if line_comment:
-            if char == "\n":
-                line_comment = False
-                output.append(char)
-            index += 1
-            continue
-        if block_comment:
-            if char == "*" and following == "/":
-                block_comment = False
-                index += 2
-            else:
-                if char == "\n":
-                    output.append(char)
-                index += 1
-            continue
-        if in_string:
-            output.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            index += 1
-            continue
-        if char == '"':
-            in_string = True
-            output.append(char)
-            index += 1
-        elif char == "#":
-            line_comment = True
-            index += 1
-        elif char == "/" and following == "/":
-            line_comment = True
-            index += 2
-        elif char == "/" and following == "*":
-            block_comment = True
-            index += 2
-        else:
-            output.append(char)
-            index += 1
-    return "".join(output)
-
 
 checks = (
     (
-        root / "modules/ecs-service/main.tf",
+        repo_root / "modules/ecs-service/main.tf",
         r"^\s*permissions_boundary\s*=\s*var\.permissions_boundary_arn\s*$",
         2,
         "ecs-service role boundary links",
     ),
     (
-        root / "envs/preview/main.tf",
+        repo_root / "envs/preview/main.tf",
         r"^\s*permissions_boundary_arn\s*=\s*local\.task_boundary_arn\s*$",
         4,
         "preview boundary call sites",
     ),
     (
-        root / "modules/redis/main.tf",
+        repo_root / "modules/redis/main.tf",
         r"^\s*permissions_boundary_arn\s*=\s*var\.permissions_boundary_arn\s*$",
         1,
         "Redis boundary forwarding links",
     ),
     (
-        root / "modules/clickhouse/main.tf",
+        repo_root / "modules/clickhouse/main.tf",
         r"^\s*permissions_boundary_arn\s*=\s*var\.permissions_boundary_arn\s*$",
         1,
         "ClickHouse boundary forwarding links",
     ),
 )
-for path, assignment_pattern, expected, label in checks:
-    if not path.is_file():
-        fail(f"boundary source file missing: {path.relative_to(root)}")
-    source = strip_hcl_comments(path.read_text())
+for source_path, assignment_pattern, expected, label in checks:
+    if not source_path.is_file():
+        fail(f"boundary source file missing: {source_path.relative_to(repo_root)}")
+    source = strip_hcl_comments(source_path.read_text())
     actual = sum(
         1 for line in source.splitlines()
         if re.fullmatch(assignment_pattern, line)
@@ -632,7 +775,8 @@ for path, assignment_pattern, expected, label in checks:
         fail(f"expected {expected} {label}, found {actual}")
 
 print("PASS: IAM task-boundary source chain")
-PY_WIRING
+PY_SOURCE
+
 
 scan_hygiene "$DOC"
 scan_fixture_hygiene
@@ -870,6 +1014,90 @@ elif mutation == "missing-resource-variant":
     if source.count(target) != 2:
         raise SystemExit(f"expected two resource variant occurrences, found {source.count(target)}")
     source = source.replace(target, target.rsplit(":", 1)[0] + ":omitted")
+elif mutation == "masked-negative-missing":
+    line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:s3:prefix:non-matching"
+    body = (
+        "aws iam simulate-principal-policy --policy-source-arn "
+        "arn:aws:iam::000000000000:role/orbit-infra-79s5rw-plan-reader "
+        "--action-names <each row Action value> --resource-arns matching row resources; "
+        "--context-entries s3:prefix:non-matching with every other condition key satisfying; "
+        "expect implicitDeny"
+    )
+    cells[7], count = re.subn(
+        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        f"{case_id} => {body}",
+        cells[7],
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit("masked-negative-missing mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "masked-negative-wrong-sid":
+    line = next(line for line in source.splitlines() if "| `ListStatePrefixes` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:s3:prefix:non-matching"
+    body = (
+        "aws iam simulate-custom-policy --policy-input-list <this document only> "
+        "--action-names <each row Action value> --resource-arns matching row resources "
+        "--context-entries <s3:prefix non-matching with every other condition key satisfying>; "
+        "expect implicitDeny (isolated; principal simulation is masked by DenySecretsAndParams "
+        "in aws_iam_role_policy.plan_reader_deny)"
+    )
+    cells[7], count = re.subn(
+        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        f"{case_id} => {body}",
+        cells[7],
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit("masked-negative-wrong-sid mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "masked-form-on-unmasked-row":
+    line = next(line for line in source.splitlines() if "| `ListStateBucket` |" in line)
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:aws_iam_policy.deployer_state:ListStateBucket:ALL:s3:prefix:non-matching"
+    body = (
+        "aws iam simulate-custom-policy --policy-input-list <this document only> "
+        "--action-names <each row Action value> --resource-arns matching row resources "
+        "--context-entries <s3:prefix non-matching with every other condition key satisfying>; "
+        "expect implicitDeny (isolated; principal simulation is masked by DenyMutatingOwnControlRoles "
+        "in aws_iam_policy.deployer_guard)"
+    )
+    cells[7], count = re.subn(
+        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        f"{case_id} => {body}",
+        cells[7],
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit("masked-form-on-unmasked-row mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
+elif mutation == "trust-absent-executable":
+    line = next(line for line in source.splitlines() if line.startswith("| `trust:plan_reader`"))
+    cells = re.findall(r"`([^`]*)`", line)
+    case_id = "case:trust:plan_reader:trust:plan_reader#0:ALL:token.actions.githubusercontent.com:aud:absent"
+    body = "deliberate plan-reader STS attempt with a token that omits aud; expect implicitDeny"
+    cells[7], case_count = re.subn(
+        rf"{re.escape(case_id)} => .*?(?=; case:)",
+        f"{case_id} => {body}",
+        cells[7],
+        count=1,
+    )
+    cells[9], evidence_count = re.subn(
+        rf"{re.escape(case_id)}=[^;]+",
+        f"{case_id}=CODE-ONLY",
+        cells[9],
+        count=1,
+    )
+    if case_count != 1 or evidence_count != 1:
+        raise SystemExit("trust-absent-executable mutation anchor mismatch")
+    replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
+    source = source.replace(line, replacement, 1)
 elif mutation == "kms-string-context":
     target = "ContextKeyValues=alias/nonmatching-one,alias/orbit-infra-79s5rw-signing,alias/nonmatching-two,ContextKeyType=stringList"
     if source.count(target) != 2:
@@ -918,6 +1146,14 @@ PY_MUTATE_DOC
   expect_fail na-embedded-in-executable "N/A case body must be exactly" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc missing-resource-variant missing-resource-variant)"
   expect_fail missing-resource-variant "missing required resource-scope variant" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc masked-negative-missing masked-negative-missing)"
+  expect_fail masked-negative-missing "masked negative must use isolated custom policy" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc masked-negative-wrong-sid masked-negative-wrong-sid)"
+  expect_fail masked-negative-wrong-sid "masked negative attribution is not a covering Deny" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc masked-form-on-unmasked-row masked-form-on-unmasked-row)"
+  expect_fail masked-form-on-unmasked-row "masked negative form is not allowed" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
+  mutated="$(mutate_doc trust-absent-executable trust-absent-executable)"
+  expect_fail trust-absent-executable "trust case must be N/A" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
   mutated="$(mutate_doc kms-string-context kms-string-context)"
   expect_fail kms-string-context "kms:ResourceAliases context is not a stringList fixture" "${child_env[@]}" IAM_MATRIX_DOC="$mutated" "$0"
 
@@ -1052,6 +1288,42 @@ PY_COMMENT_SOURCE
   printf '%s\n' 'decoy = "permissions_boundary_arn = var.permissions_boundary_arn"' \
     >>"$source_root/modules/redis/main.tf"
   expect_fail wiring-quoted-decoy "expected 1 Redis boundary forwarding links, found 0" \
+    "${child_env[@]}" IAM_MATRIX_REPO_ROOT="$source_root" "$0"
+
+  source_root="$fixture_tmp/commented-sid-ignored"
+  make_source_root "$source_root"
+  python3 - "$source_root/bootstrap/roles.tf" <<'PY_COMMENTED_SID'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+anchor = 'data "aws_iam_policy_document" "plan_reader_state" {\n'
+if text.count(anchor) != 1:
+    raise SystemExit("commented-sid-ignored mutation anchor mismatch")
+path.write_text(text.replace(anchor, anchor + '  # sid = "RetiredCase"\n', 1))
+PY_COMMENTED_SID
+  commented_sid_output="$("${child_env[@]}" IAM_MATRIX_REPO_ROOT="$source_root" "$0")"
+  commented_sid_pass="$(grep -m1 '^PASS: IAM matrix source rows' <<<"$commented_sid_output" || true)"
+  if [ -z "$commented_sid_pass" ]; then
+    fail "positive fixture commented-sid-ignored did not report its source-row pass"
+  fi
+  echo "PASS: positive fixture commented-sid-ignored -> $commented_sid_pass"
+
+  source_root="$fixture_tmp/uncommented-extra-sid"
+  make_source_root "$source_root"
+  python3 - "$source_root/bootstrap/roles.tf" <<'PY_UNCOMMENTED_SID'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+anchor = 'data "aws_iam_policy_document" "plan_reader_state" {\n'
+if text.count(anchor) != 1:
+    raise SystemExit("uncommented-extra-sid mutation anchor mismatch")
+path.write_text(text.replace(anchor, anchor + '  sid = "RetiredCase"\n', 1))
+PY_UNCOMMENTED_SID
+  expect_fail uncommented-extra-sid "source Sid missing from matrix" \
     "${child_env[@]}" IAM_MATRIX_REPO_ROOT="$source_root" "$0"
 
   IAM_MATRIX_DOC="$FIXTURES/hygiene-immutable-subject.md" IAM_MATRIX_HYGIENE_ONLY=1 "$0" >/dev/null

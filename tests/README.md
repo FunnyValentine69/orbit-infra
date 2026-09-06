@@ -153,16 +153,23 @@ their prescribed decisions, and exactly one unambiguous `expect <decision>`
 clause in every executable case. It checks same-action
 `resource:nonmatching` cases for every resource-scoped Allow, permits an exact
 `N/A(<reason>)` body only for the documented non-executable shapes (including
-full-type wildcards such as `hostedzone/*`), validates `stringList` handling
-for multivalued KMS aliases, and requires every executable non-boundary
-identity case to use principal simulation with its exact bound-role ARN.
-Boundary cases use custom simulation; live KMS cases name their exact execution
-role ARN. It strips HCL comments before counting only complete, anchored
-boundary assignments, so quoted decoys do not count. Fixture hygiene scans
-regular files plus symlink target strings and rejects links that resolve outside
-the IAM fixture directory. Evidence-label syntax is checked, but the labels are
-recorded P0-3d facts whose truth cannot be validated mechanically. Every
-authored mutation must print the `FAIL:` line for the contract it kills.
+trust `aud`/`sub` absent variants, the provider-level wrong-audience case, and
+full-type wildcards such as `hostedzone/*`), and validates `stringList` handling
+for multivalued KMS aliases. From comment-stripped HCL it derives same-role,
+cross-document Deny Action coverage and requires the exact isolated
+masked-negative form on all and only the resulting 21 negative cases; the
+attributed Sid and document must identify a covering source Deny. Every other
+executable non-boundary identity case uses principal simulation with its exact
+bound-role ARN. Boundary cases use custom simulation; live KMS cases name their
+exact execution role ARN. The same HCL comment stripper protects Sid inventory
+and complete, anchored boundary-assignment counts, so comments and quoted
+decoys do not count. Fixture hygiene scans regular files plus symlink target
+strings and rejects links that resolve outside the IAM fixture directory.
+Evidence-label syntax is checked, but the labels are recorded P0-3d facts whose
+truth cannot be validated mechanically. The `masked-negative-missing`,
+`masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
+`trust-absent-executable`, and `uncommented-extra-sid` mutations must print the
+`FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
 
 After bootstrap has been applied to LocalStack, render and compare plan mode
 through the one hardened render path:
