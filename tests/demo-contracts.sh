@@ -32,51 +32,6 @@ field_value() {
   field_line "$field" "$doc" | sed -E 's/^\| [^|]+ \| (.*) \|$/\1/'
 }
 
-generator_clean() {
-  local root=$1
-  local commit=$2
-  local dirty ignored_file ignored path
-  ignored_file="$tmp_dir/ignored-$RANDOM.bin"
-  (
-    cd "$root"
-    if ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
-      echo "generator commit unreachable; fetch full history" >&2
-      return 1
-    fi
-    # shellcheck disable=SC2086
-    if ! git diff --quiet "$commit" HEAD -- $DEMO_GENERATOR_PATHS; then
-      echo "generator inputs differ from recorded commit" >&2
-      return 1
-    fi
-    # shellcheck disable=SC2086
-    dirty="$(git status --porcelain --untracked-files=all -- $DEMO_GENERATOR_PATHS)"
-    if [ -n "$dirty" ]; then
-      echo "generator tree dirty; commit before recording" >&2
-      return 1
-    fi
-    : > "$ignored_file"
-    # shellcheck disable=SC2086
-    while IFS= read -r -d '' path; do
-      case "$path" in
-        demo/out/*|*/.terraform/*|*/.terraform-localstack/*|*/.terraform-localstack-*/*)
-          continue
-          ;;
-      esac
-      case "$path" in
-        *.tfvars|*.tfvars.json|*.tf|*.tf.json)
-          if [ "$path" != "envs/preview/backend_override.tf" ]; then
-            printf '%s\0' "$path" >> "$ignored_file"
-          fi
-          ;;
-      esac
-    done < <(git ls-files --others --ignored --exclude-standard -z -- $DEMO_GENERATOR_PATHS)
-    if IFS= read -r -d '' ignored < "$ignored_file"; then
-      echo "ignored terraform input present: $ignored" >&2
-      return 1
-    fi
-  )
-}
-
 init_generator_clone() {
   local destination=$1
   local path parent
@@ -328,7 +283,7 @@ else
 fi
 
 provenance_negative_ok=1
-for provenance_case in size sha missing duplicate cidr-mismatch environment-outside; do
+for provenance_case in size sha missing duplicate counts-mismatch cidr-mismatch environment-outside; do
   doc_copy="$tmp_dir/provenance-$provenance_case.md"
   case "$provenance_case" in
     size)
@@ -344,6 +299,10 @@ for provenance_case in size sha missing duplicate cidr-mismatch environment-outs
       ;;
     duplicate)
       awk '{print} /^\| recorder \|/{print}' "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
+      ;;
+    counts-mismatch)
+      sed -E '/^\| plan \/ apply \/ destroy \|/s/Apply complete! Resources: [0-9]+ added/Apply complete! Resources: 1 added/' \
+        "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
       ;;
     cidr-mismatch)
       sed '/^| command |/s#203\.0\.113\.0/24#203.0.113.128/25#' \
@@ -367,7 +326,7 @@ fi
 recorded_commit="$(field_value 'generator commit' "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" | \
   sed -E 's/^`?([0-9a-f]{7}).*/\1/')"
 set +e
-baseline_drift_output="$(generator_clean "$REPO_ROOT" "$recorded_commit" 2>&1)"
+baseline_drift_output="$(generator_clean_check "$REPO_ROOT" "$recorded_commit" 2>&1)"
 baseline_drift_rc=$?
 set -e
 if [ "$baseline_drift_rc" -eq 0 ]; then
@@ -385,7 +344,7 @@ mkdir -p "$positive_clone/demo/out/run-x" \
 printf '%s\n' runtime > "$positive_clone/demo/out/run-x/.started"
 printf '%s\n' runtime > "$positive_clone/envs/preview/.terraform/cache/provider.tf"
 printf '%s\n' runtime > "$positive_clone/modules/network/.terraform/cache/provider.tf"
-if generator_clean "$positive_clone" "$positive_commit" >/dev/null 2>&1; then
+if generator_clean_check "$positive_clone" "$positive_commit" >/dev/null 2>&1; then
   pass_case "generator cleanliness allows runtime output and Terraform caches"
 else
   fail_case "generator cleanliness allows runtime output and Terraform caches"
@@ -422,14 +381,14 @@ for generator_case in committed-record committed-module staged-preview uncommitt
       printf '%s\n' '# ignored input' > "$clone/envs/preview/hidden input.tf"
       ;;
   esac
-  if generator_clean "$clone" "$base_commit" >/dev/null 2>&1; then
+  if generator_clean_check "$clone" "$base_commit" >/dev/null 2>&1; then
     generator_negative_ok=0
   fi
 done
 unreachable_clone="$tmp_dir/generator-unreachable"
 init_generator_clone "$unreachable_clone"
 set +e
-unreachable_output="$(generator_clean "$unreachable_clone" deadbee 2>&1)"
+unreachable_output="$(generator_clean_check "$unreachable_clone" deadbee 2>&1)"
 unreachable_rc=$?
 set -e
 if [ "$unreachable_rc" -eq 0 ] || \
@@ -464,6 +423,8 @@ find "$REPO_ROOT/envs/preview" -maxdepth 1 -type f \
 
 fake_bin="$tmp_dir/fake-bin"
 mkdir -p "$fake_bin"
+# General lifecycle cases model an empty Git result; the real-Git case below
+# exercises the shipped generator predicate against an actual scratch clone.
 for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum; do
   printf '%s\n' '#!/usr/bin/env bash' \
     'set -euo pipefail' \
@@ -488,6 +449,7 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    printf "%s\n" "Destroy complete! Resources: 59 destroyed." > "$RUN/destroy.log"' \
     '    printf "%s\n" 1 > "$RUN/env.ok"' \
     '    printf "%s\n" "localstack | s3 | running" "Plan: 59 to add, 0 to change, 0 to destroy." "PASS: conftest-gate suite" "Apply complete! Resources: 59 added, 0 changed, 0 destroyed." "aws_ecs_cluster.this" "Destroy complete! Resources: 59 destroyed." > "$RUN/demo.txt"' \
+    '    [ "${FAKE_VHS_MODE:-}" != hygiene_path ] || printf "%s\n" /Users/example >> "$RUN/demo.txt"' \
     '    printf "%s\n" GIF > "$RUN/demo.gif"' \
     '    touch -t 203001010000 "$RUN/demo.gif"' \
     '    if [ "${FAKE_VHS_MODE:-}" = stale ]; then touch -t 200001010000 "$RUN/demo.gif"; fi' \
@@ -500,7 +462,10 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    if [ "$1" = -version ]; then echo "ffmpeg version 9.0.1"; exit 0; fi' \
     '    [ "${FAKE_FAIL:-}" != inspect_decode ]' \
     '    ;;' \
-    '  ttyd) echo "ttyd version 1.7.7" ;;' \
+    '  ttyd)' \
+    '    [ "${FAKE_FAIL:-}" != ttyd_empty ] || exit 0' \
+    '    echo "ttyd version 1.7.7"' \
+    '    ;;' \
     '  curl)' \
     '    case "$*" in *-s\ localhost*) echo '\''{"version":"2026.8.1"}'\'' ;; *) : ;; esac' \
     '    ;;' \
@@ -538,8 +503,8 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '  docker|aws) : ;;' \
     '  git)' \
     '    case "$*" in' \
-    '      "status --porcelain --untracked-files=all --"*) : ;;' \
-    '      "ls-files --others --ignored --exclude-standard -z --"*) : ;;' \
+    '      "status --porcelain --untracked-files=all --"*) printf "%s" "${FAKE_GIT_STATUS:-}" ;;' \
+    '      "ls-files --others --ignored --exclude-standard -z --"*) printf "%s" "${FAKE_GIT_IGNORED:-}" ;;' \
     '      "rev-parse --short=7 HEAD") echo abcdef0 ;;' \
     '      *) echo "unexpected fake git call: $*" >&2; exit 2 ;;' \
     '    esac' \
@@ -635,9 +600,61 @@ else
   fail_case "lifecycle boundary direct invocation has zero tool calls" "$boundary_output"
 fi
 
+real_git_bin="$tmp_dir/real-git-bin"
+real_git_source="$tmp_dir/lifecycle-real-git-source"
+real_git_root="$tmp_dir/lifecycle-real-git"
+real_git_repo="$real_git_root/repo"
+real_git_calls="$real_git_root/calls.log"
+mkdir -p "$real_git_bin" "$real_git_root"
+for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws shasum; do
+  ln -s "$fake_bin/$tool" "$real_git_bin/$tool"
+done
+cp -R "$lifecycle_template" "$real_git_source"
+(
+  cd "$real_git_source"
+  git init -q
+  git add -A
+  git -c user.name=t -c user.email=t@example.com commit -q -m x
+)
+git clone -q "$real_git_source" "$real_git_repo"
+printf '%s\n' mutation > "$real_git_repo/demo/untracked.txt"
+: > "$real_git_calls"
+real_git_before="$(shasum -a 256 "$real_git_repo/docs/assets/demo.gif" \
+  "$real_git_repo/docs/assets/DEMO_PROVENANCE.md")"
+set +e
+real_git_output="$(
+  cd "$real_git_repo"
+  PATH="$real_git_bin:$PATH" \
+  HOME="$real_git_root/home" \
+  TMPDIR="$real_git_root" \
+  TERM=xterm \
+  OPERATOR_CIDR=203.0.113.0/24 \
+    bash -p demo/env.sh env \
+      FAKE_CALL_LOG="$real_git_calls" \
+      FAKE_FAIL= \
+      FAKE_VHS_MODE=normal \
+      FAKE_STATE_MODE=empty \
+      FAKE_DESTROY_MARKER="$real_git_root/destroyed" \
+      FAKE_LIVE_MARKER="$real_git_root/live" \
+      bash demo/record.sh 2>&1
+)"
+real_git_rc=$?
+set -e
+real_git_after="$(shasum -a 256 "$real_git_repo/docs/assets/demo.gif" \
+  "$real_git_repo/docs/assets/DEMO_PROVENANCE.md")"
+if [ "$real_git_rc" -ne 0 ] && [ "$real_git_before" = "$real_git_after" ] && \
+   grep -Fq 'generator tree dirty; commit before recording' <<< "$real_git_output" && \
+   ! grep -Eq '^(make|terraform) ' "$real_git_calls"; then
+  pass_case "lifecycle real git rejects untracked generator before make or terraform"
+else
+  fail_case "lifecycle real git rejects untracked generator before make or terraform" \
+    "$real_git_output"
+fi
+
 lifecycle_failures_ok=1
 for lifecycle_case in \
   'preflight-leftover||normal|leftover||none|environment demo already has state' \
+  'preflight-versions|ttyd_empty|normal|empty||none|tool version capture incomplete' \
   'preflight-render-unexpected||normal|empty||stale-destination|execution root differs from envs/preview: stale.tfstate.tf' \
   'preflight-render-missing||normal|empty||missing-source|execution root differs from envs/preview: migration.tfstate.tf' \
   'record|record|normal|empty||none|vhs failed' \
@@ -645,6 +662,7 @@ for lifecycle_case in \
   'assert-rc-missing||rc_missing|empty||none|step rc set differs from tape markers' \
   'inspect-stale||stale|empty||none|demo.gif mtime predates run start' \
   'inspect-duration||normal|empty||none|demo.gif duration' \
+  'inspect-hygiene||hygiene_path|empty||none|demo.txt contains environment-specific text (path/access-key/email pattern); not publishing' \
   'render-provenance||normal|empty||missing-field|required provenance row artifact sha256 count was 0' \
   'teardown-destroy|teardown_destroy|normal|empty||none|teardown failed; not publishing' \
   'teardown-state||normal|teardown_nonempty||none|teardown failed; not publishing' \

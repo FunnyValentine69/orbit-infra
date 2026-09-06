@@ -77,34 +77,7 @@ state_list() {
 }
 
 assert_generator_clean() {
-  local dirty ignored_list rejected_list path rejected
-  # shellcheck disable=SC2086
-  dirty=$(git status --porcelain --untracked-files=all -- $DEMO_GENERATOR_PATHS)
-  [ -z "$dirty" ] || die "generator tree dirty; commit before recording"
-
-  ignored_list="$RUN/ignored-generator-paths.bin"
-  rejected_list="$RUN/ignored-terraform-inputs.bin"
-  # shellcheck disable=SC2086
-  git ls-files --others --ignored --exclude-standard -z -- \
-    $DEMO_GENERATOR_PATHS > "$ignored_list" || die "could not inspect ignored generator inputs"
-  : > "$rejected_list"
-  while IFS= read -r -d '' path; do
-    case "$path" in
-      demo/out/*|*/.terraform/*|*/.terraform-localstack/*|*/.terraform-localstack-*/*)
-        continue
-        ;;
-    esac
-    case "$path" in
-      *.tfvars|*.tfvars.json|*.tf|*.tf.json)
-        if [ "$path" != "envs/preview/backend_override.tf" ]; then
-          printf '%s\0' "$path" >> "$rejected_list"
-        fi
-        ;;
-    esac
-  done < "$ignored_list"
-  if IFS= read -r -d '' rejected < "$rejected_list"; then
-    die "ignored terraform input present: $rejected"
-  fi
+  generator_clean_check . || die "generator tree dirty; commit before recording"
 }
 
 terraform_input_name() {
@@ -176,6 +149,8 @@ preflight() {
     terraform version | head -1
     curl -s localhost:4566/_localstack/health | jq -r .version
   } > "$RUN/versions.txt" || die "could not record tool versions"
+  [ "$(grep -c . "$RUN/versions.txt")" -eq 5 ] || \
+    die "tool version capture incomplete"
   cat "$RUN/versions.txt" || die "could not print tool versions"
   phase_ok
 }
