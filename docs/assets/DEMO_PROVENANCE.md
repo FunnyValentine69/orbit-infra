@@ -6,13 +6,13 @@
 | --- | --- |
 | recorded_from | LocalStack 2026.8.1, Terraform 1.16.0 |
 | recorded_on | 2026-09-06 |
-| generator commit | fa554ad (the tree at this commit holds every path in DEMO_GENERATOR_PATHS) |
+| generator commit | 4d7a603 (the tree at this commit holds every path in DEMO_GENERATOR_PATHS) |
 | recorder | vhs 0.11.0, ttyd 1.7.7-unknown, ffmpeg 9.0.1 |
 | command | `OPERATOR_CIDR=203.0.113.0/24 make demo` from the repository root |
 | environment | ENV_ID=demo, TARGET=localstack, workspace default, CLI config empty, operator CIDR 203.0.113.0/24 (TEST-NET-3, /24 to /32) |
 | plan / apply / destroy | `Plan: 59 to add, 0 to change, 0 to destroy.`; `Apply complete! Resources: 59 added, 0 changed, 0 destroyed.`; `Destroy complete! Resources: 59 destroyed.` |
-| artifact | 229519 bytes, 30.360000 s, 759 frames |
-| artifact sha256 | d9b7c495e560a9a9bdd3708371ed00934043c6ce63c155867a82e37c903b5fe0 |
+| artifact | 227644 bytes, 29.840000 s, 746 frames |
+| artifact sha256 | 36a5b1fc17985e49fdcc20d07f90b3ad15170f33722fd832493f4f28bedc4337 |
 
 ## What the wrapper asserts before moving the GIF into place
 
@@ -25,8 +25,8 @@ After preflight, every success or failure path invokes the run-once teardown and
 ## Hygiene review (what was actually checked)
 
 - Text dump (`demo.txt`, every shown frame's text): grep for non-placeholder 12-digit account identifiers, IPv4 literals outside the documented TEST-NET-3, private, loopback and unspecified allowances, absolute home paths, the local username, the hostname, `@`, and `AKIA`: no matches.
-- Frames: `ffmpeg` decoded all 759 frames of the artifact row (passthrough decode exit 0); 276 unique frames by MD5.
-- OCR: tesseract 5.5.3 over every one of the 276 unique frames, same grep set: no matches outside 203.0.113.x and localhost.
+- Frames: `ffmpeg` decoded all 746 frames of the artifact row (passthrough decode exit 0); 264 unique frames by MD5.
+- OCR: tesseract 5.5.3 over every one of the unique frames of the reviewed recording, same grep set: no matches outside 203.0.113.x and localhost; the re-recording after the review fix changed no shown command, so the text-dump grep and decode were repeated and the OCR pass was not.
 - Viewed: 8 frames viewed by the reviewer (every section boundary plus a spread sample) and one frame per section by the orchestrator.
 
 Known limits: the boundary does not defend against an actively hostile host, modified binaries or loader injection. Concurrent `make demo` runs are unsupported. `SIGKILL`, host crashes, and a failure of the second publish rename can leave a mixed asset pair; the final Git status and provenance contract expose that state, and a rerun repairs it. Linux is unsupported beyond the portable freshness and byte-count checks. `HOME` passes through for vhs and Docker, so provider sources implied by user-level CLI or filesystem mirror configuration are not inventoried beyond the pinned empty Terraform CLI configuration file. Any change anywhere in `DEMO_GENERATOR_PATHS` deliberately requires a new recording because infrastructure changes can alter the visible resource count.
