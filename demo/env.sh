@@ -18,7 +18,8 @@ elif [ "$#" -ne 1 ] || [ "$1" != env ]; then
   exit 1
 fi
 
-first_makeflag=${MAKEFLAGS%%[[:space:]]*}
+first_makeflag=${MAKEFLAGS-}
+first_makeflag=${first_makeflag%%[[:space:]]*}
 if [[ "$first_makeflag" =~ ^-?[[:alpha:]]*[ikntq][[:alpha:]]*$ ]]; then
   echo "demo: refusing MAKEFLAGS='${MAKEFLAGS:-}' (-i/-k/-n/-t/-q); run make demo directly" >&2
   exit 1

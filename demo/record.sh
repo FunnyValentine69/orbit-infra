@@ -72,9 +72,13 @@ state_list() {
     rc=0
   else
     rc=$?
+    # Terraform's canonical diagnostic for an absent state is
+    # "No state file was found!" followed by an explanatory paragraph;
+    # accept it only with empty stdout and no other error line.
     if [ -z "$out" ] && awk '
-      NF { count++; if ($0 != "No state file was found") bad=1 }
-      END { exit (bad || count != 1) }
+      NF && first == "" { first = $0; next }
+      NF && ($0 ~ /^Error/ || $0 ~ /Error:/) { bad = 1 }
+      END { exit (bad || first !~ /^No state file was found!?$/) }
     ' "$err"; then
       rc=0
     else

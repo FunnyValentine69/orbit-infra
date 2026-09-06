@@ -537,7 +537,7 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '  curl)' \
     '    case "$*" in *-s\ localhost*) echo '\''{"version":"5.5.5-fake"}'\'' ;; *) : ;; esac' \
     '    ;;' \
-    '  jq) echo "5.5.5-fake" ;;' \
+    '  jq) cat >/dev/null; echo "5.5.5-fake" ;;' \
     '  make)' \
     '    case " $* " in' \
     '      *" render-localstack-backend "*)' \
@@ -563,7 +563,7 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '          leftover) echo aws_leftover.example ;;' \
     '          teardown_nonempty) [ ! -e .fake-destroyed ] || echo aws_leftover.example ;;' \
     '          post_apply) [ ! -e .fake-live ] || { [ -e .fake-destroyed ] || echo aws_live.example; } ;;' \
-    '          nostate) echo "No state file was found" >&2; exit 1 ;;' \
+    '          nostate) printf "%s\\n" "No state file was found!" "" "State management commands require a state file. Run this command" "in a directory where Terraform has been run or use the -state flag" "to point the command to a specific state location." >&2; exit 1 ;;' \
     '          nostate-plus-error) printf "%s\n" "No state file was found" "Error: backend unavailable" >&2; exit 1 ;;' \
     '          nostate-plus-stdout) echo "aws_live.example"; echo "No state file was found" >&2; exit 1 ;;' \
     '        esac' \
