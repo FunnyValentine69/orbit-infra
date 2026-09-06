@@ -76,6 +76,41 @@ if [ ! -f "$override_file" ] || ! cmp -s "$sentinel" "$override_file"; then
 fi
 rm -f "$override_file"
 
+dangling_target="../operator-owned-missing-backend.tf"
+ln -s "$dangling_target" "$override_file"
+if [ -e "$override_file" ] || [ ! -L "$override_file" ]; then
+  echo "policy-size dangling-symlink fixture must start dangling" >&2
+  exit 1
+fi
+: > "$terraform_call_log"
+set +e
+dangling_output="$(
+  PATH="$tmp_dir/bin:$PATH" \
+    FAKE_TERRAFORM_CALL_LOG="$terraform_call_log" \
+    FAKE_TERRAFORM_FAIL_STAGE=none \
+    FAKE_TERRAFORM_PLAN_JSON="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+    POLICY_SIZE_TF_DATA_DIR="$tmp_dir/policy-size-tfdata" \
+    "$isolated_repo/bootstrap/policy-size-check.sh" 2>&1
+)"
+dangling_rc=$?
+set -e
+if [ "$dangling_rc" -eq 0 ] || \
+   ! grep -Fq 'bootstrap/backend_override.tf already exists; refusing to overwrite or remove it' <<< "$dangling_output"; then
+  echo "policy-size must refuse a dangling backend override symlink immediately: $dangling_output" >&2
+  exit 1
+fi
+if [ -s "$terraform_call_log" ]; then
+  echo "policy-size must make zero Terraform calls when a dangling override symlink exists" >&2
+  exit 1
+fi
+if [ -e "$override_file" ] || [ ! -L "$override_file" ] || \
+   [ "$(readlink "$override_file")" != "$dangling_target" ]; then
+  echo "policy-size must leave the dangling override symlink present with its target unchanged" >&2
+  exit 1
+fi
+echo "PASS: sentinel dangling-backend-override -> $(grep -m1 '^FAIL:' <<< "$dangling_output")"
+rm -f "$override_file"
+
 # Group 2: with no existing override, the real script and cleanup run; only
 # Terraform is replaced so each path is deterministic without LocalStack.
 for failure_case in \

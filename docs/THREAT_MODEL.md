@@ -86,6 +86,7 @@ The boundaries are the internet-facing ALB, GitHub-to-AWS federation, the ALB ha
 |---|---|---|---|
 | P0-3b | The paid-plan prerequisite has not been completed. | Real-AWS bootstrap, image publication, and promotion depend on the account decision. | [`../TODO.md`](../TODO.md) |
 | P0-3d | Real-AWS OIDC, IAM, KMS, and ECR behavior remains unvalidated although the IAM matrix is authored. | The promotion gate has not executed the trust, ten permission-document, task-boundary, KMS, and read-only spot-check cases in [`iam-matrix.md`](iam-matrix.md). | [`../TODO.md`](../TODO.md) |
+| P5-31 | A fork PR can carry field-level IAM drift until a same-repository run. | IAM matrix source mode is Sid-keyed, while exact Action, Resource, Condition, trust-body, and KMS-principal comparison runs only in the same-repository `plan-localstack` job. | [`../TODO.md`](../TODO.md) |
 | P3-2b | The placeholder image's Python dependencies are version-pinned without hashes, so an attestation can match the repository commit while the resolved distributions differ. | Hash pinning needs pip-tools and is not done. | [`../TODO.md`](../TODO.md) |
 | P3-3b | Deployable images have not been pushed and signed. | Publication waits on P0-3b. | [`../TODO.md`](../TODO.md) |
 | P5-1 | Scheduled drift detection is absent. | The drift workflow and deliberate-change acceptance test have not started. | [`../TODO.md`](../TODO.md) |

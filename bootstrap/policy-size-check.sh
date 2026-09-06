@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.." || exit 1
 MANAGED_LIMIT=6144
 INLINE_AGGREGATE_LIMIT=10240
 
-if [ -e bootstrap/backend_override.tf ]; then
+if [ -e bootstrap/backend_override.tf ] || [ -L bootstrap/backend_override.tf ]; then
   echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2
   exit 1
 fi

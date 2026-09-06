@@ -147,12 +147,16 @@ Run source mode without LocalStack:
 bash tests/iam-matrix-contracts.sh
 ```
 
-Source mode requires exactly 85 statement rows and 13 binding rows, verifies
-source Sid and document order, all seven condition-operator truth tables,
-per-condition variants, Deny protected-resource cases, evidence labels, the
-complete preview-to-wrapper-to-service boundary chain, the Makefile target,
-and public-repository hygiene. It also runs every authored negative fixture;
-each mutation must print the `FAIL:` line for the contract it kills.
+Source mode requires exactly 85 statement rows and 13 binding rows. It verifies
+source Sid and document order, all seven condition-operator truth tables and
+their prescribed decisions, same-action `resource:nonmatching` cases for every
+resource-scoped Allow, `stringList` handling for multivalued KMS aliases, exact
+bound-role ARNs, the permitted `N/A` shapes, and Deny protected-resource cases.
+It strips HCL comments before checking the complete boundary chain and scans
+the matrix plus every IAM fixture for public-repository hygiene. Evidence-label
+syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
+validated mechanically. Every authored mutation must print the `FAIL:` line
+for the contract it kills.
 
 After bootstrap has been applied to LocalStack, render and compare plan mode
 through the one hardened render path:
@@ -166,18 +170,24 @@ For an already-rendered post-apply plan, run
 Effect, Principal or NotPrincipal, Action or NotAction, Resource or
 NotResource, Condition, all bindings, and all three trust documents exactly.
 String and array policy fields canonicalise identically. A pre-apply plan whose
-trust policies are unknown fails with the apply-first diagnostic.
+trust policies are unknown fails with the apply-first diagnostic. This exact
+comparison runs in CI only for the same-repository `plan-localstack` job; source
+mode remains Sid-keyed, so P5-31 records the fork-PR field-drift window.
 
 The slim plan and hygiene inputs in `tests/fixtures/iam-matrix/` are `authored`;
-their sidecar is `tests/fixtures/iam-matrix/PROVENANCE.md`. The email-address
-and second-account-id cases store safe fragments and assemble the rejected
-value only in the temporary test directory.
+their sidecar is `tests/fixtures/iam-matrix/PROVENANCE.md`. The condition-key
+reordering case asserts byte-identical inventory output. The email-address and
+second-account-id cases store safe fragments; the latter also injects the
+assembled ID into a temporary copy of `base-plan.json` to prove fixture-tree
+scanning without retaining that rejected value.
 
 `tests/policy-size-contracts.sh` has two groups, both running from a per-run
 temporary copy of the policy-size script and bootstrap Terraform files so
 concurrent suites never write to or delete the repository override. The
-existing-override group requires immediate refusal, zero Terraform invocations,
-and a present, byte-identical sentinel. The no-existing-override group exercises
+existing-override group covers a regular file and a dangling symlink; both
+require immediate refusal and zero Terraform invocations, while the regular
+sentinel remains byte-identical and the link remains present with its target
+string unchanged. The no-existing-override group exercises
 init, plan, and show failures plus success, requires cleanup after every path,
 and verifies that `POLICY_SIZE_PLAN_JSON_OUT` receives the rendered plan.
 

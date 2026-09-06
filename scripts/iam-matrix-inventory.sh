@@ -53,7 +53,13 @@ fi
 
 # The single-quoted jq program intentionally prevents shell interpolation.
 # shellcheck disable=SC2016
-canonical_statements='def array: if type == "array" then sort else [.] end;
+canonical_statements='def sortkeys:
+    if type == "object" then
+      to_entries | sort_by(.key) | map({key, value: (.value | sortkeys)}) | from_entries
+    elif type == "array" then map(sortkeys)
+    else .
+    end;
+  def array: if type == "array" then sort else [.] end;
   def named_array($name): {($name): .[$name] | array};
   def principal:
     if has("Principal") then
@@ -84,10 +90,10 @@ canonical_statements='def array: if type == "array" then sort else [.] end;
   | [$document,
      ($key_prefix + ($statement.Sid // (.key | tostring))),
      $statement.Effect,
-     ($statement | principal | if type == "string" then . else tojson end),
+     ($statement | principal | if type == "string" then . else sortkeys | tojson end),
      ($statement | action | tojson),
      ($statement | resource | if type == "string" then . else tojson end),
-     ($statement | condition | if type == "string" then . else tojson end)]
+     ($statement | condition | if type == "string" then . else sortkeys | tojson end)]
   | @tsv'
 
 : >"$tmp_dir/statements.tsv"
