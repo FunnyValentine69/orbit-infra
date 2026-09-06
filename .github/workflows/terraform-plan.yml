@@ -187,7 +187,11 @@ jobs:
           AWS_SECRET_ACCESS_KEY: test
           AWS_DEFAULT_REGION: us-east-1
           AWS_EC2_METADATA_DISABLED: 'true'
+          POLICY_SIZE_PLAN_JSON_OUT: /tmp/bootstrap-plan-post-apply.json
         run: bootstrap/policy-size-check.sh
+
+      - name: Check IAM matrix against post-apply plan
+        run: bash tests/iam-matrix-contracts.sh /tmp/bootstrap-plan-post-apply.json
 
       # CI builds this placeholder image for the runner's native arch
       # (amd64); local development on Apple Silicon builds arm64. Both

@@ -1,0 +1,172 @@
+{
+  "format_version": "1.2",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_iam_policy.deployer_data",
+          "type": "aws_iam_policy",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":\"ecr:GetAuthorizationToken\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcrVerificationAuth\"},{\"Action\":[\"ecr:GetDownloadUrlForLayer\",\"ecr:BatchGetImage\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/placeholder\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-worker\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-clickhouse\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-api\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/mirror/redis\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/mirror/clickhouse\"],\"Sid\":\"EcrVerificationPull\"},{\"Action\":\"kms:GetPublicKey\",\"Condition\":{\"ForAnyValue:StringEquals\":{\"kms:ResourceAliases\":\"alias/orbit-infra-79s5rw-signing\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:kms:us-east-1:000000000000:key/*\",\"Sid\":\"SigningPublicKeyRead\"},{\"Action\":\"logs:DescribeLogGroups\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"LogsDescribeStarOnly\"},{\"Action\":[\"logs:TagResource\",\"logs:CreateLogGroup\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:logs:*:000000000000:log-group:/orbit/*\",\"Sid\":\"LogsCreateWithTag\"},{\"Action\":\"logs:TagResource\",\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:logs:*:000000000000:log-group:/orbit/*\",\"Sid\":\"LogsTagResourceExisting\"},{\"Action\":[\"logs:UntagResource\",\"logs:PutRetentionPolicy\",\"logs:ListTagsForResource\",\"logs:DeleteLogGroup\"],\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:logs:*:000000000000:log-group:/orbit/*\",\"Sid\":\"LogsModifyDeleteWithResourceTag\"},{\"Action\":[\"secretsmanager:TagResource\",\"secretsmanager:CreateSecret\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:*:000000000000:secret:orbit-infra-79s5rw-*\",\"Sid\":\"ClickhouseSecretCreateWithTag\"},{\"Action\":\"secretsmanager:TagResource\",\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:*:000000000000:secret:orbit-infra-79s5rw-*\",\"Sid\":\"ClickhouseSecretTagResourceExisting\"},{\"Action\":[\"secretsmanager:UntagResource\",\"secretsmanager:PutSecretValue\",\"secretsmanager:GetSecretValue\",\"secretsmanager:GetResourcePolicy\",\"secretsmanager:DescribeSecret\",\"secretsmanager:DeleteSecret\"],\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:*:000000000000:secret:orbit-infra-79s5rw-*\",\"Sid\":\"ClickhouseSecretReadModifyWithResourceTag\"},{\"Action\":[\"sns:TagResource\",\"sns:CreateTopic\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sns:us-east-1:000000000000:orbit-infra-79s5rw-*\",\"Sid\":\"SnsCreateWithTag\"},{\"Action\":[\"sns:UntagResource\",\"sns:Subscribe\",\"sns:SetTopicAttributes\",\"sns:ListTagsForResource\",\"sns:ListSubscriptionsByTopic\",\"sns:GetTopicAttributes\",\"sns:DeleteTopic\"],\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sns:us-east-1:000000000000:orbit-infra-79s5rw-*\",\"Sid\":\"SnsRestWithResourceTag\"},{\"Action\":[\"sns:Unsubscribe\",\"sns:SetSubscriptionAttributes\",\"sns:GetSubscriptionAttributes\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:sns:us-east-1:000000000000:orbit-infra-79s5rw-*:*\",\"Sid\":\"SnsSubscriptionManage\"},{\"Action\":[\"cloudwatch:TagResource\",\"cloudwatch:PutMetricAlarm\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:cloudwatch:us-east-1:000000000000:alarm:orbit-infra-79s5rw-*\",\"Sid\":\"CloudwatchAlarmCreateWithTag\"},{\"Action\":[\"cloudwatch:UntagResource\",\"cloudwatch:ListTagsForResource\",\"cloudwatch:DescribeAlarms\",\"cloudwatch:DeleteAlarms\"],\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:cloudwatch:us-east-1:000000000000:alarm:orbit-infra-79s5rw-*\",\"Sid\":\"CloudwatchAlarmRestWithResourceTag\"},{\"Action\":\"tag:GetResources\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"TagDiscovery\"},{\"Action\":[\"s3:ListBucket\",\"s3:GetReplicationConfiguration\",\"s3:GetLifecycleConfiguration\",\"s3:GetEncryptionConfiguration\",\"s3:GetBucketWebsite\",\"s3:GetBucketVersioning\",\"s3:GetBucketTagging\",\"s3:GetBucketRequestPayment\",\"s3:GetBucketPublicAccessBlock\",\"s3:GetBucketPolicyStatus\",\"s3:GetBucketPolicy\",\"s3:GetBucketOwnershipControls\",\"s3:GetBucketObjectLockConfiguration\",\"s3:GetBucketLogging\",\"s3:GetBucketLocation\",\"s3:GetBucketCORS\",\"s3:GetBucketAcl\",\"s3:GetAccelerateConfiguration\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::orbit-infra-79s5rw-*\",\"Sid\":\"S3BucketDescribeReads\"},{\"Action\":[\"s3:PutObject\",\"s3:PutLifecycleConfiguration\",\"s3:PutEncryptionConfiguration\",\"s3:PutBucketVersioning\",\"s3:PutBucketTagging\",\"s3:PutBucketPublicAccessBlock\",\"s3:PutBucketPolicy\",\"s3:PutBucketOwnershipControls\",\"s3:ListBucketVersions\",\"s3:ListBucketMultipartUploads\",\"s3:ListBucket\",\"s3:GetObject\",\"s3:GetLifecycleConfiguration\",\"s3:GetEncryptionConfiguration\",\"s3:GetBucketVersioning\",\"s3:GetBucketTagging\",\"s3:GetBucketPublicAccessBlock\",\"s3:GetBucketPolicy\",\"s3:GetBucketOwnershipControls\",\"s3:DeleteObjectVersion\",\"s3:DeleteObject\",\"s3:DeleteBucketPublicAccessBlock\",\"s3:DeleteBucketPolicy\",\"s3:DeleteBucketOwnershipControls\",\"s3:DeleteBucket\",\"s3:CreateBucket\",\"s3:AbortMultipartUpload\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:s3:::orbit-infra-79s5rw-*-data/*\",\"arn:aws:s3:::orbit-infra-79s5rw-*-data\"],\"Sid\":\"EnvDataBucketLifecycle\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_iam_policy.deployer_ec2",
+          "type": "aws_iam_policy",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":[\"ec2:DescribeVpcs\",\"ec2:DescribeVpcEndpoints\",\"ec2:DescribeVpcAttribute\",\"ec2:DescribeTags\",\"ec2:DescribeSubnets\",\"ec2:DescribeSecurityGroups\",\"ec2:DescribeSecurityGroupRules\",\"ec2:DescribeRouteTables\",\"ec2:DescribeRegions\",\"ec2:DescribeNetworkInterfaces\",\"ec2:DescribeInternetGateways\",\"ec2:DescribeAvailabilityZones\"],\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Ec2DescribeStarOnly\"},{\"Action\":[\"ec2:CreateVpcEndpoint\",\"ec2:CreateVpc\",\"ec2:CreateSubnet\",\"ec2:CreateSecurityGroup\",\"ec2:CreateRouteTable\",\"ec2:CreateInternetGateway\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Ec2CreateWithTag\"},{\"Action\":\"ec2:CreateTags\",\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\",\"ec2:CreateAction\":[\"CreateVpc\",\"CreateSubnet\",\"CreateSecurityGroup\",\"CreateRouteTable\",\"CreateInternetGateway\",\"CreateVpcEndpoint\",\"AuthorizeSecurityGroupIngress\",\"AuthorizeSecurityGroupEgress\"]}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Ec2CreateTagsForCreateActions\"},{\"Action\":[\"ec2:AuthorizeSecurityGroupIngress\",\"ec2:AuthorizeSecurityGroupEgress\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Ec2SecurityGroupRuleCreateWithTag\"},{\"Action\":[\"ec2:RevokeSecurityGroupIngress\",\"ec2:RevokeSecurityGroupEgress\",\"ec2:ReplaceRouteTableAssociation\",\"ec2:ReplaceRoute\",\"ec2:ModifyVpcEndpoint\",\"ec2:ModifyVpcAttribute\",\"ec2:ModifySubnetAttribute\",\"ec2:ModifySecurityGroupRules\",\"ec2:DisassociateRouteTable\",\"ec2:DetachInternetGateway\",\"ec2:DeleteVpcEndpoints\",\"ec2:DeleteVpc\",\"ec2:DeleteSubnet\",\"ec2:DeleteSecurityGroup\",\"ec2:DeleteRouteTable\",\"ec2:DeleteRoute\",\"ec2:DeleteInternetGateway\",\"ec2:CreateRoute\",\"ec2:AuthorizeSecurityGroupIngress\",\"ec2:AuthorizeSecurityGroupEgress\",\"ec2:AttachInternetGateway\",\"ec2:AssociateRouteTable\"],\"Condition\":{\"StringEquals\":{\"ec2:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Ec2ModifyDeleteWithResourceTag\"},{\"Action\":\"ec2:DeleteTags\",\"Condition\":{\"StringEquals\":{\"ec2:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Ec2DeleteTags\"},{\"Action\":\"ec2:CreateTags\",\"Condition\":{\"StringEquals\":{\"ec2:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Ec2CreateTagsForResourceTag\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_iam_policy.deployer_elb_ecs",
+          "type": "aws_iam_policy",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":\"tag:GetResources\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"TagInventoryStarOnly\"},{\"Action\":[\"elasticloadbalancing:DescribeTargetGroups\",\"elasticloadbalancing:DescribeTargetGroupAttributes\",\"elasticloadbalancing:DescribeTags\",\"elasticloadbalancing:DescribeLoadBalancers\",\"elasticloadbalancing:DescribeLoadBalancerAttributes\",\"elasticloadbalancing:DescribeListeners\",\"elasticloadbalancing:DescribeListenerAttributes\"],\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ElbDescribeStarOnly\"},{\"Action\":[\"elasticloadbalancing:CreateTargetGroup\",\"elasticloadbalancing:CreateLoadBalancer\",\"elasticloadbalancing:CreateListener\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ElbCreateWithTag\"},{\"Action\":[\"elasticloadbalancing:RegisterTargets\",\"elasticloadbalancing:ModifyTargetGroupAttributes\",\"elasticloadbalancing:ModifyTargetGroup\",\"elasticloadbalancing:ModifyLoadBalancerAttributes\",\"elasticloadbalancing:ModifyListener\",\"elasticloadbalancing:DeregisterTargets\",\"elasticloadbalancing:DeleteTargetGroup\",\"elasticloadbalancing:DeleteLoadBalancer\",\"elasticloadbalancing:DeleteListener\"],\"Condition\":{\"StringEquals\":{\"elasticloadbalancing:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ElbModifyDeleteWithResourceTag\"},{\"Action\":\"elasticloadbalancing:AddTags\",\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\",\"elasticloadbalancing:CreateAction\":[\"CreateLoadBalancer\",\"CreateTargetGroup\",\"CreateListener\"]}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ElbAddTags\"},{\"Action\":\"elasticloadbalancing:RemoveTags\",\"Condition\":{\"StringEquals\":{\"elasticloadbalancing:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ElbRemoveTags\"},{\"Action\":\"elasticloadbalancing:AddTags\",\"Condition\":{\"StringEquals\":{\"elasticloadbalancing:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ElbAddTagsForResourceTag\"},{\"Action\":\"elasticloadbalancing:DescribeTargetHealth\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ElbDescribeTargetHealth\"},{\"Action\":[\"ecs:DescribeTaskDefinition\",\"ecs:DeregisterTaskDefinition\"],\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsStarOnly\"},{\"Action\":[\"ecs:RegisterTaskDefinition\",\"ecs:CreateService\",\"ecs:CreateCluster\"],\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsCreateWithTag\"},{\"Action\":[\"ecs:UpdateService\",\"ecs:DescribeServices\",\"ecs:DescribeClusters\",\"ecs:DeleteTaskDefinitions\",\"ecs:DeleteService\",\"ecs:DeleteCluster\"],\"Condition\":{\"StringEquals\":{\"ecs:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsModifyDeleteDescribeWithResourceTag\"},{\"Action\":\"ecs:TagResource\",\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\",\"ecs:CreateAction\":[\"CreateCluster\",\"CreateService\",\"RegisterTaskDefinition\"]}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsTagResource\"},{\"Action\":\"ecs:TagResource\",\"Condition\":{\"StringEquals\":{\"ecs:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsTagResourceExisting\"},{\"Action\":[\"ecs:UntagResource\",\"ecs:ListTagsForResource\"],\"Condition\":{\"StringEquals\":{\"ecs:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsUntagAndListTags\"},{\"Action\":[\"ecs:ListTaskDefinitions\",\"ecs:ListServices\"],\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsUntabledActions\"},{\"Action\":[\"ecs:ListTasks\",\"ecs:DescribeTasks\"],\"Condition\":{\"ArnLike\":{\"ecs:cluster\":\"arn:aws:ecs:*:000000000000:cluster/orbit-infra-79s5rw-*\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsListDescribeTasksForProjectClusters\"},{\"Action\":[\"servicediscovery:ListTagsForResource\",\"servicediscovery:ListServices\",\"servicediscovery:ListNamespaces\",\"servicediscovery:GetOperation\"],\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ServiceDiscoveryStarOnlyNoCondition\"},{\"Action\":\"servicediscovery:CreatePrivateDnsNamespace\",\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ServiceDiscoveryCreateNamespaceWithTag\"},{\"Action\":\"servicediscovery:CreateService\",\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ServiceDiscoveryCreateServiceWithTag\"},{\"Action\":[\"servicediscovery:UpdateService\",\"servicediscovery:GetService\",\"servicediscovery:GetNamespace\",\"servicediscovery:DeleteService\",\"servicediscovery:DeleteNamespace\"],\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ServiceDiscoveryReadDeleteUpdateWithResourceTag\"},{\"Action\":\"servicediscovery:TagResource\",\"Condition\":{\"StringEquals\":{\"aws:RequestTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ServiceDiscoveryTagResource\"},{\"Action\":\"servicediscovery:TagResource\",\"Condition\":{\"StringEquals\":{\"aws:ResourceTag/Project\":\"orbit-infra\"}},\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ServiceDiscoveryTagResourceExisting\"},{\"Action\":\"servicediscovery:UntagResource\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"ServiceDiscoveryUntagResource\"},{\"Action\":[\"route53:ListHostedZonesByName\",\"route53:CreateHostedZone\"],\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"Route53HostedZoneStarOnly\"},{\"Action\":\"route53:GetHostedZone\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:route53:::hostedzone/*\",\"Sid\":\"Route53HostedZoneRead\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_iam_policy.deployer_guard",
+          "type": "aws_iam_policy",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":[\"iam:UntagRole\",\"iam:TagRole\",\"iam:PutRolePolicy\",\"iam:PutRolePermissionsBoundary\",\"iam:PassRole\",\"iam:DetachRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:DeleteRolePermissionsBoundary\",\"iam:DeleteRole\",\"iam:CreateRole\",\"iam:AttachRolePolicy\"],\"Effect\":\"Deny\",\"Resource\":[\"arn:aws:iam::000000000000:role/orbit-infra-79s5rw-publisher\",\"arn:aws:iam::000000000000:role/orbit-infra-79s5rw-plan-reader\",\"arn:aws:iam::000000000000:role/orbit-infra-79s5rw-deployer\"],\"Sid\":\"DenyMutatingOwnControlRoles\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_iam_policy.deployer_iam",
+          "type": "aws_iam_policy",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":\"iam:CreateRole\",\"Condition\":{\"StringEquals\":{\"iam:PermissionsBoundary\":\"arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-task-boundary\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/*orbit-infra-79s5rw*\",\"Sid\":\"EnvServiceRoleCreateWithBoundary\"},{\"Action\":\"iam:AttachRolePolicy\",\"Condition\":{\"StringEquals\":{\"iam:PermissionsBoundary\":\"arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-task-boundary\",\"iam:PolicyARN\":\"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/*orbit-infra-79s5rw*\",\"Sid\":\"EnvServiceRoleAttachPolicy\"},{\"Action\":\"iam:PutRolePolicy\",\"Condition\":{\"StringEquals\":{\"iam:PermissionsBoundary\":\"arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-task-boundary\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/*orbit-infra-79s5rw*\",\"Sid\":\"EnvServiceRolePutPolicy\"},{\"Action\":\"iam:PutRolePermissionsBoundary\",\"Condition\":{\"StringEquals\":{\"iam:PermissionsBoundary\":\"arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-task-boundary\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/*orbit-infra-79s5rw*\",\"Sid\":\"EnvServiceRolePermissionsBoundarySet\"},{\"Action\":[\"iam:UntagRole\",\"iam:TagRole\",\"iam:ListRolePolicies\",\"iam:ListInstanceProfilesForRole\",\"iam:ListAttachedRolePolicies\",\"iam:GetRolePolicy\",\"iam:GetRole\",\"iam:DetachRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:DeleteRole\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/*orbit-infra-79s5rw*\",\"Sid\":\"EnvServiceRoleLifecycle\"},{\"Action\":\"iam:CreateServiceLinkedRole\",\"Condition\":{\"StringEquals\":{\"iam:AWSServiceName\":\"elasticloadbalancing.amazonaws.com\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing\",\"Sid\":\"IamServiceLinkedRoleElb\"},{\"Action\":\"iam:CreateServiceLinkedRole\",\"Condition\":{\"StringEquals\":{\"iam:AWSServiceName\":\"ecs.amazonaws.com\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS\",\"Sid\":\"IamServiceLinkedRoleEcs\"},{\"Action\":\"iam:DeleteRolePermissionsBoundary\",\"Effect\":\"Deny\",\"Resource\":\"*\",\"Sid\":\"DenyDeleteRolePermissionsBoundary\"},{\"Action\":[\"iam:PutRolePolicy\",\"iam:CreateRole\",\"iam:AttachRolePolicy\"],\"Condition\":{\"Null\":{\"iam:PermissionsBoundary\":\"true\"}},\"Effect\":\"Deny\",\"Resource\":\"*\",\"Sid\":\"DenyRoleMutationMissingBoundary\"},{\"Action\":[\"iam:PutRolePolicy\",\"iam:CreateRole\",\"iam:AttachRolePolicy\"],\"Condition\":{\"StringNotEquals\":{\"iam:PermissionsBoundary\":\"arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-task-boundary\"}},\"Effect\":\"Deny\",\"Resource\":\"*\",\"Sid\":\"DenyRoleMutationWrongBoundary\"},{\"Action\":\"iam:PassRole\",\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":\"ecs-tasks.amazonaws.com\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:iam::000000000000:role/*orbit-infra-79s5rw*\",\"Sid\":\"PassEnvRolesOnly\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_iam_policy.deployer_state",
+          "type": "aws_iam_policy",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":[\"s3:PutObject\",\"s3:GetObject\",\"s3:DeleteObjectVersion\",\"s3:DeleteObject\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:s3:::orbit-infra-79s5rw-tfstate/leases/*\",\"arn:aws:s3:::orbit-infra-79s5rw-tfstate/envs/preview/*\"],\"Sid\":\"StateAndLeaseObjects\"},{\"Action\":[\"s3:ListBucketVersions\",\"s3:ListBucket\"],\"Condition\":{\"StringLike\":{\"s3:prefix\":[\"envs/preview/*\",\"leases/*\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::orbit-infra-79s5rw-tfstate\",\"Sid\":\"ListStateBucket\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_iam_policy.task_boundary",
+          "type": "aws_iam_policy",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":\"ecr:GetAuthorizationToken\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcrAuth\"},{\"Action\":[\"ecr:GetDownloadUrlForLayer\",\"ecr:BatchGetImage\",\"ecr:BatchCheckLayerAvailability\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/placeholder\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-worker\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-clickhouse\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-api\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/mirror/redis\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/mirror/clickhouse\"],\"Sid\":\"EcrPull\"},{\"Action\":[\"logs:PutLogEvents\",\"logs:CreateLogStream\"],\"Effect\":\"Allow\",\"Resource\":\"arn:aws:logs:*:000000000000:log-group:/orbit/*\",\"Sid\":\"LogStreams\"},{\"Action\":\"secretsmanager:GetSecretValue\",\"Effect\":\"Allow\",\"Resource\":\"arn:aws:secretsmanager:*:000000000000:secret:orbit-infra-79s5rw-*\",\"Sid\":\"ProjectSecrets\"},{\"Action\":[\"ssmmessages:OpenDataChannel\",\"ssmmessages:OpenControlChannel\",\"ssmmessages:CreateDataChannel\",\"ssmmessages:CreateControlChannel\"],\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcsExec\"},{\"Action\":[\"s3:PutObject\",\"s3:GetObject\",\"s3:DeleteObject\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:s3:::orbit-infra-79s5rw-*-data/*\",\"arn:aws:s3:::orbit-infra-79s5rw-*-data\"],\"Sid\":\"ProjectDataBucket\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_iam_role.deployer",
+          "type": "aws_iam_role",
+          "values": {
+            "name": "orbit-infra-79s5rw-deployer",
+            "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\"},\"StringLike\":{\"token.actions.githubusercontent.com:sub\":\"repo:FunnyValentine69@185004810/orbit-infra@1354995040:ref:refs/heads/main\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com\"}}],\"Version\":\"2012-10-17\"}",
+            "permissions_boundary": ""
+          }
+        },
+        {
+          "address": "aws_iam_role.plan_reader",
+          "type": "aws_iam_role",
+          "values": {
+            "name": "orbit-infra-79s5rw-plan-reader",
+            "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\"},\"StringLike\":{\"token.actions.githubusercontent.com:sub\":\"repo:FunnyValentine69@185004810/orbit-infra@1354995040:ref:refs/heads/main\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com\"}}],\"Version\":\"2012-10-17\"}",
+            "permissions_boundary": ""
+          }
+        },
+        {
+          "address": "aws_iam_role.publisher",
+          "type": "aws_iam_role",
+          "values": {
+            "name": "orbit-infra-79s5rw-publisher",
+            "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\"},\"StringLike\":{\"token.actions.githubusercontent.com:sub\":\"repo:FunnyValentine69@185004810/orbit-infra@1354995040:ref:refs/heads/main\"}},\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com\"}}],\"Version\":\"2012-10-17\"}",
+            "permissions_boundary": ""
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.plan_reader_deny",
+          "type": "aws_iam_role_policy",
+          "values": {
+            "role": "orbit-infra-79s5rw-plan-reader",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Action\":[\"s3:GetObjectVersion\",\"s3:GetObject\"],\"Effect\":\"Deny\",\"NotResource\":[\"arn:aws:s3:::orbit-infra-79s5rw-tfstate/envs/preview/*\",\"arn:aws:s3:::orbit-infra-79s5rw-tfstate/bootstrap/*\"],\"Sid\":\"DenyReadStateObjectsOutsideScope\"},{\"Action\":\"s3:ListBucket\",\"Effect\":\"Deny\",\"NotResource\":\"arn:aws:s3:::orbit-infra-79s5rw-tfstate\",\"Sid\":\"DenyListBucketOutsideScope\"},{\"Action\":[\"s3:ListBucketVersions\",\"s3:ListBucket\"],\"Condition\":{\"StringNotLike\":{\"s3:prefix\":[\"envs/preview/*\",\"bootstrap/*\",\"envs/preview\",\"bootstrap\"]}},\"Effect\":\"Deny\",\"Resource\":\"arn:aws:s3:::orbit-infra-79s5rw-tfstate\",\"Sid\":\"DenyListBucketOutsideScopePrefix\"},{\"Action\":[\"s3:ListBucketVersions\",\"s3:ListBucket\"],\"Condition\":{\"Null\":{\"s3:prefix\":\"true\"}},\"Effect\":\"Deny\",\"Resource\":\"arn:aws:s3:::orbit-infra-79s5rw-tfstate\",\"Sid\":\"DenyListBucketMissingPrefix\"},{\"Action\":[\"ssm:GetParametersByPath\",\"ssm:GetParameters\",\"ssm:GetParameterHistory\",\"ssm:GetParameter\",\"secretsmanager:GetSecretValue\",\"lambda:GetLayerVersionByArn\",\"lambda:GetLayerVersion\",\"lambda:GetFunctionConfiguration\",\"lambda:GetFunction\",\"kms:Decrypt\"],\"Effect\":\"Deny\",\"Resource\":\"*\",\"Sid\":\"DenySecretsAndParams\"}]}"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.plan_reader_state",
+          "type": "aws_iam_role_policy",
+          "values": {
+            "role": "orbit-infra-79s5rw-plan-reader",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Action\":\"s3:ListBucket\",\"Condition\":{\"StringLike\":{\"s3:prefix\":[\"envs/preview/*\",\"bootstrap/*\"]}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:s3:::orbit-infra-79s5rw-tfstate\",\"Sid\":\"ListStatePrefixes\"},{\"Action\":\"s3:GetObject\",\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:s3:::orbit-infra-79s5rw-tfstate/envs/preview/*\",\"arn:aws:s3:::orbit-infra-79s5rw-tfstate/bootstrap/*\"],\"Sid\":\"ReadStateObjects\"}]}"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.publisher",
+          "type": "aws_iam_role_policy",
+          "values": {
+            "role": "orbit-infra-79s5rw-publisher",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Action\":\"ecr:GetAuthorizationToken\",\"Effect\":\"Allow\",\"Resource\":\"*\",\"Sid\":\"EcrAuth\"},{\"Action\":[\"ecr:UploadLayerPart\",\"ecr:PutImage\",\"ecr:ListImages\",\"ecr:InitiateLayerUpload\",\"ecr:GetDownloadUrlForLayer\",\"ecr:DescribeRepositories\",\"ecr:DescribeImages\",\"ecr:CompleteLayerUpload\",\"ecr:BatchGetImage\",\"ecr:BatchCheckLayerAvailability\"],\"Effect\":\"Allow\",\"Resource\":[\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/placeholder\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-worker\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-clickhouse\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/orbit-api\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/mirror/redis\",\"arn:aws:ecr:us-east-1:000000000000:repository/orbit-infra-79s5rw/mirror/clickhouse\"],\"Sid\":\"EcrPushPull\"},{\"Action\":[\"kms:Verify\",\"kms:Sign\",\"kms:GetPublicKey\",\"kms:DescribeKey\"],\"Condition\":{\"ForAnyValue:StringEquals\":{\"kms:ResourceAliases\":\"alias/orbit-infra-79s5rw-signing\"}},\"Effect\":\"Allow\",\"Resource\":\"arn:aws:kms:us-east-1:000000000000:key/*\",\"Sid\":\"SigningKey\"}]}"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.deployer_data",
+          "type": "aws_iam_role_policy_attachment",
+          "values": {
+            "role": "orbit-infra-79s5rw-deployer",
+            "policy_arn": "arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-deployer-data"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.deployer_ec2",
+          "type": "aws_iam_role_policy_attachment",
+          "values": {
+            "role": "orbit-infra-79s5rw-deployer",
+            "policy_arn": "arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-deployer-ec2"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.deployer_elb_ecs",
+          "type": "aws_iam_role_policy_attachment",
+          "values": {
+            "role": "orbit-infra-79s5rw-deployer",
+            "policy_arn": "arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-deployer-elb-ecs"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.deployer_guard",
+          "type": "aws_iam_role_policy_attachment",
+          "values": {
+            "role": "orbit-infra-79s5rw-deployer",
+            "policy_arn": "arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-deployer-guard"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.deployer_iam",
+          "type": "aws_iam_role_policy_attachment",
+          "values": {
+            "role": "orbit-infra-79s5rw-deployer",
+            "policy_arn": "arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-deployer-iam"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.deployer_state",
+          "type": "aws_iam_role_policy_attachment",
+          "values": {
+            "role": "orbit-infra-79s5rw-deployer",
+            "policy_arn": "arn:aws:iam::000000000000:policy/orbit-infra-79s5rw-deployer-state"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.plan_reader_readonly",
+          "type": "aws_iam_role_policy_attachment",
+          "values": {
+            "role": "orbit-infra-79s5rw-plan-reader",
+            "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"
+          }
+        },
+        {
+          "address": "aws_kms_key.signing",
+          "type": "aws_kms_key",
+          "values": {
+            "policy": "{\"Statement\":[{\"Action\":\"kms:*\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::000000000000:root\"},\"Resource\":\"*\",\"Sid\":\"EnableRootAdministration\"},{\"Action\":[\"kms:Verify\",\"kms:Sign\",\"kms:GetPublicKey\",\"kms:DescribeKey\"],\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::000000000000:role/orbit-infra-79s5rw-publisher\"},\"Resource\":\"*\",\"Sid\":\"AllowPublisherSigning\"}],\"Version\":\"2012-10-17\"}"
+          }
+        }
+      ]
+    }
+  }
+}

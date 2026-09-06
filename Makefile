@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply localstack-up localstack-down localstack-status plan apply destroy test test-concurrency lint validate conftest record-conftest-fixtures check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend check-localstack-read localstack-state-list localstack-show-json localstack-output placeholder-build check-placeholder-image check-vhs demo print-preview-root print-target lease-list lease-get close
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply iam-matrix-plan localstack-up localstack-down localstack-status plan apply destroy test test-concurrency lint validate conftest record-conftest-fixtures check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend check-localstack-read localstack-state-list localstack-show-json localstack-output placeholder-build check-placeholder-image check-vhs demo print-preview-root print-target lease-list lease-get close
 
 TARGET ?=
 # preflight and terraform must check the same account and region
@@ -39,6 +39,14 @@ bootstrap-validate:
 bootstrap-lint:
 	tflint --chdir bootstrap --init --recursive --config "$(CURDIR)/.tflint.hcl"
 	tflint --chdir bootstrap --recursive --config "$(CURDIR)/.tflint.hcl"
+
+# Requires bootstrap to have been applied to LocalStack so all three trust
+# documents are known; the inventory generator enforces that prerequisite.
+iam-matrix-plan:
+	@plan_json="$$(mktemp "$${TMPDIR:-/tmp}/orbit-iam-matrix.XXXXXX")"; \
+	trap 'rm -f "$$plan_json"' EXIT; \
+	POLICY_SIZE_PLAN_JSON_OUT="$$plan_json" bootstrap/policy-size-check.sh && \
+	bash tests/iam-matrix-contracts.sh "$$plan_json"
 
 # LocalStack applies are disposable; real AWS keeps the interactive confirmation
 ifeq ($(TARGET),localstack)

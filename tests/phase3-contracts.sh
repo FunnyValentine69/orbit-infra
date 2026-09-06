@@ -359,6 +359,7 @@ if "$REPO_ROOT/scripts/tool-version.sh" no-such-tool >/dev/null 2>&1; then
 fi
 
 bash "$REPO_ROOT/tests/policy-size-contracts.sh"
+bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
 
 # tests/dispatch-ordering.sh derives run order from job timestamps only:
 # GitHub stamps run_started_at at dispatch acceptance, before the concurrency
@@ -573,6 +574,19 @@ bootstrap_apply_index = one_index(
     lambda step: step.get("run") == "make bootstrap-apply TARGET=localstack",
     "LocalStack bootstrap apply in terraform-plan plan-localstack job",
 )
+policy_size_index = one_index(
+    plan_steps,
+    lambda step: step.get("name") == "Check bootstrap IAM policy sizes"
+    and step.get("run") == "bootstrap/policy-size-check.sh"
+    and step.get("env", {}).get("POLICY_SIZE_PLAN_JSON_OUT") == "/tmp/bootstrap-plan-post-apply.json",
+    "post-apply bootstrap IAM policy-size render in terraform-plan plan-localstack job",
+)
+iam_matrix_index = one_index(
+    plan_steps,
+    lambda step: step.get("name") == "Check IAM matrix against post-apply plan"
+    and step.get("run") == "bash tests/iam-matrix-contracts.sh /tmp/bootstrap-plan-post-apply.json",
+    "post-apply IAM matrix contract in terraform-plan plan-localstack job",
+)
 terraform_plan_index = one_index(
     plan_steps,
     lambda step: step.get("name") == "Terraform plan (LocalStack)",
@@ -598,13 +612,15 @@ if not (
     plan_install_index
     < bootstrap_gate_index
     < bootstrap_apply_index
+    < policy_size_index
+    < iam_matrix_index
     < terraform_plan_index
     < summary_index
     < conftest_index
     < comment_index
 ):
     raise SystemExit(
-        "terraform-plan must install Conftest, gate bootstrap, apply bootstrap, plan, summarize, gate the live plan, then comment in that order"
+        "terraform-plan must install Conftest, gate bootstrap, apply bootstrap, render and gate the IAM matrix, plan, summarize, gate the live plan, then comment in that order"
     )
 
 apply = yaml.safe_load(Path(sys.argv[2]).read_text())

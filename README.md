@@ -229,6 +229,7 @@ See `STATE.md` for current phase and in-progress work.
 - `RUNBOOKS.md` — operational procedures
 - `docs/adr/` — architecture decision records
 - `docs/THREAT_MODEL.md` — STRIDE-lite threats, controls, evidence labels, residual risk
+- `docs/iam-matrix.md` — P0-3d IAM actions, conditions, bindings, cases, and evidence
 - `STATE.md` — current phase and evidence status
 - `TODO.md` — task tracking and follow-ups
 - `tests/README.md` — fixture provenance and test suite contracts

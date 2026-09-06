@@ -13,9 +13,27 @@ cd "$(dirname "$0")/.." || exit 1
 MANAGED_LIMIT=6144
 INLINE_AGGREGATE_LIMIT=10240
 
+if [ -e bootstrap/backend_override.tf ] || [ -L bootstrap/backend_override.tf ]; then
+  echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2
+  exit 1
+fi
+
 tmp_dir="$(mktemp -d)"
-cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf
-trap 'rm -f bootstrap/backend_override.tf; rm -rf "$tmp_dir"' EXIT
+override_created=0
+# Invoked indirectly by the EXIT trap below.
+# shellcheck disable=SC2329
+cleanup() {
+  if [ "$override_created" = 1 ]; then
+    rm -f bootstrap/backend_override.tf
+  fi
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+if ! ( set -o noclobber; cat bootstrap/localstack.backend_override.tf.example > bootstrap/backend_override.tf ); then
+  echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2
+  exit 1
+fi
+override_created=1
 
 export TF_DATA_DIR="${POLICY_SIZE_TF_DATA_DIR:-.terraform-localstack}"
 if ! terraform -chdir=bootstrap init -reconfigure -input=false >"$tmp_dir/init.log" 2>&1; then
@@ -35,6 +53,9 @@ if ! terraform -chdir=bootstrap show -json "$tmp_dir/plan.out" >"$tmp_dir/show.l
   exit 1
 fi
 mv "$tmp_dir/show.log" "$tmp_dir/plan.json"
+if [ -n "${POLICY_SIZE_PLAN_JSON_OUT:-}" ]; then
+  cp "$tmp_dir/plan.json" "$POLICY_SIZE_PLAN_JSON_OUT"
+fi
 
 status=0
 

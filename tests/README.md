@@ -139,6 +139,89 @@ keeps running, sends SIGTERM to the concurrency script, and requires the
 descendant to be gone after the exit trap targets the recorded process group
 and reaps the recorded worker.
 
+## IAM action-condition matrix
+
+Run source mode without LocalStack:
+
+```
+bash tests/iam-matrix-contracts.sh
+```
+
+Source mode requires exactly 85 statement rows and 13 binding rows. It verifies
+source Sid and document order, all seven condition-operator truth tables and
+their prescribed decisions, and exactly one unambiguous `expect <decision>`
+clause in every ordinary executable case. Every executable non-KMS `:absent`
+variant must omit the tested key: single-condition rows state that no entry is
+passed, while multi-condition rows pass only the other satisfying keys. The
+wrong-audience trust variant uses its exact conditional provider form and is
+`CODE-ONLY`; a bare `N/A(...)` is rejected. Source mode also checks same-action
+`resource:nonmatching` cases for every resource-scoped Allow, permits an exact
+`N/A(<reason>)` body only for the documented non-executable shapes (including
+trust `aud`/`sub` absent variants, the unobtainable mutable-name subject, and
+full-type wildcards such as
+`hostedzone/*`), rejects unquoted glob characters in simulator option arguments, and validates `stringList` handling for multivalued KMS aliases.
+From comment-stripped HCL and canonical matrix
+resources it derives same-role Action and conservative Resource overlap across
+every other Allow or Deny, including same-document statements. The attached
+`ReadOnlyAccess` policy is modeled as covering every `Describe*`, `Get*`, and
+`List*` action on `*`. The exact isolated single-statement masked-negative form
+is required on all and only the resulting 66 negative cases across 26 Sids;
+the isolated policy must name the row Sid, and attribution must identify a
+covering source Sid and document or `ReadOnlyAccess`. Every other
+executable non-boundary identity case uses principal simulation with its exact
+bound-role ARN. Every account-bearing ARN must use the deliberate LocalStack
+placeholder account `000000000000`, making the real-account render substitution
+total. Boundary cases use custom simulation; live KMS cases name their exact
+execution role ARN. The same HCL comment stripper protects Sid inventory and
+complete, anchored boundary-assignment counts, so comments and quoted decoys do
+not count. Fixture hygiene scans regular files plus symlink target strings and
+rejects links that resolve outside the IAM fixture directory. Evidence-label
+syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
+validated mechanically. The `absent-key-passed`, `arn-real-account`,
+`allow-masked-negative-missing`, `masked-negative-missing`,
+`masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
+`masked-form-whole-document`, `trust-absent-executable`,
+`trust-mutable-name-executable`, `unquoted-wildcard`,
+`uncommented-extra-sid`, and `wrong-audience-bare-na` mutations must print the
+`FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
+
+After bootstrap has been applied to LocalStack, render and compare plan mode
+through the one hardened render path:
+
+```
+make iam-matrix-plan
+```
+
+For an already-rendered post-apply plan, run
+`bash tests/iam-matrix-contracts.sh <post-apply-plan.json>`. Plan mode compares
+Effect, Principal or NotPrincipal, Action or NotAction, Resource or
+NotResource, Condition, all bindings, and all three trust documents exactly.
+String and array policy fields canonicalise identically. A pre-apply plan whose
+trust policies are unknown fails with the apply-first diagnostic. This exact
+comparison runs in CI only for the same-repository `plan-localstack` job; source
+mode remains Sid-keyed, so P5-31 records the fork-PR field-drift window.
+
+The slim plan and hygiene inputs in `tests/fixtures/iam-matrix/` are `authored`;
+their sidecar is `tests/fixtures/iam-matrix/PROVENANCE.md`. The condition-key
+reordering case asserts byte-identical inventory output. The email-address and
+second-account-id cases store safe fragments; the latter also injects the
+assembled ID into a temporary copy of `base-plan.json` to prove fixture-tree
+scanning without retaining that rejected value.
+
+`tests/policy-size-contracts.sh` has two groups, both running from a per-run
+temporary copy of the policy-size script and bootstrap Terraform files so
+concurrent suites never write to or delete the repository override. The
+existing-override group covers a regular file and a dangling symlink; both
+require immediate refusal and zero Terraform invocations, while the regular
+sentinel remains byte-identical and the link remains present with its target
+string unchanged. The no-existing-override group exercises
+init, plan, and show failures plus success, requires cleanup after every path,
+and verifies that `POLICY_SIZE_PLAN_JSON_OUT` receives the rendered plan.
+A structural contract also requires the override copy to run in a
+`set -o noclobber` subshell. This proves the create itself refuses a file that
+appears after the fast pre-check, without attempting to schedule that race in
+the test.
+
 ## Phase 5 sweeper fixtures
 
 Run the Stage 2 regression suite without AWS or LocalStack:

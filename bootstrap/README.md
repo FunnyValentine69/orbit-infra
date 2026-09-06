@@ -90,6 +90,9 @@ read the signing key's public half. `session-apply.yml` uses those grants to
 verify selected image signatures and attestations before it opens a lease;
 only the publisher role can sign or push images.
 
+The generated statement inventory, principal bindings, condition truth tables,
+and P0-3d evidence cases are in [`../docs/iam-matrix.md`](../docs/iam-matrix.md).
+
 ## After apply
 
 Publish the three role ARNs as GitHub repository secrets (not variables --
