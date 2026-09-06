@@ -77,7 +77,7 @@ state_list() {
 }
 
 assert_generator_clean() {
-  generator_clean_check . || die "generator tree dirty; commit before recording"
+  generator_clean_check . || die "generator inputs are not clean (reason above); commit or remove them before recording"
 }
 
 terraform_input_name() {

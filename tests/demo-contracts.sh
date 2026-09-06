@@ -283,7 +283,7 @@ else
 fi
 
 provenance_negative_ok=1
-for provenance_case in size sha missing duplicate counts-mismatch cidr-mismatch environment-outside; do
+for provenance_case in size sha missing duplicate counts-mismatch cidr-mismatch environment-outside commit-format date-format; do
   doc_copy="$tmp_dir/provenance-$provenance_case.md"
   case "$provenance_case" in
     size)
@@ -310,6 +310,14 @@ for provenance_case in size sha missing duplicate counts-mismatch cidr-mismatch 
       ;;
     environment-outside)
       sed '/^| environment |/s#203\.0\.113\.0/24#203.0.114.0/24#' \
+        "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
+      ;;
+    commit-format)
+      sed -E '/^\| generator commit \|/s/[0-9a-f]{7}/zzzz/' \
+        "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
+      ;;
+    date-format)
+      sed -E '/^\| recorded_on \|/s/[0-9]{4}-[0-9]{2}-[0-9]{2}/2026-9-6/' \
         "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
       ;;
   esac
