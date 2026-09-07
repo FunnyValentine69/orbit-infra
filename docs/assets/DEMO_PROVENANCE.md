@@ -6,13 +6,13 @@
 | --- | --- |
 | recorded_from | LocalStack 2026.8.1, Terraform 1.16.0 |
 | recorded_on | 2026-09-07 |
-| generator commit | eced69b (the tree at this commit holds every path in DEMO_GENERATOR_PATHS) |
+| generator commit | d9d33f6 (the tree at this commit holds every path in DEMO_GENERATOR_PATHS) |
 | recorder | vhs 0.11.0, ttyd 1.7.7-unknown, ffmpeg 9.0.1 |
 | command | `OPERATOR_CIDR=203.0.113.0/24 make demo` from the repository root |
 | environment | ENV_ID=demo, TARGET=localstack, workspace default, CLI config empty, operator CIDR 203.0.113.0/24 (TEST-NET-3, /24 to /32) |
 | plan / apply / destroy | `Plan: 61 to add, 0 to change, 0 to destroy.`; `Apply complete! Resources: 61 added, 0 changed, 0 destroyed.`; `Destroy complete! Resources: 61 destroyed.` |
-| artifact | 224215 bytes, 30.160000 s, 754 frames |
-| artifact sha256 | b91915ea3abb634f5adc4c2c9cd279bd5863a6d6534e633601effd75607e787a |
+| artifact | 222271 bytes, 29.680000 s, 742 frames |
+| artifact sha256 | 3e9f6f52b9e96ab5e59319eeab114300aefb4802be104c81390f8d1a2a5e2874 |
 
 ## What the wrapper asserts before moving the GIF into place
 
@@ -25,8 +25,8 @@ After preflight, every success or failure path invokes the run-once teardown and
 ## Hygiene review (what was actually checked)
 
 - Text dump (`demo.txt`, every shown frame's text): grep for non-placeholder 12-digit account identifiers, IPv4 literals outside the documented TEST-NET-3, private, loopback and unspecified allowances, absolute home paths, the local username, the hostname, `@`, and `AKIA`: no matches.
-- Frames: `ffmpeg` decoded all 754 frames of the artifact row (passthrough decode exit 0); 277 unique frames by MD5.
-- OCR: tesseract 5.5.3 run on this recording (277 unique frames, same grep set): no matches at all; the visible S3 references are Terraform resource addresses, so the physical bucket name and the project suffix never appear on screen (2026-09-07).
+- Frames: `ffmpeg` decoded all 742 frames of the artifact row (passthrough decode exit 0); 255 unique frames by MD5.
+- OCR: tesseract 5.5.3 run on this recording (255 unique frames, same grep set): no matches at all; the visible S3 references are Terraform resource addresses, so the physical bucket name and the project suffix never appear on screen (2026-09-07).
 - Viewed: 8 frames viewed by the reviewer (every section boundary plus a spread sample) and one frame per section by the orchestrator.
 
 Known limits: the boundary does not defend against an actively hostile host, modified binaries or loader injection. Concurrent `make demo` runs are unsupported. `SIGKILL`, host crashes, and a failure of the second publish rename can leave a mixed asset pair; the final Git status and provenance contract expose that state, and a rerun repairs it. Linux is unsupported beyond the portable freshness and byte-count checks. `HOME` passes through for vhs and Docker, so provider sources implied by user-level CLI or filesystem mirror configuration are not inventoried beyond the pinned empty Terraform CLI configuration file. Any change anywhere in `DEMO_GENERATOR_PATHS` deliberately requires a new recording because infrastructure changes can alter the visible resource count.
