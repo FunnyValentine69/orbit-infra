@@ -70,12 +70,23 @@ assertions="$({
       } as $expected_policy
     | [
         {
+          name: "data-bucket-present",
+          passed: (
+            ($buckets | length) == 1
+            and ($bucket | type) == "string"
+            and ($bucket | length) > 0
+          )
+        },
+        {
           name: "lifecycle-present",
           passed: (($lifecycle | length) == 1)
         },
         {
           name: "lifecycle-bucket",
-          passed: ($lifecycle[0].values.bucket == $bucket)
+          passed: (
+            $bucket != null
+            and $lifecycle[0].values.bucket == $bucket
+          )
         },
         {
           name: "lifecycle-rule-count",
@@ -123,7 +134,10 @@ assertions="$({
         },
         {
           name: "policy-bucket",
-          passed: ($policies[0].values.bucket == $bucket)
+          passed: (
+            $bucket != null
+            and $policies[0].values.bucket == $bucket
+          )
         },
         {
           name: "policy-document",

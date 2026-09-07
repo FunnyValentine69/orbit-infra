@@ -17,16 +17,26 @@ repo_root="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
 contract="$script_dir/preview-plan-contracts.sh"
 
 tmp_parent="${TMPDIR:-/tmp}"
-if tmp_dir="$(mktemp -d "$tmp_parent/preview-plan-mutations.XXXXXX" 2>/dev/null)"; then
-  :
+if primary_mktemp_result="$(
+  mktemp -d "$tmp_parent/preview-plan-mutations.XXXXXX" 2>&1
+)"; then
+  tmp_dir="$primary_mktemp_result"
 else
+  primary_mktemp_error="$primary_mktemp_result"
   fallback_parent="$repo_root/.preview-runs"
   if ! mkdir -p "$fallback_parent"; then
     echo "FAIL: could not create mutation fallback directory" >&2
     exit 2
   fi
-  if ! tmp_dir="$(mktemp -d "$fallback_parent/preview-plan-mutations.XXXXXX")"; then
+  if fallback_mktemp_result="$(
+    mktemp -d "$fallback_parent/preview-plan-mutations.XXXXXX" 2>&1
+  )"; then
+    tmp_dir="$fallback_mktemp_result"
+  else
+    fallback_mktemp_error="$fallback_mktemp_result"
     echo "FAIL: could not create mutation temporary directory" >&2
+    printf 'primary mktemp error:\n%s\n' "$primary_mktemp_error" >&2
+    printf 'fallback mktemp error:\n%s\n' "$fallback_mktemp_error" >&2
     exit 2
   fi
 fi
@@ -79,6 +89,15 @@ run_mutant() {
   printf 'FAIL: mutant %s survived %s\n' "$name" "$predicate" >&2
   runner_failures=$((runner_failures + 1))
 }
+
+run_mutant \
+  data-bucket-name-removed \
+  data-bucket-present \
+  'del(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket.data").values.bucket)'
+run_mutant \
+  data-bucket-deleted \
+  data-bucket-present \
+  'del(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket.data"))'
 
 run_mutant \
   lifecycle-deleted \

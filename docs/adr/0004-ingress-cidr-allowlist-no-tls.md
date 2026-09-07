@@ -32,7 +32,7 @@ API has no authentication layer, this allowlist is the only gate.
   before apply stays the operator's responsibility.
 - Network changes require `gh secret set OPERATOR_CIDR`; covered in
   RUNBOOKS.md.
-- 2026-09-06 (P5-24): the Well-Architected ELB.1 finding (HTTP to HTTPS
+- 2026-09-07 (P5-24): the Well-Architected ELB.1 finding (HTTP to HTTPS
   redirect) is accepted under this decision; it stays open until a domain
   exists.
 
