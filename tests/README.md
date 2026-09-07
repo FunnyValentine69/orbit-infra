@@ -108,11 +108,16 @@ security-group resources, the three-entry root
 security-group argument allowlist, and the sole statement object's exact two
 partition-derived `Resource` entries in the data bucket policy. Quoted-key
 bracket traversals are normalized before the general token scans; independently,
-any protected resource token followed by optional whitespace and `[` is rejected,
-as is any protected resource token followed by a legacy `.*.` splat traversal.
-Its 24 scratch-source mutants include the load-balancer data-source read-back
+each protected resource token (`aws_lb.this`, `aws_security_group.alb`,
+`aws_security_group.service`) is matched against a per-token attribute
+allowlist, and the token must be immediately followed by `.` plus an allowed
+attribute and nothing else that continues the traversal (only a closing
+delimiter, comma, whitespace, or end of line may follow), so wrapped
+traversals such as `one([aws_lb.this]).security_groups` or
+`[aws_security_group.service][0].ingress` fail by construction.
+Its 26 scratch-source mutants include the load-balancer data-source read-back
 bypass, spaced and computed bracket traversals, a legacy-splat load-balancer
-read-back, the nested canonical `Resource`
+read-back, wrapped `one([...])` and bracket-indexed read-backs, the nested canonical `Resource`
 decoy with a local-backed statement resource,
 heredoc rejection, exact root-binding multiplicity, and fail-closed `.tf.json`
 handling; all must fail their named predicate. The script runs from `make test`.

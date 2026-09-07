@@ -261,26 +261,49 @@ workload_security_groups = (
 )
 
 forbidden_patterns = (
-    r"\baws_lb\.this\.security_groups\b",
-    r"\baws_security_group\.(?:service|alb)\.(?:ingress|egress)\b",
     r'\bdata\s+"aws_security_groups?"\s+"',
     r'\bdata\s+"aws_(?:lb|lbs|alb)"\s+"',
     r"\bdata\.aws_(?:lb|alb)\b",
-    r"\baws_security_group\.alb\b(?!\.id\b)",
 )
-protected_bracket_traversal = re.compile(
-    r"\b(?:aws_lb\.this|aws_security_group\.(?:alb|service))\s*\["
+protected_attribute_allowlist = {
+    "aws_lb.this": {"arn", "dns_name", "zone_id", "id", "arn_suffix"},
+    "aws_security_group.alb": {"id"},
+    "aws_security_group.service": {"id"},
+}
+protected_token_pattern = re.compile(
+    r"\b(aws_lb\.this|aws_security_group\.alb|aws_security_group\.service)\b"
 )
-protected_legacy_splat = re.compile(
-    r"\b(?:aws_lb\.this|aws_security_group\.(?:alb|service))\s*\.\s*\*\s*\."
-)
+
+
+def protected_traversal_violations(text):
+    violations = []
+    for match in protected_token_pattern.finditer(text):
+        token = match.group(1)
+        rest = text[match.end():]
+        attr_match = re.match(r"\.([A-Za-z_][A-Za-z0-9_]*)", rest)
+        if not attr_match or attr_match.group(1) not in protected_attribute_allowlist[token]:
+            violations.append((match.start(), token))
+            continue
+        after = rest[attr_match.end():]
+        if after and not re.match(r"[)\]},\s]", after):
+            violations.append((match.start(), token))
+    return violations
+
+
+protected_traversals = protected_traversal_violations(combined)
 no_indirection = (
     not any(re.search(pattern, combined) for pattern in forbidden_patterns)
-    and not protected_bracket_traversal.search(stripped_combined)
-    and not protected_legacy_splat.search(stripped_combined)
+    and not protected_traversals
     and bool(resources)
     and "aws_lb.this" in resources
 )
+if protected_traversals:
+    for offset, token in protected_traversals:
+        line_no = combined.count("\n", 0, offset) + 1
+        print(
+            f"FAIL: no-indirection (line {line_no}: disallowed traversal of {token})",
+            file=sys.stderr,
+        )
 
 root_sg_records = []
 for resource_name, block in resources.items():
@@ -571,6 +594,12 @@ resource "aws_instance" "mutant" {
     legacy-splat-lb-readback)
       printf '\nlocals {\n  alb_groups = flatten(aws_lb.this.*.security_groups)\n}\nmodule "mutant" {\n  source = "../../modules/ecs-service"\n  groups = local.alb_groups\n}\n' >> "$mutant_root/main.tf"
       ;;
+    wrapped-lb-readback)
+      printf '\nmodule "mutant" {\n  source = "../../modules/ecs-service"\n  groups = one([aws_lb.this]).security_groups\n}\n' >> "$mutant_root/main.tf"
+      ;;
+    wrapped-service-readback)
+      printf '\nlocals {\n  x = [aws_security_group.service][0].ingress\n}\n' >> "$mutant_root/main.tf"
+      ;;
     *)
       echo "FAIL: unknown source mutant $name" >&2
       runner_failures=$((runner_failures + 1))
@@ -613,6 +642,8 @@ run_mutant unsupported-tf-json preview-source-input
 run_mutant unsupported-unicode-heredoc preview-source-parse
 run_mutant unconsumed-service-egress-readback no-indirection
 run_mutant legacy-splat-lb-readback no-indirection
+run_mutant wrapped-lb-readback no-indirection
+run_mutant wrapped-service-readback no-indirection
 
 if [ "$runner_failures" -ne 0 ]; then
   printf 'FAIL: preview source mutations (%d of %d mutants not killed)\n' \
