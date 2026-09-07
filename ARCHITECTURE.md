@@ -235,6 +235,12 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `/health` and `/s3-roundtrip` checks. `session-destroy` leaves no active
   services or cost-bearing resources and leaves the lease `closing` for the
   stage-2 sweeper.
+- **Demo transaction:** `demo/env.sh` constructs the process environment from
+  declarations and validators in `demo/lib.sh`; `demo/record.sh` owns preflight,
+  recording, artifact inspection, provenance rendering, teardown, and publication.
+  `tests/demo-contracts.sh`, chained through `tests/phase3-contracts.sh`, verifies
+  the environment, lifecycle, tape, CIDR, provenance, and generator-drift contracts
+  offline.
 - **Phase 4:** `tests/localstack-concurrency.sh` runs two environments
   concurrently on one LocalStack instance and checks independent state,
   disjoint tag inventories with exact `env_id` values, clusters, lease refusals,

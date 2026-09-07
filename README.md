@@ -100,13 +100,15 @@ make destroy TARGET=localstack ENV_ID=dev
 
 ![Recorded LocalStack demo: status, plan, conftest gate, apply, state list, destroy](docs/assets/demo.gif)
 
-The recording is real output of a real run against LocalStack, produced by `demo/record.sh` from the committed `demo/demo.tape` (vhs). Long steps (plan, apply, destroy) run off-screen and only their summary lines are shown. Reproduce it with LocalStack up, `make bootstrap-apply TARGET=localstack` applied once, and the placeholder image built:
+The committed recording is real LocalStack output. Re-recording is one run transaction launched by `demo/env.sh` and rendered by `demo/record.sh` from the committed `demo/demo.tape` (vhs); long steps run off-screen and only their summaries are shown. Reproduce it with LocalStack up, `make bootstrap-apply TARGET=localstack` applied once, and the placeholder image built:
 
 ```
 OPERATOR_CIDR=203.0.113.0/24 make demo
 ```
 
-`OPERATOR_CIDR` must be a TEST-NET-3 value so no real address is recorded; the wrapper refuses anything else, asserts every step's exit code and the GIF's freshness before replacing `docs/assets/demo.gif`, and, once preflight has passed, destroys everything Terraform recorded for the `demo` environment on exit (a run refused in preflight touches nothing; an object created before its state write is outside Terraform's reach and is cleared by restarting LocalStack). Provenance and the hygiene review method are in `docs/assets/DEMO_PROVENANCE.md`.
+The boundary passes through only `PATH`, `HOME`, `TMPDIR`, `TERM`, `OPERATOR_CIDR`, and `DEMO_INJECT_FAIL`; `demo/lib.sh` fixes the locale, timezone, LocalStack AWS settings, Terraform CLI settings, workspace, target, environment ID, and render root. `OPERATOR_CIDR` must describe a network contained within `203.0.113.0/24` at prefix `/24` through `/32`. The recorder requires the tape's labelled step set to equal the produced exit-status set, derives its minimum duration from shown typing and sleeps, and writes the provenance rows from the same run as the GIF.
+
+After preflight, teardown runs once on success or failure and publication starts only after destroy and an empty-state check succeed. Any change under the single `DEMO_GENERATOR_PATHS` declaration requires re-recording and is checked against the provenance commit. Host compromise, concurrent recordings, abrupt process or host loss, provider mirrors implied by `HOME`, Linux beyond the portable metadata checks, and OCR/frame-content automation remain out of scope; a second-rename failure can leave a mixed pair until the drift checks expose it and a rerun repairs it. Terraform cannot destroy an object created before its state write. Full provenance, review evidence, and residuals are in `docs/assets/DEMO_PROVENANCE.md`.
 
 ## Quickstart (AWS)
 
@@ -147,7 +149,7 @@ make validate     # terraform init -backend=false + validate, every module/env
 make lint         # terraform fmt -check, tflint --recursive, checkov
 make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
 make conftest     # conftest verify + the 17-case recorded-plan regression suite
-make test-concurrency TARGET=localstack OPERATOR_CIDR=10.255.255.255/32  # two live environments on one already-running emulator
+make test-concurrency TARGET=localstack OPERATOR_CIDR=203.0.113.0/24  # two live environments on one already-running emulator
 scripts/gates.sh  # validate -> lint -> test -> policy-size -> no-nat-gateway -> conftest, with a PASS/FAIL summary
 ```
 

@@ -11,46 +11,54 @@ Set Padding 20
 Set WaitTimeout 20m
 
 Hide
+Type `record_rc() { echo "$?" > "$RUN/$1.rc"; }` Enter Wait
 Type `set -o pipefail; env | grep -c '^RUN=' > "$RUN/env.ok"; clear` Enter Wait
 Type `clear` Enter Wait
 Show
 
 # DEMO-SECTION status
-Type `make localstack-status 2>&1 | grep -E 'localstack|Service|\b(ec2|ecs|elbv2|s3|iam|logs|secretsmanager|sns|servicediscovery)\b'` Enter Wait
-Sleep 2.5s
 Hide
-Type `echo $? > "$RUN/status.rc"; clear` Enter Wait
+Type `make localstack-status > "$RUN/status.log" 2>&1; record_rc status` Enter Wait
+Type `clear` Enter Wait
 Show
+Type `grep -E 'localstack|Service|\b(ec2|ecs|elbv2|s3|iam|logs|secretsmanager|sns|servicediscovery)\b' "$RUN/status.log" 2>/dev/null` Enter Wait
+Sleep 2.5s
 
 # DEMO-SECTION plan
 Hide
-Type `make plan > "$RUN/plan.log" 2>&1; echo $? > "$RUN/plan.rc"` Enter Wait
+Type `make plan > "$RUN/plan.log" 2>&1; record_rc plan` Enter Wait
 Type `clear` Enter Wait
 Show
 Type `grep -E '^Plan:' "$RUN/plan.log"` Enter Wait
 Sleep 2.5s
-Type `make conftest 2>&1 | tail -n 3` Enter Wait
-Sleep 2.5s
+
+# DEMO-SECTION conftest
 Hide
-Type `echo $? > "$RUN/conftest.rc"; clear` Enter Wait
+Type `make conftest > "$RUN/conftest.log" 2>&1; record_rc conftest` Enter Wait
+Type `clear` Enter Wait
 Show
+Type `tail -n 3 <"$RUN/conftest.log"` Enter Wait
+Sleep 2.5s
 
 # DEMO-SECTION apply
 Hide
-Type `make apply > "$RUN/apply.log" 2>&1; echo $? > "$RUN/apply.rc"` Enter Wait
+Type `make apply > "$RUN/apply.log" 2>&1; record_rc apply` Enter Wait
 Type `clear` Enter Wait
 Show
 Type `grep -E 'Apply complete' "$RUN/apply.log"` Enter Wait
 Sleep 2.5s
-Type `make localstack-state-list 2>&1 | head -n 12` Enter Wait
-Sleep 3s
+
+# DEMO-SECTION statelist
 Hide
+Type `make localstack-state-list > "$RUN/statelist.log" 2>&1; record_rc statelist` Enter Wait
 Type `clear` Enter Wait
 Show
+Type `sed -n '1,12p' "$RUN/statelist.log"` Enter Wait
+Sleep 3s
 
 # DEMO-SECTION destroy
 Hide
-Type `make destroy > "$RUN/destroy.log" 2>&1; echo $? > "$RUN/destroy.rc"` Enter Wait
+Type `make destroy > "$RUN/destroy.log" 2>&1; record_rc destroy` Enter Wait
 Type `clear` Enter Wait
 Show
 Type `grep -E 'Destroy complete' "$RUN/destroy.log"` Enter Wait

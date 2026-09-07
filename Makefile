@@ -95,8 +95,10 @@ check-placeholder-image:
 # prevent_destroy = true and this state must never be torn down via make.
 
 # envs/preview: TARGET and ENV_ID are both required for plan/apply/destroy.
+ifeq (,$(filter demo,$(MAKECMDGOALS)))
 OPERATOR_CIDR ?= $(shell curl -sf --max-time 5 https://checkip.amazonaws.com | awk '{print $$1"/32"}')
 OPERATOR_CIDR := $(OPERATOR_CIDR)
+endif
 
 check-operator-cidr:
 	@if [ -z "$$OPERATOR_CIDR" ]; then echo "OPERATOR_CIDR auto-detect failed; pass OPERATOR_CIDR=<cidr>" >&2; exit 1; fi
@@ -204,7 +206,7 @@ test:
 	@for d in modules/*/; do \
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \
-			terraform -chdir="$$d" init -backend=false -input=false >/dev/null && \
+			terraform -chdir="$$d" init -backend=false -input=false -lockfile=readonly >/dev/null && \
 			terraform -chdir="$$d" test || exit 1; \
 		fi; \
 	done
@@ -234,7 +236,7 @@ record-conftest-fixtures:
 		temp_file="$$(mktemp "$${TMPDIR:-/tmp}/orbit-conftest-$${name}.XXXXXX")" || exit $$?; \
 		rc=0; \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
-			terraform -chdir="$$root" init -input=false -upgrade=false && \
+			terraform -chdir="$$root" init -input=false -upgrade=false -lockfile=readonly && \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
 			terraform -chdir="$$root" plan -input=false -out=plan.tfplan && \
 		env -u AWS_PROFILE AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 \
@@ -254,10 +256,10 @@ validate:
 	terraform -chdir=bootstrap validate
 	@for d in modules/*/; do \
 		echo "== terraform validate: $$d =="; \
-		terraform -chdir="$$d" init -backend=false -input=false >/dev/null && \
+		terraform -chdir="$$d" init -backend=false -input=false -lockfile=readonly >/dev/null && \
 		terraform -chdir="$$d" validate || exit 1; \
 	done
-	terraform -chdir=envs/preview init -backend=false -input=false >/dev/null
+	terraform -chdir=envs/preview init -backend=false -input=false -lockfile=readonly >/dev/null
 	terraform -chdir=envs/preview validate
 
 lint:
@@ -295,4 +297,4 @@ print-target:
 # Records docs/assets/demo.gif from demo/demo.tape against LocalStack. Local, on-demand only.
 # Usage: OPERATOR_CIDR=203.0.113.0/24 make demo
 demo: check-vhs
-	env -u PREVIEW_ROOT -u TARGET -u ENV_ID -u PLAN_FILE bash demo/record.sh
+	bash -p demo/env.sh

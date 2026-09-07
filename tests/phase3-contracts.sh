@@ -360,6 +360,7 @@ fi
 
 bash "$REPO_ROOT/tests/policy-size-contracts.sh"
 bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
+bash "$REPO_ROOT/tests/demo-contracts.sh"
 
 # tests/dispatch-ordering.sh derives run order from job timestamps only:
 # GitHub stamps run_started_at at dispatch acceptance, before the concurrency
