@@ -271,9 +271,13 @@ forbidden_patterns = (
 protected_bracket_traversal = re.compile(
     r"\b(?:aws_lb\.this|aws_security_group\.(?:alb|service))\s*\["
 )
+protected_legacy_splat = re.compile(
+    r"\b(?:aws_lb\.this|aws_security_group\.(?:alb|service))\s*\.\s*\*\s*\."
+)
 no_indirection = (
     not any(re.search(pattern, combined) for pattern in forbidden_patterns)
     and not protected_bracket_traversal.search(stripped_combined)
+    and not protected_legacy_splat.search(stripped_combined)
     and bool(resources)
     and "aws_lb.this" in resources
 )
@@ -564,6 +568,9 @@ resource "aws_instance" "mutant" {
     unconsumed-service-egress-readback)
       printf '\nlocals {\n  mutant_service_egress = aws_security_group.service.egress[*].security_groups\n}\n' >> "$mutant_root/main.tf"
       ;;
+    legacy-splat-lb-readback)
+      printf '\nlocals {\n  alb_groups = flatten(aws_lb.this.*.security_groups)\n}\nmodule "mutant" {\n  source = "../../modules/ecs-service"\n  groups = local.alb_groups\n}\n' >> "$mutant_root/main.tf"
+      ;;
     *)
       echo "FAIL: unknown source mutant $name" >&2
       runner_failures=$((runner_failures + 1))
@@ -605,6 +612,7 @@ run_mutant heredoc-alb-reference preview-source-parse
 run_mutant unsupported-tf-json preview-source-input
 run_mutant unsupported-unicode-heredoc preview-source-parse
 run_mutant unconsumed-service-egress-readback no-indirection
+run_mutant legacy-splat-lb-readback no-indirection
 
 if [ "$runner_failures" -ne 0 ]; then
   printf 'FAIL: preview source mutations (%d of %d mutants not killed)\n' \

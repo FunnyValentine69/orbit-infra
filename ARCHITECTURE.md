@@ -279,7 +279,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
   -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate evaluates
-  `policy/main.rego`, runs its 88 Rego unit tests from `policy/main_test.rego`,
+  `policy/main.rego`, runs its 91 Rego unit tests from `policy/main_test.rego`,
   and defines an 18-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The added IPv6
   bad-root case's recorded bad-root plan is denied for
