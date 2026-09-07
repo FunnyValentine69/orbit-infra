@@ -5,14 +5,14 @@
 | Field | Value |
 | --- | --- |
 | recorded_from | LocalStack 2026.8.1, Terraform 1.16.0 |
-| recorded_on | 2026-09-06 |
-| generator commit | f7be761 (the tree at this commit holds every path in DEMO_GENERATOR_PATHS) |
+| recorded_on | 2026-09-07 |
+| generator commit | b42433b (the tree at this commit holds every path in DEMO_GENERATOR_PATHS) |
 | recorder | vhs 0.11.0, ttyd 1.7.7-unknown, ffmpeg 9.0.1 |
 | command | `OPERATOR_CIDR=203.0.113.0/24 make demo` from the repository root |
 | environment | ENV_ID=demo, TARGET=localstack, workspace default, CLI config empty, operator CIDR 203.0.113.0/24 (TEST-NET-3, /24 to /32) |
 | plan / apply / destroy | `Plan: 59 to add, 0 to change, 0 to destroy.`; `Apply complete! Resources: 59 added, 0 changed, 0 destroyed.`; `Destroy complete! Resources: 59 destroyed.` |
-| artifact | 228416 bytes, 29.880000 s, 747 frames |
-| artifact sha256 | 077e3e3a9887349192055612f4f57c1b4d1375c9eefe6cbf3cb870e50bb10bea |
+| artifact | 228173 bytes, 29.960000 s, 749 frames |
+| artifact sha256 | 92697d6e2f1313c866c4677756d6485bce5df847ec10df5368368416ab3e602a |
 
 ## What the wrapper asserts before moving the GIF into place
 
@@ -25,7 +25,7 @@ After preflight, every success or failure path invokes the run-once teardown and
 ## Hygiene review (what was actually checked)
 
 - Text dump (`demo.txt`, every shown frame's text): grep for non-placeholder 12-digit account identifiers, IPv4 literals outside the documented TEST-NET-3, private, loopback and unspecified allowances, absolute home paths, the local username, the hostname, `@`, and `AKIA`: no matches.
-- Frames: `ffmpeg` decoded all 747 frames of the artifact row (passthrough decode exit 0); 268 unique frames by MD5.
+- Frames: `ffmpeg` decoded all 749 frames of the artifact row (passthrough decode exit 0); 271 unique frames by MD5.
 - OCR: tesseract 5.5.3 run on the reviewed recording (276 unique frames, same grep set): no matches outside 203.0.113.x and localhost; the re-recording after the review fix changed no shown command, so the text-dump grep and decode were repeated on the new artifact and the OCR pass was not.
 - Viewed: 8 frames viewed by the reviewer (every section boundary plus a spread sample) and one frame per section by the orchestrator.
 
