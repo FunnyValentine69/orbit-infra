@@ -278,8 +278,9 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `policy/main.rego`, runs its 88 Rego unit tests from `policy/main_test.rego`,
   and defines an 18-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The added IPv6
-  bad-root case requires the host's final fixture re-record before that suite
-  can report all 18 cases. The
+  bad-root case's recorded bad-root plan is denied for
+  `aws_vpc_security_group_ingress_rule.ipv6_open`, and the gate passes with all
+  18 cases. The
   root-module policy considers only managed resources and denies a planned S3
   bucket without exactly one fully locked public-access block targeted by either
   one unambiguous whole-resource configuration reference or an equal known planned

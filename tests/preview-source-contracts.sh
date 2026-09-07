@@ -229,7 +229,11 @@ forbidden_patterns = (
     r'\bdata\s+"aws_security_groups?"\s+"',
     r"\baws_security_group\.alb\b(?!\.id\b)",
 )
-no_indirection = not any(re.search(pattern, combined) for pattern in forbidden_patterns)
+no_indirection = (
+    not any(re.search(pattern, combined) for pattern in forbidden_patterns)
+    and bool(resources)
+    and "aws_lb.this" in resources
+)
 
 root_sg_records = []
 for resource_name, block in resources.items():
@@ -369,6 +373,9 @@ resource "aws_instance" "mutant" {
     unsupported-unicode-heredoc)
       printf '\nlocals {\n  mutant_heredoc = <<ÉND\nharmless\nÉND\n}\n' >> "$mutant_root/main.tf"
       ;;
+    unconsumed-service-egress-readback)
+      printf '\nlocals {\n  mutant_service_egress = aws_security_group.service.egress[*].security_groups\n}\n' >> "$mutant_root/main.tf"
+      ;;
     *)
       echo "FAIL: unknown source mutant $name" >&2
       runner_failures=$((runner_failures + 1))
@@ -402,6 +409,7 @@ run_mutant duplicate-service-egress root-resource-allowlist
 run_mutant heredoc-alb-reference preview-source-parse
 run_mutant unsupported-tf-json preview-source-input
 run_mutant unsupported-unicode-heredoc preview-source-parse
+run_mutant unconsumed-service-egress-readback no-indirection
 
 if [ "$runner_failures" -ne 0 ]; then
   printf 'FAIL: preview source mutations (%d of %d mutants not killed)\n' \

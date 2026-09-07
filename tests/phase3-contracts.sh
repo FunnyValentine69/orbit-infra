@@ -350,6 +350,18 @@ if [ -z "$iam_bootstrap_line" ] || [ -z "$iam_matrix_line" ] || \
   echo "iam-matrix-plan must apply the LocalStack bootstrap before make iam-matrix-plan" >&2
   exit 1
 fi
+if ! grep -Fq "if: github.ref == 'refs/heads/main'" "$iam_matrix_workflow"; then
+  echo "iam-matrix-plan job must be gated on refs/heads/main" >&2
+  exit 1
+fi
+if ! grep -Fq 'contents: read' "$iam_matrix_workflow"; then
+  echo "iam-matrix-plan workflow must declare a top-level permissions: contents: read" >&2
+  exit 1
+fi
+if ! grep -Fq 'persist-credentials: false' "$iam_matrix_workflow"; then
+  echo "iam-matrix-plan checkout step must set persist-credentials: false" >&2
+  exit 1
+fi
 echo "PASS: iam-matrix-plan workflow contracts"
 python3 - "$sweeper_workflow" "$plan_workflow" <<'PY'
 from pathlib import Path

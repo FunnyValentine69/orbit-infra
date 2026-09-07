@@ -39,8 +39,9 @@ exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_default_security_group.default`. It also requires the bad plan not to
 report the protected `aws_s3_bucket.database`. The suite also proves that a
 nested true `*_sensitive` marker and a sensitive output are rejected. The
-suite is defined to report 18 cases after `bad-plan.json` is re-recorded from
-the updated bad root; that LocalStack recording is a host step. Bucket
+suite reports all 18 cases: `bad-plan.json` was re-recorded from the updated
+bad root, and the recorded bad-root plan is denied for
+`aws_vpc_security_group_ingress_rule.ipv6_open`. Bucket
 protection requires exactly one fully
 locked planned block targeted through either one unambiguous whole-resource
 configuration reference or an equal known planned bucket name. Reference and
@@ -103,7 +104,7 @@ Terraform without providers. Five predicates enforce exactly two direct
 `aws_security_group.alb` references, service-group-only workload module wiring,
 no security-group indirection/read-back/data lookup, the three-entry root
 security-group argument allowlist, and partition-derived S3 policy ARN source.
-Its 15 scratch-source mutants cover every specified bypass plus heredoc
+Its 16 scratch-source mutants cover every specified bypass plus heredoc
 rejection, exact root-binding multiplicity, fail-closed `.tf.json` handling; all must fail their named predicate. The script
 runs from `make test`.
 

@@ -1,6 +1,6 @@
 # policy/
 
-`policy/main.rego` is the Conftest/OPA policy that gates Terraform plan JSON in CI and locally. Run it with `make conftest`, which runs `conftest verify` plus the 17-case recorded-plan regression suite; the tests live in `policy/main_test.rego`, and the plan fixtures it checks against live in `tests/fixtures/conftest` (driven by `tests/conftest-gate.sh`).
+`policy/main.rego` is the Conftest/OPA policy that gates Terraform plan JSON in CI and locally. Run it with `make conftest`, which runs `conftest verify` plus the 18-case recorded-plan regression suite; the tests live in `policy/main_test.rego`, and the plan fixtures it checks against live in `tests/fixtures/conftest` (driven by `tests/conftest-gate.sh`).
 
 ## What the Conftest gate denies
 
@@ -53,7 +53,7 @@ Local, pre-CI policy gates (`.tflint.hcl`, `.checkov.yaml` at repo root):
 make validate     # terraform init -backend=false + validate, every module/env
 make lint         # terraform fmt -check, tflint --recursive, checkov
 make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
-make conftest     # conftest verify + the 17-case recorded-plan regression suite
+make conftest     # conftest verify + the 18-case recorded-plan regression suite
 make test-concurrency TARGET=localstack OPERATOR_CIDR=203.0.113.0/24  # two live environments on one already-running emulator
 scripts/gates.sh  # validate -> lint -> test -> policy-size -> no-nat-gateway -> conftest, with a PASS/FAIL summary
 ```
