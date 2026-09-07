@@ -106,6 +106,25 @@ for target in bootstrap-plan bootstrap-apply; do
   pass "$target no-override cleanup"
 done
 
+for target in bootstrap-plan bootstrap-apply; do
+  chmod 000 "$isolated_repo/bootstrap/localstack.backend_override.tf.example"
+  : > "$terraform_log"
+  set +e
+  output="$(run_make none 41 "$target" 2>&1)"
+  rc=$?
+  set -e
+  chmod 644 "$isolated_repo/bootstrap/localstack.backend_override.tf.example"
+  if [ "$rc" -eq 0 ]; then
+    echo "$target must fail when the backend override example cannot be read: $output" >&2
+    exit 1
+  fi
+  if [ -s "$terraform_log" ] || [ -e "$override_file" ] || [ -L "$override_file" ]; then
+    echo "$target copy failure must make zero Terraform calls and leave no override" >&2
+    exit 1
+  fi
+  pass "$target copy failure cleanup"
+done
+
 for failure_case in \
   'bootstrap-plan|init|41' \
   'bootstrap-plan|plan|42' \

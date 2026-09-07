@@ -50,7 +50,11 @@ round-trips the policy but does not enforce the transport condition (probed
 reserve the maximum 12-character environment segment: only a 15-character LB
 name part or 16-character target-group name part derived from `var.name` can be
 truncated and trailing-hyphen-trimmed, followed by the intact `env_id` and
-`-alb` or `-tg` suffix. The ALB security group admits only `operator_cidr`
+`-alb` or `-tg` suffix. This guarantees uniqueness across environment ids
+under one fixed `var.name`, which is a deployment constant. Two projects whose
+names share the retained 15-character LB or 16-character target-group prefix
+must not share an AWS account and region. The ALB security group admits only
+`operator_cidr`
 (required, no default) over HTTP; no TLS since there is no domain and no idle
 budget for one.
 

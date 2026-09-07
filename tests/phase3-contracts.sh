@@ -269,7 +269,7 @@ fi
 apply_workflow="$REPO_ROOT/.github/workflows/session-apply.yml"
 sweeper_workflow="$REPO_ROOT/.github/workflows/sweeper.yml"
 plan_workflow="$REPO_ROOT/.github/workflows/terraform-plan.yml"
-iam_matrix_workflow="$REPO_ROOT/.github/workflows/iam-matrix-plan.yml"
+iam_matrix_workflow="${IAM_MATRIX_WORKFLOW_OVERRIDE:-$REPO_ROOT/.github/workflows/iam-matrix-plan.yml}"
 
 # P5-26: fixture hygiene must reject global IPv6 addresses while accepting
 # explicit policy markers and non-routable/documentation ranges.
@@ -326,10 +326,16 @@ if [ ! -f "$iam_matrix_workflow" ]; then
   exit 1
 fi
 plan_localstack_job="$(sed -n '/^  plan-localstack:/,/^  infracost:/p' "$plan_workflow")"
+iam_matrix_ref_count="$(grep -c '^[[:space:]]*uses: LocalStack/setup-localstack@' "$iam_matrix_workflow" || true)"
+iam_matrix_tag_count="$(grep -c '^[[:space:]]*image-tag:' "$iam_matrix_workflow" || true)"
+if [ "$iam_matrix_ref_count" -ne 1 ] || [ "$iam_matrix_tag_count" -ne 1 ]; then
+  echo "iam-matrix-plan must contain exactly one LocalStack action ref and image-tag" >&2
+  exit 1
+fi
 plan_localstack_ref="$(grep -m1 'uses: LocalStack/setup-localstack@' <<< "$plan_localstack_job" | sed -E 's/^[[:space:]]*uses: //')"
-iam_matrix_ref="$(grep -m1 'uses: LocalStack/setup-localstack@' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*uses: //')"
+iam_matrix_ref="$(grep '^[[:space:]]*uses: LocalStack/setup-localstack@' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*uses: //')"
 plan_localstack_tag="$(grep -m1 'image-tag:' <<< "$plan_localstack_job" | sed -E 's/^[[:space:]]*image-tag: //')"
-iam_matrix_tag="$(grep -m1 'image-tag:' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*image-tag: //')"
+iam_matrix_tag="$(grep '^[[:space:]]*image-tag:' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*image-tag: //')"
 if [ -z "$plan_localstack_ref" ] || [ "$iam_matrix_ref" != "$plan_localstack_ref" ]; then
   echo "iam-matrix-plan LocalStack action ref must equal terraform-plan.yml" >&2
   exit 1
@@ -338,18 +344,29 @@ if [ -z "$plan_localstack_tag" ] || [ "$iam_matrix_tag" != "$plan_localstack_tag
   echo "iam-matrix-plan LocalStack image-tag must equal terraform-plan.yml" >&2
   exit 1
 fi
+echo "PASS: iam-matrix-plan workflow LocalStack pin cardinality"
 if grep -Eq 'scripts/iam-matrix-inventory\.sh|tests/iam-matrix-contracts\.sh|bootstrap/policy-size-check\.sh' \
     "$iam_matrix_workflow"; then
   echo "iam-matrix-plan workflow must use the Makefile target instead of direct inventory, contract, or render scripts" >&2
   exit 1
 fi
-iam_bootstrap_line="$(grep -n 'run: make bootstrap-apply TARGET=localstack' "$iam_matrix_workflow" | cut -d: -f1)"
-iam_matrix_line="$(grep -n 'run: make iam-matrix-plan' "$iam_matrix_workflow" | cut -d: -f1)"
-if [ -z "$iam_bootstrap_line" ] || [ -z "$iam_matrix_line" ] || \
-   [ "$iam_bootstrap_line" -ge "$iam_matrix_line" ]; then
+iam_bootstrap_count="$(grep -c '^[[:space:]]*run: make bootstrap-apply TARGET=localstack[[:space:]]*$' "$iam_matrix_workflow" || true)"
+iam_matrix_count="$(grep -c '^[[:space:]]*run: make iam-matrix-plan[[:space:]]*$' "$iam_matrix_workflow" || true)"
+if [ "$iam_bootstrap_count" -ne 1 ] || [ "$iam_matrix_count" -ne 1 ]; then
+  echo "iam-matrix-plan must contain exactly one bootstrap apply and IAM matrix plan invocation" >&2
+  exit 1
+fi
+iam_bootstrap_line="$(grep -n '^[[:space:]]*run: make bootstrap-apply TARGET=localstack[[:space:]]*$' "$iam_matrix_workflow" | cut -d: -f1)"
+iam_matrix_line="$(grep -n '^[[:space:]]*run: make iam-matrix-plan[[:space:]]*$' "$iam_matrix_workflow" | cut -d: -f1)"
+if ! [[ "$iam_bootstrap_line" =~ ^[0-9]+$ && "$iam_matrix_line" =~ ^[0-9]+$ ]]; then
+  echo "iam-matrix-plan producer and consumer line numbers must be single integers" >&2
+  exit 1
+fi
+if [ "$iam_bootstrap_line" -ge "$iam_matrix_line" ]; then
   echo "iam-matrix-plan must apply the LocalStack bootstrap before make iam-matrix-plan" >&2
   exit 1
 fi
+echo "PASS: iam-matrix-plan workflow producer/consumer cardinality and ordering"
 if ! grep -Fq "if: github.ref == 'refs/heads/main'" "$iam_matrix_workflow"; then
   echo "iam-matrix-plan job must be gated on refs/heads/main" >&2
   exit 1

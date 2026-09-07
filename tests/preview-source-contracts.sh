@@ -65,6 +65,15 @@ def strip_comments(text):
     return "".join(result)
 
 
+def normalize_bracket_traversals(text):
+    text = re.sub(
+        r'\[(?:"([A-Za-z_][A-Za-z0-9_-]*)"|\'([A-Za-z_][A-Za-z0-9_-]*)\')\]',
+        lambda match: "." + (match.group(1) or match.group(2)),
+        text,
+    )
+    return re.sub(r"\[(?:\*|[0-9]+)\]", "", text)
+
+
 def structural_depths(text):
     depths = [0] * (len(text) + 1)
     depth = 0
@@ -115,6 +124,31 @@ def matching_brace(text, opening):
     raise ValueError("unmatched block brace")
 
 
+def matching_square_bracket(text, opening):
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(opening, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    raise ValueError("unmatched list bracket")
+
+
 block_pattern = re.compile(
     r"(?m)^[ \t]*([A-Za-z_][A-Za-z0-9_-]*)\b([^\n={]*)\{"
 )
@@ -158,14 +192,16 @@ def nested_assignments(body, path=()):
 
 
 try:
-    texts = {path: strip_comments(path.read_text()) for path in paths}
+    raw_texts = {path: path.read_text() for path in paths}
+    texts = {path: strip_comments(text) for path, text in raw_texts.items()}
     if any(structural_depths(text)[-1] != 0 for text in texts.values()):
         raise ValueError("unbalanced source braces")
     root_blocks = [block for text in texts.values() for block in top_blocks(text)]
 except ValueError as error:
     print(f"FAIL: preview-source-parse ({error})", file=sys.stderr)
     raise SystemExit(1)
-combined = "\n".join(texts.values())
+combined = normalize_bracket_traversals("\n".join(texts.values()))
+raw_combined = "\n".join(raw_texts.values())
 resources = {
     f'{block["labels"][0]}.{block["labels"][1]}': block
     for block in root_blocks
@@ -260,10 +296,47 @@ expected_root_sg_records = [
 root_resource_allowlist = Counter(root_sg_records) == Counter(expected_root_sg_records)
 
 bucket_policy = resources.get("aws_s3_bucket_policy.data", {"body": ""})["body"]
-partition_source = "arn:${data.aws_partition.current.partition}:s3:::"
+policy_resource_list = None
+policy_depths = structural_depths(bucket_policy)
+policy_assignments = [
+    match
+    for match in re.finditer(
+        r"(?m)^[ \t]*policy[ \t]*=[ \t]*jsonencode[ \t]*\([ \t]*\{",
+        bucket_policy,
+    )
+    if policy_depths[match.start()] == 0
+]
+if len(policy_assignments) == 1:
+    policy_opening = bucket_policy.find(
+        "{", policy_assignments[0].start(), policy_assignments[0].end()
+    )
+    policy_closing = matching_brace(bucket_policy, policy_opening)
+    policy_jsonencode = bucket_policy[policy_opening + 1 : policy_closing]
+    resource_assignments = list(
+        re.finditer(r"(?m)^[ \t]*Resource[ \t]*=[ \t]*\[", policy_jsonencode)
+    )
+    if len(resource_assignments) == 1:
+        resource_opening = policy_jsonencode.find(
+            "[", resource_assignments[0].start(), resource_assignments[0].end()
+        )
+        try:
+            resource_closing = matching_square_bracket(policy_jsonencode, resource_opening)
+            policy_resource_list = re.sub(
+                r"\s+",
+                "",
+                policy_jsonencode[resource_opening + 1 : resource_closing],
+            )
+        except ValueError:
+            policy_resource_list = None
+expected_policy_resource_list = (
+    '"arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}",'
+    '"arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}/*"'
+)
 policy_partition_source = (
-    bucket_policy.count(partition_source) == 2
-    and "arn:aws:" not in combined
+    policy_resource_list
+    in (expected_policy_resource_list, expected_policy_resource_list + ",")
+    and "arn:aws:" not in raw_combined
+    and 'arn:${"' not in raw_combined
 )
 
 checks = (
@@ -324,6 +397,12 @@ run_mutant() {
     local-service-ingress-readback)
       printf '\nlocals {\n  mutant_service_groups = aws_security_group.service.ingress[*].security_groups\n}\nresource "aws_instance" "mutant" {\n  vpc_security_group_ids = flatten(local.mutant_service_groups)\n}\n' >> "$mutant_root/main.tf"
       ;;
+    bracket-lb-security-groups)
+      printf '\nlocals {\n  mutant_lb_groups = aws_lb.this["security_groups"]\n}\n' >> "$mutant_root/main.tf"
+      ;;
+    bracket-service-ingress)
+      printf "\nlocals {\n  mutant_service_groups = aws_security_group.service['ingress']\n}\n" >> "$mutant_root/main.tf"
+      ;;
     module-alb-group)
       perl -0pi -e 's/security_group_ids = \[aws_security_group\.service\.id\]/security_group_ids = [aws_security_group.alb.id]/' "$mutant_root/main.tf"
       ;;
@@ -344,6 +423,9 @@ run_mutant() {
       ;;
     hardcoded-policy-partition)
       perl -0pi -e 's/arn:\$\{data\.aws_partition\.current\.partition\}:s3:::/arn:aws:s3:::/g' "$mutant_root/main.tf"
+      ;;
+    decoy-partition-literal)
+      perl -0pi -e 's/arn:\$\{data\.aws_partition\.current\.partition\}:s3:::/arn:\$\{"aws"\}:s3:::/g; s/(resource "aws_s3_bucket_policy" "data" \{)/$1\n  mutant_partition_decoy = replace("arn:\${data.aws_partition.current.partition}:s3:::", "arn:\${data.aws_partition.current.partition}:s3:::", "unused")/' "$mutant_root/main.tf"
       ;;
     heredoc-depth-decoy)
       printf '
@@ -397,6 +479,8 @@ resource "aws_instance" "mutant" {
 run_mutant local-alb-alias alb-reference-set
 run_mutant local-lb-security-groups no-indirection
 run_mutant local-service-ingress-readback no-indirection
+run_mutant bracket-lb-security-groups no-indirection
+run_mutant bracket-service-ingress no-indirection
 run_mutant module-alb-group workload-security-groups
 run_mutant module-second-group workload-security-groups
 run_mutant data-security-group-lookup no-indirection
@@ -404,6 +488,7 @@ run_mutant third-alb-reference alb-reference-set
 run_mutant unallowlisted-service-reference root-resource-allowlist
 run_mutant lb-reference-removed alb-reference-set
 run_mutant hardcoded-policy-partition policy-partition-source
+run_mutant decoy-partition-literal policy-partition-source
 run_mutant heredoc-depth-decoy preview-source-parse
 run_mutant duplicate-service-egress root-resource-allowlist
 run_mutant heredoc-alb-reference preview-source-parse

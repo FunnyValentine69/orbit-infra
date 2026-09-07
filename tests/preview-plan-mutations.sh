@@ -289,6 +289,14 @@ run_mutant \
   listener-http-redirect \
   listener-no-redirect \
   '(.planned_values.root_module.resources[] | select(.address == "aws_lb_listener.http").values.default_action[0].type) = "redirect"'
+run_mutant \
+  listener-null-protocol \
+  listener-no-https \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb_listener.http").values.protocol) = null'
+run_mutant \
+  listener-null-action \
+  listener-no-redirect \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb_listener.http").values.default_action[0].type) = null'
 
 run_mutant \
   listener-https-in-child-module \

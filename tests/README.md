@@ -103,8 +103,10 @@ because it can carry prior state and sensitive values.
 Terraform without providers. Five predicates enforce exactly two direct
 `aws_security_group.alb` references, service-group-only workload module wiring,
 no security-group indirection/read-back/data lookup, the three-entry root
-security-group argument allowlist, and partition-derived S3 policy ARN source.
-Its 16 scratch-source mutants cover every specified bypass plus heredoc
+security-group argument allowlist, and the exact two partition-derived Resource
+entries in the data bucket policy. Before token scans, quoted-key bracket
+traversals are normalized to dot form and wildcard or numeric indexes are
+removed. Its 19 scratch-source mutants cover every specified bypass plus heredoc
 rejection, exact root-binding multiplicity, fail-closed `.tf.json` handling; all must fail their named predicate. The script
 runs from `make test`.
 
@@ -114,16 +116,18 @@ partition in refresh-derived `prior_state`, the `data-bucket-present` requiremen
 `aws_s3_bucket.data` with a non-null, non-empty string `.values.bucket`), the
 preview data bucket lifecycle shape (rule id `data-retention`, a 7-day
 multipart abort, and a 30-day expiration on current objects), the complete
-SSL-only bucket policy document, and the absence of HTTPS listeners or HTTP
-redirect actions. The contract walks child modules recursively, so resources
+SSL-only bucket policy document, known non-empty listener protocol and action
+types, and the absence of HTTPS listeners or HTTP redirect actions. The contract
+walks child modules recursively, so resources
 nested under `child_modules` at any depth are included alongside root module
 resources. `tests/preview-plan-mutations.sh <plan.json>` first requires
-the unmodified plan to pass, then derives 46 temporary mutants that prove each
+the unmodified plan to pass, then derives 48 temporary mutants that prove each
 contract predicate independently rejects its targeted drift. The added naming
 mutants cover trailing hyphens, 33-character values, altered environment
 segments, empty name parts, and over-budget name parts for both resources; the
 partition mutants alter the policy ARN partition or remove the prior-state data
-source. Three of the 46 mutants are fail-closed input checks (empty, non-JSON,
+source, and listener mutants set the protocol or action type to null. Three of
+the 48 mutants are fail-closed input checks (empty, non-JSON,
 and missing-`planned_values` plan files) that confirm the contract script rejects
 invalid input rather than passing vacuously. Both scripts run
 in the `plan-localstack` job immediately after the Conftest live-plan gate.
@@ -161,9 +165,10 @@ and verifies the observed generation, status, and owner arguments. It runs
 jq-level probes extract the live jobs aggregation and timestamp-comparison
 filters from `tests/dispatch-ordering.sh`. It also verifies five IPv6 hygiene
 negative, decoded-value/key, allowlist, and digest cases and that the
-`iam-matrix-plan` workflow keeps its LocalStack action and image pins identical
-to `terraform-plan.yml`, applies bootstrap before `make iam-matrix-plan`, and
-never calls the inventory or contract scripts directly. It verifies that
+`iam-matrix-plan` workflow has exactly one LocalStack action and image tag
+matching `terraform-plan.yml`, exactly one bootstrap producer before exactly one
+`make iam-matrix-plan` consumer, and never calls the inventory or contract
+scripts directly. It verifies that
 policy-size remains required by default and moves to the owner-only
 `plan-localstack` job after its health wait, and that Conftest is installed
 before the bootstrap-plan
@@ -279,10 +284,11 @@ appears after the fast pre-check, without attempting to schedule that race in
 the test.
 
 `tests/bootstrap-override-contracts.sh` applies the same ownership contract to
-both Makefile LocalStack bootstrap targets. Its 10 cases cover regular and
+both Makefile LocalStack bootstrap targets. Its 12 cases cover regular and
 dangling operator-owned sentinels with zero Terraform calls, successful
-creation and cleanup, and injected init/plan/apply failures with their original
-recipe exit status and cleanup. It runs from `make test`.
+creation and cleanup, unreadable-example copy failures before any Terraform
+call, and injected init/plan/apply failures with their original recipe exit
+status and cleanup. It runs from `make test`.
 
 ## Phase 5 sweeper fixtures
 
