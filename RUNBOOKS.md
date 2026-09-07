@@ -7,7 +7,11 @@ Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 all
 Every fork and owner PR runs the secret-free `gates` job with policy-size
 explicitly skipped because that check renders a LocalStack plan. Owner PRs
 also run the `plan-localstack` job, which executes policy-size after the
-emulator health wait with the LocalStack environment contract. Local
+emulator health wait with the LocalStack environment contract. Because source
+mode is only Sid-keyed on fork PRs, `.github/workflows/iam-matrix-plan.yml`
+closes the exact-field drift window on the next push to `main` by applying the
+LocalStack bootstrap before `make iam-matrix-plan`; a weekly schedule is the
+backstop, and default-branch dispatch is also available. Local
 `scripts/gates.sh` runs keep policy-size required by default.
 
 The `oidc-smoke.yml` jobs run on same-repository PR runs and are skipped on fork
@@ -56,6 +60,13 @@ terraform -chdir=bootstrap import 'aws_budgets_budget.monthly[0]' <account-id>:o
 
 `<account-id>` is a placeholder — substitute the real 12-digit account ID
 locally at import time; never paste it into a tracked file.
+
+The LocalStack `make bootstrap-plan TARGET=localstack` and `make
+bootstrap-apply TARGET=localstack` paths own `bootstrap/backend_override.tf`
+only when they create it. If that path already exists as a regular file or
+symlink, including a dangling symlink, the target refuses before Terraform and
+leaves the operator-owned entry unchanged. Move or remove an intentional
+operator override yourself before rerunning; the recipe never adopts it.
 
 If the state bucket object itself is lost or corrupted after migration,
 restore a prior version instead of re-importing everything:

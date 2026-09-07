@@ -93,6 +93,7 @@ for address in \
   aws_security_group.alb \
   aws_security_group.zero_lb \
   aws_vpc_security_group_ingress_rule.open \
+  aws_vpc_security_group_ingress_rule.ipv6_open \
   aws_security_group_rule.legacy_open \
   aws_default_security_group.default; do
   address_pattern="${address//./\\.}"

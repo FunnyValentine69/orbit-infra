@@ -2431,6 +2431,101 @@ test_multiple_indexed_alb_group_instances_deny_as_ambiguous if {
 	"aws_security_group.alb[1]: indexed group instances cannot be unambiguously correlated" in messages
 }
 
+
+test_noncanonical_ipv6_world_open_variants_deny if {
+	every cidr in {"0::/0", "::0/0", "0000::/0"} {
+		messages := deny with input as {
+			"configuration": {"root_module": {"resources": [
+				{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+			]}},
+			"resource_changes": [{
+				"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group",
+				"change": {"after": {"ingress": [{"ipv6_cidr_blocks": [cidr]}]}},
+			}],
+		}
+
+		count(messages) == 1
+		"aws_security_group.service: non-ALB security group has IPv6 ingress open to ::/0" in messages
+	}
+}
+
+test_zero_padded_ipv4_world_open_prefix_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group",
+			"change": {"after": {"ingress": [{"cidr_blocks": ["0.0.0.0/00"]}]}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: non-ALB security group has IPv4 ingress open to 0.0.0.0/0" in messages
+}
+
+test_zero_padded_ipv6_world_open_prefix_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group",
+			"change": {"after": {"ingress": [{"ipv6_cidr_blocks": ["::/00"]}]}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: non-ALB security group has IPv6 ingress open to ::/0" in messages
+}
+
+test_multiple_zero_padded_ipv6_world_open_prefix_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group",
+			"change": {"after": {"ingress": [{"ipv6_cidr_blocks": ["0000::/000"]}]}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: non-ALB security group has IPv6 ingress open to ::/0" in messages
+}
+
+test_canonical_ipv4_world_open_still_denies if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group",
+			"change": {"after": {"ingress": [{"cidr_blocks": ["0.0.0.0/0"]}]}},
+		}],
+	}
+
+	count(messages) == 1
+	"aws_security_group.service: non-ALB security group has IPv4 ingress open to 0.0.0.0/0" in messages
+}
+
+test_private_ipv4_and_unique_local_ipv6_are_not_world_open if {
+	messages := deny with input as {
+		"configuration": {"root_module": {"resources": [
+			{"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group"},
+		]}},
+		"resource_changes": [{
+			"address": "aws_security_group.service", "mode": "managed", "type": "aws_security_group",
+			"change": {"after": {"ingress": [{
+				"cidr_blocks": ["10.0.0.0/08"],
+				"ipv6_cidr_blocks": ["fd00::/8"],
+			}]}},
+		}],
+	}
+
+	count(messages) == 0
+}
+
 test_known_alb_group_forgotten_scalar_before_value_denies if {
 	messages := deny with input as {
 		"configuration": {"root_module": {"resources": [

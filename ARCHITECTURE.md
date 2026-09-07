@@ -40,10 +40,21 @@ lifecycle rule (id `data-retention`) that aborts incomplete multipart uploads
 after 7 days and expires current objects after 30 days as a cost safety net
 for an environment that outlives its sweeper, plus an SSL-only bucket policy
 that denies `s3:*` when
-`aws:SecureTransport` is `false`; CI asserts both with
-`tests/preview-plan-contracts.sh`. LocalStack accepts and round-trips the policy
-but does not enforce the transport condition (probed 2026-09-07), so local HTTP
-flows are unaffected. The ALB security group admits only `operator_cidr`
+`aws:SecureTransport` is `false`. Both policy resource ARNs derive their
+partition from `data.aws_partition.current`; the plan contract fails closed
+unless the refresh-derived `prior_state` contains that partition, while the
+source contract rejects a hardcoded `arn:aws:` replacement. CI asserts the
+complete document with `tests/preview-plan-contracts.sh`. LocalStack accepts and
+round-trips the policy but does not enforce the transport condition (probed
+2026-09-07), so local HTTP flows are unaffected. The ALB and target-group names
+reserve the maximum 12-character environment segment: only a 15-character LB
+name part or 16-character target-group name part derived from `var.name` can be
+truncated and trailing-hyphen-trimmed, followed by the intact `env_id` and
+`-alb` or `-tg` suffix. This guarantees uniqueness across environment ids
+under one fixed `var.name`, which is a deployment constant. Two projects whose
+names share the retained 15-character LB or 16-character target-group prefix
+must not share an AWS account and region. The ALB security group admits only
+`operator_cidr`
 (required, no default) over HTTP; no TLS since there is no domain and no idle
 budget for one.
 
@@ -268,9 +279,12 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
   -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate evaluates
-  `policy/main.rego`, runs its 85 Rego unit tests from `policy/main_test.rego`,
-  and runs the 17-case shell suite against fixtures that are
-  LOCALSTACK-recorded locally and pass recording-hygiene checks. The
+  `policy/main.rego`, runs its 91 Rego unit tests from `policy/main_test.rego`,
+  and defines an 18-case shell suite against fixtures that are
+  LOCALSTACK-recorded locally and pass recording-hygiene checks. The added IPv6
+  bad-root case's recorded bad-root plan is denied for
+  `aws_vpc_security_group_ingress_rule.ipv6_open`, and the gate passes with all
+  18 cases. The
   root-module policy considers only managed resources and denies a planned S3
   bucket without exactly one fully locked public-access block targeted by either
   one unambiguous whole-resource configuration reference or an equal known planned
@@ -280,8 +294,8 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   unresolvable. No-op buckets are evaluated, pure deletes
   are skipped, governed `forget` actions are denied because their protections
   cannot be verified, and `count`/`for_each` instances fail closed. The policy also
-  denies canonical IPv4 and IPv6 default-route CIDRs, unknown CIDR ingress,
-  or non-empty/unknown
+  denies IPv4 and IPv6 CIDRs whose prefix length is zero, including
+  noncanonical IPv6 spellings, unknown CIDR ingress, or non-empty/unknown
   prefix-list ingress on `aws_security_group`, `aws_default_security_group`,
   `aws_vpc_security_group_ingress_rule`, and `aws_security_group_rule`; unknown
   legacy-rule direction is treated as potentially ingress. Data-source reads
@@ -302,11 +316,15 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   are not consumers. Any configuration reference
   below another security group's `expressions.ingress` or `expressions.egress`,
   whether flattened or nested, is treated as a rule source; planned nested ingress
-  and egress `security_groups` source values are likewise excluded. Terraform plan
-  JSON does not serialize locals, so a fresh-create
-  ALB-group consumer hidden only behind local or other indirection remains
-  undetectable; this repository's own root attaches the ALB group only to the ALB,
-  which the live-plan gate checks through direct references. A standalone
+  and egress `security_groups` source values are likewise excluded. Terraform
+  plan JSON does not serialize locals, so the offline
+  `preview-source-contracts.sh` invariant requires exactly two direct ALB-group
+  references: the ALB attachment and the service group's ingress source. It also
+  requires every workload module to receive only the service group, forbids
+  group/list/rule read-back and group data lookups, and checks the exact
+  multiplicity of every allowlisted security-group-shaped root argument,
+  including the service egress to the network endpoint group. Its scanner fails
+  closed on heredocs or `.tf.json` configuration. A standalone
   ingress rule, including an indexed instance, must also plan a known
   `security_group_id` equal to that ID, or both the rule target and group ID
   must be unknown through the same exact two-traversal reference set. A
@@ -314,8 +332,11 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   child-module load balancer never exempts a group. In
   `terraform-plan.yml`, the `gates` job runs the gate and `plan-localstack`
   gates both the bootstrap plan before bootstrap apply and the live LocalStack
-  plan before its PR summary comment. The bootstrap state bucket uses `.bucket`
-  and a fully locked public-access block and defines no security groups. The
+  plan before its PR summary comment. `iam-matrix-plan.yml` separately applies
+  a LocalStack bootstrap and invokes the Makefile-owned exact-field plan mode on
+  pushes to `main`, weekly, and by default-branch dispatch. The bootstrap state
+  bucket uses `.bucket` and a fully locked public-access block and defines no
+  security groups. The
   existing static/live-plan paths are VERIFIED in CI on PR #12's prior head;
   the new bootstrap gate is CODE-ONLY pending host validation. In
   `session-apply.yml`, Conftest gates the saved AWS plan before `make apply`;

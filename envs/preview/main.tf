@@ -53,6 +53,14 @@ data "aws_partition" "current" {}
 locals {
   tags = merge(var.tags, { Project = var.project_tag })
 
+  # Reserve the maximum 12-character env_id before composing provider-limited
+  # 32-character names. Only var.name is truncated; env_id and suffixes remain
+  # intact so distinct environment identifiers cannot collide.
+  lb_name_part = replace(substr(var.name, 0, 32 - (1 + 12 + length("-alb"))), "/-+$/", "")
+  tg_name_part = replace(substr(var.name, 0, 32 - (1 + 12 + length("-tg"))), "/-+$/", "")
+  lb_name      = "${local.lb_name_part}-${var.env_id}-alb"
+  tg_name      = "${local.tg_name_part}-${var.env_id}-tg"
+
   # Naming contract with bootstrap/roles.tf: the task-boundary policy is
   # created there as "${var.name}-task-boundary" (see bootstrap/README.md
   # and ADR 0005 Amendment 2026-09-02).
@@ -114,7 +122,7 @@ resource "aws_security_group" "alb" {
 resource "aws_lb" "this" {
   #checkov:skip=CKV_AWS_150:No TLS listener exists per ADR 0004; deletion protection is intentionally off for an ephemeral, Terraform-destroyed environment
   #checkov:skip=CKV_AWS_131:No TLS on this ALB (ADR 0004); drop_invalid_header_fields is the applicable hardening control instead
-  name                       = substr("${var.name}-${var.env_id}-alb", 0, 32)
+  name                       = local.lb_name
   internal                   = false
   load_balancer_type         = "application"
   subnets                    = module.network.public_subnet_ids
@@ -126,7 +134,7 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = substr("${var.name}-${var.env_id}-api-tg", 0, 32)
+  name        = local.tg_name
   port        = 8000
   protocol    = "HTTP"
   vpc_id      = module.network.vpc_id
@@ -354,8 +362,8 @@ resource "aws_s3_bucket_policy" "data" {
       Principal = "*"
       Action    = "s3:*"
       Resource = [
-        "arn:aws:s3:::${aws_s3_bucket.data.bucket}",
-        "arn:aws:s3:::${aws_s3_bucket.data.bucket}/*",
+        "arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}",
+        "arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}/*",
       ]
       Condition = {
         Bool = {

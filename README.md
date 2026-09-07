@@ -8,21 +8,16 @@ Ephemeral, near-zero-idle AWS platform for a containerized workload: Terraform, 
 ![LocalStack](https://img.shields.io/badge/dev%2Fci-LocalStack-6B41F7)
 ![OIDC + KMS cosign](https://img.shields.io/badge/supply%20chain-OIDC%20%2B%20KMS%20cosign-2AA198)
 
-Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b. Phase 5 IAM-matrix and recorded-demo evidence is summarized in the Evidence table below.
-
 ## Why this project exists
 
-An always-on ECS/ALB/ClickHouse/Redis stack for this platform would cost money whether or not it is used. An ephemeral, near-zero-idle AWS platform: every environment is created and destroyed on demand by a lease-managed lifecycle, so nothing runs (and almost nothing costs money: one KMS key at about a dollar a month) when no one is using it. It is workload-agnostic — the platform, not any one application, is the deliverable. Every real-AWS access from CI runs through GitHub Actions federated with AWS via OIDC, with no static cloud keys; the LocalStack lane uses the emulator's dummy credentials and assumes no AWS role. It ships a placeholder image built from public source so it applies end to end without private code, and separately deploys an upstream workload for demonstration; that upstream's source and images are never publicly published.
+An always-on ECS/ALB/ClickHouse/Redis stack would cost money whether or not it is used. This platform creates and destroys every environment on demand through a lease-managed lifecycle, so nothing runs, and almost nothing costs money (one KMS key at about a dollar a month), when no one is using it. The platform itself — not any one application — is the deliverable, and it is workload-agnostic. It ships a placeholder image built from public source so it applies end to end without private code, while separately deploying an upstream workload for demonstration. That reference workload is a private repository, `SuperGokou/happyCoding`, used with its owner's permission; its source and images are never published, and this repository deploys any image that satisfies the workload contract described in `ARCHITECTURE.md`.
 
 ## Highlights
 
-- Three OIDC-federated IAM roles split by purpose (`plan-reader`, `deployer`, `publisher`), each trust policy pinned to the immutable-ID subject form and `ref:refs/heads/main`, no static AWS keys anywhere in CI.
-- No-NAT private networking: interface VPC endpoints (ECR `api`/`dkr`, CloudWatch Logs, Secrets Manager, `ssmmessages`) plus the S3 gateway endpoint carry every AWS API call a task makes.
-- Per-environment lease lifecycle on S3 with ETag compare-and-swap and a two-stage close: stage 1 destroys and verifies with an exclusive claim, stage 2 re-probes task definitions and removes state versions under its own claim.
-- LocalStack CI lane proves apply, Stage 1, and the successful in-job Stage 2 allowance/close path without AWS spend (stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only), using the GitHub Student Developer Pack's LocalStack Student plan.
-- PR checks that must be green are `gates` on every PR and, on repository-owner-authored same-repository PRs, `plan-localstack` and `infracost`. The separate `oidc-smoke.yml` jobs skip fork PRs and runs whose `github.actor` is `dependabot[bot]`; their three `assume-*` jobs stay red on same-repository PRs until P0-3b.
-- The private-image signing pipeline is designed and implemented, but real-AWS execution is CODE-ONLY until P0-3b: upstream images are built locally from a pinned `git archive` and never built in hosted CI; `sign-images.yml` scans, KMS-signs, and attests the already-pushed digests with Rekor upload disabled.
-- Fail-closed verifier fixture suites: 27 sweeper cases and 48 cleanup-verifier cases cover the pending, hand-back, prune, and CAS-loss paths.
+- OIDC-only CI: three purpose-split IAM roles (`plan-reader`, `deployer`, `publisher`), no static AWS keys anywhere.
+- No-NAT private networking: every AWS API call a task makes goes through interface VPC endpoints or the S3 gateway endpoint.
+- Lease lifecycle with compare-and-swap on S3 and a two-stage close (destroy-and-verify, then re-probe and remove state).
+- Policy gates and contract suites that prove their own predicates by mutation testing.
 
 ## System overview
 
@@ -58,11 +53,9 @@ flowchart LR
     api --> alarms["CloudWatch alarms"] --> sns["SNS"]
 ```
 
-One VPC per environment, no NAT gateway. Two public subnets across two AZs hold the ALB (which requires at least two AZs); one private subnet in a single AZ holds every ECS task. With no NAT, every AWS API a task calls needs a matching interface endpoint, plus the no-cost S3 gateway endpoint. One ECS Fargate cluster (ARM64) hosts the `api`, `clickhouse`, and `redis` services via Cloud Map, plus an optional `worker`. The ALB security group admits only `operator_cidr` (required, no default) over HTTP; no TLS since there is no domain and no idle budget for one. See `ARCHITECTURE.md` for the persistent-vs-ephemeral resource split and the full trust model.
+One VPC per environment, no NAT gateway: two public subnets across two AZs hold the ALB, and one private subnet holds every ECS task. Because there is no NAT, every AWS API a task calls needs a matching interface endpoint, plus the no-cost S3 gateway endpoint. One ECS Fargate cluster (ARM64) hosts the `api`, `clickhouse`, and `redis` services via Cloud Map, plus an optional `worker`; the ALB admits only `operator_cidr` over HTTP. See `ARCHITECTURE.md` for the persistent-vs-ephemeral resource split and the full trust model.
 
 ## Lease lifecycle
-
-Each `env_id` has a durable lease with states `open → closing → closed | cleanup_failed`. Within a lease object's lifetime, its `generation` increases when a retained `closed` lease is reopened; after the seven-day prune deletes the lease object, reopening starts a new lease at generation 1. TODO P5-13 tracks the planned generation tombstone or non-reusable lease-incarnation fix. Every mutation is a compare-and-swap on the lease object's S3 ETag, so two writers can never both win.
 
 ```mermaid
 stateDiagram-v2
@@ -83,11 +76,13 @@ stateDiagram-v2
     closed --> [*]: prune after seven days
 ```
 
-Close is two-stage because ECS task definitions delete asynchronously (up to 24 hours) while a hosted job caps at 6. Stage 1 CAS-acquires an exclusive, generation-bound `stage1_claim`, tears down services, calls `DeleteTaskDefinitions`, and verifies every candidate against an exact-service predicate (`gone`, `pending`, `live`, `indeterminate`); success clears the claim and leaves `closing` with state retained, failure sets `cleanup_failed`. The lease admits three automatic stage-1 attempts per generation; after the third, only an audited force retry can claim stage 1 again. Stage 2 claims the exclusive `stage2_claim` only when `stage1_claim` is null, re-probes every recorded task-definition candidate, requires the last Stage 1 verification to have passed with zero live or indeterminate results, then deletes every version and delete marker for the environment's state key before setting `closed`. A pending task definition releases the Stage 2 claim and leaves the lease `closing` for the next sweep; a pending non-task resource hands the lease back to Stage 1 for re-verification. Closed leases prune after 7 days. See ADR 0006 for the full state machine, the sweeper's `discover`/`env` split, and the fixture-recorded LocalStack allowance.
+Every mutation is a compare-and-swap on the lease object's S3 ETag, so two writers can never both win. See ADR 0006 for the full state machine and the sweeper's `discover`/`env` split.
 
-## Two targets
+## Demo
 
-Development runs against LocalStack, using the GitHub Student Developer Pack's LocalStack Student plan (Ultimate-tier service coverage), so the stack can be built and tested without AWS spend. The Phase 3 `terraform-plan` workflow has landed: static gates run on every pull request, while its secret-bearing LocalStack and Infracost jobs run only for the repository owner's own same-repository pull requests. Real AWS is the promotion target once the platform is proven. Three things are verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact OIDC trust-condition semantics. See ADR 0008. The three `assume-*` checks of `oidc-smoke.yml` fail on same-repository PRs until P0-3b (role secrets not yet published) and are skipped on fork PRs and on runs whose `github.actor` is `dependabot[bot]`; see RUNBOOKS "PR review gates".
+![Recorded LocalStack demo: status, plan, conftest gate, apply, state list, destroy](docs/assets/demo.gif)
+
+The committed recording is real LocalStack output, produced by a single run transaction and never hand-edited. Before reproducing it, ensure LocalStack is running, run `make bootstrap-apply TARGET=localstack` once, and build the placeholder image with `make placeholder-build`. Then run `OPERATOR_CIDR=203.0.113.0/24 make demo`; full provenance and review evidence are in `docs/assets/DEMO_PROVENANCE.md`.
 
 ## Quickstart (LocalStack)
 
@@ -98,29 +93,19 @@ make apply TARGET=localstack ENV_ID=dev
 make destroy TARGET=localstack ENV_ID=dev
 ```
 
-## Demo
+## How it is verified
 
-![Recorded LocalStack demo: status, plan, conftest gate, apply, state list, destroy](docs/assets/demo.gif)
+This repo labels every claim by how it was checked:
 
-The committed recording is real LocalStack output. Re-recording is one run transaction launched by `demo/env.sh` and rendered by `demo/record.sh` from the committed `demo/demo.tape` (vhs); long steps run off-screen and only their summaries are shown. Reproduce it with LocalStack up, `make bootstrap-apply TARGET=localstack` applied once, and the placeholder image built:
+- **LOCALSTACK-VERIFIED** — ran against the LocalStack emulator, in CI or locally.
+- **CODE-ONLY** — implemented and contract-tested, but not yet executed on real AWS.
+- **fixture-verified** — exercised through recorded fixtures rather than a live run.
 
-```
-OPERATOR_CIDR=203.0.113.0/24 make demo
-```
+Full evidence table and gate descriptions: `docs/EVIDENCE.md`. Pinned tool versions and checksums: `tools.lock`.
 
-The boundary passes through only `PATH`, `HOME`, `TMPDIR`, `TERM`, `OPERATOR_CIDR`, and `DEMO_INJECT_FAIL`; `demo/lib.sh` fixes the locale, timezone, LocalStack AWS settings, Terraform CLI settings, workspace, target, environment ID, and render root. `OPERATOR_CIDR` must describe a network contained within `203.0.113.0/24` at prefix `/24` through `/32`. The recorder requires the tape's labelled step set to equal the produced exit-status set, derives its minimum duration from shown typing and sleeps, and writes the provenance rows from the same run as the GIF.
+## Status
 
-After preflight, teardown runs once on success or failure and publication starts only after destroy and an empty-state check succeed. Any change under the single `DEMO_GENERATOR_PATHS` declaration requires re-recording and is checked against the provenance commit. Host compromise, concurrent recordings, abrupt process or host loss, provider mirrors implied by `HOME`, Linux beyond the portable metadata checks, and OCR/frame-content automation remain out of scope; a second-rename failure can leave a mixed pair until the drift checks expose it and a rerun repairs it. Terraform cannot destroy an object created before its state write. Full provenance, review evidence, and residuals are in `docs/assets/DEMO_PROVENANCE.md`.
-
-## Quickstart (AWS)
-
-See `bootstrap/README.md` for the one-time bootstrap apply sequence. The ALB ingress allowlist is read from the `OPERATOR_CIDR` repository secret; see RUNBOOKS.md to change it. Preview workflows generate the required AWS backend config from bootstrap naming, save the plan, and apply that exact plan non-interactively.
-
-## Upstream
-
-The reference workload is a private repository, `SuperGokou/happyCoding`, used with its owner's permission. Its source and images are never publicly published; this repository deploys any image that satisfies the workload contract (see ARCHITECTURE.md), and ships a public-source placeholder image through private ECR so the stack can be applied without the private upstream.
-
-`session-apply` requires an explicit deployment mode. `upstream` selects the locked `orbit-api` and `orbit-clickhouse` images plus mirrored Redis. `public` selects the locked private-ECR placeholder plus mirrored Redis and ClickHouse. The workflow opens no lease until every repository name matches `bootstrap/ecr.tf`, every selected lock entry is digest-pinned, and every image has a valid signature and lock-matching attestation. The lease-open CAS records the workflow-run owner, mode, and resolved image references atomically so AWS cleanup can load the same Terraform configuration for destroy. Failure and cancellation cleanup re-reads that lease and runs only when the same workflow run owns an `open` or `closing` generation. Stage 1 holds an exclusive lease claim until its success or failure CAS; Stage 2 refuses while that claim exists.
+The platform runs end to end on LocalStack in CI; promotion to real AWS waits on a paid-account upgrade, after which the signing pipeline, nightly sweeper, and OIDC role checks execute for real.
 
 ## Repository layout
 
@@ -145,93 +130,6 @@ upstream.lock         private upstream build inputs and pushed ECR digests
 mirror-images.lock    placeholder plus Redis/ClickHouse private-ECR digests
 ```
 
-## Gates
-
-Local, pre-CI policy gates (`.tflint.hcl`, `.checkov.yaml` at repo root):
-
-```
-make validate     # terraform init -backend=false + validate, every module/env
-make lint         # terraform fmt -check, tflint --recursive, checkov
-make test         # terraform test, every module with a tests/ dir (also runs envs/*/tests)
-make conftest     # conftest verify + the 17-case recorded-plan regression suite
-make test-concurrency TARGET=localstack OPERATOR_CIDR=203.0.113.0/24  # two live environments on one already-running emulator
-scripts/gates.sh  # validate -> lint -> test -> policy-size -> no-nat-gateway -> conftest, with a PASS/FAIL summary
-```
-
-The live concurrency target, its LocalStack-free SIGTERM/process-group test, and the nonce-bound post-merge GitHub dispatch-ordering test are documented in `tests/README.md`; none starts, stops, or reconfigures LocalStack.
-
-`scripts/gates.sh` also requires the `policy-size` gate by default: it renders a LocalStack plan of `bootstrap/` and requires every planned IAM policy document to be plan-time known (see `bootstrap/README.md` § Gates / size). Run it standalone with `bootstrap/policy-size-check.sh`. The secret-free PR gates set `GATES_POLICY_SIZE=skip`; the owner-only `plan-localstack` job runs the check after LocalStack is healthy.
-
-Conftest evaluates managed resources only: data-source buckets are not denied,
-and data-source groups or load balancers cannot become exemption anchors. It
-denies a planned root S3 bucket unless exactly one planned public-access block
-targets it through one unambiguous whole-resource configuration reference or an
-equal known planned bucket name, has a known planned `after.bucket` equal to the
-bucket's known planned name, and enables all four protections. The target set is
-the union of reference and planned-name correlation, so distinct blocks targeting
-one bucket are ambiguous. A planned block without a bucket reference is denied as
-unresolvable when its target is unknown or its known name matches no planned
-bucket. Governed resources whose actions contain `forget` are also denied because
-their protections cannot be verified. Open, unknown, or prefix-list non-ALB
-ingress is denied because this gate cannot prove a managed prefix list safe;
-unknown legacy-rule direction is treated as potentially ingress. An ALB exemption
-requires exactly one distinct managed security-group reference and a planned root
-managed application-ALB instance, with known planned attachment IDs agreeing. A
-configuration group address correlates only when exactly one planned group
-instance matches; multiple `count`/`for_each` instances fail closed as ambiguous.
-Direct configuration references from an `aws_lb` not backed exclusively by known
-planned application instances, any other root managed non-rule resource, or a root
-module call revoke the exemption. For a group with a known planned ID, a matching
-string leaf anywhere in any managed planned `change.after` at any module depth,
-or in `change.before` for a forgotten managed non-rule resource, also revokes it.
-A fresh-created group has no known pre-existing ID to match. Planned application
-ALBs and security-group rule resources are excluded from those consumer checks.
-Any configuration reference under another security
-group's `expressions.ingress` or `expressions.egress`, whether flattened or nested,
-is treated as a rule source rather than a consumer; planned nested ingress or egress
-`security_groups` source values are likewise excluded. When an ALB attachment is
-unknown, its complete reference set must be exactly the group's whole-resource and
-`.id` traversals. A standalone ingress rule, including an indexed instance, must
-additionally have one unambiguous group reference and either a known planned
-`security_group_id` equal to the group's known planned `id`, or both values unknown
-with that same exact two-traversal reference set; condition references and planned
-literal or mismatched IDs are denied. The owner-only `plan-localstack` job also
-renders and gates the bootstrap plan before bootstrap apply; its state bucket has
-all four protections, its block targets `.bucket`, and bootstrap defines no
-security groups. The existing gate in `gates` and enforcement on the live
-`plan-localstack` PR plan are VERIFIED in CI on PR #12's prior head; the new
-bootstrap pre-apply gate and `session-apply` gating of the saved AWS plan remain
-CODE-ONLY pending their host/live validation.
-
-CI: `terraform-plan.yml` runs static gates on every pull request. Its LocalStack plan and Infracost comment jobs run only for the repository owner's own same-repository pull requests; no AWS credentials are involved. The Infracost GitHub App also reviews every pull request against FinOps policies as a separate `Infracost` check; `infracost.yml` pins its project list to `bootstrap` and `envs/preview` so the conftest fixture roots, deliberately insecure policy-gate inputs that are never deployed, are not evaluated.
-
-## Toolchain
-
-Pinned tool versions and checksums: `tools.lock`.
-
-## Evidence
-
-| Signal | Status |
-|---|---|
-| OIDC-federated Actions, no static AWS keys | in progress |
-| Remote state, S3 native locking, bootstrapped once | in progress |
-| Reusable modules + `terraform test` | in progress |
-| Policy gates: tflint + checkov + conftest (public S3, open non-ALB ingress) on every PR plan; conftest also gates the saved AWS plan before apply | done (apply-side gate CODE-ONLY until P0-3d) |
-| IAM action-condition matrix | source and post-apply plan contracts; executable cases CODE-ONLY until P0-3d |
-| Recorded LocalStack demo | LOCALSTACK-VERIFIED recording; provenance and generator drift contract-verified in CI |
-| Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
-| SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
-| In-job LocalStack Stage 2 | LOCALSTACK-VERIFIED in CI (run 33825140591) |
-| AWS nightly sweeper | CODE-ONLY until P0-3b |
-| Scheduled drift detection on persistent resources | planned |
-| Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
-| Observability: CloudWatch logs, two alarms, one written SLO | done |
-| ADRs, runbooks, threat model | documents done; controls carry their own labels, mostly CODE-ONLY until P0-3d |
-
-## Status
-
-See `STATE.md` for current phase and in-progress work.
-
 ## Documentation map
 
 - `ARCHITECTURE.md` — system design and decisions
@@ -243,8 +141,10 @@ See `STATE.md` for current phase and in-progress work.
 - `placeholder/README.md` — public workload image endpoints, region requirements, and build commands
 - `docs/adr/` — architecture decision records
 - `docs/THREAT_MODEL.md` — STRIDE-lite threats, controls, evidence labels, residual risk
-- `docs/iam-matrix.md` — P0-3d IAM actions, conditions, bindings, cases, and evidence
+- `docs/iam-matrix.md` — IAM actions, conditions, bindings, cases, and evidence
+- `docs/EVIDENCE.md` — evidence labels, the evidence table, and PR gate requirements
 - `docs/assets/DEMO_PROVENANCE.md` — recording provenance, verification, and residuals
+- `policy/README.md` — what the Conftest gate denies and how to run it
 - `STATE.md` — current phase and evidence status
 - `TODO.md` — task tracking and follow-ups
 - `tests/README.md` — fixture provenance and test suite contracts

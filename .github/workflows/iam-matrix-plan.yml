@@ -1,0 +1,78 @@
+# iam-matrix-plan
+#
+# Re-runs the exact-field IAM matrix against a real LocalStack bootstrap plan
+# when changes reach main and on a weekly cadence. Fork PRs remain secret-free;
+# this owner-controlled workflow closes their plan-mode evidence window.
+
+name: iam-matrix-plan
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iam-matrix-plan
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read terraform version from tools.lock
+        id: tf-version
+        run: |
+          version="$(scripts/tool-version.sh terraform)"
+          test -n "${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.tf-version.outputs.version }}
+          terraform_wrapper: false
+
+      - name: Start LocalStack
+        uses: LocalStack/setup-localstack@7c8a0cb3405bc58be4c8f763f812aa000bc46303 # v0.3.2
+        with:
+          image-tag: '2026.8'
+          install-awslocal: 'true'
+          use-pro: 'true'
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+
+      - name: Wait for LocalStack health
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:4566/_localstack/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "LocalStack did not become healthy in time" >&2
+          exit 1
+
+      - name: Apply bootstrap (LocalStack)
+        run: make bootstrap-apply TARGET=localstack
+
+      - name: Check IAM matrix against post-apply plan
+        env:
+          TARGET: localstack
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: make iam-matrix-plan
