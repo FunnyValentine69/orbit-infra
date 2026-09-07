@@ -35,9 +35,17 @@ One ECS Fargate cluster (ARM64) hosts four services via Cloud Map: `api`
 (behind the ALB), `clickhouse`, `redis`, and an optional `worker`
 (disabled unless a worker image/command are supplied). Object storage is
 a Terraform-managed S3 bucket (`force_destroy = true`) granted only to
-the task role — no self-hosted MinIO. The ALB security group admits only
-`operator_cidr` (required, no default) over HTTP; no TLS since there is
-no domain and no idle budget for one.
+the task role — no self-hosted MinIO. The unversioned bucket carries a
+lifecycle rule (id `data-retention`) that aborts incomplete multipart uploads
+after 7 days and expires current objects after 30 days as a cost safety net
+for an environment that outlives its sweeper, plus an SSL-only bucket policy
+that denies `s3:*` when
+`aws:SecureTransport` is `false`; CI asserts both with
+`tests/preview-plan-contracts.sh`. LocalStack accepts and round-trips the policy
+but does not enforce the transport condition (probed 2026-09-07), so local HTTP
+flows are unaffected. The ALB security group admits only `operator_cidr`
+(required, no default) over HTTP; no TLS since there is no domain and no idle
+budget for one.
 
 ```mermaid
 flowchart LR
