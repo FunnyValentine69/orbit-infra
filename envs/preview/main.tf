@@ -320,19 +320,24 @@ resource "aws_s3_bucket_public_access_block" "data" {
   restrict_public_buckets = true
 }
 
-# This bucket is unversioned, so only the multipart abort applies; this mirrors
-# bootstrap/state.tf.
+# This bucket is unversioned, so only the multipart abort and a 30-day
+# current-object expiration apply; the expiration is a cost safety net for an
+# environment that outlives its sweeper.
 resource "aws_s3_bucket_lifecycle_configuration" "data" {
   bucket = aws_s3_bucket.data.bucket
 
   rule {
-    id     = "data-multipart-abort"
+    id     = "data-retention"
     status = "Enabled"
 
     filter {}
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
+    }
+
+    expiration {
+      days = 30
     }
   }
 }

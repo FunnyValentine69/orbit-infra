@@ -93,12 +93,13 @@ because it can carry prior state and sensitive values.
 `tests/preview-plan-contracts.sh <plan.json>` reads a Terraform plan JSON and
 uses 16 predicates to assert the `data-bucket-present` requirement (exactly one
 `aws_s3_bucket.data` with a non-null, non-empty string `.values.bucket`), the
-preview data bucket multipart-abort lifecycle shape, the complete
+preview data bucket lifecycle shape (rule id `data-retention`, a 7-day
+multipart abort, and a 30-day expiration on current objects), the complete
 SSL-only bucket policy document, and the absence of HTTPS listeners or HTTP
 redirect actions. The contract walks child modules recursively, so resources
 nested under `child_modules` at any depth are included alongside root module
 resources. `tests/preview-plan-mutations.sh <plan.json>` first requires
-the unmodified plan to pass, then derives 30 temporary mutants that prove each
+the unmodified plan to pass, then derives 31 temporary mutants that prove each
 contract predicate independently rejects its targeted drift. Both scripts run
 in the `plan-localstack` job immediately after the Conftest live-plan gate.
 

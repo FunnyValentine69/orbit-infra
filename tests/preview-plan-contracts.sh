@@ -97,7 +97,7 @@ assertions="$({
         },
         {
           name: "lifecycle-rule-id",
-          passed: ($rule.id == "data-multipart-abort")
+          passed: ($rule.id == "data-retention")
         },
         {
           name: "lifecycle-rule-status",
@@ -120,10 +120,14 @@ assertions="$({
           ] | length) == 0)
         },
         {
-          name: "lifecycle-no-expiration",
+          name: "lifecycle-expiration-days",
           passed: (([
             $lifecycle[]?.values.rule[]?.expiration[]?
-          ] | length) == 0)
+          ]) as $expirations
+          | ($expirations | length) == 1
+          and ($expirations[0].days == 30)
+          and (($expirations[0].date // "") == "")
+          and (($expirations[0].expired_object_delete_marker // false) != true))
         },
         {
           name: "lifecycle-no-transition",

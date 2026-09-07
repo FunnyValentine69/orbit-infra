@@ -144,9 +144,13 @@ run_mutant \
   lifecycle-no-noncurrent \
   '(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket_lifecycle_configuration.data").values.rule[0].noncurrent_version_expiration) = [{"noncurrent_days":1}]'
 run_mutant \
-  lifecycle-expiration-added \
-  lifecycle-no-expiration \
-  '(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket_lifecycle_configuration.data").values.rule[0].expiration) = [{"days":1}]'
+  lifecycle-expiration-removed \
+  lifecycle-expiration-days \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket_lifecycle_configuration.data").values.rule[0].expiration) = []'
+run_mutant \
+  lifecycle-expiration-days-29 \
+  lifecycle-expiration-days \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket_lifecycle_configuration.data").values.rule[0].expiration[0].days) = 29'
 run_mutant \
   lifecycle-transition-added \
   lifecycle-no-transition \
