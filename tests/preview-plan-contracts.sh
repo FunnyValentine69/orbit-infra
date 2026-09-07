@@ -67,6 +67,7 @@ assertions="$({
         | select(.address == "aws_s3_bucket_policy.data")
       ] as $policies
     | [$resources[] | select(.type == "aws_lb_listener")] as $listeners
+    | [$listeners[] | select(.address == "aws_lb_listener.http")] as $http_listeners
     | ($lifecycle[0].values.rule // []) as $rules
     | ($rules[0] // {}) as $rule
     | (try ($policies[0].values.policy | fromjson) catch null) as $actual_policy
@@ -214,9 +215,24 @@ assertions="$({
           )
         },
         {
+          name: "listener-present",
+          passed: (
+            ($http_listeners | length) == 1
+            and (($http_listeners[0].values.protocol | type) == "string")
+            and (($http_listeners[0].values.protocol | length) > 0)
+            and (($http_listeners[0].values.default_action | type) == "array")
+            and (($http_listeners[0].values.default_action | length) > 0)
+            and ($http_listeners[0].values.default_action | all(
+              .[];
+              ((.type | type) == "string" and (.type | length) > 0)
+            ))
+          )
+        },
+        {
           name: "listener-no-https",
           passed: (
-            ($listeners | all(
+            ($listeners | length) > 0
+            and ($listeners | all(
               .[];
               ((.values.protocol | type) == "string"
               and (.values.protocol | length) > 0)
@@ -230,7 +246,8 @@ assertions="$({
         {
           name: "listener-no-redirect",
           passed: (
-            ($listeners | all(
+            ($listeners | length) > 0
+            and ($listeners | all(
               .[];
               ((.values.default_action | type) == "array"
               and (.values.default_action | length) > 0

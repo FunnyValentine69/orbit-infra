@@ -325,61 +325,138 @@ if [ ! -f "$iam_matrix_workflow" ]; then
   echo "iam-matrix-plan workflow is missing" >&2
   exit 1
 fi
-plan_localstack_job="$(sed -n '/^  plan-localstack:/,/^  infracost:/p' "$plan_workflow")"
-iam_matrix_ref_count="$(grep -c '^[[:space:]]*uses: LocalStack/setup-localstack@' "$iam_matrix_workflow" || true)"
-iam_matrix_tag_count="$(grep -c '^[[:space:]]*image-tag:' "$iam_matrix_workflow" || true)"
-if [ "$iam_matrix_ref_count" -ne 1 ] || [ "$iam_matrix_tag_count" -ne 1 ]; then
-  echo "iam-matrix-plan must contain exactly one LocalStack action ref and image-tag" >&2
-  exit 1
-fi
-plan_localstack_ref="$(grep -m1 'uses: LocalStack/setup-localstack@' <<< "$plan_localstack_job" | sed -E 's/^[[:space:]]*uses: //')"
-iam_matrix_ref="$(grep '^[[:space:]]*uses: LocalStack/setup-localstack@' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*uses: //')"
-plan_localstack_tag="$(grep -m1 'image-tag:' <<< "$plan_localstack_job" | sed -E 's/^[[:space:]]*image-tag: //')"
-iam_matrix_tag="$(grep '^[[:space:]]*image-tag:' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*image-tag: //')"
-if [ -z "$plan_localstack_ref" ] || [ "$iam_matrix_ref" != "$plan_localstack_ref" ]; then
-  echo "iam-matrix-plan LocalStack action ref must equal terraform-plan.yml" >&2
-  exit 1
-fi
-if [ -z "$plan_localstack_tag" ] || [ "$iam_matrix_tag" != "$plan_localstack_tag" ]; then
-  echo "iam-matrix-plan LocalStack image-tag must equal terraform-plan.yml" >&2
-  exit 1
-fi
-echo "PASS: iam-matrix-plan workflow LocalStack pin cardinality"
-if grep -Eq 'scripts/iam-matrix-inventory\.sh|tests/iam-matrix-contracts\.sh|bootstrap/policy-size-check\.sh' \
-    "$iam_matrix_workflow"; then
-  echo "iam-matrix-plan workflow must use the Makefile target instead of direct inventory, contract, or render scripts" >&2
-  exit 1
-fi
-iam_bootstrap_count="$(grep -c '^[[:space:]]*run: make bootstrap-apply TARGET=localstack[[:space:]]*$' "$iam_matrix_workflow" || true)"
-iam_matrix_count="$(grep -c '^[[:space:]]*run: make iam-matrix-plan[[:space:]]*$' "$iam_matrix_workflow" || true)"
-if [ "$iam_bootstrap_count" -ne 1 ] || [ "$iam_matrix_count" -ne 1 ]; then
-  echo "iam-matrix-plan must contain exactly one bootstrap apply and IAM matrix plan invocation" >&2
-  exit 1
-fi
-iam_bootstrap_line="$(grep -n '^[[:space:]]*run: make bootstrap-apply TARGET=localstack[[:space:]]*$' "$iam_matrix_workflow" | cut -d: -f1)"
-iam_matrix_line="$(grep -n '^[[:space:]]*run: make iam-matrix-plan[[:space:]]*$' "$iam_matrix_workflow" | cut -d: -f1)"
-if ! [[ "$iam_bootstrap_line" =~ ^[0-9]+$ && "$iam_matrix_line" =~ ^[0-9]+$ ]]; then
-  echo "iam-matrix-plan producer and consumer line numbers must be single integers" >&2
-  exit 1
-fi
-if [ "$iam_bootstrap_line" -ge "$iam_matrix_line" ]; then
-  echo "iam-matrix-plan must apply the LocalStack bootstrap before make iam-matrix-plan" >&2
-  exit 1
-fi
-echo "PASS: iam-matrix-plan workflow producer/consumer cardinality and ordering"
-if ! grep -Fq "if: github.ref == 'refs/heads/main'" "$iam_matrix_workflow"; then
-  echo "iam-matrix-plan job must be gated on refs/heads/main" >&2
-  exit 1
-fi
-if ! grep -Fq 'contents: read' "$iam_matrix_workflow"; then
-  echo "iam-matrix-plan workflow must declare a top-level permissions: contents: read" >&2
-  exit 1
-fi
-if ! grep -Fq 'persist-credentials: false' "$iam_matrix_workflow"; then
-  echo "iam-matrix-plan checkout step must set persist-credentials: false" >&2
-  exit 1
-fi
-echo "PASS: iam-matrix-plan workflow contracts"
+python3 - "$iam_matrix_workflow" "$plan_workflow" <<'PY_IAM_MATRIX_WORKFLOW'
+from pathlib import Path
+import sys
+import yaml
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load_workflow(path, label):
+    try:
+        workflow = yaml.safe_load(Path(path).read_text())
+    except (OSError, yaml.YAMLError):
+        fail(f"{label} workflow could not be loaded as YAML")
+    if not isinstance(workflow, dict):
+        fail(f"{label} workflow must be a YAML mapping")
+    return workflow
+
+
+def matching_indices(steps, predicate):
+    return [index for index, step in enumerate(steps) if predicate(step)]
+
+
+def step_string(step, key):
+    value = step.get(key, "") if isinstance(step, dict) else ""
+    return value if isinstance(value, str) else ""
+
+
+iam_matrix = load_workflow(sys.argv[1], "iam-matrix-plan")
+plan = load_workflow(sys.argv[2], "terraform-plan")
+
+jobs = iam_matrix.get("jobs")
+if not isinstance(jobs, dict) or len(jobs) != 1:
+    fail("iam-matrix-plan must contain exactly one job")
+iam_job = next(iter(jobs.values()))
+if not isinstance(iam_job, dict):
+    fail("iam-matrix-plan job must be a mapping")
+iam_steps = iam_job.get("steps")
+if not isinstance(iam_steps, list) or not all(
+    isinstance(step, dict) for step in iam_steps
+):
+    fail("iam-matrix-plan job steps must be a list of mappings")
+
+plan_jobs = plan.get("jobs")
+plan_job = plan_jobs.get("plan-localstack") if isinstance(plan_jobs, dict) else None
+plan_steps = plan_job.get("steps") if isinstance(plan_job, dict) else None
+if not isinstance(plan_steps, list) or not all(
+    isinstance(step, dict) for step in plan_steps
+):
+    fail("terraform-plan plan-localstack steps must be a list of mappings")
+
+localstack_prefix = "LocalStack/setup-localstack@"
+iam_localstack = matching_indices(
+    iam_steps,
+    lambda step: step_string(step, "uses").startswith(localstack_prefix),
+)
+plan_localstack = matching_indices(
+    plan_steps,
+    lambda step: step_string(step, "uses").startswith(localstack_prefix),
+)
+if len(iam_localstack) != 1:
+    fail("iam-matrix-plan must contain exactly one LocalStack action ref and image-tag")
+if len(plan_localstack) != 1:
+    fail("terraform-plan plan-localstack job must contain exactly one LocalStack action")
+iam_localstack_step = iam_steps[iam_localstack[0]]
+plan_localstack_step = plan_steps[plan_localstack[0]]
+iam_with = iam_localstack_step.get("with")
+plan_with = plan_localstack_step.get("with")
+if not isinstance(iam_with, dict) or not isinstance(plan_with, dict):
+    fail("LocalStack workflow steps must carry with mappings")
+plan_localstack_ref = step_string(plan_localstack_step, "uses")
+plan_localstack_tag = plan_with.get("image-tag")
+if step_string(iam_localstack_step, "uses") != plan_localstack_ref:
+    fail("iam-matrix-plan LocalStack action ref must equal terraform-plan.yml")
+if (
+    not isinstance(plan_localstack_tag, str)
+    or not plan_localstack_tag
+    or iam_with.get("image-tag") != plan_localstack_tag
+):
+    fail("iam-matrix-plan LocalStack image-tag must equal terraform-plan.yml")
+print("PASS: iam-matrix-plan workflow LocalStack pin cardinality")
+
+forbidden_commands = (
+    "scripts/iam-matrix-inventory.sh",
+    "tests/iam-matrix-contracts.sh",
+    "bootstrap/policy-size-check.sh",
+)
+if any(
+    command in step_string(step, "run")
+    for step in iam_steps
+    for command in forbidden_commands
+):
+    fail(
+        "iam-matrix-plan workflow must use the Makefile target instead of "
+        "direct inventory, contract, or render scripts"
+    )
+bootstrap_indices = matching_indices(
+    iam_steps,
+    lambda step: "make bootstrap-apply TARGET=localstack"
+    in step_string(step, "run"),
+)
+matrix_indices = matching_indices(
+    iam_steps,
+    lambda step: "make iam-matrix-plan" in step_string(step, "run"),
+)
+if len(bootstrap_indices) != 1 or len(matrix_indices) != 1:
+    fail(
+        "iam-matrix-plan must contain exactly one bootstrap apply and IAM "
+        "matrix plan invocation"
+    )
+if bootstrap_indices[0] >= matrix_indices[0]:
+    fail("iam-matrix-plan must apply the LocalStack bootstrap before make iam-matrix-plan")
+print("PASS: iam-matrix-plan workflow producer/consumer cardinality and ordering")
+
+if iam_job.get("if") != "github.ref == 'refs/heads/main'":
+    fail("iam-matrix-plan job must be gated on refs/heads/main")
+permissions = iam_matrix.get("permissions")
+if not isinstance(permissions, dict) or permissions.get("contents") != "read":
+    fail("iam-matrix-plan workflow must declare a top-level permissions: contents: read")
+checkout_indices = matching_indices(
+    iam_steps,
+    lambda step: step_string(step, "uses").startswith("actions/checkout@"),
+)
+if len(checkout_indices) != 1:
+    fail("iam-matrix-plan must contain exactly one checkout step")
+checkout_with = iam_steps[checkout_indices[0]].get("with")
+if not isinstance(checkout_with, dict) or checkout_with.get("persist-credentials") is not False:
+    fail("iam-matrix-plan checkout step must set persist-credentials: false")
+print("PASS: iam-matrix-plan workflow contracts")
+PY_IAM_MATRIX_WORKFLOW
 python3 - "$sweeper_workflow" "$plan_workflow" <<'PY'
 from pathlib import Path
 import sys

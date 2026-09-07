@@ -290,6 +290,10 @@ run_mutant \
   listener-no-redirect \
   '(.planned_values.root_module.resources[] | select(.address == "aws_lb_listener.http").values.default_action[0].type) = "redirect"'
 run_mutant \
+  listener-deleted \
+  listener-present \
+  'del(.planned_values.root_module.resources[] | select(.address == "aws_lb_listener.http"))'
+run_mutant \
   listener-null-protocol \
   listener-no-https \
   '(.planned_values.root_module.resources[] | select(.address == "aws_lb_listener.http").values.protocol) = null'

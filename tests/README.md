@@ -102,35 +102,39 @@ because it can carry prior state and sensitive values.
 `tests/preview-source-contracts.sh` comment-strips and parses the root preview
 Terraform without providers. Five predicates enforce exactly two direct
 `aws_security_group.alb` references, service-group-only workload module wiring,
-no security-group indirection/read-back/data lookup, the three-entry root
-security-group argument allowlist, and the exact two partition-derived Resource
-entries in the data bucket policy. Before token scans, quoted-key bracket
-traversals are normalized to dot form and wildcard or numeric indexes are
-removed. Its 19 scratch-source mutants cover every specified bypass plus heredoc
-rejection, exact root-binding multiplicity, fail-closed `.tf.json` handling; all must fail their named predicate. The script
-runs from `make test`.
+no security-group indirection/read-back/data lookup or bracket traversal on the
+protected load-balancer and security-group resources, the three-entry root
+security-group argument allowlist, and the sole statement object's exact two
+partition-derived `Resource` entries in the data bucket policy. Quoted-key
+bracket traversals are normalized before the general token scans; independently,
+any protected resource token followed by optional whitespace and `[` is rejected.
+Its 22 scratch-source mutants include spaced and computed bracket traversals,
+the nested canonical `Resource` decoy with a local-backed statement resource,
+heredoc rejection, exact root-binding multiplicity, and fail-closed `.tf.json`
+handling; all must fail their named predicate. The script runs from `make test`.
 
 `tests/preview-plan-contracts.sh <plan.json>` reads a Terraform plan JSON and
-uses 19 predicates to assert the `lb-name` and `tg-name` composition, a known
-partition in refresh-derived `prior_state`, the `data-bucket-present` requirement (exactly one
-`aws_s3_bucket.data` with a non-null, non-empty string `.values.bucket`), the
-preview data bucket lifecycle shape (rule id `data-retention`, a 7-day
-multipart abort, and a 30-day expiration on current objects), the complete
-SSL-only bucket policy document, known non-empty listener protocol and action
-types, and the absence of HTTPS listeners or HTTP redirect actions. The contract
-walks child modules recursively, so resources
-nested under `child_modules` at any depth are included alongside root module
-resources. `tests/preview-plan-mutations.sh <plan.json>` first requires
-the unmodified plan to pass, then derives 48 temporary mutants that prove each
-contract predicate independently rejects its targeted drift. The added naming
-mutants cover trailing hyphens, 33-character values, altered environment
-segments, empty name parts, and over-budget name parts for both resources; the
-partition mutants alter the policy ARN partition or remove the prior-state data
-source, and listener mutants set the protocol or action type to null. Three of
-the 48 mutants are fail-closed input checks (empty, non-JSON,
-and missing-`planned_values` plan files) that confirm the contract script rejects
-invalid input rather than passing vacuously. Both scripts run
-in the `plan-localstack` job immediately after the Conftest live-plan gate.
+uses 20 predicates to assert the `lb-name` and `tg-name` composition, a known
+partition in refresh-derived `prior_state`, the `data-bucket-present` requirement
+(exactly one `aws_s3_bucket.data` with a non-null, non-empty string
+`.values.bucket`), the preview data bucket lifecycle shape (rule id
+`data-retention`, a 7-day multipart abort, and a 30-day expiration on current
+objects), the complete SSL-only bucket policy document, exactly one
+`aws_lb_listener.http` with known non-empty protocol and action strings, and the
+absence of HTTPS listeners or HTTP redirect actions. The contract walks child
+modules recursively, so resources nested under `child_modules` at any depth are
+included alongside root module resources. `tests/preview-plan-mutations.sh
+<plan.json>` first requires the unmodified plan to pass, then derives 49
+temporary mutants that prove each contract predicate independently rejects its
+targeted drift. The naming mutants cover trailing hyphens, 33-character values,
+altered environment segments, empty name parts, and over-budget name parts for
+both resources; the partition mutants alter the policy ARN partition or remove
+the prior-state data source, and listener mutants delete the HTTP listener,
+inject HTTPS or redirects, or set the protocol or action type to null. Three of
+the 49 mutants are fail-closed input checks (empty, non-JSON, and
+missing-`planned_values` plan files) that confirm the contract script rejects
+invalid input rather than passing vacuously. Both scripts run in the
+`plan-localstack` job immediately after the Conftest live-plan gate.
 
 Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
 and exact API `rc`/`stdout`/`stderr` responses. The production predicate layer
@@ -161,21 +165,22 @@ Makefile contracts, including the LocalStack owner/rerun guards and the
 signal-path test below. It also executes both the AWS close and LocalStack
 close-and-sweep workflow blocks against controlled lease/close/sweep scripts
 and verifies the observed generation, status, and owner arguments. It runs
-`tests/dispatch-ordering-contracts.sh`, whose
-jq-level probes extract the live jobs aggregation and timestamp-comparison
-filters from `tests/dispatch-ordering.sh`. It also verifies five IPv6 hygiene
-negative, decoded-value/key, allowlist, and digest cases and that the
-`iam-matrix-plan` workflow has exactly one LocalStack action and image tag
-matching `terraform-plan.yml`, exactly one bootstrap producer before exactly one
-`make iam-matrix-plan` consumer, and never calls the inventory or contract
-scripts directly. It verifies that
-policy-size remains required by default and moves to the owner-only
-`plan-localstack` job after its health wait, and that Conftest is installed
-before the bootstrap-plan
-gate, bootstrap apply, live plan, redacted summary, live-plan gate, and PR
-comment in that order. Fork PRs receive the secret-free gates with policy-size
-explicitly skipped; owner PRs receive those gates plus the LocalStack-backed
-policy-size check. Neither suite starts, stops, or reconfigures LocalStack.
+`tests/dispatch-ordering-contracts.sh`, whose jq-level probes extract the live
+jobs aggregation and timestamp-comparison filters from
+`tests/dispatch-ordering.sh`. It also verifies five IPv6 hygiene negative,
+decoded-value/key, allowlist, and digest cases. The `iam-matrix-plan` workflow is
+parsed structurally and must contain exactly one job: that job owns the sole
+LocalStack action and matching `terraform-plan.yml` image/action pins, the sole
+bootstrap producer before the sole `make iam-matrix-plan` consumer, the main
+branch guard, and a checkout step with credentials persistence disabled; the
+workflow also keeps top-level read-only contents permission and never calls the
+inventory or contract scripts directly. It verifies that policy-size remains
+required by default and moves to the owner-only `plan-localstack` job after its
+health wait, and that Conftest is installed before the bootstrap-plan gate,
+bootstrap apply, live plan, redacted summary, live-plan gate, and PR comment in
+that order. Fork PRs receive the secret-free gates with policy-size explicitly
+skipped; owner PRs receive those gates plus the LocalStack-backed policy-size
+check. Neither suite starts, stops, or reconfigures LocalStack.
 
 ## Demo recording contracts
 

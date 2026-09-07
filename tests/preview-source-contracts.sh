@@ -200,7 +200,8 @@ try:
 except ValueError as error:
     print(f"FAIL: preview-source-parse ({error})", file=sys.stderr)
     raise SystemExit(1)
-combined = normalize_bracket_traversals("\n".join(texts.values()))
+stripped_combined = "\n".join(texts.values())
+combined = normalize_bracket_traversals(stripped_combined)
 raw_combined = "\n".join(raw_texts.values())
 resources = {
     f'{block["labels"][0]}.{block["labels"][1]}': block
@@ -265,8 +266,12 @@ forbidden_patterns = (
     r'\bdata\s+"aws_security_groups?"\s+"',
     r"\baws_security_group\.alb\b(?!\.id\b)",
 )
+protected_bracket_traversal = re.compile(
+    r"\b(?:aws_lb\.this|aws_security_group\.(?:alb|service))\s*\["
+)
 no_indirection = (
     not any(re.search(pattern, combined) for pattern in forbidden_patterns)
+    and not protected_bracket_traversal.search(stripped_combined)
     and bool(resources)
     and "aws_lb.this" in resources
 )
@@ -297,6 +302,9 @@ root_resource_allowlist = Counter(root_sg_records) == Counter(expected_root_sg_r
 
 bucket_policy = resources.get("aws_s3_bucket_policy.data", {"body": ""})["body"]
 policy_resource_list = None
+policy_resource_references_input = False
+policy_statement_count = 0
+policy_resource_count = 0
 policy_depths = structural_depths(bucket_policy)
 policy_assignments = [
     match
@@ -312,28 +320,110 @@ if len(policy_assignments) == 1:
     )
     policy_closing = matching_brace(bucket_policy, policy_opening)
     policy_jsonencode = bucket_policy[policy_opening + 1 : policy_closing]
-    resource_assignments = list(
-        re.finditer(r"(?m)^[ \t]*Resource[ \t]*=[ \t]*\[", policy_jsonencode)
+    statement_keys = list(
+        re.finditer(r"(?m)^[ \t]*Statement[ \t]*=", policy_jsonencode)
     )
-    if len(resource_assignments) == 1:
-        resource_opening = policy_jsonencode.find(
-            "[", resource_assignments[0].start(), resource_assignments[0].end()
-        )
-        try:
-            resource_closing = matching_square_bracket(policy_jsonencode, resource_opening)
-            policy_resource_list = re.sub(
-                r"\s+",
-                "",
-                policy_jsonencode[resource_opening + 1 : resource_closing],
-            )
-        except ValueError:
-            policy_resource_list = None
+    resource_keys = list(
+        re.finditer(r"(?m)^[ \t]*Resource[ \t]*=", bucket_policy)
+    )
+    policy_statement_count = len(statement_keys)
+    policy_resource_count = len(resource_keys)
+    jsonencode_depths = structural_depths(policy_jsonencode)
+    if (
+        policy_statement_count == 1
+        and policy_resource_count == 1
+        and jsonencode_depths[statement_keys[0].start()] == 0
+    ):
+        statement_rhs = statement_keys[0].end()
+        statement_list_prefix = re.match(r"[ \t]*\[", policy_jsonencode[statement_rhs:])
+        if statement_list_prefix:
+            statement_opening = statement_rhs + statement_list_prefix.end() - 1
+            try:
+                statement_closing = matching_square_bracket(
+                    policy_jsonencode, statement_opening
+                )
+                statement_list = policy_jsonencode[
+                    statement_opening + 1 : statement_closing
+                ]
+                statement_list_depths = structural_depths(statement_list)
+                object_openings = [
+                    index
+                    for index, char in enumerate(statement_list)
+                    if char == "{" and statement_list_depths[index] == 0
+                ]
+                if len(object_openings) == 1:
+                    object_opening = object_openings[0]
+                    object_closing = matching_brace(statement_list, object_opening)
+                    before_object = statement_list[:object_opening].strip()
+                    after_object = statement_list[object_closing + 1 :].strip()
+                    if not before_object and after_object in ("", ","):
+                        statement_body = statement_list[
+                            object_opening + 1 : object_closing
+                        ]
+                        statement_depths = structural_depths(statement_body)
+                        statement_resource_keys = [
+                            match
+                            for match in re.finditer(
+                                r"(?m)^[ \t]*Resource[ \t]*=", statement_body
+                            )
+                            if statement_depths[match.start()] == 0
+                        ]
+                        if len(statement_resource_keys) == 1:
+                            resource_key = statement_resource_keys[0]
+                            resource_rhs = resource_key.end()
+                            resource_line_end = statement_body.find("\n", resource_rhs)
+                            if resource_line_end == -1:
+                                resource_line_end = len(statement_body)
+                            resource_line = statement_body[resource_rhs:resource_line_end]
+                            policy_resource_references_input = bool(
+                                re.search(r"\b(?:local|var)\.", resource_line)
+                            )
+                            resource_list_prefix = re.match(
+                                r"[ \t]*\[", statement_body[resource_rhs:]
+                            )
+                            if resource_list_prefix:
+                                resource_opening = (
+                                    resource_rhs + resource_list_prefix.end() - 1
+                                )
+                                resource_closing = matching_square_bracket(
+                                    statement_body, resource_opening
+                                )
+                                resource_list = statement_body[
+                                    resource_opening + 1 : resource_closing
+                                ]
+                                policy_resource_references_input = (
+                                    policy_resource_references_input
+                                    or bool(
+                                        re.search(
+                                            r"\b(?:local|var)\.", resource_list
+                                        )
+                                    )
+                                )
+                                resource_line_suffix = statement_body[
+                                    resource_closing + 1 : statement_body.find(
+                                        "\n", resource_closing + 1
+                                    )
+                                    if statement_body.find(
+                                        "\n", resource_closing + 1
+                                    )
+                                    != -1
+                                    else len(statement_body)
+                                ].strip()
+                                if resource_line_suffix in ("", ","):
+                                    policy_resource_list = re.sub(
+                                        r"\s+", "", resource_list
+                                    )
+            except ValueError:
+                policy_resource_list = None
 expected_policy_resource_list = (
     '"arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}",'
     '"arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}/*"'
 )
 policy_partition_source = (
-    policy_resource_list
+    policy_statement_count == 1
+    and policy_resource_count == 1
+    and not policy_resource_references_input
+    and policy_resource_list
     in (expected_policy_resource_list, expected_policy_resource_list + ",")
     and "arn:aws:" not in raw_combined
     and 'arn:${"' not in raw_combined
@@ -403,6 +493,12 @@ run_mutant() {
     bracket-service-ingress)
       printf "\nlocals {\n  mutant_service_groups = aws_security_group.service['ingress']\n}\n" >> "$mutant_root/main.tf"
       ;;
+    spaced-bracket-lb)
+      printf '\nlocals {\n  mutant_lb_groups = aws_lb.this[ "security_groups" ]\n}\n' >> "$mutant_root/main.tf"
+      ;;
+    computed-index-service)
+      printf '\nlocals {\n  mutant_service_groups = aws_security_group.service[var.direction]\n}\n' >> "$mutant_root/main.tf"
+      ;;
     module-alb-group)
       perl -0pi -e 's/security_group_ids = \[aws_security_group\.service\.id\]/security_group_ids = [aws_security_group.alb.id]/' "$mutant_root/main.tf"
       ;;
@@ -426,6 +522,11 @@ run_mutant() {
       ;;
     decoy-partition-literal)
       perl -0pi -e 's/arn:\$\{data\.aws_partition\.current\.partition\}:s3:::/arn:\$\{"aws"\}:s3:::/g; s/(resource "aws_s3_bucket_policy" "data" \{)/$1\n  mutant_partition_decoy = replace("arn:\${data.aws_partition.current.partition}:s3:::", "arn:\${data.aws_partition.current.partition}:s3:::", "unused")/' "$mutant_root/main.tf"
+      ;;
+    nested-resource-decoy)
+      perl -0pi -e 's{      Resource = \[\n        "arn:\$\{data\.aws_partition\.current\.partition\}:s3:::\$\{aws_s3_bucket\.data\.bucket\}",\n        "arn:\$\{data\.aws_partition\.current\.partition\}:s3:::\$\{aws_s3_bucket\.data\.bucket\}/\*",\n      \]}{      Resource = local.hardcoded_policy_resources}; s!      Condition = \{\n!      Condition = {\n        Resource = [\n          "arn:\${data.aws_partition.current.partition}:s3:::\${aws_s3_bucket.data.bucket}",\n          "arn:\${data.aws_partition.current.partition}:s3:::\${aws_s3_bucket.data.bucket}/*",\n        ]\n!' "$mutant_root/main.tf"
+      # shellcheck disable=SC2016 # Terraform interpolation must remain literal.
+      printf '\nlocals {\n  hardcoded_policy_resources = [\n    "arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}",\n    "arn:${data.aws_partition.current.partition}:s3:::${aws_s3_bucket.data.bucket}/*",\n  ]\n}\n' >> "$mutant_root/main.tf"
       ;;
     heredoc-depth-decoy)
       printf '
@@ -481,6 +582,8 @@ run_mutant local-lb-security-groups no-indirection
 run_mutant local-service-ingress-readback no-indirection
 run_mutant bracket-lb-security-groups no-indirection
 run_mutant bracket-service-ingress no-indirection
+run_mutant spaced-bracket-lb no-indirection
+run_mutant computed-index-service no-indirection
 run_mutant module-alb-group workload-security-groups
 run_mutant module-second-group workload-security-groups
 run_mutant data-security-group-lookup no-indirection
@@ -489,6 +592,7 @@ run_mutant unallowlisted-service-reference root-resource-allowlist
 run_mutant lb-reference-removed alb-reference-set
 run_mutant hardcoded-policy-partition policy-partition-source
 run_mutant decoy-partition-literal policy-partition-source
+run_mutant nested-resource-decoy policy-partition-source
 run_mutant heredoc-depth-decoy preview-source-parse
 run_mutant duplicate-service-egress root-resource-allowlist
 run_mutant heredoc-alb-reference preview-source-parse
