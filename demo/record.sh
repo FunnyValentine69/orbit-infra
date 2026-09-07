@@ -381,6 +381,13 @@ rewrite_provenance_row() {
   mv "$output" "$RUN/DEMO_PROVENANCE.md"
 }
 
+recheck_generator() {
+  phase_begin generator_recheck
+  generator_clean_check . "$GENERATOR_COMMIT" || \
+    die "generator inputs changed during the recording; not publishing"
+  phase_ok
+}
+
 render_provenance() {
   phase_begin render_provenance
   cp "$DEMO_DOC" "$RUN/DEMO_PROVENANCE.md" || \
@@ -445,8 +452,7 @@ main() {
   assert_steps
   inspect_artifact
   build_manifest
-  generator_clean_check . "$GENERATOR_COMMIT" || \
-    die "generator inputs changed during the recording; not publishing"
+  recheck_generator
   render_provenance
   teardown || die "teardown failed; not publishing (see $RUN/cleanup.log)"
   publish

@@ -907,7 +907,7 @@ for lifecycle_case in \
     assert-*) phase=assert_steps; trapped=1 ;;
     inspect-*) phase=inspect_artifact; trapped=1 ;;
     render-provenance) phase=render_provenance; trapped=1 ;;
-    render-generator-drift) phase=none; trapped=1 ;;
+    render-generator-drift) phase=generator_recheck; trapped=1 ;;
     teardown-*) phase=teardown; trapped=1 ;;
     post-apply) phase=inject_check; trapped=1 ;;
     *) phase=unknown; trapped=1 ;;
@@ -918,6 +918,8 @@ for lifecycle_case in \
     phase_failures="$(grep -c "^$phase:fail$" "$LIFECYCLE_RUN/lifecycle.log" || true)"
     [ "$phase_failures" -eq 1 ] || case_ok=0
   fi
+  if [ "$name" = render-generator-drift ] && \
+    grep -q '^render_provenance:' "$LIFECYCLE_RUN/lifecycle.log"; then case_ok=0; fi
   destroy_calls="$(grep -c '^make destroy$' "$LIFECYCLE_CALLS" || true)"
   teardown_lines="$(grep -c '^teardown:' "$LIFECYCLE_RUN/lifecycle.log" || true)"
   if [ "$trapped" -eq 0 ]; then
@@ -970,7 +972,7 @@ success_order="$(awk -F: '$1 == "teardown" { teardown=NR } $1 == "publish" { pub
 teardown_lines="$(grep -c '^teardown:' "$LIFECYCLE_RUN/lifecycle.log")"
 expected_lifecycle="$tmp_dir/expected-success-lifecycle.log"
 printf '%s\n' guard:ok setup:ok preflight:ok record:ok inject_check:ok \
-  assert_steps:ok inspect_artifact:ok build_manifest:ok render_provenance:ok \
+  assert_steps:ok inspect_artifact:ok build_manifest:ok generator_recheck:ok render_provenance:ok \
   teardown:ok publish:ok > "$expected_lifecycle"
 if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$LIFECYCLE_BEFORE" != "$LIFECYCLE_AFTER" ] && \
    [ "$success_order" = ok ] && [ "$teardown_lines" -eq 1 ] && \
