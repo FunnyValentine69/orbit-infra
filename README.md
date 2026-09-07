@@ -8,7 +8,7 @@ Ephemeral, near-zero-idle AWS platform for a containerized workload: Terraform, 
 ![LocalStack](https://img.shields.io/badge/dev%2Fci-LocalStack-6B41F7)
 ![OIDC + KMS cosign](https://img.shields.io/badge/supply%20chain-OIDC%20%2B%20KMS%20cosign-2AA198)
 
-Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b.
+Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b. Phase 5 IAM-matrix and recorded-demo evidence is summarized in the Evidence table below.
 
 ## Why this project exists
 
@@ -44,6 +44,7 @@ flowchart LR
             api["api service"]
             ch["clickhouse service"]
             redis["redis service"]
+            worker["worker service (optional)"]
         end
         ep["Interface endpoints<br/>ECR api/dkr, Logs,<br/>Secrets Manager, ssmmessages"]
         gw["S3 gateway endpoint"]
@@ -51,6 +52,7 @@ flowchart LR
     alb --> api
     api --> ch
     api --> redis
+    api -.-> worker
     api --> gw
     priv --> ep
     api --> alarms["CloudWatch alarms"] --> sns["SNS"]
@@ -127,15 +129,18 @@ bootstrap/            one-time Terraform: state bucket, OIDC + roles, KMS, ECR, 
 placeholder/          public-source placeholder workload image
 docs/adr/             architecture decision records
 docs/assets/          recorded demo GIF and its provenance
-scripts/              repo hooks (pre-push guard, hook installer)
+scripts/              lifecycle (lease, close, sweep), policy-gate runner,
+                      cleanup verifier, image build, IAM inventory,
+                      tool digests, hooks
 tests/                shell-level lifecycle and CI contracts
 demo/                 vhs tape and wrapper that record the LocalStack demo (make demo)
+policy/               Conftest/OPA Rego policy and its tests
 .github/workflows/    CI: terraform-plan.yml, oidc-smoke.yml,
                       session-apply.yml, session-destroy.yml, sweeper.yml,
                       mirror-images.yml, sign-images.yml
-modules/              reusable Terraform modules (Phase 2+)
-envs/                 per-environment composition (Phase 2+)
-images/               workload image sources (Phase 2+)
+modules/              four Terraform modules: network, ECS service, Redis, ClickHouse
+envs/                 preview environment composition
+images/               ClickHouse workload image source
 upstream.lock         private upstream build inputs and pushed ECR digests
 mirror-images.lock    placeholder plus Redis/ClickHouse private-ECR digests
 ```
@@ -212,6 +217,8 @@ Pinned tool versions and checksums: `tools.lock`.
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov + conftest (public S3, open non-ALB ingress) on every PR plan; conftest also gates the saved AWS plan before apply | done (apply-side gate CODE-ONLY until P0-3d) |
+| IAM action-condition matrix | source and post-apply plan contracts; executable cases CODE-ONLY until P0-3d |
+| Recorded LocalStack demo | LOCALSTACK-VERIFIED recording; provenance and generator drift contract-verified in CI |
 | Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
 | SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
 | In-job LocalStack Stage 2 | LOCALSTACK-VERIFIED in CI (run 33825140591) |
@@ -229,9 +236,13 @@ See `STATE.md` for current phase and in-progress work.
 
 - `ARCHITECTURE.md` — system design and decisions
 - `RUNBOOKS.md` — operational procedures
+- `bootstrap/README.md` — persistent bootstrap setup and policy-size gate
+- `envs/preview/README.md` — preview composition inputs, outputs, and backends
+- `modules/*/README.md` — network, ECS-service, Redis, and ClickHouse module contracts
 - `docs/adr/` — architecture decision records
 - `docs/THREAT_MODEL.md` — STRIDE-lite threats, controls, evidence labels, residual risk
 - `docs/iam-matrix.md` — P0-3d IAM actions, conditions, bindings, cases, and evidence
+- `docs/assets/DEMO_PROVENANCE.md` — recording provenance, verification, and residuals
 - `STATE.md` — current phase and evidence status
 - `TODO.md` — task tracking and follow-ups
 - `tests/README.md` — fixture provenance and test suite contracts

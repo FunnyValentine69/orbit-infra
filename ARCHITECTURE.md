@@ -259,8 +259,9 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
-  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate runs 85
-  Rego unit tests and the 17-case shell suite against fixtures that are
+  -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate evaluates
+  `policy/main.rego`, runs its 85 Rego unit tests from `policy/main_test.rego`,
+  and runs the 17-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The
   root-module policy considers only managed resources and denies a planned S3
   bucket without exactly one fully locked public-access block targeted by either
@@ -271,7 +272,8 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   unresolvable. No-op buckets are evaluated, pure deletes
   are skipped, governed `forget` actions are denied because their protections
   cannot be verified, and `count`/`for_each` instances fail closed. The policy also
-  denies `0.0.0.0/0`, `::/0`, unknown CIDR ingress, or non-empty/unknown
+  denies canonical IPv4 and IPv6 default-route CIDRs, unknown CIDR ingress,
+  or non-empty/unknown
   prefix-list ingress on `aws_security_group`, `aws_default_security_group`,
   `aws_vpc_security_group_ingress_rule`, and `aws_security_group_rule`; unknown
   legacy-rule direction is treated as potentially ingress. Data-source reads
