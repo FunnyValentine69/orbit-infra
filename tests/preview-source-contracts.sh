@@ -264,6 +264,8 @@ forbidden_patterns = (
     r"\baws_lb\.this\.security_groups\b",
     r"\baws_security_group\.(?:service|alb)\.(?:ingress|egress)\b",
     r'\bdata\s+"aws_security_groups?"\s+"',
+    r'\bdata\s+"aws_(?:lb|lbs|alb)"\s+"',
+    r"\bdata\.aws_(?:lb|alb)\b",
     r"\baws_security_group\.alb\b(?!\.id\b)",
 )
 protected_bracket_traversal = re.compile(
@@ -508,6 +510,9 @@ run_mutant() {
     data-security-group-lookup)
       printf '\ndata "aws_security_group" "mutant" {\n  id = aws_security_group.alb.id\n}\n' >> "$mutant_root/main.tf"
       ;;
+    data-lb-readback)
+      printf '\ndata "aws_lb" "mutant" {\n  name = aws_lb.this.name\n}\nlocals {\n  mutant_lb_groups = data.aws_lb.mutant.security_groups\n}\n' >> "$mutant_root/main.tf"
+      ;;
     third-alb-reference)
       printf '\nresource "aws_instance" "mutant" {\n  vpc_security_group_ids = [aws_security_group.alb.id]\n}\n' >> "$mutant_root/main.tf"
       ;;
@@ -587,6 +592,7 @@ run_mutant computed-index-service no-indirection
 run_mutant module-alb-group workload-security-groups
 run_mutant module-second-group workload-security-groups
 run_mutant data-security-group-lookup no-indirection
+run_mutant data-lb-readback no-indirection
 run_mutant third-alb-reference alb-reference-set
 run_mutant unallowlisted-service-reference root-resource-allowlist
 run_mutant lb-reference-removed alb-reference-set

@@ -102,14 +102,16 @@ because it can carry prior state and sensitive values.
 `tests/preview-source-contracts.sh` comment-strips and parses the root preview
 Terraform without providers. Five predicates enforce exactly two direct
 `aws_security_group.alb` references, service-group-only workload module wiring,
-no security-group indirection/read-back/data lookup or bracket traversal on the
-protected load-balancer and security-group resources, the three-entry root
+no security-group indirection/read-back/data lookup, no load-balancer data-source
+lookup/read-back, or bracket traversal on the protected load-balancer and
+security-group resources, the three-entry root
 security-group argument allowlist, and the sole statement object's exact two
 partition-derived `Resource` entries in the data bucket policy. Quoted-key
 bracket traversals are normalized before the general token scans; independently,
 any protected resource token followed by optional whitespace and `[` is rejected.
-Its 22 scratch-source mutants include spaced and computed bracket traversals,
-the nested canonical `Resource` decoy with a local-backed statement resource,
+Its 23 scratch-source mutants include the load-balancer data-source read-back
+bypass, spaced and computed bracket traversals, the nested canonical `Resource`
+decoy with a local-backed statement resource,
 heredoc rejection, exact root-binding multiplicity, and fail-closed `.tf.json`
 handling; all must fail their named predicate. The script runs from `make test`.
 
@@ -291,8 +293,9 @@ the test.
 `tests/bootstrap-override-contracts.sh` applies the same ownership contract to
 both Makefile LocalStack bootstrap targets. Its 12 cases cover regular and
 dangling operator-owned sentinels with zero Terraform calls, successful
-creation and cleanup, unreadable-example copy failures before any Terraform
-call, and injected init/plan/apply failures with their original recipe exit
+creation and cleanup, directory-backed example-source copy failures that do not
+depend on permission bits and occur before any Terraform call, and injected
+init/plan/apply failures with their original recipe exit
 status and cleanup. It runs from `make test`.
 
 ## Phase 5 sweeper fixtures

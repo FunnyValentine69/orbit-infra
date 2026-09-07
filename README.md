@@ -82,7 +82,7 @@ Every mutation is a compare-and-swap on the lease object's S3 ETag, so two write
 
 ![Recorded LocalStack demo: status, plan, conftest gate, apply, state list, destroy](docs/assets/demo.gif)
 
-The committed recording is real LocalStack output, produced by a single run transaction and never hand-edited. Reproduce it with `OPERATOR_CIDR=203.0.113.0/24 make demo`; full provenance and review evidence are in `docs/assets/DEMO_PROVENANCE.md`.
+The committed recording is real LocalStack output, produced by a single run transaction and never hand-edited. Before reproducing it, ensure LocalStack is running, run `make bootstrap-apply TARGET=localstack` once, and build the placeholder image with `make placeholder-build`. Then run `OPERATOR_CIDR=203.0.113.0/24 make demo`; full provenance and review evidence are in `docs/assets/DEMO_PROVENANCE.md`.
 
 ## Quickstart (LocalStack)
 

@@ -590,7 +590,9 @@ world_open(cidr) if {
 	is_string(cidr)
 	parts := split(cidr, "/")
 	count(parts) == 2
-	parts[1] == "0"
+	prefix := parts[1]
+	regex.match("^[0-9]+$", prefix)
+	to_number(prefix) == 0
 }
 
 inline_ipv4_open(after) if {

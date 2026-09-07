@@ -106,16 +106,18 @@ for target in bootstrap-plan bootstrap-apply; do
   pass "$target no-override cleanup"
 done
 
+example_source="$isolated_repo/bootstrap/localstack.backend_override.tf.example"
+saved_example="$example_source.regular"
+mv "$example_source" "$saved_example"
+mkdir "$example_source"
 for target in bootstrap-plan bootstrap-apply; do
-  chmod 000 "$isolated_repo/bootstrap/localstack.backend_override.tf.example"
   : > "$terraform_log"
   set +e
   output="$(run_make none 41 "$target" 2>&1)"
   rc=$?
   set -e
-  chmod 644 "$isolated_repo/bootstrap/localstack.backend_override.tf.example"
   if [ "$rc" -eq 0 ]; then
-    echo "$target must fail when the backend override example cannot be read: $output" >&2
+    echo "$target must fail when the backend override example cannot be copied: $output" >&2
     exit 1
   fi
   if [ -s "$terraform_log" ] || [ -e "$override_file" ] || [ -L "$override_file" ]; then
@@ -124,6 +126,8 @@ for target in bootstrap-plan bootstrap-apply; do
   fi
   pass "$target copy failure cleanup"
 done
+rmdir "$example_source"
+mv "$saved_example" "$example_source"
 
 for failure_case in \
   'bootstrap-plan|init|41' \
