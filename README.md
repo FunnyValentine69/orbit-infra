@@ -238,7 +238,9 @@ See `STATE.md` for current phase and in-progress work.
 - `RUNBOOKS.md` — operational procedures
 - `bootstrap/README.md` — persistent bootstrap setup and policy-size gate
 - `envs/preview/README.md` — preview composition variables, state keys, boundary, and commands
+- `images/clickhouse/README.md` — derived ClickHouse image and upstream schema build-context boundary
 - `modules/*/README.md` — network, ECS-service, Redis, and ClickHouse module contracts
+- `placeholder/README.md` — public workload image endpoints, region requirements, and build commands
 - `docs/adr/` — architecture decision records
 - `docs/THREAT_MODEL.md` — STRIDE-lite threats, controls, evidence labels, residual risk
 - `docs/iam-matrix.md` — P0-3d IAM actions, conditions, bindings, cases, and evidence
