@@ -36,7 +36,10 @@ assertions="$({
         .
       end;
 
-    (.planned_values.root_module.resources // []) as $resources
+    def all_resources:
+      [.planned_values.root_module | recurse(.child_modules[]?) | .resources[]?];
+
+    (all_resources) as $resources
     | [$resources[] | select(.address == "aws_s3_bucket.data")] as $buckets
     | ($buckets[0].values.bucket // null) as $bucket
     | [

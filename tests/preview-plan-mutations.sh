@@ -206,6 +206,15 @@ run_mutant \
   listener-no-redirect \
   '(.planned_values.root_module.resources[] | select(.address == "aws_lb_listener.http").values.default_action[0].type) = "redirect"'
 
+run_mutant \
+  listener-https-in-child-module \
+  listener-no-https \
+  '(.planned_values.root_module.child_modules[0]) |= (. // {"address":"module.injected","resources":[]}) | (.planned_values.root_module.child_modules[0].resources) |= . + [{"address":"module.injected.aws_lb_listener.https","mode":"managed","type":"aws_lb_listener","name":"https","values":{"protocol":"HTTPS","default_action":[{"type":"forward"}]}}]'
+run_mutant \
+  listener-redirect-in-child-module \
+  listener-no-redirect \
+  '(.planned_values.root_module.child_modules[0]) |= (. // {"address":"module.injected","resources":[]}) | (.planned_values.root_module.child_modules[0].resources) |= . + [{"address":"module.injected.aws_lb_listener.https","mode":"managed","type":"aws_lb_listener","name":"https","values":{"protocol":"HTTP","default_action":[{"type":"redirect"}]}}]'
+
 if [ "$runner_failures" -ne 0 ]; then
   printf 'FAIL: preview plan mutations (%d of %d mutants not killed)\n' \
     "$runner_failures" "$mutant_count" >&2

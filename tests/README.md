@@ -95,8 +95,10 @@ uses 16 predicates to assert the `data-bucket-present` requirement (exactly one
 `aws_s3_bucket.data` with a non-null, non-empty string `.values.bucket`), the
 preview data bucket multipart-abort lifecycle shape, the complete
 SSL-only bucket policy document, and the absence of HTTPS listeners or HTTP
-redirect actions. `tests/preview-plan-mutations.sh <plan.json>` first requires
-the unmodified plan to pass, then derives 28 temporary mutants that prove each
+redirect actions. The contract walks child modules recursively, so resources
+nested under `child_modules` at any depth are included alongside root module
+resources. `tests/preview-plan-mutations.sh <plan.json>` first requires
+the unmodified plan to pass, then derives 30 temporary mutants that prove each
 contract predicate independently rejects its targeted drift. Both scripts run
 in the `plan-localstack` job immediately after the Conftest live-plan gate.
 
