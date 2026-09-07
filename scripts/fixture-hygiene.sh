@@ -63,6 +63,64 @@ while IFS= read -r literal; do
   esac
 done < <(LC_ALL=C grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?' "$fixture" || true)
 
+python3 - "$fixture" <<'PY'
+import ipaddress
+import json
+import re
+import sys
+
+
+fixture = sys.argv[1]
+candidate_pattern = re.compile(
+    r"(?<![0-9A-Fa-f:])(?=[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:)"
+    r"[0-9A-Fa-f:]+(?:/[0-9]{1,3})?(?![0-9A-Fa-f:])"
+)
+allowed_networks = (
+    ipaddress.IPv6Network("fc00::/7"),
+    ipaddress.IPv6Network("fe80::/10"),
+    ipaddress.IPv6Network("2001:db8::/32"),
+)
+world_open = ipaddress.IPv6Network("::/0")
+
+
+def json_strings(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from json_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from json_strings(child)
+    elif isinstance(value, str):
+        yield value
+
+
+with open(fixture, encoding="utf-8") as fixture_file:
+    fixture_json = json.load(fixture_file)
+
+for string in json_strings(fixture_json):
+    for candidate in candidate_pattern.findall(string):
+        try:
+            network = ipaddress.ip_network(candidate, strict=False)
+        except ValueError:
+            continue
+        if not isinstance(network, ipaddress.IPv6Network):
+            continue
+        allowed = (
+            network == world_open
+            or network.is_loopback
+            or network.is_unspecified
+            or any(network.subnet_of(parent) for parent in allowed_networks)
+        )
+        if not allowed:
+            print(
+                f"fixture hygiene failed for {fixture}: "
+                f"contains non-private IPv6 literal {candidate}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+PY
+
 if LC_ALL=C grep -Eiq '[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}' "$fixture"; then
   fail "contains an email address"
 fi

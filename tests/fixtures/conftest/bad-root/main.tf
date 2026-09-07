@@ -132,6 +132,14 @@ resource "aws_vpc_security_group_ingress_rule" "open" {
   to_port           = 443
 }
 
+resource "aws_vpc_security_group_ingress_rule" "ipv6_open" {
+  security_group_id = aws_security_group.service.id
+  cidr_ipv6         = "0::/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+}
+
 resource "aws_security_group_rule" "legacy_open" {
   type              = "ingress"
   security_group_id = aws_security_group.service.id

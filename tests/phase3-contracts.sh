@@ -269,6 +269,88 @@ fi
 apply_workflow="$REPO_ROOT/.github/workflows/session-apply.yml"
 sweeper_workflow="$REPO_ROOT/.github/workflows/sweeper.yml"
 plan_workflow="$REPO_ROOT/.github/workflows/terraform-plan.yml"
+iam_matrix_workflow="$REPO_ROOT/.github/workflows/iam-matrix-plan.yml"
+
+# P5-26: fixture hygiene must reject global IPv6 addresses while accepting
+# explicit policy markers and non-routable/documentation ranges.
+ipv6_global_fixture="$tmp_dir/ipv6-global.json"
+ipv6_escaped_fixture="$tmp_dir/ipv6-escaped.json"
+ipv6_escaped_key_fixture="$tmp_dir/ipv6-escaped-key.json"
+ipv6_allowed_fixture="$tmp_dir/ipv6-allowed.json"
+ipv6_digest_fixture="$tmp_dir/ipv6-digest.json"
+printf '%s\n' '{"value":"2001:4860:4860::8888"}' > "$ipv6_global_fixture"
+printf '%s\n' '{"value":"2001\u003a4860\u003a4860\u003a\u003a8888"}' > "$ipv6_escaped_fixture"
+printf '%s\n' '{"2001\u003a4860\u003a4860\u003a\u003a8888":"value"}' > "$ipv6_escaped_key_fixture"
+printf '%s\n' '{"values":["::/0","::1","fe80::1","fd00::1","2001:db8::1","::"]}' > "$ipv6_allowed_fixture"
+printf '%s\n' '{"digest":"01234567:89abcdef:01234567:89abcdef:01234567:89abcdef:01234567:89abcdef"}' > "$ipv6_digest_fixture"
+set +e
+ipv6_global_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" "$ipv6_global_fixture" 2>&1)"
+ipv6_global_rc=$?
+set -e
+if [ "$ipv6_global_rc" -ne 1 ] || \
+   ! grep -Fq 'contains non-private IPv6 literal 2001:4860:4860::8888' <<< "$ipv6_global_output"; then
+  echo "fixture hygiene must reject a globally routable IPv6 literal: $ipv6_global_output" >&2
+  exit 1
+fi
+set +e
+ipv6_escaped_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" "$ipv6_escaped_fixture" 2>&1)"
+ipv6_escaped_rc=$?
+set -e
+if [ "$ipv6_escaped_rc" -ne 1 ] || \
+   ! grep -Fq 'contains non-private IPv6 literal 2001:4860:4860::8888' <<< "$ipv6_escaped_output"; then
+  echo "fixture hygiene must reject a Unicode-escaped global IPv6 literal: $ipv6_escaped_output" >&2
+  exit 1
+fi
+set +e
+ipv6_escaped_key_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" "$ipv6_escaped_key_fixture" 2>&1)"
+ipv6_escaped_key_rc=$?
+set -e
+if [ "$ipv6_escaped_key_rc" -ne 1 ] || \
+   ! grep -Fq 'contains non-private IPv6 literal 2001:4860:4860::8888' <<< "$ipv6_escaped_key_output"; then
+  echo "fixture hygiene must reject a Unicode-escaped global IPv6 key: $ipv6_escaped_key_output" >&2
+  exit 1
+fi
+for accepted_fixture in "$ipv6_allowed_fixture" "$ipv6_digest_fixture"; do
+  if ! accepted_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" "$accepted_fixture" 2>&1)"; then
+    echo "fixture hygiene rejected an allowed IPv6 or digest case: $accepted_output" >&2
+    exit 1
+  fi
+done
+echo "PASS: fixture IPv6 hygiene contracts (5 cases)"
+
+# P5-31: the periodic/main plan-mode workflow must keep the LocalStack action
+# and image pins byte-equal to the owner-PR job and produce bootstrap state
+# before invoking the Makefile-owned IAM matrix plan path.
+if [ ! -f "$iam_matrix_workflow" ]; then
+  echo "iam-matrix-plan workflow is missing" >&2
+  exit 1
+fi
+plan_localstack_job="$(sed -n '/^  plan-localstack:/,/^  infracost:/p' "$plan_workflow")"
+plan_localstack_ref="$(grep -m1 'uses: LocalStack/setup-localstack@' <<< "$plan_localstack_job" | sed -E 's/^[[:space:]]*uses: //')"
+iam_matrix_ref="$(grep -m1 'uses: LocalStack/setup-localstack@' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*uses: //')"
+plan_localstack_tag="$(grep -m1 'image-tag:' <<< "$plan_localstack_job" | sed -E 's/^[[:space:]]*image-tag: //')"
+iam_matrix_tag="$(grep -m1 'image-tag:' "$iam_matrix_workflow" | sed -E 's/^[[:space:]]*image-tag: //')"
+if [ -z "$plan_localstack_ref" ] || [ "$iam_matrix_ref" != "$plan_localstack_ref" ]; then
+  echo "iam-matrix-plan LocalStack action ref must equal terraform-plan.yml" >&2
+  exit 1
+fi
+if [ -z "$plan_localstack_tag" ] || [ "$iam_matrix_tag" != "$plan_localstack_tag" ]; then
+  echo "iam-matrix-plan LocalStack image-tag must equal terraform-plan.yml" >&2
+  exit 1
+fi
+if grep -Eq 'scripts/iam-matrix-inventory\.sh|tests/iam-matrix-contracts\.sh|bootstrap/policy-size-check\.sh' \
+    "$iam_matrix_workflow"; then
+  echo "iam-matrix-plan workflow must use the Makefile target instead of direct inventory, contract, or render scripts" >&2
+  exit 1
+fi
+iam_bootstrap_line="$(grep -n 'run: make bootstrap-apply TARGET=localstack' "$iam_matrix_workflow" | cut -d: -f1)"
+iam_matrix_line="$(grep -n 'run: make iam-matrix-plan' "$iam_matrix_workflow" | cut -d: -f1)"
+if [ -z "$iam_bootstrap_line" ] || [ -z "$iam_matrix_line" ] || \
+   [ "$iam_bootstrap_line" -ge "$iam_matrix_line" ]; then
+  echo "iam-matrix-plan must apply the LocalStack bootstrap before make iam-matrix-plan" >&2
+  exit 1
+fi
+echo "PASS: iam-matrix-plan workflow contracts"
 python3 - "$sweeper_workflow" "$plan_workflow" <<'PY'
 from pathlib import Path
 import sys

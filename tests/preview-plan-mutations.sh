@@ -59,6 +59,36 @@ mutant_count=0
 killed_count=0
 runner_failures=0
 
+run_invalid_input_case() {
+  local name="$1"
+  local content="$2"
+  local mutant="$tmp_dir/$name.json"
+  local output
+  local rc
+
+  mutant_count=$((mutant_count + 1))
+  printf '%s' "$content" > "$mutant"
+
+  output="$(bash "$contract" "$mutant" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    case "$output" in
+      *"FAIL: preview plan file is empty, not JSON, or has no planned_values"*)
+        printf 'PASS: mutant %s killed by fail-closed input check\n' "$name"
+        killed_count=$((killed_count + 1))
+        return
+        ;;
+    esac
+  fi
+
+  printf 'FAIL: mutant %s survived fail-closed input check\n' "$name" >&2
+  runner_failures=$((runner_failures + 1))
+}
+
+run_invalid_input_case empty-plan-file ""
+run_invalid_input_case non-json-plan-file "not json"
+run_invalid_input_case no-planned-values "{}"
+
 run_mutant() {
   local name="$1"
   local predicate="$2"
@@ -98,6 +128,48 @@ run_mutant \
   data-bucket-deleted \
   data-bucket-present \
   'del(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket.data"))'
+
+run_mutant \
+  lb-name-trailing-hyphen \
+  lb-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb.this").values.name) = "mutant-"'
+run_mutant \
+  lb-name-33-characters \
+  lb-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb.this").values.name) = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+run_mutant \
+  lb-name-env-id-altered \
+  lb-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb.this").values.name) = "aaaaaaaaaaaaaaa-mutated-alb"'
+run_mutant \
+  lb-name-part-empty \
+  lb-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb.this").values.name) = "\(.variables.env_id.value)-alb"'
+run_mutant \
+  lb-name-part-over-budget \
+  lb-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb.this").values.name) = "\(.variables.name.value[0:16] | sub("-+$"; ""))-\(.variables.env_id.value)-alb"'
+
+run_mutant \
+  tg-name-trailing-hyphen \
+  tg-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb_target_group.api").values.name) = "mutant-"'
+run_mutant \
+  tg-name-33-characters \
+  tg-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb_target_group.api").values.name) = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+run_mutant \
+  tg-name-env-id-altered \
+  tg-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb_target_group.api").values.name) = "aaaaaaaaaaaaaaaa-mutated-tg"'
+run_mutant \
+  tg-name-part-empty \
+  tg-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb_target_group.api").values.name) = "\(.variables.env_id.value)-tg"'
+run_mutant \
+  tg-name-part-over-budget \
+  tg-name \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_lb_target_group.api").values.name) = "\(.variables.name.value[0:17] | sub("-+$"; ""))-\(.variables.env_id.value)-tg"'
 
 run_mutant \
   lifecycle-deleted \
@@ -164,6 +236,14 @@ run_mutant \
   policy-bucket-changed \
   policy-bucket \
   '(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket_policy.data").values.bucket) = "mutated-data"'
+run_mutant \
+  policy-partition-changed \
+  policy-document \
+  '(.planned_values.root_module.resources[] | select(.address == "aws_s3_bucket_policy.data").values.policy) |= (fromjson | .Statement[0].Resource |= map(sub("^arn:[^:]+:"; "arn:mutated:")) | tojson)'
+run_mutant \
+  prior-state-partition-removed \
+  partition-known \
+  'del(.prior_state.values.root_module.resources[] | select(.address == "data.aws_partition.current"))'
 run_mutant \
   policy-version-changed \
   policy-document \

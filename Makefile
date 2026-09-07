@@ -51,16 +51,34 @@ iam-matrix-plan:
 # LocalStack applies are disposable; real AWS keeps the interactive confirmation
 ifeq ($(TARGET),localstack)
 bootstrap-plan:
-	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf; \
+	@override_created=0; \
+	if [ -e bootstrap/backend_override.tf ] || [ -L bootstrap/backend_override.tf ]; then \
+		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
+	fi; \
+	if ! ( set -o noclobber; cat bootstrap/localstack.backend_override.tf.example > bootstrap/backend_override.tf ); then \
+		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
+	fi; \
+	override_created=1; \
+	cleanup() { if [ "$$override_created" = 1 ]; then rm -f bootstrap/backend_override.tf; fi; }; \
+	trap cleanup EXIT; \
 	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
 	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap plan -var "target=$$TARGET" -var budget_email=unused; \
-	rc=$$?; rm -f bootstrap/backend_override.tf; exit $$rc
+	rc=$$?; cleanup; trap - EXIT; exit $$rc
 
 bootstrap-apply:
-	cp bootstrap/localstack.backend_override.tf.example bootstrap/backend_override.tf; \
+	@override_created=0; \
+	if [ -e bootstrap/backend_override.tf ] || [ -L bootstrap/backend_override.tf ]; then \
+		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
+	fi; \
+	if ! ( set -o noclobber; cat bootstrap/localstack.backend_override.tf.example > bootstrap/backend_override.tf ); then \
+		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
+	fi; \
+	override_created=1; \
+	cleanup() { if [ "$$override_created" = 1 ]; then rm -f bootstrap/backend_override.tf; fi; }; \
+	trap cleanup EXIT; \
 	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap init -reconfigure -input=false && \
 	$(LOCALSTACK_AWS_ENV) TF_DATA_DIR=.terraform-localstack terraform -chdir=bootstrap apply -var "target=$$TARGET" -var budget_email=unused -auto-approve; \
-	rc=$$?; rm -f bootstrap/backend_override.tf; exit $$rc
+	rc=$$?; cleanup; trap - EXIT; exit $$rc
 else
 bootstrap-plan:
 	rm -f bootstrap/backend_override.tf
@@ -203,6 +221,8 @@ test:
 	@bash tests/sweeper.sh
 	@bash tests/cleanup-verifier.sh
 	@bash tests/phase3-contracts.sh
+	@bash tests/preview-source-contracts.sh
+	@bash tests/bootstrap-override-contracts.sh
 	@for d in modules/*/; do \
 		if [ -d "$${d}tests" ]; then \
 			echo "== terraform test: $$d =="; \

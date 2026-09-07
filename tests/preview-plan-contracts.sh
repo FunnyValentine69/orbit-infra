@@ -12,6 +12,14 @@ if [ ! -f "$plan_file" ]; then
   exit 2
 fi
 
+if [ ! -s "$plan_file" ] \
+  || ! jq -e . "$plan_file" >/dev/null 2>&1 \
+  || ! jq -e '(.planned_values.root_module | type) == "object"' "$plan_file" >/dev/null 2>&1
+then
+  echo "FAIL: preview plan file is empty, not JSON, or has no planned_values: $plan_file" >&2
+  exit 2
+fi
+
 assertions="$({
   jq -S -r '
     def empty_value:
@@ -40,6 +48,14 @@ assertions="$({
       [.planned_values.root_module | recurse(.child_modules[]?) | .resources[]?];
 
     (all_resources) as $resources
+    | (.variables.name.value // null) as $name
+    | (.variables.env_id.value // null) as $env_id
+    | (if ($name | type) == "string" then ($name[0:15] | sub("-+$"; "")) else null end) as $lb_name_part
+    | (if ($name | type) == "string" then ($name[0:16] | sub("-+$"; "")) else null end) as $tg_name_part
+    | [$resources[] | select(.address == "aws_lb.this")] as $load_balancers
+    | [$resources[] | select(.address == "aws_lb_target_group.api")] as $target_groups
+    | ($load_balancers[0].values.name // null) as $lb_name
+    | ($target_groups[0].values.name // null) as $tg_name
     | [$resources[] | select(.address == "aws_s3_bucket.data")] as $buckets
     | ($buckets[0].values.bucket // null) as $bucket
     | [
@@ -53,6 +69,15 @@ assertions="$({
     | ($lifecycle[0].values.rule // []) as $rules
     | ($rules[0] // {}) as $rule
     | (try ($policies[0].values.policy | fromjson) catch null) as $actual_policy
+    | ([
+        .prior_state.values.root_module
+        | recurse(.child_modules[]?)
+        | .resources[]?
+        | select(.address == "data.aws_partition.current")
+        | .values.partition
+        | select(type == "string" and length > 0)
+      ]) as $partitions
+    | ($partitions[0] // null) as $partition
     | {
         Version: "2012-10-17",
         Statement: [{
@@ -61,8 +86,8 @@ assertions="$({
           Principal: "*",
           Action: "s3:*",
           Resource: [
-            "arn:aws:s3:::\($bucket)",
-            "arn:aws:s3:::\($bucket)/*"
+            "arn:\($partition):s3:::\($bucket)",
+            "arn:\($partition):s3:::\($bucket)/*"
           ],
           Condition: {
             Bool: {
@@ -72,6 +97,36 @@ assertions="$({
         }]
       } as $expected_policy
     | [
+        {
+          name: "lb-name",
+          passed: (
+            ($load_balancers | length) == 1
+            and ($name | type) == "string"
+            and ($env_id | type) == "string"
+            and ($lb_name_part | type) == "string"
+            and ($lb_name_part | length) > 0
+            and ($lb_name | type) == "string"
+            and ($lb_name | length) >= 1
+            and ($lb_name | length) <= 32
+            and ($lb_name | test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))
+            and $lb_name == "\($lb_name_part)-\($env_id)-alb"
+          )
+        },
+        {
+          name: "tg-name",
+          passed: (
+            ($target_groups | length) == 1
+            and ($name | type) == "string"
+            and ($env_id | type) == "string"
+            and ($tg_name_part | type) == "string"
+            and ($tg_name_part | length) > 0
+            and ($tg_name | type) == "string"
+            and ($tg_name | length) >= 1
+            and ($tg_name | length) <= 32
+            and ($tg_name | test("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"))
+            and $tg_name == "\($tg_name_part)-\($env_id)-tg"
+          )
+        },
         {
           name: "data-bucket-present",
           passed: (
@@ -147,6 +202,10 @@ assertions="$({
           )
         },
         {
+          name: "partition-known",
+          passed: (($partitions | length) == 1)
+        },
+        {
           name: "policy-document",
           passed: (
             ($actual_policy | normalize_policy)
@@ -202,6 +261,11 @@ done <<< "$assertions"
 if [ "$failures" -ne 0 ]; then
   printf 'FAIL: preview plan contracts (%d of %d assertions failed)\n' \
     "$failures" "$total" >&2
+  exit 1
+fi
+
+if [ "$total" -eq 0 ]; then
+  echo "FAIL: preview plan contracts evaluated no assertions" >&2
   exit 1
 fi
 

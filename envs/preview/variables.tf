@@ -42,6 +42,11 @@ variable "name" {
     condition     = length(var.name) <= 18
     error_message = "name must be at most 18 characters so that name and a 12-character env_id fit the 32-character IAM role prefix the deployer policy matches on"
   }
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", var.name))
+    error_message = "name must contain only lowercase letters, digits, or hyphens, start and end alphanumeric, and have no leading or trailing hyphen"
+  }
 }
 
 variable "env_id" {

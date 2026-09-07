@@ -586,16 +586,23 @@ is_planned_alb_group(address) if {
 	not group_has_non_load_balancer_consumer(address)
 }
 
+world_open(cidr) if {
+	is_string(cidr)
+	parts := split(cidr, "/")
+	count(parts) == 2
+	parts[1] == "0"
+}
+
 inline_ipv4_open(after) if {
 	some ingress in object.get(after, "ingress", [])
 	some cidr in object.get(ingress, "cidr_blocks", [])
-	cidr == "0.0.0.0/0"
+	world_open(cidr)
 }
 
 inline_ipv6_open(after) if {
 	some ingress in object.get(after, "ingress", [])
 	some cidr in object.get(ingress, "ipv6_cidr_blocks", [])
-	cidr == "::/0"
+	world_open(cidr)
 }
 
 inline_cidr_unknown(change) if {
@@ -770,7 +777,7 @@ deny contains msg if {
 	rule.type == "aws_vpc_security_group_ingress_rule"
 	planned(rule)
 	not rule_is_for_planned_alb(rule)
-	rule.change.after.cidr_ipv4 == "0.0.0.0/0"
+	world_open(object.get(rule.change.after, "cidr_ipv4", null))
 
 	msg := rule_deny_message(rule, sprintf("%s: non-ALB ingress rule is open to 0.0.0.0/0", [rule.address]))
 }
@@ -780,7 +787,7 @@ deny contains msg if {
 	rule.type == "aws_vpc_security_group_ingress_rule"
 	planned(rule)
 	not rule_is_for_planned_alb(rule)
-	rule.change.after.cidr_ipv6 == "::/0"
+	world_open(object.get(rule.change.after, "cidr_ipv6", null))
 
 	msg := rule_deny_message(rule, sprintf("%s: non-ALB ingress rule is open to ::/0", [rule.address]))
 }
@@ -813,12 +820,12 @@ deny contains msg if {
 
 legacy_ipv4_open(after) if {
 	some cidr in object.get(after, "cidr_blocks", [])
-	cidr == "0.0.0.0/0"
+	world_open(cidr)
 }
 
 legacy_ipv6_open(after) if {
 	some cidr in object.get(after, "ipv6_cidr_blocks", [])
-	cidr == "::/0"
+	world_open(cidr)
 }
 
 legacy_cidr_unknown(change) if {

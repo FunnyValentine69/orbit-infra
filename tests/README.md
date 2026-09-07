@@ -29,16 +29,19 @@ bash tests/conftest-gate.sh
 ```
 
 The suite first runs fixture hygiene against both committed plans, then
-requires `conftest verify` to pass all 85 Rego unit tests. It accepts the good
+requires `conftest verify` to pass all 88 Rego unit tests. It accepts the good
 plan without reporting `aws_security_group.alb`, and requires the bad plan to
 exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
 `aws_security_group.zero_lb`, `aws_vpc_security_group_ingress_rule.open`,
+`aws_vpc_security_group_ingress_rule.ipv6_open`,
 `aws_security_group_rule.legacy_open`, and
 `aws_default_security_group.default`. It also requires the bad plan not to
 report the protected `aws_s3_bucket.database`. The suite also proves that a
-nested true `*_sensitive` marker and a sensitive output are rejected and
-currently reports 17 cases. Bucket protection requires exactly one fully
+nested true `*_sensitive` marker and a sensitive output are rejected. The
+suite is defined to report 18 cases after `bad-plan.json` is re-recorded from
+the updated bad root; that LocalStack recording is a host step. Bucket
+protection requires exactly one fully
 locked planned block targeted through either one unambiguous whole-resource
 configuration reference or an equal known planned bucket name. Reference and
 planned-name correlations are unioned, distinct blocks targeting one bucket are
@@ -84,14 +87,29 @@ the tracked fixture. The check rejects `prior_state`, true leaves below `*_sensi
 `sensitive_values`, objects marked `"sensitive": true`, non-empty top-level
 `variables` because variables must not be serialized into fixtures,
 non-placeholder 12-digit numbers, IPv4 literals outside the documented
-RFC 1918, unspecified-address, and loopback allowances, and email addresses. Fixtures are re-recorded
+RFC 1918, unspecified-address, and loopback allowances, and email addresses.
+JSON string keys and values are decoded before IPv6 candidates are parsed
+with Python's `ipaddress`: the default route, loopback, link-local, unique-local,
+unspecified, and `2001:db8::/32` documentation range are allowed, while other
+valid IPv6 literals are rejected. Invalid colon-delimited tokens such as digests
+are skipped. Fixtures are re-recorded
 from those roots, never edited. The real `envs/preview` plan is never committed
 because it can carry prior state and sensitive values.
 
-## Preview plan contracts
+## Preview source and plan contracts
+
+`tests/preview-source-contracts.sh` comment-strips and parses the root preview
+Terraform without providers. Five predicates enforce exactly two direct
+`aws_security_group.alb` references, service-group-only workload module wiring,
+no security-group indirection/read-back/data lookup, the three-entry root
+security-group argument allowlist, and partition-derived S3 policy ARN source.
+Its 15 scratch-source mutants cover every specified bypass plus heredoc
+rejection, exact root-binding multiplicity, fail-closed `.tf.json` handling; all must fail their named predicate. The script
+runs from `make test`.
 
 `tests/preview-plan-contracts.sh <plan.json>` reads a Terraform plan JSON and
-uses 16 predicates to assert the `data-bucket-present` requirement (exactly one
+uses 19 predicates to assert the `lb-name` and `tg-name` composition, a known
+partition in refresh-derived `prior_state`, the `data-bucket-present` requirement (exactly one
 `aws_s3_bucket.data` with a non-null, non-empty string `.values.bucket`), the
 preview data bucket lifecycle shape (rule id `data-retention`, a 7-day
 multipart abort, and a 30-day expiration on current objects), the complete
@@ -99,8 +117,14 @@ SSL-only bucket policy document, and the absence of HTTPS listeners or HTTP
 redirect actions. The contract walks child modules recursively, so resources
 nested under `child_modules` at any depth are included alongside root module
 resources. `tests/preview-plan-mutations.sh <plan.json>` first requires
-the unmodified plan to pass, then derives 31 temporary mutants that prove each
-contract predicate independently rejects its targeted drift. Both scripts run
+the unmodified plan to pass, then derives 46 temporary mutants that prove each
+contract predicate independently rejects its targeted drift. The added naming
+mutants cover trailing hyphens, 33-character values, altered environment
+segments, empty name parts, and over-budget name parts for both resources; the
+partition mutants alter the policy ARN partition or remove the prior-state data
+source. Three of the 46 mutants are fail-closed input checks (empty, non-JSON,
+and missing-`planned_values` plan files) that confirm the contract script rejects
+invalid input rather than passing vacuously. Both scripts run
 in the `plan-localstack` job immediately after the Conftest live-plan gate.
 
 Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
@@ -134,9 +158,14 @@ close-and-sweep workflow blocks against controlled lease/close/sweep scripts
 and verifies the observed generation, status, and owner arguments. It runs
 `tests/dispatch-ordering-contracts.sh`, whose
 jq-level probes extract the live jobs aggregation and timestamp-comparison
-filters from `tests/dispatch-ordering.sh`. It also verifies that policy-size
-remains required by default and moves to the owner-only `plan-localstack` job
-after its health wait, and that Conftest is installed before the bootstrap-plan
+filters from `tests/dispatch-ordering.sh`. It also verifies five IPv6 hygiene
+negative, decoded-value/key, allowlist, and digest cases and that the
+`iam-matrix-plan` workflow keeps its LocalStack action and image pins identical
+to `terraform-plan.yml`, applies bootstrap before `make iam-matrix-plan`, and
+never calls the inventory or contract scripts directly. It verifies that
+policy-size remains required by default and moves to the owner-only
+`plan-localstack` job after its health wait, and that Conftest is installed
+before the bootstrap-plan
 gate, bootstrap apply, live plan, redacted summary, live-plan gate, and PR
 comment in that order. Fork PRs receive the secret-free gates with policy-size
 explicitly skipped; owner PRs receive those gates plus the LocalStack-backed
@@ -221,9 +250,11 @@ For an already-rendered post-apply plan, run
 Effect, Principal or NotPrincipal, Action or NotAction, Resource or
 NotResource, Condition, all bindings, and all three trust documents exactly.
 String and array policy fields canonicalise identically. A pre-apply plan whose
-trust policies are unknown fails with the apply-first diagnostic. This exact
-comparison runs in CI only for the same-repository `plan-localstack` job; source
-mode remains Sid-keyed, so P5-31 records the fork-PR field-drift window.
+trust policies are unknown fails with the apply-first diagnostic. This exact comparison runs in the same-repository `plan-localstack` job and in
+`iam-matrix-plan.yml` after a LocalStack bootstrap apply on every push to
+`main`, weekly, and by manual dispatch from the default branch. Source mode
+remains Sid-keyed on fork PRs; the next main push closes that exact-field drift
+window, with the weekly run as a backstop.
 
 The slim plan and hygiene inputs in `tests/fixtures/iam-matrix/` are `authored`;
 their sidecar is `tests/fixtures/iam-matrix/PROVENANCE.md`. The condition-key
@@ -245,6 +276,12 @@ A structural contract also requires the override copy to run in a
 `set -o noclobber` subshell. This proves the create itself refuses a file that
 appears after the fast pre-check, without attempting to schedule that race in
 the test.
+
+`tests/bootstrap-override-contracts.sh` applies the same ownership contract to
+both Makefile LocalStack bootstrap targets. Its 10 cases cover regular and
+dangling operator-owned sentinels with zero Terraform calls, successful
+creation and cleanup, and injected init/plan/apply failures with their original
+recipe exit status and cleanup. It runs from `make test`.
 
 ## Phase 5 sweeper fixtures
 
