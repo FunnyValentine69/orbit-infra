@@ -154,6 +154,8 @@ preflight() {
     die "state bucket missing; run make bootstrap-apply TARGET=localstack first"
 
   assert_generator_clean
+  GENERATOR_COMMIT=$(git rev-parse --short=7 HEAD) || \
+    die "could not resolve generator commit"
   make render-localstack-backend >/dev/null || die "render-localstack-backend failed"
   assert_execution_root
   env TF_DATA_DIR=.terraform-localstack terraform -chdir="$PREVIEW_ROOT" \
@@ -169,7 +171,8 @@ preflight() {
     ttyd --version 2>&1 | head -1
     ffmpeg -version | head -1
     terraform version | head -1
-    curl -s localhost:4566/_localstack/health | jq -r .version
+    curl -sf localhost:4566/_localstack/health | \
+      jq -er '.version | select(type=="string" and length>0)'
   } > "$RUN/versions.txt" || die "could not record tool versions"
   [ "$(grep -c . "$RUN/versions.txt")" -eq 5 ] || \
     die "tool version capture incomplete"
@@ -237,7 +240,8 @@ assert_steps() {
 }
 
 inspect_artifact() {
-  local size duration frames floor local_user local_host
+  local size duration frame_info frames frame_rate minimum_frames floor
+  local local_user local_host
   phase_begin inspect_artifact
   [ -s "$RUN/demo.gif" ] || die "demo.gif missing or empty"
   [ "$RUN/demo.gif" -nt "$RUN/.started" ] || \
@@ -246,8 +250,11 @@ inspect_artifact() {
 
   duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 \
     "$RUN/demo.gif")
-  frames=$(ffprobe -v error -count_frames -select_streams v:0 \
-    -show_entries stream=nb_read_frames -of csv=p=0 "$RUN/demo.gif")
+  frame_info=$(ffprobe -v error -count_frames -select_streams v:0 \
+    -show_entries stream=nb_read_frames,r_frame_rate \
+    -of default=noprint_wrappers=1 "$RUN/demo.gif")
+  frames=$(printf '%s\n' "$frame_info" | sed -n 's/^nb_read_frames=//p')
+  frame_rate=$(printf '%s\n' "$frame_info" | sed -n 's/^r_frame_rate=//p')
   [[ "$frames" =~ ^[0-9]+$ ]] && [ "$frames" -gt 0 ] || \
     die "demo.gif has no frames"
   ffmpeg -v error -i "$RUN/demo.gif" -f null - \
@@ -258,6 +265,26 @@ inspect_artifact() {
   awk -v duration="$duration" -v floor="$floor" \
     'BEGIN { if (duration + 0 < floor + 0) exit 1 }' || \
     die "demo.gif duration $duration s is below tape-derived floor $floor s"
+  if ! minimum_frames=$(awk -v floor="$floor" -v rate="$frame_rate" '
+    BEGIN {
+      if (split(rate, ratio, "/") != 2 ||
+          ratio[1] !~ /^[0-9]+$/ || ratio[2] !~ /^[0-9]+$/ ||
+          ratio[1] + 0 <= 0 || ratio[2] + 0 <= 0) exit 1
+      split(floor, seconds, ".")
+      scale=1
+      for (i=1; i <= length(seconds[2]); i++) scale *= 10
+      floor_units=(seconds[1] * scale) + seconds[2]
+      numerator=floor_units * ratio[1]
+      denominator=scale * ratio[2]
+      minimum=int(numerator / denominator)
+      if (minimum * denominator < numerator) minimum++
+      print minimum
+    }
+  '); then
+    die "demo.gif has no usable frame rate"
+  fi
+  [ "$frames" -ge "$minimum_frames" ] || \
+    die "demo.gif has $frames frames, below the floor $minimum_frames for $floor s at $frame_rate fps"
 
   grep -qE '^Plan: [0-9]+ to add' "$RUN/demo.txt" || \
     die "demo.txt missing 'Plan: ' line"
@@ -301,7 +328,7 @@ inspect_artifact() {
 
 build_manifest() {
   local vhs_version ttyd_version ffmpeg_version terraform_version localstack_version
-  local recorded_from recorder commit recorded_on plan_line apply_line destroy_line sha
+  local recorded_from recorder recorded_on plan_line apply_line destroy_line sha
   phase_begin build_manifest
   vhs_version=$(sed -n '1p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
   ttyd_version=$(sed -n '2p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
@@ -310,7 +337,6 @@ build_manifest() {
   localstack_version=$(sed -n '5p' "$RUN/versions.txt")
   recorded_from="LocalStack $localstack_version, Terraform $terraform_version"
   recorder="vhs $vhs_version, ttyd $ttyd_version, ffmpeg $ffmpeg_version"
-  commit=$(git rev-parse --short=7 HEAD) || die "could not resolve generator commit"
   recorded_on=$(date -u +%F)
   plan_line=$(grep -m1 '^Plan:' "$RUN/plan.log")
   apply_line=$(grep -m1 '^Apply complete' "$RUN/apply.log")
@@ -320,7 +346,7 @@ build_manifest() {
   {
     printf 'recorded_from=%s\n' "$recorded_from"
     printf 'recorded_on=%s\n' "$recorded_on"
-    printf 'generator_commit=%s (the tree at this commit holds every path in DEMO_GENERATOR_PATHS)\n' "$commit"
+    printf 'generator_commit=%s (the tree at this commit holds every path in DEMO_GENERATOR_PATHS)\n' "$GENERATOR_COMMIT"
     printf 'recorder=%s\n' "$recorder"
     # shellcheck disable=SC2016
     printf 'command=`OPERATOR_CIDR=%s make demo` from the repository root\n' "$OPERATOR_CIDR"
@@ -353,6 +379,13 @@ rewrite_provenance_row() {
     "$RUN/DEMO_PROVENANCE.md" > "$output" || \
     die "could not render provenance row $field"
   mv "$output" "$RUN/DEMO_PROVENANCE.md"
+}
+
+recheck_generator() {
+  phase_begin generator_recheck
+  generator_clean_check . "$GENERATOR_COMMIT" || \
+    die "generator inputs changed during the recording; not publishing"
+  phase_ok
 }
 
 render_provenance() {
@@ -419,6 +452,7 @@ main() {
   assert_steps
   inspect_artifact
   build_manifest
+  recheck_generator
   render_provenance
   teardown || die "teardown failed; not publishing (see $RUN/cleanup.log)"
   publish

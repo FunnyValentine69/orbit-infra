@@ -233,13 +233,14 @@ fi
 echo "PASS: demo contract group steps and tape"
 
 echo "== demo contracts: CIDR and provenance =="
+outside_cidr="$(printf '203.0.%s.0/24' 114)"
 cidr_ok=1
 for cidr in 203.0.113.0/24 203.0.113.128/25 203.0.113.16/28 203.0.113.7/32; do
   cidr_in_test_net_3 "$cidr" || cidr_ok=0
 done
 for cidr in 203.0.113.7 203.0.113.0/16 203.0.113.5/24 \
   203.0.113.17/28 203.0.113.256/32 203.0.113.01/32 \
-  203.0.114.0/24 203.0.113.0/33 203.0.113.0/8; do
+  "$outside_cidr" 203.0.113.0/33 203.0.113.0/8; do
   if cidr_in_test_net_3 "$cidr"; then cidr_ok=0; fi
 done
 if [ "$cidr_ok" -eq 1 ]; then
@@ -365,7 +366,7 @@ for provenance_case in size sha missing duplicate counts-mismatch cidr-mismatch 
         "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
       ;;
     environment-outside)
-      sed '/^| environment |/s#203\.0\.113\.0/24#203.0.114.0/24#' \
+      sed '/^| environment |/s#203\.0\.113\.0/24#'"$outside_cidr"'#' \
         "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
       ;;
     commit-format)
@@ -497,6 +498,9 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     'FAKE_VHS_MODE=normal; IFS= read -r FAKE_VHS_MODE < .fake-vhs-mode || :' \
     'FAKE_TF_STATE=empty; IFS= read -r FAKE_TF_STATE < .fake-tf-state || :' \
     'FAKE_DURATION=44.44; IFS= read -r FAKE_DURATION < .fake-duration || :' \
+    'FAKE_FRAMES=987; IFS= read -r FAKE_FRAMES < .fake-frames || :' \
+    'FAKE_FRAME_RATE=25/1; IFS= read -r FAKE_FRAME_RATE < .fake-frame-rate || :' \
+    'FAKE_LS_VERSION=ok; IFS= read -r FAKE_LS_VERSION < .fake-ls-version || :' \
     'printf "%s %s\n" "$tool" "$*" >> .fake-calls.log' \
     'case "$tool" in' \
     '  vhs)' \
@@ -517,14 +521,19 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    printf "%s\n" "Destroy complete! Resources: 3 destroyed." > "$RUN/destroy.log"' \
     '    printf "%s\n" 1 > "$RUN/env.ok"' \
     '    printf "%s\n" "localstack | s3 | running" "Plan: 3 to add, 0 to change, 0 to destroy." "PASS: conftest-gate suite" "Apply complete! Resources: 3 added, 0 changed, 0 destroyed." "aws_ecs_cluster.this" "Destroy complete! Resources: 3 destroyed." > "$RUN/demo.txt"' \
-    '    [ "$FAKE_VHS_MODE" != hygiene_path ] || printf "%s\n" /Users/example >> "$RUN/demo.txt"' \
+    '    [ "$FAKE_VHS_MODE" != hygiene_path ] || printf "/%s/example\n" Users >> "$RUN/demo.txt"' \
     '    printf "%s\n" DISTINCTIVE_FAKE_GIF_PAYLOAD_20260906 > "$RUN/demo.gif"' \
-    '    touch -t 203001010000 "$RUN/demo.gif"' \
-    '    if [ "$FAKE_VHS_MODE" = stale ]; then touch -t 200001010000 "$RUN/demo.gif"; fi' \
+    '    touch -t "20300101""0000" "$RUN/demo.gif"' \
+    '    if [ "$FAKE_VHS_MODE" = stale ]; then touch -t "20000101""0000" "$RUN/demo.gif"; fi' \
     '    if [ "$FAKE_TF_STATE" = post_apply ]; then touch .fake-live; fi' \
+    '    if [ "$FAKE_VHS_MODE" = generator_drift ]; then touch .fake-git-drift; fi' \
     '    ;;' \
     '  ffprobe)' \
-    '    case "$*" in *format=duration*) printf "%s\n" "$FAKE_DURATION" ;; *) printf "%s\n" 987 ;; esac' \
+    '    case "$*" in' \
+    '      *format=duration*) printf "%s\n" "$FAKE_DURATION" ;;' \
+    '      *r_frame_rate*) printf "r_frame_rate=%s\nnb_read_frames=%s\n" "$FAKE_FRAME_RATE" "$FAKE_FRAMES" ;;' \
+    '      *) printf "%s\n" "$FAKE_FRAMES" ;;' \
+    '    esac' \
     '    ;;' \
     '  ffmpeg)' \
     '    if [ "$1" = -version ]; then echo "ffmpeg version 7.7.7-fake build"; exit 0; fi' \
@@ -535,9 +544,52 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    echo "ttyd version 8.8.8-fake"' \
     '    ;;' \
     '  curl)' \
-    '    case "$*" in *-s\ localhost*) echo '\''{"version":"5.5.5-fake"}'\'' ;; *) : ;; esac' \
+    '    case "$*" in' \
+    '      *_localstack/health*)' \
+    '        printf "health-response:%s\n" "$FAKE_LS_VERSION" >> .fake-calls.log' \
+    '        health_calls=0; IFS= read -r health_calls < .fake-health-calls || :' \
+    '        health_calls=$((health_calls + 1))' \
+    '        printf "%s\n" "$health_calls" > .fake-health-calls' \
+    '        if [ "$health_calls" -eq 1 ]; then echo '\''{"version":"5.5.5-fake"}'\''; exit 0; fi' \
+    '        printf "health-request-2:" >> .fake-calls.log' \
+    '        printf " <%q>" "$@" >> .fake-calls.log' \
+    '        printf "\n" >> .fake-calls.log' \
+    '        case "$FAKE_LS_VERSION" in' \
+    '          ok) echo '\''{"version":"5.5.5-fake"}'\'' ;;' \
+    '          null) echo '\''{"version":null}'\'' ;;' \
+    '          missing) echo '\''{}'\'' ;;' \
+    '          empty) echo '\''{"version":""}'\'' ;;' \
+    '          array) echo '\''{"version":["5"]}'\'' ;;' \
+    '          http-fail)' \
+    '            has_fail_flag=0' \
+    '            for arg in "$@"; do' \
+    '              case "$arg" in --*) ;; -*) case "${arg#-}" in *f*) has_fail_flag=1 ;; esac ;; esac' \
+    '            done' \
+    '            if [ "$has_fail_flag" -eq 1 ]; then exit 22; fi' \
+    '            echo '\''{"version":"5.5.5-fake"}'\''' \
+    '            ;;' \
+    '          *) echo "unexpected fake LocalStack version mode: $FAKE_LS_VERSION" >&2; exit 2 ;;' \
+    '        esac' \
+    '        ;;' \
+    '      *) :' \
+    '        ;;' \
+    '    esac' \
     '    ;;' \
-    '  jq) cat >/dev/null; echo "5.5.5-fake" ;;' \
+    '  jq)' \
+    '    input=$(cat)' \
+    '    case "$input" in' \
+    '      '\''{"version":"5.5.5-fake"}'\'') value=5.5.5-fake; value_type=string; value_length=10 ;;' \
+    '      '\''{"version":null}'\''|'\''{}'\'') value=null; value_type=null; value_length=0 ;;' \
+    '      '\''{"version":""}'\'') value=; value_type=string; value_length=0 ;;' \
+    '      '\''{"version":["5"]}'\'') value='\''["5"]'\''; value_type=array; value_length=1 ;;' \
+    '      *) echo "unexpected fake jq input: $input" >&2; exit 2 ;;' \
+    '    esac' \
+    '    selected=1' \
+    '    case "$*" in *'\''type=="string"'\''*) [ "$value_type" = string ] || selected=0 ;; esac' \
+    '    case "$*" in *'\''length>0'\''*) [ "$value_length" -gt 0 ] || selected=0 ;; esac' \
+    '    if [ "$selected" -eq 1 ]; then printf "%s\n" "$value"; exit 0; fi' \
+    '    case " $* " in *" -e "*|*" -er "*|*" -re "*) exit 4 ;; *) exit 0 ;; esac' \
+    '    ;;' \
     '  make)' \
     '    case " $* " in' \
     '      *" render-localstack-backend "*)' \
@@ -576,6 +628,8 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    case "$*" in' \
     '      "status --porcelain --untracked-files=all --"*) printf "%s" "${FAKE_GIT_STATUS:-}" ;;' \
     '      "ls-files --others --ignored --exclude-standard -z --"*) printf "%s" "${FAKE_GIT_IGNORED:-}" ;;' \
+    '      "cat-file -e "*) exit 0 ;;' \
+    '      "diff --quiet "*" HEAD -- "*) [ ! -e .fake-git-drift ] ;;' \
     '      "rev-parse --short=7 HEAD") echo abc1234 ;;' \
     '      *) echo "unexpected fake git call: $*" >&2; exit 2 ;;' \
     '    esac' \
@@ -598,18 +652,25 @@ run_lifecycle() {
   local inject=$5
   local mutation=$6
   local case_root repo call_log before after output rc run_dir
-  local fake_duration rewrite_key record_next
+  local fake_duration fake_frames fake_frame_rate fake_ls_version rewrite_key record_next
   case_root="$tmp_dir/lifecycle-$name"
   repo="$case_root/repo"
   mkdir -p "$case_root"
   cp -R "$lifecycle_template" "$repo"
   call_log="$repo/.fake-calls.log"
   fake_duration=${FAKE_CASE_DURATION:-44.44}
+  fake_frames=${FAKE_CASE_FRAMES:-987}
+  fake_frame_rate=${FAKE_CASE_FRAME_RATE:-25/1}
+  fake_ls_version=${FAKE_CASE_LS_VERSION:-ok}
   : > "$call_log"
   printf '%s\n' "$fake_fail" > "$repo/.fake-fail"
   printf '%s\n' "$vhs_mode" > "$repo/.fake-vhs-mode"
   printf '%s\n' "$state_mode" > "$repo/.fake-tf-state"
   printf '%s\n' "$fake_duration" > "$repo/.fake-duration"
+  printf '%s\n' "$fake_frames" > "$repo/.fake-frames"
+  printf '%s\n' "$fake_frame_rate" > "$repo/.fake-frame-rate"
+  printf '%s\n' "$fake_ls_version" > "$repo/.fake-ls-version"
+  printf '%s\n' 0 > "$repo/.fake-health-calls"
   case "$mutation" in
     stale-symlink)
       mkdir -p "$repo/.preview-runs/demo"
@@ -631,6 +692,44 @@ run_lifecycle() {
         END { if (removed != 1) exit 1 }
       ' "$repo/demo/record.sh" > "$record_next"
       mv "$record_next" "$repo/demo/record.sh"
+      ;;
+    delete-ls-type)
+      sed 's/type=="string" and //' "$repo/demo/record.sh" > "$case_root/record.next"
+      mv "$case_root/record.next" "$repo/demo/record.sh"
+      ;;
+    delete-ls-length)
+      sed 's/ and length>0//' "$repo/demo/record.sh" > "$case_root/record.next"
+      mv "$case_root/record.next" "$repo/demo/record.sh"
+      ;;
+    delete-ls-fail-flag)
+      awk '
+        index($0, "curl -sf localhost:4566/_localstack/health | \\") {
+          sub(/curl -sf /, "curl -s ")
+          changed++
+        }
+        { print }
+        END { if (changed != 1) exit 1 }
+      ' "$repo/demo/record.sh" > "$case_root/record.next"
+      mv "$case_root/record.next" "$repo/demo/record.sh"
+      ;;
+    delete-frame-rate-validator)
+      awk '
+        /if \(split\(rate, ratio, "\/"\) != 2 \|\|/ {
+          print "      split(rate, ratio, \"/\")"
+          deleting=1
+          changed++
+          next
+        }
+        deleting {
+          if (/ratio\[1\] \+ 0 <= 0 \|\| ratio\[2\] \+ 0 <= 0\) exit 1/) {
+            deleting=0
+          }
+          next
+        }
+        { print }
+        END { if (deleting || changed != 1) exit 1 }
+      ' "$repo/demo/record.sh" > "$case_root/record.next"
+      mv "$case_root/record.next" "$repo/demo/record.sh"
       ;;
   esac
   before="$(shasum -a 256 "$repo/docs/assets/demo.gif" "$repo/docs/assets/DEMO_PROVENANCE.md")"
@@ -761,6 +860,10 @@ printf '\n' > "$real_git_repo/.fake-fail"
 printf '%s\n' normal > "$real_git_repo/.fake-vhs-mode"
 printf '%s\n' empty > "$real_git_repo/.fake-tf-state"
 printf '%s\n' 44.44 > "$real_git_repo/.fake-duration"
+printf '%s\n' 987 > "$real_git_repo/.fake-frames"
+printf '%s\n' 25/1 > "$real_git_repo/.fake-frame-rate"
+printf '%s\n' ok > "$real_git_repo/.fake-ls-version"
+printf '%s\n' 0 > "$real_git_repo/.fake-health-calls"
 real_git_before="$(shasum -a 256 "$real_git_repo/docs/assets/demo.gif" \
   "$real_git_repo/docs/assets/DEMO_PROVENANCE.md")"
 set +e
@@ -792,6 +895,11 @@ for lifecycle_case in \
   'preflight-nostate-plus-error||normal|nostate-plus-error||none|terraform state list failed' \
   'preflight-nostate-plus-stdout||normal|nostate-plus-stdout||none|terraform state list failed' \
   'preflight-versions|ttyd_empty|normal|empty||none|tool version capture incomplete' \
+  'preflight-ls-version-null||normal|empty||none|could not record tool versions' \
+  'preflight-ls-version-missing||normal|empty||none|could not record tool versions' \
+  'preflight-ls-version-empty||normal|empty||none|could not record tool versions' \
+  'preflight-ls-version-array||normal|empty||none|could not record tool versions' \
+  'preflight-ls-version-http-fail||normal|empty||none|could not record tool versions' \
   'preflight-render-nonregular||normal|empty||stale-symlink|non-regular terraform input in execution root: stale.tfstate.tf' \
   'preflight-render-missing||normal|empty||missing-source|execution root differs from envs/preview: migration.tfstate.tf' \
   'record|record|normal|empty||none|vhs failed' \
@@ -799,20 +907,35 @@ for lifecycle_case in \
   'assert-rc-missing||rc_missing|empty||none|step rc set differs from tape markers' \
   'inspect-stale||stale|empty||none|demo.gif mtime predates run start' \
   'inspect-duration||normal|empty||none|demo.gif duration' \
+  'inspect-frames||normal|empty||none|demo.gif has 708 frames, below the floor 709 for 28.36 s at 25/1 fps' \
+  'inspect-frames-fractional||normal|empty||none|demo.gif has 679 frames, below the floor 680 for 28.36 s at 24000/1001 fps' \
+  'inspect-frames-norate||normal|empty||none|demo.gif has no usable frame rate' \
+  'inspect-frames-zero-rate||normal|empty||none|demo.gif has no usable frame rate' \
   'inspect-hygiene||hygiene_path|empty||none|demo.txt contains environment-specific text (path/access-key/email pattern); not publishing' \
   'render-provenance||normal|empty||missing-field|required provenance row artifact sha256 count was 0' \
+  'render-generator-drift||generator_drift|empty||none|generator inputs changed during the recording; not publishing' \
   'teardown-destroy|teardown_destroy|normal|empty||none|teardown failed; not publishing' \
   'teardown-state||normal|teardown_nonempty||none|teardown failed; not publishing' \
   'post-apply||normal|post_apply|post-apply|none|injected failure after apply'; do
   IFS='|' read -r name fake_fail vhs_mode state_mode inject mutation expected_message <<< "$lifecycle_case"
-  if [ "$name" = inspect-duration ]; then
-    FAKE_CASE_DURATION=28.35
-  else
-    FAKE_CASE_DURATION=31.72
-  fi
-  export FAKE_CASE_DURATION
+  FAKE_CASE_DURATION=31.72
+  FAKE_CASE_FRAMES=987
+  FAKE_CASE_FRAME_RATE=25/1
+  FAKE_CASE_LS_VERSION=ok
+  case "$name" in
+    inspect-duration) FAKE_CASE_DURATION=28.35 ;;
+    inspect-frames) FAKE_CASE_FRAMES=708 ;;
+    inspect-frames-fractional)
+      FAKE_CASE_FRAMES=679
+      FAKE_CASE_FRAME_RATE=24000/1001
+      ;;
+    inspect-frames-norate) FAKE_CASE_FRAME_RATE=bogus/1 ;;
+    inspect-frames-zero-rate) FAKE_CASE_FRAME_RATE=0/0 ;;
+    preflight-ls-version-*) FAKE_CASE_LS_VERSION=${name#preflight-ls-version-} ;;
+  esac
+  export FAKE_CASE_DURATION FAKE_CASE_FRAMES FAKE_CASE_FRAME_RATE FAKE_CASE_LS_VERSION
   run_lifecycle "$name" "$fake_fail" "$vhs_mode" "$state_mode" "$inject" "$mutation"
-  unset FAKE_CASE_DURATION
+  unset FAKE_CASE_DURATION FAKE_CASE_FRAMES FAKE_CASE_FRAME_RATE FAKE_CASE_LS_VERSION
   if [ "$LIFECYCLE_RC" -eq 0 ] || [ "$LIFECYCLE_BEFORE" != "$LIFECYCLE_AFTER" ] || \
      ! grep -Fq "$expected_message" <<< "$LIFECYCLE_OUTPUT" || \
      grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
@@ -827,12 +950,19 @@ for lifecycle_case in \
     assert-*) phase=assert_steps; trapped=1 ;;
     inspect-*) phase=inspect_artifact; trapped=1 ;;
     render-provenance) phase=render_provenance; trapped=1 ;;
+    render-generator-drift) phase=generator_recheck; trapped=1 ;;
     teardown-*) phase=teardown; trapped=1 ;;
     post-apply) phase=inject_check; trapped=1 ;;
     *) phase=unknown; trapped=1 ;;
   esac
-  phase_failures="$(grep -c "^$phase:fail$" "$LIFECYCLE_RUN/lifecycle.log" || true)"
-  [ "$phase_failures" -eq 1 ] || case_ok=0
+  if [ "$phase" = none ]; then
+    if grep -q '^render_provenance:' "$LIFECYCLE_RUN/lifecycle.log"; then case_ok=0; fi
+  else
+    phase_failures="$(grep -c "^$phase:fail$" "$LIFECYCLE_RUN/lifecycle.log" || true)"
+    [ "$phase_failures" -eq 1 ] || case_ok=0
+  fi
+  if [ "$name" = render-generator-drift ] && \
+    grep -q '^render_provenance:' "$LIFECYCLE_RUN/lifecycle.log"; then case_ok=0; fi
   destroy_calls="$(grep -c '^make destroy$' "$LIFECYCLE_CALLS" || true)"
   teardown_lines="$(grep -c '^teardown:' "$LIFECYCLE_RUN/lifecycle.log" || true)"
   if [ "$trapped" -eq 0 ]; then
@@ -844,6 +974,23 @@ for lifecycle_case in \
      grep -Eq '^terraform .* init' "$LIFECYCLE_CALLS"; then
     case_ok=0
   fi
+  case "$name" in
+    preflight-ls-version-*)
+      ls_mode=${name#preflight-ls-version-}
+      grep -Fxq "health-response:$ls_mode" "$LIFECYCLE_CALLS" || case_ok=0
+      if [ "$ls_mode" = http-fail ]; then
+        health_calls="$(grep -c '^curl .*_localstack/health' "$LIFECYCLE_CALLS" || true)"
+        [ "$health_calls" -eq 2 ] || case_ok=0
+        grep -Fxq \
+          'health-request-2: <-sf> <localhost:4566/_localstack/health>' \
+          "$LIFECYCLE_CALLS" || case_ok=0
+      fi
+      ;;
+    render-generator-drift)
+      grep -Fq 'git cat-file -e abc1234^{commit}' "$LIFECYCLE_CALLS" || case_ok=0
+      grep -Fq 'git diff --quiet abc1234 HEAD --' "$LIFECYCLE_CALLS" || case_ok=0
+      ;;
+  esac
   if [ "$case_ok" -eq 1 ]; then
     pass_case "lifecycle $name"
   else
@@ -871,7 +1018,7 @@ success_order="$(awk -F: '$1 == "teardown" { teardown=NR } $1 == "publish" { pub
 teardown_lines="$(grep -c '^teardown:' "$LIFECYCLE_RUN/lifecycle.log")"
 expected_lifecycle="$tmp_dir/expected-success-lifecycle.log"
 printf '%s\n' guard:ok setup:ok preflight:ok record:ok inject_check:ok \
-  assert_steps:ok inspect_artifact:ok build_manifest:ok render_provenance:ok \
+  assert_steps:ok inspect_artifact:ok build_manifest:ok generator_recheck:ok render_provenance:ok \
   teardown:ok publish:ok > "$expected_lifecycle"
 if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$LIFECYCLE_BEFORE" != "$LIFECYCLE_AFTER" ] && \
    [ "$success_order" = ok ] && [ "$teardown_lines" -eq 1 ] && \
@@ -879,7 +1026,10 @@ if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$LIFECYCLE_BEFORE" != "$LIFECYCLE_AFTER" ] &&
    validate_provenance "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
      "$LIFECYCLE_REPO/docs/assets/demo.gif" >/dev/null 2>&1 && \
    provenance_matches_manifest "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
-     "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1; then
+     "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1 && \
+   [ "$(field_value 'generator commit' \
+       "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md")" = \
+     'abc1234 (the tree at this commit holds every path in DEMO_GENERATOR_PATHS)' ]; then
   pass_case "lifecycle success publishes every run-derived provenance row after teardown"
 else
   lifecycle_failures_ok=0
@@ -910,6 +1060,57 @@ if [ "$rewrite_deletion_ok" -eq 1 ]; then
 else
   lifecycle_failures_ok=0
   fail_case "lifecycle provenance exact-row deletion mutation table (9 mappings)"
+fi
+
+version_predicate_neuter_ok=1
+FAKE_CASE_LS_VERSION=array
+export FAKE_CASE_LS_VERSION
+run_lifecycle ls-type-neutered '' normal empty '' delete-ls-type
+if [ "$LIFECYCLE_RC" -ne 0 ] || \
+   ! grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
+  version_predicate_neuter_ok=0
+fi
+FAKE_CASE_LS_VERSION=empty
+run_lifecycle ls-length-neutered '' normal empty '' delete-ls-length
+unset FAKE_CASE_LS_VERSION
+if [ "$LIFECYCLE_RC" -eq 0 ] || \
+   ! grep -Fq 'tool version capture incomplete' <<< "$LIFECYCLE_OUTPUT" || \
+   grep -Fq 'could not record tool versions' <<< "$LIFECYCLE_OUTPUT"; then
+  version_predicate_neuter_ok=0
+fi
+if [ "$version_predicate_neuter_ok" -eq 1 ]; then
+  pass_case "lifecycle LocalStack version predicate neuter table"
+else
+  lifecycle_failures_ok=0
+  fail_case "lifecycle LocalStack version predicate neuter table"
+fi
+
+FAKE_CASE_LS_VERSION=http-fail
+export FAKE_CASE_LS_VERSION
+run_lifecycle ls-fail-flag-neutered '' normal empty '' delete-ls-fail-flag
+unset FAKE_CASE_LS_VERSION
+if [ "$LIFECYCLE_RC" -eq 0 ] && \
+   grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log" && \
+   grep -Fxq 'health-request-2: <-s> <localhost:4566/_localstack/health>' \
+     "$LIFECYCLE_CALLS"; then
+  pass_case "mutation delete-ls-fail-flag defeats preflight-ls-version-http-fail"
+else
+  lifecycle_failures_ok=0
+  fail_case "mutation delete-ls-fail-flag defeats preflight-ls-version-http-fail" \
+    "$LIFECYCLE_OUTPUT"
+fi
+
+FAKE_CASE_FRAME_RATE=bogus/1
+export FAKE_CASE_FRAME_RATE
+run_lifecycle frame-rate-validator-neutered '' normal empty '' delete-frame-rate-validator
+unset FAKE_CASE_FRAME_RATE
+if [ "$LIFECYCLE_RC" -eq 0 ] && \
+   grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
+  pass_case "mutation delete-frame-rate-validator defeats inspect-frames-norate"
+else
+  lifecycle_failures_ok=0
+  fail_case "mutation delete-frame-rate-validator defeats inspect-frames-norate" \
+    "$LIFECYCLE_OUTPUT"
 fi
 
 if [ "$lifecycle_failures_ok" -eq 1 ]; then
