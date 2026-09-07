@@ -229,6 +229,11 @@ jobs:
       - name: Conftest policy gate on the LocalStack plan
         run: conftest test --policy policy/ /tmp/plan.json
 
+      - name: Preview plan contracts and mutations
+        run: |
+          bash tests/preview-plan-contracts.sh /tmp/plan.json
+          bash tests/preview-plan-mutations.sh /tmp/plan.json
+
       - name: Remove local plan file
         if: always()
         env:

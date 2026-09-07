@@ -303,7 +303,6 @@ module "clickhouse" {
 resource "aws_s3_bucket" "data" {
   #checkov:skip=CKV_AWS_144:This platform is ephemeral (ADR 0001); cross-region replication has no purpose for a session-scoped environment
   #checkov:skip=CKV_AWS_145:No KMS key exists in this stack's cost model; default AWS-owned SSE is sufficient for a session-scoped environment
-  #checkov:skip=CKV2_AWS_61:No lifecycle policy needed; the bucket is force-destroyed with the rest of the environment
   #checkov:skip=CKV2_AWS_62:No idle budget for event notifications on a session-scoped bucket
   #checkov:skip=CKV_AWS_21:Versioning is intentionally off; ADR 0001 treats this environment as ephemeral
   bucket        = "${var.name}-${var.env_id}-data"
@@ -319,6 +318,49 @@ resource "aws_s3_bucket_public_access_block" "data" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# This bucket is unversioned, so only the multipart abort applies; this mirrors
+# bootstrap/state.tf.
+resource "aws_s3_bucket_lifecycle_configuration" "data" {
+  bucket = aws_s3_bucket.data.bucket
+
+  rule {
+    id     = "data-multipart-abort"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+# Build the ARNs from the bucket name so the policy is known at plan time and
+# contract-checked in CI.
+resource "aws_s3_bucket_policy" "data" {
+  bucket = aws_s3_bucket.data.bucket
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        "arn:aws:s3:::${aws_s3_bucket.data.bucket}",
+        "arn:aws:s3:::${aws_s3_bucket.data.bucket}/*",
+      ]
+      Condition = {
+        Bool = {
+          "aws:SecureTransport" = "false"
+        }
+      }
+    }]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.data]
 }
 
 locals {

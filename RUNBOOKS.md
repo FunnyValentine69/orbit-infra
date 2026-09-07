@@ -380,7 +380,8 @@ TARGET=aws scripts/aws-cli.sh ec2 describe-network-interfaces --filters "Name=vp
 3. If the exact S3 candidate is still live because the data bucket is not
    empty, resolve its name from the lease, assert that it is this environment's
    data bucket, inspect current keys, and empty only that bucket. Versioning is
-   intentionally disabled on the ephemeral data bucket:
+   intentionally disabled on the ephemeral data bucket. The multipart-abort
+   lifecycle rule does not change this procedure; the bucket is still unversioned:
 
 ```
 BUCKET="$(jq -er '.manifest.candidates[] | select(.resource_type == "s3:bucket") | .id' <<< "$LEASE_JSON" | head -n1)"

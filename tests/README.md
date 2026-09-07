@@ -88,6 +88,16 @@ RFC 1918, unspecified-address, and loopback allowances, and email addresses. Fix
 from those roots, never edited. The real `envs/preview` plan is never committed
 because it can carry prior state and sensitive values.
 
+## Preview plan contracts
+
+`tests/preview-plan-contracts.sh <plan.json>` reads a Terraform plan JSON and
+asserts the preview data bucket multipart-abort lifecycle shape, the complete
+SSL-only bucket policy document, and the absence of HTTPS listeners or HTTP
+redirect actions. `tests/preview-plan-mutations.sh <plan.json>` first requires
+the unmodified plan to pass, then derives temporary mutants that prove each
+contract predicate independently rejects its targeted drift. Both scripts run
+in the `plan-localstack` job immediately after the Conftest live-plan gate.
+
 Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
 and exact API `rc`/`stdout`/`stderr` responses. The production predicate layer
 consumes the same response shape for recorded and live probes. The suite covers
