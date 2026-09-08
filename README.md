@@ -20,6 +20,26 @@ An always-on ECS/ALB/ClickHouse/Redis stack would cost money whether or not it i
 - Policy gates and contract suites that prove their own predicates by mutation testing.
 - Supply-chain checks use hash-locked placeholder dependencies, re-attest corrected SBOM metadata or relationships, and require a fresh passing scan attestation before AWS apply.
 
+## How a change flows
+
+![Animated storyboard of the pull-request, apply, lease closure, and supply-chain flow](docs/assets/storyboard.svg)
+
+The storyboard follows a change from pull request through static gates, LocalStack planning, an owner-bound preview lease, apply, and both cleanup stages, with supply-chain verification alongside apply.
+
+![Recorded LocalStack lifecycle: status, plan, policy gate, apply, state, and destroy](docs/assets/demo.gif)
+
+The lifecycle recording shows the existing end-to-end LocalStack transaction; its provenance is in `docs/assets/DEMO_PROVENANCE.md`.
+
+![Recorded lease lifecycle: open, apply, close, sweep, and closed state](docs/assets/demo-lease.gif)
+
+The lease recording shows generation-bound open, Stage 1 close, Stage 2 sweep, and the final empty state inventory; its provenance is in `docs/assets/DEMO_PROVENANCE_LEASE.md`.
+
+![Recorded supply-chain verification: canonical SBOM comparisons and contracts](docs/assets/demo-supplychain.gif)
+
+The supply-chain recording shows timestamp-insensitive canonicalization, checksum-sensitive comparison, and the canonicalizer contract suite; its provenance is in `docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md`.
+
+After starting LocalStack, applying its bootstrap once, and building the placeholder image, reproduce the set with `OPERATOR_CIDR=203.0.113.0/24 make demo-all`.
+
 ## System overview
 
 ```mermaid
@@ -81,12 +101,6 @@ stateDiagram-v2
 
 Every mutation is a compare-and-swap on the lease object's S3 ETag, so two writers can never both win. Prune retains a generation tombstone, and Stage 1 and Stage 2 escalate independently after three automatic executions. See ADR 0006 for the full state machine and the sweeper's `discover`/`env` split.
 
-## Demo
-
-![Recorded LocalStack demo: status, plan, conftest gate, apply, state list, destroy](docs/assets/demo.gif)
-
-The committed recording is real LocalStack output, produced by a single run transaction and never hand-edited. Before reproducing it, ensure LocalStack is running, run `make bootstrap-apply TARGET=localstack` once, and build the placeholder image with `make placeholder-build`. Then run `OPERATOR_CIDR=203.0.113.0/24 make demo`; full provenance and review evidence are in `docs/assets/DEMO_PROVENANCE.md`.
-
 ## Quickstart (LocalStack)
 
 ```
@@ -146,7 +160,7 @@ mirror-images.lock    placeholder plus Redis/ClickHouse private-ECR digests
 - `docs/THREAT_MODEL.md` — STRIDE-lite threats, controls, evidence labels, residual risk
 - `docs/iam-matrix.md` — IAM actions, conditions, bindings, cases, and evidence
 - `docs/EVIDENCE.md` — evidence labels, the evidence table, and PR gate requirements
-- `docs/assets/DEMO_PROVENANCE.md` — recording provenance, verification, and residuals
+- `docs/assets/*_PROVENANCE*.md` — provenance for the three recordings and the storyboard
 - `policy/README.md` — what the Conftest gate denies and how to run it
 - `STATE.md` — current phase and evidence status
 - `TODO.md` — task tracking and follow-ups

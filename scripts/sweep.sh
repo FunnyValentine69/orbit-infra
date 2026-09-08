@@ -23,7 +23,7 @@ usage() {
   cat <<'EOF'
 Usage:
   sweep.sh discover
-  sweep.sh env <env_id>
+  sweep.sh env <env_id> [--expect-owner <token>] [--expect-generation <N>]
 
 Env: TARGET (aws|localstack, required), LEASE_BUCKET, STATE_BUCKET.
 EOF
@@ -429,10 +429,14 @@ delete_state_versions() {
 stage2() {
   local env_id="$1"
   local initial_lease="$2"
+  local expected_generation="${3:-}"
   local generation claim manifest_target arns arn describe_out describe_rc status claim_rc
   local pending=false allowance_recorded=false lease latest_run state_key entries remaining rc
   local deleted_arns='[]' verified_empty_at proof_file
   generation="$(jq -r '.generation' <<< "$initial_lease")"
+  if [ -n "$expected_generation" ]; then
+    generation=$expected_generation
+  fi
   # SWEEP_STAGE2_TOKEN_OVERRIDE is test-only: honoured only when set, to let
   # fixtures pre-seed a lease with the exact claim token the sweep will use.
   claim="${SWEEP_STAGE2_TOKEN_OVERRIDE:-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$}"
@@ -669,7 +673,9 @@ cmd_discover() {
 
 cmd_env() {
   local env_id="$1"
-  local lease rc generation status
+  local expected_owner="${2:-}"
+  local expected_generation="${3:-}"
+  local lease rc generation status lease_owner
   validate_env_id "$env_id"
   set +e
   lease="$(get_lease "$env_id")"
@@ -681,16 +687,28 @@ cmd_env() {
   fi
   [ "$rc" -eq 0 ] || return "$rc"
   validate_inventory_lease "$lease" || { err "lease $env_id is malformed"; return 2; }
+  generation="$(jq -r '.generation' <<< "$lease")"
+  lease_owner="$(jq -r 'if (.owner | type) == "string" then .owner else "" end' <<< "$lease")"
+  if { [ -n "$expected_owner" ] && [ "$lease_owner" != "$expected_owner" ]; } || \
+     { [ -n "$expected_generation" ] && [ "$generation" != "$expected_generation" ]; }; then
+    err "lease belongs to another run"
+    return 3
+  fi
   classify_lease "$lease" || return $?
   case "$CLASSIFICATION" in
     stage1-stale-open|stage1-retry)
       generation="$(jq -r '.generation' <<< "$lease")"
       status="$(jq -r '.status' <<< "$lease")"
       echo "sweep.sh: running stage 1 for $env_id ($CLASSIFICATION)"
-      "$CLOSE_ENV_SH" --generation "$generation" --from "$status" "$env_id"
+      if [ -n "$expected_owner" ]; then
+        "$CLOSE_ENV_SH" --owner "$expected_owner" --generation "$generation" \
+          --from "$status" "$env_id"
+      else
+        "$CLOSE_ENV_SH" --generation "$generation" --from "$status" "$env_id"
+      fi
       ;;
     stage2)
-      stage2 "$env_id" "$lease"
+      stage2 "$env_id" "$lease" "$expected_generation"
       ;;
     prune)
       prune_closed_lease "$env_id"
@@ -713,8 +731,32 @@ main() {
       cmd_discover
       ;;
     env)
-      [ "$#" -eq 2 ] || { usage >&2; exit 2; }
-      cmd_env "$2"
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      env_id=$2
+      expected_owner=
+      expected_generation=
+      shift 2
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --expect-owner)
+            [ "$#" -ge 2 ] && [ -n "$2" ] || { usage >&2; exit 2; }
+            expected_owner=$2
+            shift 2
+            ;;
+          --expect-generation)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            expected_generation=$2
+            shift 2
+            ;;
+          *) usage >&2; exit 2 ;;
+        esac
+      done
+      if [ -n "$expected_generation" ] && \
+         ! [[ "$expected_generation" =~ ^[1-9][0-9]*$ ]]; then
+        err "--expect-generation must be a positive integer"
+        exit 2
+      fi
+      cmd_env "$env_id" "$expected_owner" "$expected_generation"
       ;;
     --help|-h) usage ;;
     *) usage >&2; exit 2 ;;

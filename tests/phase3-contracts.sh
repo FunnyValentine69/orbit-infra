@@ -1402,6 +1402,16 @@ plan_index = one_index(
 if not bootstrap_index < plan_index:
     raise SystemExit("terraform-plan must bootstrap LocalStack state before planning")
 PY
+workflow_sweep_call="$(grep -F \
+  "SWEEP_IN_JOB=true scripts/sweep.sh env \"\$ENV_ID\"" \
+  "$apply_workflow" || true)"
+workflow_sweep_expected="            if ! SWEEP_IN_JOB=true scripts/sweep.sh env \"\$ENV_ID\"; then"
+if [ "$workflow_sweep_call" != "$workflow_sweep_expected" ]; then
+  echo 'session-apply sweep.sh env call must remain byte-identical' >&2
+  exit 1
+fi
+echo 'PASS: session-apply sweep.sh env call remains byte-identical'
+
 validate_guard="$(sed -n '/^  validate-input:/,/^  apply:/s/^    if: //p' "$apply_workflow")"
 apply_guard="$(sed -n '/^  apply:/,/^    runs-on:/s/^    if: //p' "$apply_workflow")"
 setup_localstack_guard="$(sed -n '/      - name: Start LocalStack/,/        uses:/s/^        if: //p' "$apply_workflow")"

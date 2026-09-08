@@ -1,4 +1,4 @@
-.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply iam-matrix-plan localstack-up localstack-down localstack-status plan apply destroy test test-concurrency lint validate conftest record-conftest-fixtures check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend check-localstack-read localstack-state-list localstack-show-json localstack-output placeholder-build check-placeholder-image check-vhs demo print-preview-root print-target lease-list lease-get close
+.PHONY: bootstrap-preflight bootstrap-fmt bootstrap-validate bootstrap-lint bootstrap-plan bootstrap-apply iam-matrix-plan localstack-up localstack-down localstack-status plan apply destroy test test-concurrency lint validate conftest record-conftest-fixtures check-target check-env-id check-operator-cidr check-plan-file render-localstack-backend check-localstack-read localstack-state-list localstack-show-json localstack-output placeholder-build check-placeholder-image check-vhs storyboard demo demo-all print-preview-root print-target lease-list lease-get close
 
 TARGET ?=
 # preflight and terraform must check the same account and region
@@ -224,6 +224,7 @@ destroy: check-backend-hcl
 endif
 
 test:
+	@bash tests/storyboard-contracts.sh
 	@bash tests/sweeper.sh
 	@bash tests/cleanup-verifier.sh
 	@bash tests/phase3-contracts.sh
@@ -320,7 +321,18 @@ print-preview-root:
 print-target:
 	@printf '%s\n' "$(TARGET)"
 
-# Records docs/assets/demo.gif from demo/demo.tape against LocalStack. Local, on-demand only.
-# Usage: OPERATOR_CIDR=203.0.113.0/24 make demo
+storyboard:
+	@python3 scripts/storyboard.py
+	@commit="$$(git rev-parse HEAD)" && \
+	sha="$$(shasum -a 256 docs/assets/storyboard.svg | awk '{print $$1}')" && \
+	printf '# Storyboard provenance\n\n| field | value |\n|---|---|\n| generator commit | %s |\n| artifact sha256 | %s |\n| command | make storyboard |\n' "$$commit" "$$sha" > docs/assets/STORYBOARD_PROVENANCE.md
+
+# Records one demo against LocalStack. Local, on-demand only.
+# Usage: OPERATOR_CIDR=203.0.113.0/24 make demo [NAME=demo|lease|supply]
 demo: check-vhs
-	bash -p demo/env.sh
+	DEMO_NAME="$(if $(NAME),$(NAME),demo)" bash -p demo/env.sh
+
+demo-all:
+	@for name in demo lease supply; do \
+		$(MAKE) demo NAME="$$name" || exit $$?; \
+	done

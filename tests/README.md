@@ -237,7 +237,29 @@ Run the recorder regression suite without LocalStack, vhs, ffprobe, or network a
 bash tests/demo-contracts.sh
 ```
 
-Its four groups cover the exact constructed environment and `MAKEFLAGS` refusals; transaction lifecycle failures, teardown-before-publish ordering, and fake-only network calls; the six tape steps and fail-closed timing parser; and CIDR containment, artifact/provenance integrity, and generator drift. The lifecycle group includes `inspect-frames`, `inspect-frames-fractional`, `inspect-frames-norate`, and `inspect-frames-zero-rate` for the encoded-rate frame floor; `preflight-ls-version-null`, `preflight-ls-version-missing`, `preflight-ls-version-empty`, `preflight-ls-version-array`, and `preflight-ls-version-http-fail` for version capture; and `render-generator-drift` for a generator change after preflight. Mutation checks remove the version-capture fail flag and the frame-rate validator to prove those negative cases fail without their target guards. Negative generator cases use temporary Git repositories and cover committed, staged or unstaged, untracked, and ignored Terraform-consumable changes while permitting ignored recorder output and Terraform caches. The provenance commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a shallow checkout fails with `generator commit unreachable; fetch full history`. The suite is chained from `tests/phase3-contracts.sh` after the IAM matrix contract.
+Its six groups cover the exact per-name environment and unknown-name refusal;
+all three tapes and their required output; kind-specific provenance and generator
+closures; the bounded, owner- and generation-fenced lease recovery helper; the
+existing lifecycle transaction failure table; and fake end-to-end lease and
+supply-chain recordings. Lease cases include repeat recording from `closed`,
+abort and claim states, action-time ownership races, one- and two-pass sleeps,
+exhaustion, and the no-backend-call boundary after final inventory. Drift mutants
+cover each kind's scripts, templates, contracts, and fixtures. The provenance
+commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a
+shallow checkout fails with `generator commit unreachable; fetch full history`. The suite
+remains chained through `tests/phase3-contracts.sh`.
+
+Run the storyboard generator contracts separately or through `make test`:
+
+```
+bash tests/storyboard-contracts.sh
+```
+
+The generator group checks exact captions, byte determinism, accessibility,
+hygiene, reduced motion, and static snapshot scheduling. Until both committed
+storyboard outputs exist, the asset group alone reports
+`SKIP: storyboard asset not committed yet`; once present, it validates byte
+identity, provenance hash, commit reachability, and the generator closure.
 
 Run the process-group signal test directly without LocalStack:
 

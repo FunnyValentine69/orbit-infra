@@ -11,6 +11,15 @@ cd -- "$script_dir/.."
 # shellcheck source=demo/lib.sh
 source demo/lib.sh
 
+DEMO_NAME=${DEMO_NAME:-demo}
+config="$(demo_recording_config "$DEMO_NAME")" || exit $?
+config_env_id=
+while IFS='=' read -r key value; do
+  case "$key" in
+    ENV_ID) config_env_id=$value ;;
+  esac
+done <<< "$config"
+
 if [ "$#" -eq 0 ]; then
   set -- bash demo/record.sh
 elif [ "$#" -ne 1 ] || [ "$1" != env ]; then
@@ -34,5 +43,8 @@ done
 for assignment in $DEMO_ENV_FIXED; do
   env_args+=("$assignment")
 done
+if [ -n "$config_env_id" ]; then
+  env_args+=("ENV_ID=$config_env_id" "PREVIEW_ROOT=.preview-runs/$config_env_id")
+fi
 
 exec env -i "${env_args[@]}" "$@"

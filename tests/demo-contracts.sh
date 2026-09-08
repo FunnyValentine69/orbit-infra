@@ -32,17 +32,24 @@ field_value() {
   field_line "$field" "$doc" | sed -E 's/^\| [^|]+ \| (.*) \|$/\1/'
 }
 
+all_generator_paths() {
+  for recording_kind in lifecycle lease verify; do
+    demo_generator_paths "$recording_kind"
+  done | tr ' ' '\n' | sort -u
+}
+
 init_generator_clone() {
   local destination=$1
   local path parent
   mkdir -p "$destination"
-  for path in $DEMO_GENERATOR_PATHS; do
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
     parent=${path%/*}
     if [ "$parent" != "$path" ]; then
       mkdir -p "$destination/$parent"
     fi
     cp -R "$REPO_ROOT/$path" "$destination/$path"
-  done
+  done < <(all_generator_paths)
   cp "$REPO_ROOT/.gitignore" "$destination/.gitignore"
   if [ -d "$destination/demo/out" ]; then
     find "$destination/demo/out" -type f -delete
@@ -97,6 +104,7 @@ for name in $DEMO_ENV_PASSTHROUGH; do
     TERM) value=xterm-contract ;;
     OPERATOR_CIDR) value=203.0.113.0/24 ;;
     DEMO_INJECT_FAIL) value=none ;;
+    DEMO_NAME) value=demo ;;
     *) value=unexpected ;;
   esac
   printf '%s=%s\n' "$name" "$value" >> "$expected_env"
@@ -104,6 +112,7 @@ done
 for assignment in $DEMO_ENV_FIXED; do
   printf '%s\n' "$assignment" >> "$expected_env"
 done
+printf '%s\n' 'ENV_ID=demo' 'PREVIEW_ROOT=.preview-runs/demo' >> "$expected_env"
 sort -o "$expected_env" "$expected_env"
 if [ "$environment_rc" -eq 0 ] && cmp -s "$expected_env" "$actual_env" && \
    [ ! -e "$environment_root/bash-env-ran" ]; then
@@ -170,6 +179,129 @@ if [ "$actual_steps" = "$expected_steps" ]; then
   pass_case "steps marker set"
 else
   fail_case "steps marker set" "$actual_steps"
+fi
+
+tape_sets_ok=1
+for tape_case in \
+  'demo/demo.tape|status plan conftest apply statelist destroy' \
+  'demo/demo-lease.tape|lease-before lease-open apply lease-active close sweep' \
+  'demo/demo-supplychain.tape|canon-timestamp canon-checksum canon-sha contracts'; do
+  tape_path=${tape_case%%|*}
+  tape_want=${tape_case#*|}
+  if [ -f "$REPO_ROOT/$tape_path" ]; then
+    tape_actual="$(tape_steps "$REPO_ROOT/$tape_path" | tr '\n' ' ' | sed 's/ $//')"
+  else
+    tape_actual=missing
+  fi
+  [ "$tape_actual" = "$tape_want" ] || tape_sets_ok=0
+done
+if [ "$tape_sets_ok" -eq 1 ]; then
+  pass_case "steps marker sets for demo lease and supply tapes"
+else
+  fail_case "steps marker sets for demo lease and supply tapes"
+fi
+
+recording_config_ok=1
+for config_case in \
+  $'demo|TAPE=demo/demo.tape\nDOC=docs/assets/DEMO_PROVENANCE.md\nGIF=docs/assets/demo.gif\nENV_ID=demo\nKIND=lifecycle' \
+  $'lease|TAPE=demo/demo-lease.tape\nDOC=docs/assets/DEMO_PROVENANCE_LEASE.md\nGIF=docs/assets/demo-lease.gif\nENV_ID=demo-lease\nKIND=lease' \
+  $'supply|TAPE=demo/demo-supplychain.tape\nDOC=docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md\nGIF=docs/assets/demo-supplychain.gif\nENV_ID=\nKIND=verify'; do
+  config_name=${config_case%%|*}
+  config_want=${config_case#*|}
+  set +e
+  config_actual="$(demo_recording_config "$config_name" 2>/dev/null)"
+  config_rc=$?
+  set -e
+  if [ "$config_rc" -ne 0 ] || [ "$config_actual" != "$config_want" ]; then
+    recording_config_ok=0
+  fi
+done
+set +e
+bogus_config_output="$(demo_recording_config bogus 2>&1)"
+bogus_config_rc=$?
+set -e
+if [ "$bogus_config_rc" -eq 0 ] || \
+   ! grep -Fq "unknown DEMO_NAME 'bogus'" <<< "$bogus_config_output"; then
+  recording_config_ok=0
+fi
+if [ "$recording_config_ok" -eq 1 ]; then
+  pass_case "recording config exact mapping and bogus-name refusal"
+else
+  fail_case "recording config exact mapping and bogus-name refusal" "$bogus_config_output"
+fi
+
+make_recording_ok=1
+for make_case in demo lease supply; do
+  make_name=
+  [ "$make_case" = demo ] || make_name="NAME=$make_case"
+  make_output="$(make -n -C "$REPO_ROOT" demo $make_name 2>/dev/null)"
+  grep -Fxq "DEMO_NAME=\"$make_case\" bash -p demo/env.sh" <<< "$make_output" || \
+    make_recording_ok=0
+done
+demo_all_body="$(awk '
+  /^demo-all:$/ { body=1; next }
+  body && /^[^[:space:]]/ { exit }
+  body { print }
+' "$REPO_ROOT/Makefile")"
+grep -Fq 'for name in demo lease supply; do' <<< "$demo_all_body" ||   make_recording_ok=0
+if [ "$make_recording_ok" -eq 1 ]; then
+  pass_case "Make demo defaults and named recording dispatch"
+else
+  fail_case "Make demo defaults and named recording dispatch" "$demo_all_body"
+fi
+
+membership_actual="$tmp_dir/demo-membership-actual.txt"
+membership_expected="$tmp_dir/demo-membership-expected.txt"
+git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard -- demo | \
+  grep -v '^demo/out/' | sort > "$membership_actual"
+{
+  for membership_kind in lifecycle lease verify; do
+    demo_generator_paths "$membership_kind" | tr ' ' '\n'
+  done
+} | grep '^demo/' | sort -u > "$membership_expected"
+if cmp -s "$membership_expected" "$membership_actual"; then
+  pass_case "demo membership contract equals the union of the recording closures"
+else
+  fail_case "demo membership contract equals the union of the recording closures" \
+    "$(diff -u "$membership_expected" "$membership_actual" || true)"
+fi
+
+lease_scripts_actual="$tmp_dir/lease-scripts-actual.txt"
+lease_scripts_expected="$tmp_dir/lease-scripts-expected.txt"
+set +e
+demo_generator_paths lease 2>/dev/null | tr ' ' '\n' | \
+  grep '^scripts/.*[.]sh$' | grep -v '^scripts/fixture-hygiene[.]sh$' | \
+  sort -u > "$lease_scripts_actual"
+closure_rc=${PIPESTATUS[0]}
+set -e
+printf '%s\n' \
+  scripts/aws-cli.sh \
+  scripts/cleanup-verifier.sh \
+  scripts/close-env.sh \
+  scripts/lease-sweep-until-closed.sh \
+  scripts/lease.sh \
+  scripts/sweep.sh | sort > "$lease_scripts_expected"
+if [ "$closure_rc" -eq 0 ] && cmp -s "$lease_scripts_expected" "$lease_scripts_actual"; then
+  pass_case "lease script closure equals transitive enumeration"
+else
+  fail_case "lease script closure equals transitive enumeration" \
+    "$(diff -u "$lease_scripts_expected" "$lease_scripts_actual" || true)"
+fi
+
+workflow_bound="$(sed -n 's/.*sweep_attempt <= \([0-9][0-9]*\).*/\1/p' \
+  "$REPO_ROOT/.github/workflows/session-apply.yml")"
+workflow_sleep="$(sed -n 's/.*SWEEP_LOOP_SLEEP_SECONDS:-\([0-9][0-9]*\).*/\1/p' \
+  "$REPO_ROOT/.github/workflows/session-apply.yml")"
+helper_bound="$(sed -n 's/^MAX_SWEEP_PASSES=\([0-9][0-9]*\)$/\1/p' \
+  "$REPO_ROOT/scripts/lease-sweep-until-closed.sh" 2>/dev/null || true)"
+helper_sleep="$(sed -n 's/^SWEEP_SLEEP_SECONDS="${SWEEP_LOOP_SLEEP_SECONDS:-\([0-9][0-9]*\)}"$/\1/p' \
+  "$REPO_ROOT/scripts/lease-sweep-until-closed.sh" 2>/dev/null || true)"
+if [ "$workflow_bound" = 20 ] && [ "$workflow_sleep" = 3 ] && \
+   [ "$helper_bound" = "$workflow_bound" ] && [ "$helper_sleep" = "$workflow_sleep" ]; then
+  pass_case "lease sweep bound and sleep equal session-apply"
+else
+  fail_case "lease sweep bound and sleep equal session-apply" \
+    "workflow=$workflow_bound/$workflow_sleep helper=$helper_bound/$helper_sleep"
 fi
 
 make_step_names="$(awk '
@@ -249,26 +381,87 @@ else
   fail_case "CIDR TEST-NET-3 containment truth table"
 fi
 
+provenance_mappings() {
+  case "$1" in
+    lifecycle)
+      printf '%s\n' \
+        'recorded_from|recorded_from' \
+        'recorded_on|recorded_on' \
+        'generator_commit|generator commit' \
+        'recorder|recorder' \
+        'command|command' \
+        'environment|environment' \
+        'plan_apply_destroy|plan / apply / destroy' \
+        'artifact|artifact' \
+        'artifact_sha256|artifact sha256'
+      ;;
+    lease)
+      printf '%s\n' \
+        'recorded_from|recorded_from' \
+        'generator_commit|generator commit' \
+        'environment|environment' \
+        'pre_open_status|pre-open lease status' \
+        'opened_generation|opened generation' \
+        'apply_resource_count|apply resource count' \
+        'close_result|close result' \
+        'final_status|final lease status' \
+        'versions_remaining|state and lock versions remaining' \
+        'artifact_sha256|gif sha256' \
+        'artifact_size|size' \
+        'artifact_duration|duration' \
+        'artifact_frames|frames'
+      ;;
+    verify)
+      printf '%s\n' \
+        'recorded_from|recorded_from' \
+        'generator_commit|generator commit' \
+        'canonicalizer_sha256|canonicalizer sha256' \
+        'fixtures_used|fixtures used' \
+        'timestamp_result|timestamp-variant result' \
+        'checksum_result|checksum-variant result' \
+        'contracts_result|contracts result' \
+        'artifact_sha256|gif sha256' \
+        'artifact_size|size' \
+        'artifact_duration|duration' \
+        'artifact_frames|frames'
+      ;;
+    *) return 2 ;;
+  esac
+}
+
 validate_provenance() {
-  local doc=$1
-  local gif=$2
+  local kind=$1
+  local doc=$2
+  local gif=$3
   local field count artifact sha commit recorded_on command environment
   local command_cidr environment_cidr expected_size expected_sha
-  for field in recorded_from recorded_on 'generator commit' recorder command environment \
-    'plan / apply / destroy' artifact 'artifact sha256'; do
+  local required_count table_count value
+  while IFS='|' read -r _ field; do
     count="$(grep -Fc "| $field |" "$doc")"
     if [ "$count" -ne 1 ]; then
       echo "required provenance row count $field: $count" >&2
       return 1
     fi
-  done
-  artifact="$(field_value artifact "$doc")"
+  done < <(provenance_mappings "$kind")
+  required_count="$(provenance_mappings "$kind" | wc -l | tr -d ' ')"
+  table_count="$(grep -Ec '^\| [^|]+ \|.*\|$' "$doc")"
+  [ "$table_count" -eq $((required_count + 2)) ] || {
+    echo "provenance field set differs for $kind" >&2
+    return 1
+  }
+  if [ "$kind" = lifecycle ]; then
+    artifact="$(field_value artifact "$doc")"
+    sha="$(field_value 'artifact sha256' "$doc")"
+  else
+    artifact="$(field_value size "$doc")"
+    sha="$(field_value 'gif sha256' "$doc")"
+  fi
   expected_size="$(wc -c < "$gif" | tr -d ' ')"
   case "$artifact" in
     "$expected_size bytes,"*) ;;
+    "$expected_size bytes") ;;
     *) echo "artifact byte count mismatch" >&2; return 1 ;;
   esac
-  sha="$(field_value 'artifact sha256' "$doc")"
   expected_sha="$(shasum -a 256 "$gif" | awk '{print $1}')"
   if [ "$sha" != "$expected_sha" ]; then
     echo "artifact sha256 mismatch" >&2
@@ -276,6 +469,27 @@ validate_provenance() {
   fi
   commit="$(field_value 'generator commit' "$doc" | sed -E 's/^`?([0-9a-f]{7}).*/\1/')"
   [[ "$commit" =~ ^[0-9a-f]{7}$ ]] || { echo "generator commit is not 7 hex" >&2; return 1; }
+  case "$kind" in
+    lease)
+      value="$(field_value 'pre-open lease status' "$doc")"
+      [[ "$value" =~ ^(absent|closed|deleted)$ ]] || return 1
+      value="$(field_value 'opened generation' "$doc")"
+      [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+      [ "$(field_value 'apply resource count' "$doc")" = 61 ] || return 1
+      [ "$(field_value 'final lease status' "$doc")" = closed ] || return 1
+      [ "$(field_value 'state and lock versions remaining' "$doc")" = 0 ] || return 1
+      [ "$(field_value 'close result' "$doc")" =         "close-env.sh: demo-lease stage 1 complete; lease remains 'closing' for the sweeper" ] || return 1
+      return 0
+      ;;
+    verify)
+      [[ "$(field_value 'canonicalizer sha256' "$doc")" =~ ^[0-9a-f]{64}$ ]] || return 1
+      [ "$(field_value 'fixtures used' "$doc")" =         'base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json' ] || return 1
+      [ "$(field_value 'timestamp-variant result' "$doc")" = identical ] || return 1
+      [ "$(field_value 'checksum-variant result' "$doc")" = different ] || return 1
+      [ "$(field_value 'contracts result' "$doc")" = '14 assertions' ] || return 1
+      return 0
+      ;;
+  esac
   recorded_on="$(field_value recorded_on "$doc")"
   [[ "$recorded_on" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "recorded_on is not YYYY-MM-DD" >&2; return 1; }
   if ! awk '/^\| plan \/ apply \/ destroy \|/ {
@@ -304,19 +518,11 @@ validate_provenance() {
 }
 
 provenance_matches_manifest() {
-  local doc=$1
-  local manifest=$2
+  local kind=$1
+  local doc=$2
+  local manifest=$3
   local mapping key field expected actual count
-  for mapping in \
-    'recorded_from|recorded_from' \
-    'recorded_on|recorded_on' \
-    'generator_commit|generator commit' \
-    'recorder|recorder' \
-    'command|command' \
-    'environment|environment' \
-    'plan_apply_destroy|plan / apply / destroy' \
-    'artifact|artifact' \
-    'artifact_sha256|artifact sha256'; do
+  while IFS= read -r mapping; do
     IFS='|' read -r key field <<< "$mapping"
     count="$(grep -Fc "| $field |" "$doc")"
     if [ "$count" -ne 1 ]; then
@@ -329,10 +535,10 @@ provenance_matches_manifest() {
       echo "provenance row differs from run manifest: $field" >&2
       return 1
     fi
-  done
+  done < <(provenance_mappings "$kind")
 }
 
-if provenance_output="$(validate_provenance "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" \
+if provenance_output="$(validate_provenance lifecycle "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" \
   "$REPO_ROOT/docs/assets/demo.gif" 2>&1)"; then
   pass_case "provenance committed artifact rows"
 else
@@ -378,7 +584,7 @@ for provenance_case in size sha missing duplicate counts-mismatch cidr-mismatch 
         "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" > "$doc_copy"
       ;;
   esac
-  if validate_provenance "$doc_copy" "$REPO_ROOT/docs/assets/demo.gif" >/dev/null 2>&1; then
+  if validate_provenance lifecycle "$doc_copy" "$REPO_ROOT/docs/assets/demo.gif" >/dev/null 2>&1; then
     provenance_negative_ok=0
   fi
 done
@@ -388,16 +594,44 @@ else
   fail_case "provenance negative mutation table"
 fi
 
-recorded_commit="$(field_value 'generator commit' "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" | \
-  sed -E 's/^`?([0-9a-f]{7}).*/\1/')"
-set +e
-baseline_drift_output="$(generator_clean_check "$REPO_ROOT" "$recorded_commit" 2>&1)"
-baseline_drift_rc=$?
-set -e
-if [ "$baseline_drift_rc" -eq 0 ]; then
-  pass_case "generator commit drift"
+recording_set_present=1
+for artifact in \
+  docs/assets/demo.gif \
+  docs/assets/DEMO_PROVENANCE.md \
+  docs/assets/demo-lease.gif \
+  docs/assets/DEMO_PROVENANCE_LEASE.md \
+  docs/assets/demo-supplychain.gif \
+  docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md; do
+  [ -f "$REPO_ROOT/$artifact" ] || recording_set_present=0
+done
+new_recording_members="$(find "$REPO_ROOT/docs/assets" -maxdepth 1 -type f \
+  \( -name 'demo-lease.gif' -o -name 'DEMO_PROVENANCE_LEASE.md' \
+     -o -name 'demo-supplychain.gif' -o -name 'DEMO_PROVENANCE_SUPPLYCHAIN.md' \) | wc -l | tr -d ' ')"
+if [ "$recording_set_present" -eq 0 ] && [ "$new_recording_members" -ne 0 ]; then
+  fail_case "final-HEAD recorded-commit comparison" "recording output pairs are incomplete"
+elif [ "$recording_set_present" -eq 0 ]; then
+  pass_case "final-HEAD recorded-commit comparison armed for complete recording set"
 else
-  fail_case "generator commit drift" "$baseline_drift_output"
+  final_head_ok=1
+  for recording_case in \
+    'lifecycle|docs/assets/DEMO_PROVENANCE.md|docs/assets/demo.gif' \
+    'lease|docs/assets/DEMO_PROVENANCE_LEASE.md|docs/assets/demo-lease.gif' \
+    'verify|docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md|docs/assets/demo-supplychain.gif'; do
+    IFS='|' read -r recording_kind recording_doc recording_gif <<< "$recording_case"
+    recorded_commit="$(field_value 'generator commit' "$REPO_ROOT/$recording_doc" | \
+      sed -E 's/^`?([0-9a-f]{7}).*/\1/')"
+    if ! validate_provenance "$recording_kind" "$REPO_ROOT/$recording_doc" \
+         "$REPO_ROOT/$recording_gif" >/dev/null 2>&1 || \
+       ! generator_clean_check "$REPO_ROOT" "$recorded_commit" \
+         "$recording_kind" >/dev/null 2>&1; then
+      final_head_ok=0
+    fi
+  done
+  if [ "$final_head_ok" -eq 1 ]; then
+    pass_case "final-HEAD recorded-commit comparison for all recordings"
+  else
+    fail_case "final-HEAD recorded-commit comparison for all recordings"
+  fi
 fi
 
 positive_clone="$tmp_dir/generator-positive"
@@ -417,7 +651,7 @@ fi
 
 generator_negative_ok=1
 for generator_case in committed-record committed-module staged-preview uncommitted-preview \
-  untracked-demo ignored-preview-tfvars ignored-module-override ignored-space-input; do
+  ignored-preview-tfvars ignored-module-override ignored-space-input; do
   clone="$tmp_dir/generator-$generator_case"
   init_generator_clone "$clone"
   base_commit="$(git -C "$clone" rev-parse HEAD)"
@@ -435,7 +669,6 @@ for generator_case in committed-record committed-module staged-preview uncommitt
       (cd "$clone" && git add envs/preview/main.tf)
       ;;
     uncommitted-preview) printf '%s\n' '# mutation' >> "$clone/envs/preview/main.tf" ;;
-    untracked-demo) printf '%s\n' mutation > "$clone/demo/untracked.txt" ;;
     ignored-preview-tfvars) printf '%s\n' 'x = 1' > "$clone/envs/preview/terraform.tfvars" ;;
     ignored-module-override)
       printf '%s\n' 'modules/network/zz_override.tf' >> "$clone/.git/info/exclude"
@@ -465,6 +698,40 @@ if [ "$generator_negative_ok" -eq 1 ]; then
 else
   fail_case "generator drift negative mutation table and unreachable history"
 fi
+
+kind_drift_ok=1
+for drift_case in \
+  'lease-script|scripts/lease.sh|lease' \
+  'cleanup-verifier|scripts/cleanup-verifier.sh|lease' \
+  'lifecycle-template|demo/provenance/lifecycle.md|lifecycle' \
+  'lease-template|demo/provenance/lease.md|lease' \
+  'supply-template|demo/provenance/supply.md|verify' \
+  'canonicalizer|scripts/sbom-canon.sh|verify' \
+  'sbom-contract|tests/sbom-canon.sh|verify' \
+  'sbom-fixture|tests/fixtures/sbom/base.spdx.json|verify'; do
+  IFS='|' read -r drift_name drift_path affected_kind <<< "$drift_case"
+  clone="$tmp_dir/kind-drift-$drift_name"
+  init_generator_clone "$clone"
+  base_commit="$(git -C "$clone" rev-parse HEAD)"
+  printf '%s\n' '# drift mutation' >> "$clone/$drift_path"
+  (cd "$clone" && git add "$drift_path" && \
+    git -c user.name=t -c user.email=t@localhost commit -q -m mutation)
+  for checked_kind in lifecycle lease verify; do
+    set +e
+    generator_clean_check "$clone" "$base_commit" "$checked_kind" >/dev/null 2>&1
+    drift_rc=$?
+    set -e
+    if { [ "$checked_kind" = "$affected_kind" ] && [ "$drift_rc" -eq 0 ]; } || \
+       { [ "$checked_kind" != "$affected_kind" ] && [ "$drift_rc" -ne 0 ]; }; then
+      kind_drift_ok=0
+    fi
+  done
+done
+if [ "$kind_drift_ok" -eq 1 ]; then
+  pass_case "generator drift mutants are isolated per recording kind"
+else
+  fail_case "generator drift mutants are isolated per recording kind"
+fi
 gates_job="$(sed -n '/^  gates:/,/^  plan-localstack:/p' \
   "$REPO_ROOT/.github/workflows/terraform-plan.yml")"
 if grep -Fq 'fetch-depth: 0' <<< "$gates_job"; then
@@ -474,13 +741,234 @@ else
 fi
 echo "PASS: demo contract group CIDR and provenance (generator drift reported separately)"
 
+echo "== demo contracts: lease sweep recovery =="
+helper_root="$tmp_dir/helper"
+helper_bin="$helper_root/bin"
+helper_state="$helper_root/lease.json"
+helper_calls="$helper_root/calls.log"
+mkdir -p "$helper_bin"
+: > "$helper_calls"
+
+cat > "$helper_root/lease.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'lease %s\n' "$*" >> "$HELPER_CALLS"
+case "${1:-}" in
+  get)
+    reads=0
+    IFS= read -r reads < "$HELPER_READS" || :
+    reads=$((reads + 1))
+    printf '%s\n' "$reads" > "$HELPER_READS"
+    if [ "${HELPER_RACE_ON_READ:-0}" -eq "$reads" ]; then
+      jq '.owner="another-run" | .generation += 1' "$HELPER_STATE" > "$HELPER_STATE.next"
+      mv "$HELPER_STATE.next" "$HELPER_STATE"
+    fi
+    cat "$HELPER_STATE"
+    ;;
+  *)
+    printf 'destructive %s\n' "$*" >> "$HELPER_CALLS"
+    exit 9
+    ;;
+esac
+EOF
+
+cat > "$helper_root/close.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+owner=
+generation=
+from=
+env_id=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --owner) owner=$2; shift 2 ;;
+    --generation) generation=$2; shift 2 ;;
+    --from) from=$2; shift 2 ;;
+    *) env_id=$1; shift ;;
+  esac
+done
+if [ "${HELPER_CLOSE_MODE:-normal}" = race ]; then
+  jq '.owner="another-run" | .generation += 1' "$HELPER_STATE" > "$HELPER_STATE.next"
+  mv "$HELPER_STATE.next" "$HELPER_STATE"
+fi
+if ! jq -e --arg owner "$owner" --argjson generation "$generation" --arg from "$from" \
+    '.owner == $owner and .generation == $generation and .status == $from' \
+    "$HELPER_STATE" >/dev/null; then
+  echo "close-env.sh: lease belongs to another run" >&2
+  exit 3
+fi
+printf 'begin-cleanup %s %s\n' "$env_id" "$generation" >> "$HELPER_CALLS"
+jq '.status="closing" | .stage1_claim=null' "$HELPER_STATE" > "$HELPER_STATE.next"
+mv "$HELPER_STATE.next" "$HELPER_STATE"
+echo "close-env.sh: $env_id stage 1 complete; lease remains 'closing' for the sweeper"
+EOF
+
+cat > "$helper_root/sweep.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'sweep %s\n' "$*" >> "$HELPER_CALLS"
+count=0
+IFS= read -r count < "$HELPER_SWEEPS" || :
+count=$((count + 1))
+printf '%s\n' "$count" > "$HELPER_SWEEPS"
+if [ "$count" -ge "$HELPER_CLOSE_AFTER" ]; then
+  jq '.status="closed" | .stage2_claim=null' "$HELPER_STATE" > "$HELPER_STATE.next"
+  mv "$HELPER_STATE.next" "$HELPER_STATE"
+  echo "sweep.sh: demo-lease Stage 2 complete; lease is closed"
+fi
+EOF
+
+cat > "$helper_bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'sleep %s\n' "$*" >> "$HELPER_CALLS"
+EOF
+chmod +x "$helper_root/lease.sh" "$helper_root/close.sh" \
+  "$helper_root/sweep.sh" "$helper_bin/sleep"
+
+helper_lease() {
+  local status=$1
+  local owner=${2:-demo-owner}
+  local generation=${3:-1}
+  local stage1=${4:-null}
+  local stage2=${5:-null}
+  local manual=${6:-false}
+  jq -cn --arg status "$status" --arg owner "$owner" \
+    --argjson generation "$generation" --argjson stage1 "$stage1" \
+    --argjson stage2 "$stage2" --argjson manual "$manual" '
+      {
+        env_id:"demo-lease", status:$status, owner:$owner,
+        generation:$generation, opened_at:"2026-09-08T00:00:00Z",
+        updated_at:"2026-09-08T00:00:00Z", cleanup_attempt:0,
+        stage2_attempt:0, next_retry_at:null,
+        manual_intervention_required:$manual, stage1_claim:$stage1,
+        stage2_claim:$stage2, manifest:{target:"localstack",candidates:[],verification_runs:[]}
+      }'
+}
+
+run_helper() {
+  local label=$1
+  local lease=$2
+  local close_after=${3:-1}
+  local close_mode=${4:-normal}
+  local race_read=${5:-0}
+  local sweep_script=${6:-$helper_root/sweep.sh}
+  printf '%s\n' "$lease" > "$helper_state"
+  : > "$helper_calls"
+  printf '%s\n' 0 > "$helper_root/reads"
+  printf '%s\n' 0 > "$helper_root/sweeps"
+  set +e
+  HELPER_STATE="$helper_state" \
+  HELPER_CALLS="$helper_calls" \
+  HELPER_READS="$helper_root/reads" \
+  HELPER_SWEEPS="$helper_root/sweeps" \
+  HELPER_CLOSE_AFTER="$close_after" \
+  HELPER_CLOSE_MODE="$close_mode" \
+  HELPER_RACE_ON_READ="$race_read" \
+  LEASE_SH="$helper_root/lease.sh" \
+  CLOSE_ENV_SH="$helper_root/close.sh" \
+  SWEEP_SH="$sweep_script" \
+  TARGET=localstack \
+  PATH="$helper_bin:$PATH" \
+    "$REPO_ROOT/scripts/lease-sweep-until-closed.sh" demo-lease \
+      --owner demo-owner --generation 1 > "$helper_root/$label.out" 2>&1
+  HELPER_RC=$?
+  set -e
+  HELPER_OUTPUT="$(cat "$helper_root/$label.out")"
+}
+
+helper_contract_ok=1
+run_helper open "$(helper_lease open)" 1
+if [ "$HELPER_RC" -ne 0 ] || \
+   ! grep -Fq 'final_status=closed' <<< "$HELPER_OUTPUT" || \
+   [ "$(grep -c '^begin-cleanup ' "$helper_calls" || true)" -ne 1 ] || \
+   [ "$(grep -c '^sweep ' "$helper_calls" || true)" -ne 1 ]; then
+  helper_contract_ok=0
+fi
+
+run_helper one-nonterminal "$(helper_lease closing)" 2
+if [ "$HELPER_RC" -ne 0 ] || \
+   [ "$(grep -c '^sweep ' "$helper_calls" || true)" -ne 2 ] || \
+   [ "$(grep -c '^sleep 3$' "$helper_calls" || true)" -ne 1 ]; then
+  helper_contract_ok=0
+fi
+run_helper two-nonterminal "$(helper_lease closing)" 3
+if [ "$HELPER_RC" -ne 0 ] || \
+   [ "$(grep -c '^sweep ' "$helper_calls" || true)" -ne 3 ] || \
+   [ "$(grep -c '^sleep 3$' "$helper_calls" || true)" -ne 2 ]; then
+  helper_contract_ok=0
+fi
+if [ "$helper_contract_ok" -eq 1 ]; then
+  pass_case "lease helper open recovery and one/two nonterminal sweeps"
+else
+  fail_case "lease helper open recovery and one/two nonterminal sweeps" "$HELPER_OUTPUT"
+fi
+
+helper_refusal_ok=1
+stage1_claim='{"token":"stage1","claimed_at":"2026-09-08T00:00:00Z"}'
+fresh_stage2='{"token":"stage2","claimed_at":"2026-09-08T00:00:00Z"}'
+stale_stage2='{"token":"stage2","claimed_at":"2020-01-01T00:00:00Z"}'
+for refusal_case in \
+  "manual|$(helper_lease closing demo-owner 1 null null true)" \
+  "stage1-claimed|$(helper_lease closing demo-owner 1 "$stage1_claim")" \
+  "stage2-fresh|$(helper_lease closing demo-owner 1 null "$fresh_stage2")" \
+  "stage2-stale|$(helper_lease closing demo-owner 1 null "$stale_stage2")" \
+  "cleanup-failed|$(helper_lease cleanup_failed)" \
+  "other-owner|$(helper_lease open another-run)"; do
+  refusal_name=${refusal_case%%|*}
+  refusal_lease=${refusal_case#*|}
+  run_helper "$refusal_name" "$refusal_lease" 1
+  if [ "$HELPER_RC" -eq 0 ] || \
+     grep -Eq '^(begin-cleanup|sweep) ' "$helper_calls" || \
+     ! grep -Eq 'lease belongs to another run|RUNBOOKS.md#manual-lease-recovery' \
+       <<< "$HELPER_OUTPUT"; then
+    helper_refusal_ok=0
+  fi
+done
+if [ "$helper_refusal_ok" -eq 1 ]; then
+  pass_case "lease helper refuses manual claimed failed and foreign leases"
+else
+  fail_case "lease helper refuses manual claimed failed and foreign leases" "$HELPER_OUTPUT"
+fi
+
+run_helper exhaustion "$(helper_lease closing)" 99
+if [ "$HELPER_RC" -ne 0 ] && \
+   [ "$(grep -c '^sweep ' "$helper_calls" || true)" -eq 20 ] && \
+   [ "$(grep -c '^sleep 3$' "$helper_calls" || true)" -eq 19 ] && \
+   grep -Fq 'final_status=closing' <<< "$HELPER_OUTPUT"; then
+  pass_case "lease helper bounded sweep exhaustion reports last status"
+else
+  fail_case "lease helper bounded sweep exhaustion reports last status" "$HELPER_OUTPUT"
+fi
+
+run_helper close-race "$(helper_lease open)" 1 race
+if [ "$HELPER_RC" -ne 0 ] && \
+   ! grep -Eq '^(begin-cleanup|sweep) ' "$helper_calls" && \
+   grep -Fq 'lease belongs to another run' <<< "$HELPER_OUTPUT"; then
+  pass_case "lease helper close race has zero destructive calls"
+else
+  fail_case "lease helper close race has zero destructive calls" "$HELPER_OUTPUT"
+fi
+
+run_helper sweep-race "$(helper_lease closing)" 1 normal 3 "$REPO_ROOT/scripts/sweep.sh"
+if [ "$HELPER_RC" -ne 0 ] && \
+   [ "$(grep -c '^lease get ' "$helper_calls" || true)" -eq 3 ] && \
+   ! grep -Eq '^(destructive|begin-cleanup) ' "$helper_calls" && \
+   ! grep -Fq 'lease claim-stage2' "$helper_calls" && \
+   grep -Fq 'lease belongs to another run' <<< "$HELPER_OUTPUT"; then
+  pass_case "lease sweep own-read race has zero claim close or delete calls"
+else
+  fail_case "lease sweep own-read race has zero claim close or delete calls" "$HELPER_OUTPUT"
+fi
+echo "PASS: demo contract group lease sweep recovery"
 
 echo "== demo contracts: lifecycle =="
 lifecycle_template="$tmp_dir/lifecycle-template"
-mkdir -p "$lifecycle_template/demo" "$lifecycle_template/docs/assets" \
+mkdir -p "$lifecycle_template/demo/provenance" "$lifecycle_template/docs/assets" \
   "$lifecycle_template/envs/preview"
 cp "$REPO_ROOT/demo/record.sh" "$REPO_ROOT/demo/lib.sh" "$REPO_ROOT/demo/env.sh" \
   "$REPO_ROOT/demo/demo.tape" "$lifecycle_template/demo/"
+cp "$REPO_ROOT/demo/provenance/lifecycle.md" "$lifecycle_template/demo/provenance/"
 cp "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" "$REPO_ROOT/docs/assets/demo.gif" \
   "$lifecycle_template/docs/assets/"
 find "$REPO_ROOT/envs/preview" -maxdepth 1 -type f \
@@ -526,7 +1014,7 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    touch -t "20300101""0000" "$RUN/demo.gif"' \
     '    if [ "$FAKE_VHS_MODE" = stale ]; then touch -t "20000101""0000" "$RUN/demo.gif"; fi' \
     '    if [ "$FAKE_TF_STATE" = post_apply ]; then touch .fake-live; fi' \
-    '    if [ "$FAKE_VHS_MODE" = generator_drift ]; then touch .fake-git-drift; fi' \
+    '    if [ "$FAKE_VHS_MODE" = generator_drift ]; then printf "\n# post-preflight drift\n" >> demo/provenance/lifecycle.md; touch .fake-git-drift; fi' \
     '    ;;' \
     '  ffprobe)' \
     '    case "$*" in' \
@@ -651,6 +1139,11 @@ run_lifecycle() {
   local state_mode=$4
   local inject=$5
   local mutation=$6
+  local recording=${7:-demo}
+  if [ "$recording" != demo ]; then
+    run_recording_case "$name" "$vhs_mode" "$recording"
+    return
+  fi
   local case_root repo call_log before after output rc run_dir
   local fake_duration fake_frames fake_frame_rate fake_ls_version rewrite_key record_next
   case_root="$tmp_dir/lifecycle-$name"
@@ -680,14 +1173,14 @@ run_lifecycle() {
       printf '%s\n' source > "$repo/envs/preview/migration.tfstate.tf"
       ;;
     missing-field)
-      awk '!/^\| artifact sha256 \|/' "$repo/docs/assets/DEMO_PROVENANCE.md" > "$case_root/doc"
-      cp "$case_root/doc" "$repo/docs/assets/DEMO_PROVENANCE.md"
+      awk '!/^\| artifact sha256 \|/' "$repo/demo/provenance/lifecycle.md" > "$case_root/doc"
+      cp "$case_root/doc" "$repo/demo/provenance/lifecycle.md"
       ;;
     delete-rewrite-*)
       rewrite_key=${mutation#delete-rewrite-}
       record_next="$case_root/record.next"
       awk -v key="$rewrite_key" '
-        $1 == "rewrite_provenance_row" && $2 == key { removed++; next }
+        !removed && $1 == "rewrite_provenance_row" && $2 == key { removed++; next }
         { print }
         END { if (removed != 1) exit 1 }
       ' "$repo/demo/record.sh" > "$record_next"
@@ -742,6 +1235,7 @@ run_lifecycle() {
     TERM=xterm \
     OPERATOR_CIDR=203.0.113.128/25 \
     DEMO_INJECT_FAIL="$inject" \
+    DEMO_NAME="$recording" \
       bash -p demo/env.sh 2>&1
   )"
   rc=$?
@@ -854,7 +1348,7 @@ cp -R "$lifecycle_template" "$real_git_source"
   git -c user.name=t -c user.email=t@localhost commit -q -m x
 )
 git clone -q "$real_git_source" "$real_git_repo"
-printf '%s\n' mutation > "$real_git_repo/demo/untracked.txt"
+printf '%s\n' mutation > "$real_git_repo/envs/preview/untracked.tf"
 : > "$real_git_calls"
 printf '\n' > "$real_git_repo/.fake-fail"
 printf '%s\n' normal > "$real_git_repo/.fake-vhs-mode"
@@ -1023,9 +1517,9 @@ printf '%s\n' guard:ok setup:ok preflight:ok record:ok inject_check:ok \
 if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$LIFECYCLE_BEFORE" != "$LIFECYCLE_AFTER" ] && \
    [ "$success_order" = ok ] && [ "$teardown_lines" -eq 1 ] && \
    cmp -s "$expected_lifecycle" "$LIFECYCLE_RUN/lifecycle.log" && \
-   validate_provenance "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
+   validate_provenance lifecycle "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
      "$LIFECYCLE_REPO/docs/assets/demo.gif" >/dev/null 2>&1 && \
-   provenance_matches_manifest "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
+   provenance_matches_manifest lifecycle "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
      "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1 && \
    [ "$(field_value 'generator commit' \
        "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md")" = \
@@ -1050,7 +1544,7 @@ for rewrite_key in recorded_from recorded_on generator_commit recorder command e
   run_lifecycle "rewrite-deleted-$rewrite_key" '' normal empty '' \
     "delete-rewrite-$rewrite_key"
   if [ "$LIFECYCLE_RC" -ne 0 ] || \
-     provenance_matches_manifest "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
+     provenance_matches_manifest lifecycle "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md" \
        "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1; then
     rewrite_deletion_ok=0
   fi
@@ -1119,10 +1613,563 @@ else
   echo "FAIL: demo contract group lifecycle" >&2
 fi
 
+echo "== demo contracts: lease and supply recordings =="
+recording_template="$tmp_dir/recording-template"
+mkdir -p "$recording_template/demo/provenance" "$recording_template/docs/assets" \
+  "$recording_template/envs/preview" "$recording_template/scripts" \
+  "$recording_template/tests/fixtures/sbom"
+cp "$REPO_ROOT/demo/record.sh" "$REPO_ROOT/demo/lib.sh" "$REPO_ROOT/demo/env.sh" \
+  "$REPO_ROOT/demo/demo.tape" "$REPO_ROOT/demo/demo-lease.tape" \
+  "$REPO_ROOT/demo/demo-supplychain.tape" "$recording_template/demo/"
+cp "$REPO_ROOT/demo/provenance/"*.md "$recording_template/demo/provenance/"
+cp "$REPO_ROOT/scripts/lease-sweep-until-closed.sh" \
+  "$REPO_ROOT/scripts/cleanup-verifier.sh" \
+  "$REPO_ROOT/scripts/sbom-canon.sh" "$recording_template/scripts/"
+cp "$REPO_ROOT/tests/sbom-canon.sh" "$recording_template/tests/"
+cp "$REPO_ROOT/tests/fixtures/sbom/"*.json "$recording_template/tests/fixtures/sbom/"
+find "$REPO_ROOT/envs/preview" -maxdepth 1 -type f \
+  -exec cp {} "$recording_template/envs/preview/" \;
+printf '%s\n' old-demo > "$recording_template/docs/assets/demo.gif"
+cp "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" \
+  "$recording_template/docs/assets/DEMO_PROVENANCE.md"
+
+cat > "$recording_template/scripts/lease.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+LEASE_BUCKET="${LEASE_BUCKET:-contract-state}"
+printf 'lease %s\n' "$*" >> .fake-calls.log
+case "${1:-}" in
+  get)
+    if [ ! -f .fake-lease.json ]; then
+      echo "lease.sh: no lease for ${2:-}" >&2
+      exit 1
+    fi
+    if [ -f "$RUN/final-inventory.complete" ]; then
+      echo "after-final lease get" >> .fake-calls.log
+    fi
+    cat .fake-lease.json
+    ;;
+  open)
+    env_id=$2
+    shift 2
+    owner=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --owner) owner=$2; shift 2 ;;
+        *) echo "unexpected open argument: $1" >&2; exit 2 ;;
+      esac
+    done
+    generation=1
+    if [ -f .fake-lease.json ]; then
+      status=$(jq -r .status .fake-lease.json)
+      case "$status" in closed|deleted) ;; *) exit 3 ;; esac
+      generation=$(( $(jq -r .generation .fake-lease.json) + 1 ))
+    fi
+    jq -cn --arg env_id "$env_id" --arg owner "$owner" \
+      --argjson generation "$generation" '
+        {env_id:$env_id,status:"open",generation:$generation,
+         owner:$owner,opened_at:"2026-09-08T00:00:00Z",
+         updated_at:"2026-09-08T00:00:00Z",cleanup_attempt:0,
+         stage2_attempt:0,next_retry_at:null,manual_intervention_required:false,
+         stage1_claim:null,stage2_claim:null,
+         manifest:{target:"localstack",candidates:[],verification_runs:[]}}' \
+      > .fake-lease.next
+    mv .fake-lease.next .fake-lease.json
+    cat .fake-lease.json
+    ;;
+  *)
+    echo "destructive lease $*" >> .fake-calls.log
+    exit 9
+    ;;
+esac
+EOF
+
+cat > "$recording_template/scripts/close-env.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+owner=
+generation=
+from=
+env_id=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --owner) owner=$2; shift 2 ;;
+    --generation) generation=$2; shift 2 ;;
+    --from) from=$2; shift 2 ;;
+    *) env_id=$1; shift ;;
+  esac
+done
+mode=$(cat .record-mode)
+if [ "$mode" = cas-close ]; then
+  jq '.owner="another-run" | .generation += 1' .fake-lease.json > .fake-lease.next
+  mv .fake-lease.next .fake-lease.json
+fi
+if ! jq -e --arg owner "$owner" --argjson generation "$generation" --arg from "$from" \
+    '.owner == $owner and .generation == $generation and .status == $from' \
+    .fake-lease.json >/dev/null; then
+  echo "close-env.sh: lease belongs to another run" >&2
+  exit 3
+fi
+echo "begin-cleanup $env_id $generation" >> .fake-calls.log
+case "$mode" in
+  abort-close-claimed)
+    jq '.status="closing" | .stage1_claim={token:"active",claimed_at:"2026-09-08T00:00:00Z"}' \
+      .fake-lease.json > .fake-lease.next
+    mv .fake-lease.next .fake-lease.json
+    exit 1
+    ;;
+  cleanup-failed)
+    jq '.status="cleanup_failed"' .fake-lease.json > .fake-lease.next
+    mv .fake-lease.next .fake-lease.json
+    exit 1
+    ;;
+esac
+jq '.status="closing" | .stage1_claim=null' .fake-lease.json > .fake-lease.next
+mv .fake-lease.next .fake-lease.json
+echo "close-env.sh: $env_id stage 1 complete; lease remains 'closing' for the sweeper"
+EOF
+
+cat > "$recording_template/scripts/sweep.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+env_id=$2
+owner=
+generation=
+shift 2
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --expect-owner) owner=$2; shift 2 ;;
+    --expect-generation) generation=$2; shift 2 ;;
+    *) exit 2 ;;
+  esac
+done
+if ! jq -e --arg owner "$owner" --argjson generation "$generation" \
+    '.owner == $owner and .generation == $generation' .fake-lease.json >/dev/null; then
+  echo "sweep.sh: lease belongs to another run" >&2
+  exit 3
+fi
+echo "sweep $env_id $generation" >> .fake-calls.log
+count=0
+IFS= read -r count < .sweep-count || :
+count=$((count + 1))
+printf '%s\n' "$count" > .sweep-count
+close_after=$(cat .close-after)
+if [ "$count" -ge "$close_after" ]; then
+  jq '.status="closed" | .stage2_claim=null' .fake-lease.json > .fake-lease.next
+  mv .fake-lease.next .fake-lease.json
+  echo "sweep.sh: $env_id Stage 2 complete; lease is closed"
+fi
+EOF
+
+cat > "$recording_template/scripts/aws-cli.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -f "$RUN/final-inventory.complete" ]; then
+  echo "after-final backend $*" >> .fake-calls.log
+fi
+echo "backend $*" >> .fake-calls.log
+echo '{"IsTruncated":false,"Versions":[],"DeleteMarkers":[]}'
+EOF
+chmod +x "$recording_template/scripts/"*.sh
+
+recording_bin="$tmp_dir/recording-bin"
+mkdir -p "$recording_bin"
+real_jq=$(command -v jq)
+ln -s "$real_jq" "$recording_bin/jq"
+cat > "$recording_bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "sleep $*" >> .fake-calls.log
+EOF
+cat > "$recording_bin/vhs" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = --version ]; then echo 'vhs 9.9.9-fake'; exit 0; fi
+mode=$(cat .record-mode)
+while IFS= read -r step; do
+  [ -n "$step" ] || continue
+  printf '%s\n' 0 > "$RUN/$step.rc"
+done < <(awk '/^# DEMO-SECTION / { print $3 }' "$RUN/demo.tape")
+printf '%s\n' 1 > "$RUN/env.ok"
+case "$DEMO_NAME" in
+  lease)
+    if [ -f .fake-lease.json ]; then
+      pre_status=$(jq -r .status .fake-lease.json)
+      pre_generation=$(jq -r .generation .fake-lease.json)
+    else
+      pre_status=absent
+      pre_generation=0
+    fi
+    expected=$((pre_generation + 1))
+    printf '%s\n' "$expected" > "$RUN/lease.expected"
+    printf 'status=%s generation=%s\n' "$pre_status" "$pre_generation" > "$RUN/lease-before.log"
+    if [ "$mode" = cas-loss ]; then
+      jq -cn --argjson generation "$expected" '
+        {env_id:"demo-lease",status:"open",generation:$generation,
+         owner:"another-run",opened_at:"2026-09-08T00:00:00Z",
+         updated_at:"2026-09-08T00:00:00Z",cleanup_attempt:0,
+         stage2_attempt:0,next_retry_at:null,manual_intervention_required:false,
+         stage1_claim:null,stage2_claim:null,
+         manifest:{target:"localstack",candidates:[],verification_runs:[]}}' > .fake-lease.json
+      exit 1
+    fi
+    if [ "$mode" = abort-open-intervening ]; then
+      jq -cn --argjson generation "$expected" '
+        {env_id:"demo-lease",status:"closed",generation:$generation,
+         owner:"another-run",opened_at:"2026-09-08T00:00:00Z",
+         updated_at:"2026-09-08T00:00:00Z",cleanup_attempt:0,
+         stage2_attempt:0,next_retry_at:null,manual_intervention_required:false,
+         stage1_claim:null,stage2_claim:null,
+         manifest:{target:"localstack",candidates:[],verification_runs:[]}}' > .fake-lease.json
+    fi
+    scripts/lease.sh open demo-lease --owner "$DEMO_OWNER" > "$RUN/open.raw"
+    opened=$(jq -r .generation "$RUN/open.raw")
+    if [ "$mode" = abort-open-missing ] || [ "$mode" = abort-open-intervening ]; then
+      exit 1
+    fi
+    printf '%s\n' "$opened" > "$RUN/lease.generation"
+    printf 'status=open generation=%s\n' "$opened" > "$RUN/open.log"
+    [ "$mode" != abort-after-open ] || exit 1
+    printf '%s\n' 'Plan: 61 to add, 0 to change, 0 to destroy.' > "$RUN/plan.log"
+    printf '%s\n' 'Apply complete! Resources: 61 added, 0 changed, 0 destroyed.' > "$RUN/apply.log"
+    [ "$mode" != abort-after-apply ] || exit 1
+    printf '%s\n' '{"status": "open"}' > "$RUN/lease-active.log"
+    set +e
+    scripts/close-env.sh demo-lease --owner "$DEMO_OWNER" \
+      --generation "$opened" --from open > "$RUN/close.log" 2>&1
+    close_rc=$?
+    set -e
+    [ "$close_rc" -eq 0 ] || exit "$close_rc"
+    set +e
+    scripts/lease-sweep-until-closed.sh demo-lease --owner "$DEMO_OWNER" \
+      --generation "$opened" > "$RUN/sweep.log" 2>&1
+    sweep_rc=$?
+    set -e
+    [ "$sweep_rc" -eq 0 ] || exit "$sweep_rc"
+    cat "$RUN/lease-before.log" "$RUN/open.log" "$RUN/plan.log" \
+      "$RUN/apply.log" "$RUN/lease-active.log" "$RUN/close.log" \
+      "$RUN/sweep.log" > "$RUN/demo.txt"
+    ;;
+  supply)
+    printf '%s\n' identical=0 > "$RUN/canon-timestamp.log"
+    printf '%s\n' identical=1 > "$RUN/canon-checksum.log"
+    printf '%s\n' \
+      'base=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+      'timestamp=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+      > "$RUN/canon-sha.log"
+    printf '%s\n' 'PASS: SBOM canonicalization contracts (14 assertions)' > "$RUN/contracts.log"
+    cat "$RUN/canon-timestamp.log" "$RUN/canon-checksum.log" \
+      "$RUN/canon-sha.log" "$RUN/contracts.log" > "$RUN/demo.txt"
+    ;;
+  *) exit 2 ;;
+esac
+if [[ "$mode" == drift:* ]]; then
+  drift_path=${mode#drift:}
+  printf '\n# post-preflight drift\n' >> "$drift_path"
+  printf '%s\n' "$drift_path" > .generator-drift-path
+fi
+printf '%s\n' DISTINCTIVE_RECORDING_GIF_PAYLOAD > "$RUN/demo.gif"
+touch -t '2030''01010000' "$RUN/demo.gif"
+EOF
+
+for tool in ffprobe ffmpeg ttyd tesseract curl docker aws terraform make git shasum date; do
+  cat > "$recording_bin/$tool" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+tool=${0##*/}
+echo "$tool $*" >> .fake-calls.log
+if [ "$DEMO_NAME" = supply ]; then
+  case "$tool" in curl|docker|aws|terraform|make) echo "forbidden supply tool: $tool" >&2; exit 91 ;; esac
+fi
+case "$tool" in
+  ffprobe)
+    case "$*" in
+      *format=duration*) echo 44.44 ;;
+      *r_frame_rate*) printf '%s\n' r_frame_rate=25/1 nb_read_frames=1200 ;;
+    esac
+    ;;
+  ffmpeg) [ "${1:-}" != -version ] || echo 'ffmpeg version 7.7.7-fake build' ;;
+  ttyd) echo 'ttyd version 8.8.8-fake' ;;
+  tesseract) echo 'tesseract 5.5.5-fake' ;;
+  curl) echo '{"version":"5.5.5-fake"}' ;;
+  docker|aws) : ;;
+  terraform)
+    case " $* " in *' version '*) echo 'Terraform v6.6.6-fake' ;; esac
+    ;;
+  make)
+    if [[ " $* " == *' render-localstack-backend '* ]]; then
+      mkdir -p "$PREVIEW_ROOT"
+      find "$PREVIEW_ROOT" -maxdepth 1 -type f ! -name backend_override.tf ! -name '*.tfstate*' -delete
+      while IFS= read -r -d '' source; do
+        name=${source##*/}
+        case "$name" in backend_override.tf|*.tfstate*) continue ;; esac
+        cp "$source" "$PREVIEW_ROOT/$name"
+      done < <(find envs/preview -maxdepth 1 -type f -print0)
+      echo generated > "$PREVIEW_ROOT/backend_override.tf"
+    fi
+    ;;
+  git)
+    case "$*" in
+      'status --porcelain --untracked-files=all --'*) : ;;
+      'ls-files --others --ignored --exclude-standard -z --'*) : ;;
+      'cat-file -e '*) : ;;
+      'diff --quiet '*' HEAD -- '*)
+        if [ ! -f .generator-drift-path ]; then
+          exit 0
+        fi
+        drift_path=$(cat .generator-drift-path)
+        case "$drift_path" in
+          tests/fixtures/sbom/*) drift_path=tests/fixtures/sbom ;;
+        esac
+        if grep -Fqw -- "$drift_path" <<< "$*"; then exit 1; fi
+        ;;
+      'rev-parse --short=7 HEAD') echo abc1234 ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  shasum) /usr/bin/shasum "$@" ;;
+  date) echo 2099-12-31 ;;
+esac
+EOF
+  chmod +x "$recording_bin/$tool"
+done
+chmod +x "$recording_bin/vhs" "$recording_bin/sleep"
+
+run_recording_case() {
+  local name=$1
+  local mode=$2
+  local recording=$3
+  local case_root="$tmp_dir/recording-$name"
+  local repo="$case_root/repo"
+  mkdir -p "$case_root"
+  cp -R "$recording_template" "$repo"
+  : > "$repo/.fake-calls.log"
+  printf '%s\n' "$mode" > "$repo/.record-mode"
+  printf '%s\n' 0 > "$repo/.sweep-count"
+  case "$mode" in
+    sweep-one) printf '%s\n' 2 > "$repo/.close-after" ;;
+    sweep-two) printf '%s\n' 3 > "$repo/.close-after" ;;
+    sweep-exhaustion) printf '%s\n' 99 > "$repo/.close-after" ;;
+    *) printf '%s\n' 1 > "$repo/.close-after" ;;
+  esac
+  if [[ "$mode" == second-run:* ]]; then
+    initial_generation=${mode#second-run:}
+    printf '%s\n' normal > "$repo/.record-mode"
+    jq -cn --argjson generation "$initial_generation" '
+      {env_id:"demo-lease",status:"closed",generation:$generation,
+       owner:"earlier-run",opened_at:"2026-09-08T00:00:00Z",
+       updated_at:"2026-09-08T00:00:00Z",cleanup_attempt:0,
+       stage2_attempt:0,next_retry_at:null,manual_intervention_required:false,
+       stage1_claim:null,stage2_claim:null,
+       manifest:{target:"localstack",candidates:[],verification_runs:[]}}' > "$repo/.fake-lease.json"
+  fi
+  set +e
+  output="$(
+    cd "$repo"
+    PATH="$recording_bin:$PATH" \
+    HOME="$case_root/home" \
+    TMPDIR="$case_root" \
+    TERM=xterm \
+    OPERATOR_CIDR=203.0.113.128/25 \
+    DEMO_NAME="$recording" \
+      bash -p demo/env.sh 2>&1
+  )"
+  rc=$?
+  set -e
+  set -- "$repo"/demo/out/run-*
+  LIFECYCLE_OUTPUT=$output
+  LIFECYCLE_RC=$rc
+  LIFECYCLE_RUN=$1
+  LIFECYCLE_CALLS="$repo/.fake-calls.log"
+  LIFECYCLE_REPO=$repo
+}
+
+recording_contract_ok=1
+run_lifecycle lease-success '' normal empty '' none lease
+if [ "$LIFECYCLE_RC" -ne 0 ] || \
+   ! validate_provenance lease \
+     "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_LEASE.md" \
+     "$LIFECYCLE_REPO/docs/assets/demo-lease.gif" >/dev/null 2>&1 || \
+   ! provenance_matches_manifest lease \
+     "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_LEASE.md" \
+     "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1 || \
+   grep -q '^after-final ' "$LIFECYCLE_CALLS"; then
+  recording_contract_ok=0
+  fail_case "lease recording positive transaction and post-inventory boundary" "$LIFECYCLE_OUTPUT"
+else
+  pass_case "lease recording positive transaction and post-inventory boundary"
+fi
+lease_success_repo=$LIFECYCLE_REPO
+lease_success_run=$LIFECYCLE_RUN
+
+run_lifecycle lease-second-run '' second-run:4 empty '' none lease
+if [ "$LIFECYCLE_RC" -eq 0 ] && \
+   [ "$(field_value 'pre-open lease status' \
+      "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_LEASE.md")" = closed ] && \
+   [ "$(field_value 'opened generation' \
+      "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_LEASE.md")" = 5 ]; then
+  pass_case "lease recording second run advances closed generation"
+else
+  recording_contract_ok=0
+  fail_case "lease recording second run advances closed generation" "$LIFECYCLE_OUTPUT"
+fi
+
+run_lifecycle supply-success '' normal empty '' none supply
+if [ "$LIFECYCLE_RC" -ne 0 ] || \
+   ! validate_provenance verify \
+     "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md" \
+     "$LIFECYCLE_REPO/docs/assets/demo-supplychain.gif" >/dev/null 2>&1 || \
+   ! provenance_matches_manifest verify \
+     "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md" \
+     "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1 || \
+   grep -Eq '^(curl|docker|aws|terraform|make) ' "$LIFECYCLE_CALLS"; then
+  recording_contract_ok=0
+  fail_case "supply recording positive transaction avoids environment tools" "$LIFECYCLE_OUTPUT"
+else
+  pass_case "supply recording positive transaction avoids environment tools"
+fi
+supply_success_repo=$LIFECYCLE_REPO
+supply_success_run=$LIFECYCLE_RUN
+
+lease_failures_ok=1
+for failure_case in \
+  'abort-open-missing|closed|lease open committed before generation capture' \
+  'abort-open-intervening|closed|intervening generation recovery' \
+  'abort-after-open|closed|abort after open' \
+  'abort-after-apply|closed|abort after apply' \
+  'abort-close-claimed|closing|RUNBOOKS.md#manual-lease-recovery' \
+  'cleanup-failed|cleanup_failed|RUNBOOKS.md#manual-lease-recovery' \
+  'cas-loss|open|lease belongs to another run' \
+  'cas-close|open|lease belongs to another run' \
+  'sweep-exhaustion|closing|final_status=closing'; do
+  IFS='|' read -r failure_mode expected_status expected_output <<< "$failure_case"
+  run_lifecycle "lease-$failure_mode" '' "$failure_mode" empty '' none lease
+  actual_status=$(jq -r .status "$LIFECYCLE_REPO/.fake-lease.json")
+  if [ "$LIFECYCLE_RC" -eq 0 ] || [ "$actual_status" != "$expected_status" ]; then
+    lease_failures_ok=0
+  fi
+  case "$failure_mode" in
+    abort-open-missing|abort-open-intervening|abort-after-open|abort-after-apply)
+      [ "$actual_status" = closed ] || lease_failures_ok=0
+      ;;
+    abort-close-claimed|cleanup-failed)
+      grep -Fq "$expected_output" <<< "$LIFECYCLE_OUTPUT" || lease_failures_ok=0
+      ;;
+    cas-loss|cas-close)
+      grep -Fq "$expected_output" <<< "$LIFECYCLE_OUTPUT" || lease_failures_ok=0
+      if grep -Eq '^(sweep|destructive lease) ' "$LIFECYCLE_CALLS"; then lease_failures_ok=0; fi
+      ;;
+    sweep-exhaustion)
+      grep -Fq "$expected_output" <<< "$LIFECYCLE_OUTPUT" || lease_failures_ok=0
+      ;;
+  esac
+done
+if [ "$lease_failures_ok" -eq 1 ]; then
+  pass_case "lease recording failure recovery and race table"
+else
+  recording_contract_ok=0
+  fail_case "lease recording failure recovery and race table" "$LIFECYCLE_OUTPUT"
+fi
+
+sweep_sleeps_ok=1
+for sweep_mode in sweep-one sweep-two; do
+  run_lifecycle "lease-$sweep_mode" '' "$sweep_mode" empty '' none lease
+  expected_sleeps=1
+  [ "$sweep_mode" != sweep-two ] || expected_sleeps=2
+  if [ "$LIFECYCLE_RC" -ne 0 ] || \
+     [ "$(grep -c '^sleep 3$' "$LIFECYCLE_CALLS" || true)" -ne "$expected_sleeps" ]; then
+    sweep_sleeps_ok=0
+  fi
+done
+if [ "$sweep_sleeps_ok" -eq 1 ]; then
+  pass_case "lease recording observes one and two nonterminal sweep sleeps"
+else
+  recording_contract_ok=0
+  fail_case "lease recording observes one and two nonterminal sweep sleeps"
+fi
+
+provenance_field_mutants_ok=1
+for validation_case in \
+  "lease|$lease_success_repo/docs/assets/DEMO_PROVENANCE_LEASE.md|$lease_success_repo/docs/assets/demo-lease.gif|$lease_success_run/provenance.env" \
+  "verify|$supply_success_repo/docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md|$supply_success_repo/docs/assets/demo-supplychain.gif|$supply_success_run/provenance.env"; do
+  IFS='|' read -r validation_kind validation_doc validation_gif validation_manifest <<< "$validation_case"
+  while IFS='|' read -r _ validation_field; do
+    mutated_doc="$tmp_dir/${validation_kind}-${validation_field// /-}.md"
+    awk -v prefix="| $validation_field |" 'index($0,prefix) != 1' \
+      "$validation_doc" > "$mutated_doc"
+    if validate_provenance "$validation_kind" "$mutated_doc" "$validation_gif" \
+         >/dev/null 2>&1 || \
+       provenance_matches_manifest "$validation_kind" "$mutated_doc" \
+         "$validation_manifest" >/dev/null 2>&1; then
+      provenance_field_mutants_ok=0
+    fi
+  done < <(provenance_mappings "$validation_kind")
+done
+if [ "$provenance_field_mutants_ok" -eq 1 ]; then
+  pass_case "lease and supply provenance required-field deletion mutants"
+else
+  recording_contract_ok=0
+  fail_case "lease and supply provenance required-field deletion mutants"
+fi
+
+temporal_drift_ok=1
+for drift_case in \
+  'lease-script|scripts/lease.sh|lease|supply|docs/assets/DEMO_PROVENANCE_LEASE.md' \
+  'cleanup-verifier|scripts/cleanup-verifier.sh|lease|supply|docs/assets/DEMO_PROVENANCE_LEASE.md' \
+  'lease-template|demo/provenance/lease.md|lease|supply|docs/assets/DEMO_PROVENANCE_LEASE.md' \
+  'canonicalizer|scripts/sbom-canon.sh|supply|lease|docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md' \
+  'supply-template|demo/provenance/supply.md|supply|lease|docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md' \
+  'sbom-contract|tests/sbom-canon.sh|supply|lease|docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md' \
+  'sbom-fixture|tests/fixtures/sbom/base.spdx.json|supply|lease|docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md'; do
+  IFS='|' read -r drift_name drift_path affected_recording unaffected_recording \
+    affected_doc <<< "$drift_case"
+  run_lifecycle "drift-$drift_name-affected" '' "drift:$drift_path" \
+    empty '' none "$affected_recording"
+  if [ "$LIFECYCLE_RC" -eq 0 ] || \
+     ! grep -Fq 'generator inputs changed during the recording; not publishing' \
+       <<< "$LIFECYCLE_OUTPUT" || \
+     [ -e "$LIFECYCLE_REPO/$affected_doc" ]; then
+    temporal_drift_ok=0
+  fi
+  run_lifecycle "drift-$drift_name-unaffected" '' "drift:$drift_path" \
+    empty '' none "$unaffected_recording"
+  [ "$LIFECYCLE_RC" -eq 0 ] || temporal_drift_ok=0
+done
+if [ "$temporal_drift_ok" -eq 1 ]; then
+  pass_case "post-preflight generator drift mutants are isolated per recording kind"
+else
+  recording_contract_ok=0
+  fail_case "post-preflight generator drift mutants are isolated per recording kind" \
+    "$LIFECYCLE_OUTPUT"
+fi
+
+bogus_root="$tmp_dir/recording-bogus"
+cp -R "$recording_template" "$bogus_root"
+: > "$bogus_root/.fake-calls.log"
+set +e
+bogus_output="$(cd "$bogus_root" && \
+  PATH="$recording_bin:$PATH" HOME="$tmp_dir/home" TMPDIR="$tmp_dir" TERM=xterm \
+  DEMO_NAME=bogus bash -p demo/env.sh 2>&1)"
+bogus_rc=$?
+set -e
+if [ "$bogus_rc" -ne 0 ] && [ ! -s "$bogus_root/.fake-calls.log" ] && \
+   grep -Fq "unknown DEMO_NAME 'bogus'" <<< "$bogus_output"; then
+  pass_case "unknown DEMO_NAME refuses before recorder tools"
+else
+  recording_contract_ok=0
+  fail_case "unknown DEMO_NAME refuses before recorder tools" "$bogus_output"
+fi
+
+if [ "$recording_contract_ok" -eq 1 ]; then
+  echo "PASS: demo contract group lease and supply recordings"
+else
+  echo "FAIL: demo contract group lease and supply recordings" >&2
+fi
+
 echo "== demo contract case results =="
 cat "$results"
 if [ "$failures" -ne 0 ]; then
   echo "FAIL: demo contracts ($failures case(s))" >&2
   exit 1
 fi
-echo "PASS: demo contracts (4 groups)"
+echo "PASS: demo contracts (6 groups)"

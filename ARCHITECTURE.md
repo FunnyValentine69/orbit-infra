@@ -274,12 +274,19 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `/health` and `/s3-roundtrip` checks. `session-destroy` leaves no active
   services or cost-bearing resources and leaves the lease `closing` for the
   stage-2 sweeper.
-- **Demo transaction:** `demo/env.sh` constructs the process environment from
-  declarations and validators in `demo/lib.sh`; `demo/record.sh` owns preflight,
-  recording, artifact inspection, provenance rendering, teardown, and publication.
-  `tests/demo-contracts.sh`, chained through `tests/phase3-contracts.sh`, verifies
-  the environment, lifecycle, tape, CIDR, provenance, and generator-drift contracts
-  offline.
+- **Front-page evidence:** `scripts/storyboard.py` deterministically renders the
+  animated change-flow SVG and static snapshot variants from one keyframe
+  schedule. Its asset provenance is independent of the recordings. The shared
+  `demo/env.sh` and `demo/record.sh` transaction records lifecycle, lease, or
+  supply-chain evidence from a closed per-kind configuration in `demo/lib.sh`.
+  Each kind has its own tape, immutable provenance template, required output
+  patterns, and transitive generator closure; artifact inspection, teardown,
+  provenance rendering, and publication remain one transaction.
+- **Front-page contracts:** `tests/storyboard-contracts.sh` checks deterministic,
+  accessible, hygienic SVG generation before an asset exists and later binds the
+  committed asset to its generator commit. `tests/demo-contracts.sh` verifies the
+  exact environment, every tape and provenance schema, lease recovery fencing,
+  per-kind generator drift, and transaction failures entirely offline.
 - **Phase 4:** `tests/localstack-concurrency.sh` runs two environments
   concurrently on one LocalStack instance and checks independent state,
   disjoint tag inventories with exact `env_id` values, clusters, lease refusals,
