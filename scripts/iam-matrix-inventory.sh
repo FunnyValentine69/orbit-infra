@@ -149,8 +149,8 @@ for role in "${trust_roles[@]}"; do
 done
 
 statement_count="$(wc -l <"$tmp_dir/statements.tsv" | tr -d ' ')"
-if [ "$statement_count" -ne 85 ]; then
-  echo "FAIL: expected 85 IAM statement rows, found $statement_count" >&2
+if [ "$statement_count" -ne 87 ]; then
+  echo "FAIL: expected 87 IAM statement rows, found $statement_count" >&2
   exit 1
 fi
 

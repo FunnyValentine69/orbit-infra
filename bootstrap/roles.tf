@@ -229,7 +229,6 @@ data "aws_iam_policy_document" "plan_reader_deny" {
       "lambda:GetFunction",
       "lambda:GetFunctionConfiguration",
       "lambda:GetLayerVersion",
-      "lambda:GetLayerVersionByArn",
     ]
     resources = ["*"]
   }
@@ -415,10 +414,10 @@ data "aws_iam_policy_document" "deployer_ec2" {
   # `resources = ["*"]` is kept (the ARN is unknown before create, and
   # Terraform's IAM engine still enforces the conditions below against
   # any resource matched by "*"), scoped instead by tag conditions.
-  # Only the 7 Describe* actions the table confirms `* only` (plus two
-  # untested-but-consistent Describe* calls, flagged) are left bare.
+  # Describe* actions remain Resource = "*" where the reference lists no
+  # resource type, but every action is restricted to the configured region.
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed * only EC2 Describe* actions; no condition key exists (iam-condition-keys.md EC2 section)
+    #checkov:skip=CKV_AWS_111:EC2 Describe* actions are restricted to the configured region through ec2:Region
     #checkov:skip=CKV_AWS_356:same as above
     sid    = "Ec2DescribeStarOnly"
     effect = "Allow"
@@ -426,17 +425,23 @@ data "aws_iam_policy_document" "deployer_ec2" {
       "ec2:DescribeAvailabilityZones",
       "ec2:DescribeRegions",
       "ec2:DescribeVpcs",
-      "ec2:DescribeVpcAttribute", # not one of the table's 7 tested Describe* rows; treated consistently, flagged
+      "ec2:DescribeVpcAttribute",
       "ec2:DescribeSubnets",
       "ec2:DescribeInternetGateways",
       "ec2:DescribeRouteTables",
       "ec2:DescribeVpcEndpoints",
       "ec2:DescribeSecurityGroups",
-      "ec2:DescribeSecurityGroupRules", # not one of the table's 7 tested Describe* rows; treated consistently, flagged
+      "ec2:DescribeSecurityGroupRules",
       "ec2:DescribeTags",
       "ec2:DescribeNetworkInterfaces", # F6: ENI discovery only for SG-delete-path lookups; no ENI deletion granted
     ]
     resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:Region"
+      values   = [var.region]
+    }
   }
 
   statement {
@@ -856,18 +861,31 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
     }
   }
 
-  # ListServices/ListTaskDefinitions are not covered by
-  # iam-condition-keys.md; no verified condition key, kept unconditioned.
+  # ListTaskDefinitions has no published resource type or condition key.
   statement {
-    #checkov:skip=CKV_AWS_111:not covered by iam-condition-keys.md (ECS section); no verified condition key exists
+    #checkov:skip=CKV_AWS_111:table-confirmed no resource type or condition key for ecs:ListTaskDefinitions
     #checkov:skip=CKV_AWS_356:same as above
-    sid    = "EcsUntabledActions"
-    effect = "Allow"
-    actions = [
-      "ecs:ListServices",
-      "ecs:ListTaskDefinitions",
-    ]
+    sid       = "EcsUntabledActions"
+    effect    = "Allow"
+    actions   = ["ecs:ListTaskDefinitions"]
     resources = ["*"]
+  }
+
+  # ListServices supports the ecs:cluster condition key and cleanup targets
+  # only environment clusters under the project name prefix.
+  statement {
+    #checkov:skip=CKV_AWS_111:ListServices is restricted to project cluster ARNs through ecs:cluster
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "EcsListServicesClusterScoped"
+    effect    = "Allow"
+    actions   = ["ecs:ListServices"]
+    resources = ["*"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "ecs:cluster"
+      values   = ["arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:cluster/${var.name}-*"]
+    }
   }
 
   # ListTasks supports the ecs:cluster condition key. Stage-1 close always
@@ -888,10 +906,10 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   }
 
   # --- (e) Cloud Map namespace + service. ---
-  # ListTagsForResource is table-confirmed * only with zero condition
-  # keys; ListNamespaces/ListServices are not covered by the table.
+  # ListTagsForResource/ListNamespaces/ListServices have no published
+  # resource type or condition key.
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed * only (ListTagsForResource) or uncovered (ListNamespaces/ListServices) Cloud Map actions (iam-condition-keys.md Cloud Map section)
+    #checkov:skip=CKV_AWS_111:table-confirmed no resource type or condition key for these Cloud Map list actions
     #checkov:skip=CKV_AWS_356:same as above
     sid    = "ServiceDiscoveryStarOnlyNoCondition"
     effect = "Allow"
@@ -899,12 +917,25 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
       "servicediscovery:ListTagsForResource",
       "servicediscovery:ListNamespaces",
       "servicediscovery:ListServices",
-      # T2: GetOperation polls an operation ID, which is not taggable, so
-      # it cannot carry the aws:ResourceTag/Project condition the other
-      # actions below use; kept unconditioned here instead.
-      "servicediscovery:GetOperation",
     ]
     resources = ["*"]
+  }
+
+  # GetOperation supports the generic Project resource-tag condition on its
+  # published namespace and service resource types.
+  statement {
+    #checkov:skip=CKV_AWS_111:GetOperation is restricted through aws:ResourceTag/Project
+    #checkov:skip=CKV_AWS_356:same as above
+    sid       = "ServiceDiscoveryGetOperationWithResourceTag"
+    effect    = "Allow"
+    actions   = ["servicediscovery:GetOperation"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
   }
 
   # CreatePrivateDnsNamespace is table-confirmed * only but supports
@@ -987,15 +1018,25 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
     }
   }
 
-  # UntagResource: the table shows no aws:ResourceTag/aws:RequestTag
-  # scoping key documented for this action; kept unconditioned.
+  # UntagResource remains Resource = "*", but it may remove only tag keys
+  # managed through the bootstrap and preview provider default-tag sets.
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed no ResourceTag/RequestTag condition key for servicediscovery:UntagResource (iam-condition-keys.md Cloud Map section)
+    #checkov:skip=CKV_AWS_111:UntagResource is restricted to repository-managed keys through aws:TagKeys
     #checkov:skip=CKV_AWS_356:same as above
     sid       = "ServiceDiscoveryUntagResource"
     effect    = "Allow"
     actions   = ["servicediscovery:UntagResource"]
     resources = ["*"]
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values = [
+        "Project",
+        "ManagedBy",
+        "env_id",
+      ]
+    }
   }
 
   # Private DNS namespace create/delete provisions a Route 53 hosted zone

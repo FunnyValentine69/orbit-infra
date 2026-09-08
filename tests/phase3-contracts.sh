@@ -277,6 +277,415 @@ if ! import_err="$(python3 -c 'import yaml' 2>&1 >/dev/null)"; then
   exit 1
 fi
 
+
+# Supply-chain closures: canonical SBOM comparison, hash-locked placeholder
+# dependencies, scan-attestation producer ordering, scanner pinning, and apply
+# freshness verification all stay offline-contractable.
+bash "$REPO_ROOT/tests/sbom-canon.sh"
+
+python3 - "$REPO_ROOT/placeholder/requirements.in" \
+  "$REPO_ROOT/placeholder/requirements.txt" \
+  "$REPO_ROOT/placeholder/Dockerfile" \
+  "$REPO_ROOT/tools.lock" <<'PY_REQUIREMENT_HASHES'
+from pathlib import Path
+import re
+import sys
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: {message}")
+
+
+requirements_in = Path(sys.argv[1]).read_text().splitlines()
+compiled_text = Path(sys.argv[2]).read_text()
+dockerfile = Path(sys.argv[3]).read_text()
+tools_lock = Path(sys.argv[4]).read_text()
+
+header = "uv pip compile --universal --generate-hashes --python-version 3.12 requirements.in -o requirements.txt"
+if header not in compiled_text:
+    fail("placeholder/requirements.txt must retain the uv universal hash-generation header")
+
+logical = []
+current = []
+for raw_line in compiled_text.splitlines():
+    stripped = raw_line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if raw_line[:1].isspace():
+        if current:
+            current.append(stripped.rstrip("\\").strip())
+        continue
+    if current:
+        logical.append(" ".join(current))
+    current = [stripped.rstrip("\\").strip()]
+if current:
+    logical.append(" ".join(current))
+if not logical:
+    fail("placeholder/requirements.txt has no logical requirement lines")
+missing_hashes = [line.split()[0] for line in logical if "--hash=sha256:" not in line]
+if missing_hashes:
+    fail("logical requirements lack sha256 hashes: " + ", ".join(missing_hashes))
+
+top_level = []
+for raw_line in requirements_in:
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    match = re.match(r"([A-Za-z0-9_.-]+)(?:\[[^]]+\])?==", line)
+    if match is None:
+        fail(f"unsupported requirements.in entry: {line}")
+    top_level.append(match.group(1).lower().replace("_", "-"))
+compiled_names = {
+    re.match(r"([A-Za-z0-9_.-]+)(?:\[[^]]+\])?==", line).group(1).lower().replace("_", "-")
+    for line in logical
+}
+missing_top_level = [name for name in top_level if name not in compiled_names]
+if missing_top_level:
+    fail("requirements.in entries missing from compiled requirements: " + ", ".join(missing_top_level))
+if not re.search(r"^RUN pip install\b[^\n]*--require-hashes\b[^\n]*-r requirements\.txt$", dockerfile, re.MULTILINE):
+    fail("placeholder Dockerfile must install requirements with --require-hashes")
+if not re.search(r"^uv 0\.10\.4$", tools_lock, re.MULTILINE):
+    fail("tools.lock must pin uv 0.10.4")
+if not re.search(r"^uv b4a21408a169f66ffe2e91d4d416d5b08bd72d2780e99c700b3d79c311972a57$", tools_lock, re.MULTILINE):
+    fail("tools.lock must carry the supplied uv Homebrew bottle checksum")
+
+print(f"PASS: placeholder requirements hashes ({len(logical)} logical packages, {len(top_level)} top-level pins)")
+PY_REQUIREMENT_HASHES
+
+sign_workflow="$REPO_ROOT/.github/workflows/sign-images.yml"
+python3 - "$sign_workflow" "$mirror_workflow" "$apply_workflow" <<'PY_SCAN_STRUCTURE'
+from copy import deepcopy
+from pathlib import Path
+import sys
+import yaml
+
+
+VULN_TYPE = "https://github.com/FunnyValentine69/orbit-infra/vuln-scan/v1"
+TRIVY_VERSION_EXPR = "v${{ steps.tool-versions.outputs.trivy }}"
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: {message}")
+
+
+def load(path):
+    value = yaml.safe_load(Path(path).read_text())
+    if not isinstance(value, dict):
+        fail(f"workflow is not a mapping: {path}")
+    return value
+
+
+def one_index(steps, predicate, label):
+    matches = [index for index, step in enumerate(steps) if predicate(step)]
+    if len(matches) != 1:
+        fail(f"expected one {label}, found {len(matches)}")
+    return matches[0]
+
+
+def assert_attest_flags(run, label):
+    for flag in ("--tlog-upload=false", "--use-signing-config=false"):
+        if flag not in run:
+            fail(f"{label} must carry {flag}")
+
+
+def assert_trivy_action_version(step, label):
+    if step.get("with", {}).get("version") != TRIVY_VERSION_EXPR:
+        fail(f"{label} must carry the tools.lock Trivy version")
+
+
+sign = load(sys.argv[1])
+mirror = load(sys.argv[2])
+apply = load(sys.argv[3])
+sign_steps = sign["jobs"]["sign"]["steps"]
+mirror_steps = mirror["jobs"]["mirror"]["steps"]
+apply_steps = apply["jobs"]["apply"]["steps"]
+
+sign_index = one_index(
+    sign_steps,
+    lambda step: step.get("name") == "Generate SBOMs, scan, sign, and attest upstream images",
+    "upstream supply-chain step",
+)
+sign_run = sign_steps[sign_index].get("run", "")
+if '.name + "@" + (.versionInfo // "")' in sign_run:
+    fail("sign-images must not retain the name@version SBOM inventory filter")
+if sign_run.count("scripts/sbom-canon.sh") < 2:
+    fail("sign-images must canonicalise the new SBOM and every decoded prior predicate")
+sign_markers = (
+    'trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1',
+    '--type spdxjson --predicate',
+    f"--type {VULN_TYPE}",
+    "cosign sign --yes",
+)
+positions = [sign_run.find(marker) for marker in sign_markers]
+if any(position < 0 for position in positions) or positions != sorted(positions):
+    fail("sign-images order must be Trivy, SBOM attest, scan attest, signature")
+scan_attest_start = sign_run.find(f"--type {VULN_TYPE}")
+scan_attest_context = sign_run[max(0, scan_attest_start - 260):scan_attest_start + 260]
+assert_attest_flags(scan_attest_context, "sign-images vulnerability attestation")
+for field in ("scanner", "trivyVersion", "severityGate", "exitCode", "scannedAt", "digest"):
+    if field not in sign_run:
+        fail(f"sign-images vulnerability predicate lacks {field}")
+
+artifacts = (
+    ("placeholder", "KMS sign and attest placeholder"),
+    ("redis mirror", "KMS sign and attest redis mirror"),
+    ("clickhouse mirror", "KMS sign and attest clickhouse mirror"),
+)
+for artifact, sign_name in artifacts:
+    scan_name = f"Trivy scan {artifact}"
+    attest_name = f"Attest vulnerability scan {artifact}"
+    scan_step_index = one_index(mirror_steps, lambda step, name=scan_name: step.get("name") == name, scan_name)
+    attest_step_index = one_index(mirror_steps, lambda step, name=attest_name: step.get("name") == name, attest_name)
+    image_sign_index = one_index(mirror_steps, lambda step, name=sign_name: step.get("name") == name, sign_name)
+    if not scan_step_index < attest_step_index < image_sign_index:
+        fail(f"mirror-images order must be Trivy, scan attest, signature for {artifact}")
+    scan_step = mirror_steps[scan_step_index]
+    if not str(scan_step.get("uses", "")).startswith("aquasecurity/trivy-action@"):
+        fail(f"{scan_name} must use trivy-action")
+    assert_trivy_action_version(scan_step, scan_name)
+    if scan_step.get("with", {}).get("severity") != "CRITICAL,HIGH":
+        fail(f"{scan_name} must retain the CRITICAL,HIGH severity gate")
+    attest_run = mirror_steps[attest_step_index].get("run", "")
+    assert_attest_flags(attest_run, attest_name)
+    if f"--type {VULN_TYPE}" not in attest_run:
+        fail(f"{attest_name} must use the vulnerability predicate type")
+    for field in ("scanner", "trivyVersion", "severityGate", "exitCode", "scannedAt", "digest"):
+        if field not in attest_run:
+            fail(f"{attest_name} predicate lacks {field}")
+    if "trivy --version" not in attest_run or "trivy version mismatch" not in attest_run:
+        fail(f"{attest_name} must attest the executed binary version after checking the pin")
+
+first_attest = next(step for step in mirror_steps if step.get("name") == "Attest vulnerability scan placeholder")
+for removed_flag in ("--tlog-upload=false", "--use-signing-config=false"):
+    mutant = first_attest["run"].replace(removed_flag, "", 1)
+    try:
+        assert_attest_flags(mutant, "mutated placeholder vulnerability attestation")
+    except SystemExit:
+        pass
+    else:
+        fail(f"scan-attestation flag mutant survived removal of {removed_flag}")
+print("PASS: scan-attestation flag mutants killed (2 mutations)")
+
+mutated_mirror = deepcopy(mirror_steps)
+mutated_scan = next(step for step in mutated_mirror if step.get("name") == "Trivy scan placeholder")
+mutated_scan["with"]["version"] = "v0.0.0"
+try:
+    assert_trivy_action_version(mutated_scan, "mutated placeholder Trivy step")
+except SystemExit:
+    pass
+else:
+    fail("divergent Trivy version mutant survived validation")
+print("PASS: divergent trivy-action version fixture rejected")
+
+trigger = mirror.get("on", mirror.get(True))
+cron_entries = trigger.get("schedule") if isinstance(trigger, dict) else None
+cron_values = [entry.get("cron") for entry in cron_entries or [] if isinstance(entry, dict)]
+if cron_values != ["0 6 * * 1"]:
+    fail(f"mirror-images schedule must be Monday 06:00 UTC weekly, found {cron_values}")
+
+apply_trigger = apply.get("on", apply.get(True))
+inputs = apply_trigger.get("workflow_dispatch", {}).get("inputs", {}) if isinstance(apply_trigger, dict) else {}
+freshness = inputs.get("scan_freshness_days")
+default_days = freshness.get("default") if isinstance(freshness, dict) else None
+if default_days != 10:
+    fail("session-apply scan_freshness_days must default to 10")
+cron_parts = cron_values[0].split()
+if cron_parts != ["0", "6", "*", "*", "1"]:
+    fail("mirror-images cadence parser requires the Monday 06:00 UTC weekly cron")
+scheduled_interval_days = 7
+if default_days < scheduled_interval_days + 3:
+    fail("scan freshness default must cover the parsed producer interval plus three days")
+
+verify_index = one_index(
+    apply_steps,
+    lambda step: step.get("name") == "Verify selected image signatures and attestations",
+    "session-apply image verification step",
+)
+verify_run = apply_steps[verify_index].get("run", "")
+if "verify_scan_attestation()" not in verify_run:
+    fail("session-apply must define verify_scan_attestation")
+required_calls = (
+    'verify_scan_attestation api_image "$api_image"',
+    'verify_scan_attestation redis_image "$redis_image"',
+    'verify_scan_attestation clickhouse_image "$clickhouse_image"',
+)
+for call in required_calls:
+    if verify_run.count(call) != 1:
+        fail(f"session-apply must contain one scan call site: {call}")
+print("PASS: scan verification call sites (upstream=3, public=3)")
+print("PASS: scan producer ordering, predicate fields, version pins, and weekly cadence")
+PY_SCAN_STRUCTURE
+
+scan_verify_script="$tmp_dir/verify-scan-attestation.sh"
+scan_verify_mutant="$tmp_dir/verify-scan-attestation-mutant.sh"
+python3 - "$apply_workflow" "$scan_verify_script" "$scan_verify_mutant" <<'PY_EXTRACT_SCAN_VERIFY'
+from pathlib import Path
+import re
+import sys
+import yaml
+
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+steps = workflow["jobs"]["apply"]["steps"]
+runs = [
+    step.get("run", "")
+    for step in steps
+    if step.get("name") == "Verify selected image signatures and attestations"
+]
+if len(runs) != 1:
+    raise SystemExit(f"FAIL: expected one image verification run block, found {len(runs)}")
+source = runs[0]
+
+
+def function(name):
+    match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{\n.*?^\}}$", source)
+    if match is None:
+        raise SystemExit(f"FAIL: could not extract {name} from image verification step")
+    return match.group(0)
+
+
+extracted = function("iso_to_epoch") + "\n" + function("verify_scan_attestation")
+script = "#!/usr/bin/env bash\nset -euo pipefail\n" + extracted + '\nverify_scan_attestation test_image "$TEST_IMAGE"\n'
+Path(sys.argv[2]).write_text(script)
+needle = 'if [ "$age_seconds" -gt "$window_seconds" ]; then'
+if script.count(needle) != 1:
+    raise SystemExit("FAIL: freshness comparison mutation anchor must occur exactly once")
+Path(sys.argv[3]).write_text(script.replace(needle, "if false; then", 1))
+PY_EXTRACT_SCAN_VERIFY
+
+mkdir -p "$tmp_dir/scan-bin"
+cat > "$tmp_dir/scan-bin/cosign" <<'EOF_SCAN_COSIGN'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${SCAN_NO_ATTESTATION:-0}" = 1 ]; then
+  exit 1
+fi
+while IFS= read -r predicate; do
+  statement="$(jq -cn --argjson predicate "$predicate" '{predicate:$predicate}')"
+  payload="$(printf '%s' "$statement" | base64 | tr -d '\n')"
+  jq -cn --arg payload "$payload" '{payload:$payload}'
+done < <(jq -c 'if type == "array" then .[] else . end' "$SCAN_PREDICATE_FILE")
+EOF_SCAN_COSIGN
+chmod +x "$tmp_dir/scan-bin/cosign" "$scan_verify_script" "$scan_verify_mutant"
+
+scan_digest="sha256:$(printf 'a%.0s' {1..64})"
+scan_now_epoch=2000000000
+trivy_pin="$("$REPO_ROOT"/scripts/tool-version.sh trivy)"
+scan_iso() {
+  python3 - "$1" <<'PY_SCAN_ISO'
+from datetime import datetime, timezone
+import sys
+print(datetime.fromtimestamp(int(sys.argv[1]), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY_SCAN_ISO
+}
+
+write_scan_predicate() {
+  local destination="$1"
+  local scanned_at="$2"
+  local digest="$3"
+  local scanner="$4"
+  local version="$5"
+  local exit_code="$6"
+  jq -cn \
+    --arg scanner "$scanner" \
+    --arg version "$version" \
+    --arg severity CRITICAL \
+    --arg scanned_at "$scanned_at" \
+    --arg digest "$digest" \
+    --argjson exit_code "$exit_code" \
+    '{scanner:$scanner,trivyVersion:$version,severityGate:$severity,exitCode:$exit_code,scannedAt:$scanned_at,digest:$digest}' \
+    > "$destination"
+}
+
+run_scan_case() {
+  local label="$1"
+  local expected_rc="$2"
+  local expected_message="$3"
+  local script="$4"
+  local predicate_file="$5"
+  local freshness_days="$6"
+  local no_attestation="${7:-0}"
+  local output rc
+  set +e
+  output="$(
+    PATH="$tmp_dir/scan-bin:$PATH" \
+    PUBLIC_KEY="$tmp_dir/test-public-key.pem" \
+    TEST_IMAGE="example.invalid/image@${scan_digest}" \
+    TRIVY_VERSION="$trivy_pin" \
+    SCAN_FRESHNESS_DAYS="$freshness_days" \
+    SCAN_NOW_EPOCH="$scan_now_epoch" \
+    SCAN_PREDICATE_FILE="$predicate_file" \
+    SCAN_NO_ATTESTATION="$no_attestation" \
+      bash "$script" 2>&1
+  )"
+  rc=$?
+  set -e
+  if [ "$expected_rc" = 0 ] && [ "$rc" -ne 0 ]; then
+    echo "scan-attestation case $label unexpectedly failed: $output" >&2
+    exit 1
+  fi
+  if [ "$expected_rc" != 0 ] && [ "$rc" -eq 0 ]; then
+    echo "scan-attestation case $label unexpectedly passed" >&2
+    exit 1
+  fi
+  if [ -n "$expected_message" ] && ! grep -Fq "$expected_message" <<< "$output"; then
+    echo "scan-attestation case $label lacked message '$expected_message': $output" >&2
+    exit 1
+  fi
+  echo "PASS: scan-attestation case $label"
+}
+
+scan_predicate="$tmp_dir/scan-predicate.json"
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case fresh 0 "" "$scan_verify_script" "$scan_predicate" 10
+
+stale_predicate="$tmp_dir/scan-stale-predicate.json"
+fresh_predicate="$tmp_dir/scan-fresh-predicate.json"
+write_scan_predicate "$stale_predicate" "$(scan_iso $((scan_now_epoch - 11 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
+write_scan_predicate "$fresh_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+jq -s '.' "$stale_predicate" "$fresh_predicate" > "$scan_predicate"
+run_scan_case stale-then-fresh 0 "" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 11 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case stale 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case missing 1 "no scan attestation for $scan_digest" "$scan_verify_script" "$scan_predicate" 10 1
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 1
+run_scan_case failed-scan 1 "scan attestation reports a failed scan" "$scan_verify_script" "$scan_predicate" 10
+
+wrong_digest="sha256:$(printf 'b%.0s' {1..64})"
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$wrong_digest" trivy "$trivy_pin" 0
+run_scan_case digest-mismatch 1 "no scan attestation for $scan_digest" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch + 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case future 1 "scan attestation scannedAt is in the future" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" yesterday "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case malformed 1 "scan attestation scannedAt is malformed" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 10 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case boundary 0 "" "$scan_verify_script" "$scan_predicate" 10
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 10 * 86400 - 1)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case past-boundary 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+for invalid_window in 0 61 abc; do
+  run_scan_case "window-${invalid_window}" 1 "SCAN_FRESHNESS_DAYS out of range" \
+    "$scan_verify_script" "$scan_predicate" "$invalid_window"
+done
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" grype "$trivy_pin" 0
+run_scan_case scanner-mismatch 1 "scan attestation scanner or version mismatch" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy 0.73.0 0
+run_scan_case version-mismatch 1 "scan attestation scanner or version mismatch" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 11 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case stale-original 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case stale-mutant 0 "" "$scan_verify_mutant" "$scan_predicate" 10
+echo "PASS: scan-attestation freshness mutant killed"
+echo "PASS: scan-attestation verification contracts (17 cases)"
+
 # P5-26: fixture hygiene must reject global IPv6 addresses while accepting
 # explicit policy markers and non-routable/documentation ranges.
 ipv6_global_fixture="$tmp_dir/ipv6-global.json"

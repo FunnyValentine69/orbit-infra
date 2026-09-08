@@ -6,6 +6,22 @@ Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 all
 in `tools.lock`, read with `scripts/tool-version.sh pyyaml`, and installed
 explicitly in the `terraform-plan.yml` gates job before `scripts/gates.sh`.
 
+`tests/sbom-canon.sh` checks that the real-syft-derived fixtures preserve the
+creator string and that timestamp-only changes, consistent identifier
+renumbering, and reversed package order compare equal. Five separate assertions
+require checksum, license, relationship, identifier-swap, and same-name
+relationship-switch changes to compare different; a missing-array case proves
+null safety.
+
+The phase-3 suite also joins every logical requirements line and requires a hash,
+checks the three direct pins and Dockerfile `--require-hashes` flag, and
+structurally verifies scan producer order, attestation flags, pinned Trivy
+versions, per-mode verifier call sites, weekly cadence, and the 10-day default.
+Its extracted verifier runs 17 cases across freshness boundaries, multiple
+attestations, malformed and
+future timestamps, predicate contents, scanner versions, and input range. A
+removed-freshness mutant and flag/version mutations must be rejected.
+
 Run the cleanup regression suite without AWS or LocalStack:
 
 ```
@@ -268,6 +284,17 @@ validated mechanically. The `absent-key-passed`, `arn-real-account`,
 `trust-mutable-name-executable`, `unquoted-wildcard`,
 `uncommented-extra-sid`, and `wrong-audience-bare-na` mutations must print the
 `FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
+
+The wildcard evaluation contract derives every unconditioned
+`Resource = "*"` tuple from comment-stripped `bootstrap/roles.tf` and requires
+exact equality with the 36-row reference table. Scratch mutations add a Sid,
+append an action, remove a table row, alter each duplicate `EcrAuth` statement
+independently, and break each of the four static condition scopes. The authored
+`base-plan.json` includes the invalid Lambda-action removal plus the four
+conditions and two statement splits. Because the bootstrap policy changed, the
+host worker must run `make bootstrap-apply TARGET=localstack` followed by
+`make iam-matrix-plan` to refresh plan-mode evidence; the fixture was not
+presented as a LocalStack recording.
 
 After bootstrap has been applied to LocalStack, render and compare plan mode
 through the one hardened render path:

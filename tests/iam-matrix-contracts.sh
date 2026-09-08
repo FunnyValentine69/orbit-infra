@@ -115,6 +115,7 @@ truth_rows = (
     ("Allow", "StringEquals", "matching=allowed; non-matching=implicitDeny; absent=implicitDeny"),
     ("Allow", "StringLike", "matching=allowed; non-matching=implicitDeny; absent=implicitDeny"),
     ("Allow", "ForAnyValue:StringEquals", "one-matching=allowed; none-matching=implicitDeny; absent=implicitDeny"),
+    ("Allow", "ForAllValues:StringEquals", "all-matching=allowed; any-non-matching=implicitDeny; absent=allowed"),
     ("Allow", "ArnLike", "matching=allowed; non-matching=implicitDeny; absent=implicitDeny"),
     ("Deny", "StringNotLike", "outside-set=explicitDeny; inside-set=not-denied-by-this-statement; absent=explicitDeny"),
     ("Deny", "Null", "absent=explicitDeny; present=not-denied-by-this-statement"),
@@ -133,8 +134,8 @@ resource_truth_rows = (
 for resource_truth in resource_truth_rows:
     if resource_truth not in text:
         fail(f"resource-scope truth table is missing: {resource_truth}")
-if "For `ForAnyValue` operators, present condition keys are supplied as `ContextKeyType=stringList`" not in text:
-    fail("truth table does not require stringList context for ForAnyValue")
+if "For `ForAnyValue` and `ForAllValues` operators, present condition keys are supplied as `ContextKeyType=stringList`" not in text:
+    fail("truth table does not require stringList context for set operators")
 
 statement_rows = []
 binding_rows = []
@@ -154,8 +155,8 @@ for line_no, line in enumerate(text.splitlines(), 1):
             fail(f"bare pipe inside binding table cell at line {line_no}")
         binding_rows.append((line_no, cells))
 
-if len(statement_rows) != 85:
-    fail(f"expected 85 statement rows, found {len(statement_rows)}")
+if len(statement_rows) != 87:
+    fail(f"expected 87 statement rows, found {len(statement_rows)}")
 if len(binding_rows) != 13:
     fail(f"expected 13 binding rows, found {len(binding_rows)}")
 
@@ -385,6 +386,7 @@ variant_table = {
     ("Allow", "StringEquals"): (("matching", "allowed"), ("non-matching", "implicitDeny"), ("absent", "implicitDeny")),
     ("Allow", "StringLike"): (("matching", "allowed"), ("non-matching", "implicitDeny"), ("absent", "implicitDeny")),
     ("Allow", "ForAnyValue:StringEquals"): (("one-matching", "allowed"), ("none-matching", "implicitDeny"), ("absent", "implicitDeny")),
+    ("Allow", "ForAllValues:StringEquals"): (("all-matching", "allowed"), ("any-non-matching", "implicitDeny"), ("absent", "allowed")),
     ("Allow", "ArnLike"): (("matching", "allowed"), ("non-matching", "implicitDeny"), ("absent", "implicitDeny")),
     ("Deny", "StringNotLike"): (("outside-set", "explicitDeny"), ("inside-set", "not denied by this statement"), ("absent", "explicitDeny")),
     ("Deny", "Null"): (("absent", "explicitDeny"), ("present", "not denied by this statement")),
@@ -842,6 +844,14 @@ for line_no, cells in statement_rows:
                         }[variant]
                         if expected_context not in entries_by_id[required]:
                             fail(f"kms:ResourceAliases context is not a stringList fixture at line {line_no}: {required}")
+                    if condition_key == "aws:TagKeys":
+                        expected_context = {
+                            "all-matching": "--context-entries ContextKeyName=aws:TagKeys,ContextKeyValues=Project,ManagedBy,env_id,ContextKeyType=stringList",
+                            "any-non-matching": "--context-entries ContextKeyName=aws:TagKeys,ContextKeyValues=Project,Name,ContextKeyType=stringList",
+                            "absent": "--context-entries omitted (no entry for aws:TagKeys)",
+                        }[variant]
+                        if expected_context not in entries_by_id[required]:
+                            fail(f"aws:TagKeys context is not a stringList fixture at line {line_no}: {required}")
 
     if document == "aws_iam_policy.task_boundary":
         if "simulate-principal-policy" in cases or "--policy-source-arn" in cases:
@@ -1083,6 +1093,409 @@ PY_PLAN
   exit 0
 fi
 
+# P5-20: every action in every unconditioned Resource "*" statement must
+# have an AWS-reference evaluation row. Exact document/Sid/action tuples keep
+# duplicate EcrAuth statements distinct and make new wildcard grants fail shut.
+wildcard_roles="${IAM_WILDCARD_ROLES_OVERRIDE:-$REPO_ROOT/bootstrap/roles.tf}"
+wildcard_doc="${IAM_WILDCARD_DOC_OVERRIDE:-$DOC}"
+python3 - "$wildcard_roles" "$wildcard_doc" <<'PY_WILDCARD_EVALUATION'
+from pathlib import Path
+import json
+import re
+import sys
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: wildcard evaluation {message}")
+
+
+def strip_hcl_comments(source):
+    output = []
+    index = 0
+    in_string = False
+    escaped = False
+    line_comment = False
+    block_comment = False
+    while index < len(source):
+        char = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+                output.append(char)
+            index += 1
+            continue
+        if block_comment:
+            if char == "*" and following == "/":
+                block_comment = False
+                index += 2
+            else:
+                if char == "\n":
+                    output.append(char)
+                index += 1
+            continue
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            output.append(char)
+            index += 1
+        elif char == "#":
+            line_comment = True
+            index += 1
+        elif char == "/" and following == "/":
+            line_comment = True
+            index += 2
+        elif char == "/" and following == "*":
+            block_comment = True
+            index += 2
+        else:
+            output.append(char)
+            index += 1
+    return "".join(output)
+
+
+def blocks(source, pattern):
+    found = []
+    for match in re.finditer(pattern, source, re.MULTILINE):
+        depth = 0
+        end = None
+        in_string = False
+        escaped = False
+        for index in range(match.start(), len(source)):
+            char = source[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end is None:
+            fail("contains an unterminated HCL block")
+        found.append((match, source[match.start():end]))
+    return found
+
+
+roles = strip_hcl_comments(Path(sys.argv[1]).read_text())
+documents = blocks(roles, r'^\s*data\s+"aws_iam_policy_document"\s+"([^\"]+)"\s*\{')
+
+
+def statement_actions(statement):
+    match = re.search(r"^\s*actions\s*=\s*\[(.*?)\]", statement, re.MULTILINE | re.DOTALL)
+    if match is None:
+        fail("cannot parse actions in scoped statement")
+    return tuple(sorted(re.findall(r'"([^\"]+)"', match.group(1))))
+
+
+def statement_conditions(statement):
+    parsed = []
+    for _, condition in blocks(statement, r"^\s*condition\s*\{"):
+        test_match = re.search(r'^\s*test\s*=\s*"([^\"]+)"', condition, re.MULTILINE)
+        variable_match = re.search(r'^\s*variable\s*=\s*"([^\"]+)"', condition, re.MULTILINE)
+        values_match = re.search(r"^\s*values\s*=\s*\[(.*?)\]", condition, re.MULTILINE | re.DOTALL)
+        if test_match is None or variable_match is None or values_match is None:
+            fail("cannot parse scoped statement condition")
+        values_source = values_match.group(1)
+        quoted_values = re.findall(r'"([^\"]+)"', values_source)
+        bare_values = re.findall(r"(?<![A-Za-z0-9_$\{])var\.[A-Za-z0-9_]+", values_source)
+        parsed.append((test_match.group(1), variable_match.group(1), tuple(quoted_values + bare_values)))
+    return tuple(parsed)
+
+
+statement_map = {}
+for document_match, document_block in documents:
+    document = document_match.group(1)
+    for _, statement in blocks(document_block, r"^\s*statement\s*\{"):
+        sid_match = re.search(r'^\s*sid\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
+        if sid_match is None:
+            continue
+        key = (document, sid_match.group(1))
+        if key in statement_map:
+            fail(f"duplicate scoped statement key {document}/{sid_match.group(1)}")
+        statement_map[key] = statement
+
+expected_scoped_statements = {
+    ("deployer_ec2", "Ec2DescribeStarOnly"): (
+        tuple(sorted((
+            "ec2:DescribeAvailabilityZones", "ec2:DescribeRegions", "ec2:DescribeVpcs",
+            "ec2:DescribeVpcAttribute", "ec2:DescribeSubnets", "ec2:DescribeInternetGateways",
+            "ec2:DescribeRouteTables", "ec2:DescribeVpcEndpoints", "ec2:DescribeSecurityGroups",
+            "ec2:DescribeSecurityGroupRules", "ec2:DescribeTags", "ec2:DescribeNetworkInterfaces",
+        ))),
+        (("StringEquals", "ec2:Region", ("var.region",)),),
+    ),
+    ("deployer_elb_ecs", "EcsUntabledActions"): (("ecs:ListTaskDefinitions",), ()),
+    ("deployer_elb_ecs", "EcsListServicesClusterScoped"): (
+        ("ecs:ListServices",),
+        (("ArnLike", "ecs:cluster", ("arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:cluster/${var.name}-*",)),),
+    ),
+    ("deployer_elb_ecs", "ServiceDiscoveryStarOnlyNoCondition"): (
+        tuple(sorted((
+            "servicediscovery:ListTagsForResource", "servicediscovery:ListNamespaces",
+            "servicediscovery:ListServices",
+        ))),
+        (),
+    ),
+    ("deployer_elb_ecs", "ServiceDiscoveryGetOperationWithResourceTag"): (
+        ("servicediscovery:GetOperation",),
+        (("StringEquals", "aws:ResourceTag/Project", ("var.project_tag",)),),
+    ),
+    ("deployer_elb_ecs", "ServiceDiscoveryUntagResource"): (
+        ("servicediscovery:UntagResource",),
+        (("ForAllValues:StringEquals", "aws:TagKeys", ("Project", "ManagedBy", "env_id")),),
+    ),
+}
+for key, expected in expected_scoped_statements.items():
+    statement = statement_map.get(key)
+    if statement is None:
+        fail(f"scoped statement missing {key[0]}/{key[1]}")
+    actual = (statement_actions(statement), statement_conditions(statement))
+    if actual != expected:
+        fail(f"scoped statement mismatch {key[0]}/{key[1]}: expected {expected}, found {actual}")
+
+source_rows = []
+for document_match, document_block in documents:
+    document = document_match.group(1)
+    for _, statement in blocks(document_block, r"^\s*statement\s*\{"):
+        if re.search(r"^\s*condition\s*\{", statement, re.MULTILINE):
+            continue
+        resource_match = re.search(r"^\s*resources\s*=\s*\[(.*?)\]", statement, re.MULTILINE | re.DOTALL)
+        if resource_match is None or re.findall(r'"([^\"]+)"', resource_match.group(1)) != ["*"]:
+            continue
+        sid_match = re.search(r'^\s*sid\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
+        effect_match = re.search(r'^\s*effect\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
+        actions_match = re.search(r"^\s*actions\s*=\s*\[(.*?)\]", statement, re.MULTILINE | re.DOTALL)
+        if sid_match is None or effect_match is None or actions_match is None:
+            fail(f"cannot parse unconditioned wildcard statement in {document}")
+        actions = re.findall(r'"([^\"]+)"', actions_match.group(1))
+        if not actions:
+            fail(f"has an empty Action list in {document}/{sid_match.group(1)}")
+        source_rows.extend((document, sid_match.group(1), effect_match.group(1), action) for action in actions)
+
+if len(source_rows) != len(set(source_rows)):
+    fail("source tuple set contains a duplicate")
+if any(action == "lambda:GetLayerVersionByArn" for _, _, _, action in source_rows):
+    fail("still contains the non-existent lambda:GetLayerVersionByArn action")
+
+text = Path(sys.argv[2]).read_text()
+start_marker = "<!-- wildcard-evaluation:start -->"
+end_marker = "<!-- wildcard-evaluation:end -->"
+if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+    fail("table markers must each occur exactly once")
+section = text.split(start_marker, 1)[1].split(end_marker, 1)[0]
+table_rows = []
+for line in section.splitlines():
+    if not line.startswith("| `"):
+        continue
+    cells = re.findall(r"`([^`]*)`", line)
+    if len(cells) != 10:
+        fail(f"row must have ten code cells: {line}")
+    document, sid, effect, action, resource_cell, condition_cell, resource_scope, condition_scope, disposition, reference = cells
+    try:
+        resource_types = json.loads(resource_cell)
+        condition_keys = json.loads(condition_cell)
+    except json.JSONDecodeError as exc:
+        fail(f"reference cells must be JSON arrays for {document}/{sid}/{action}: {exc}")
+    if not isinstance(resource_types, list) or not isinstance(condition_keys, list):
+        fail(f"reference cells must be JSON arrays for {document}/{sid}/{action}")
+    expected_resource = "possible" if resource_types else "none"
+    expected_condition = "possible" if condition_keys else "none"
+    if resource_scope != expected_resource or condition_scope != expected_condition:
+        fail(f"conclusion does not match reference cells for {document}/{sid}/{action}")
+    if effect == "Deny":
+        if disposition != "by-design deny":
+            fail(f"Deny disposition must be by-design for {document}/{sid}/{action}")
+    elif effect == "Allow":
+        if (resource_scope == "possible" or condition_scope == "possible") and not (
+            disposition.startswith("scoped in this PR") or re.search(r"TODO P5-[0-9]+", disposition)
+        ):
+            fail(f"possible Allow scope lacks PR scoping or a cited TODO for {document}/{sid}/{action}")
+    else:
+        fail(f"unsupported effect {effect} for {document}/{sid}/{action}")
+    if "https://docs.aws.amazon.com/service-authorization/" not in reference or "fetched 2026-09-08" not in reference:
+        fail(f"reference URL/date missing for {document}/{sid}/{action}")
+    table_rows.append((document, sid, effect, action))
+
+if len(table_rows) != len(set(table_rows)):
+    fail("table tuple set contains a duplicate")
+source_set = set(source_rows)
+table_set = set(table_rows)
+missing = sorted(source_set - table_set)
+extra = sorted(table_set - source_set)
+if missing or extra:
+    detail = []
+    if missing:
+        detail.append("missing " + "/".join(missing[0]))
+    if extra:
+        detail.append("extra " + "/".join(extra[0]))
+    fail("tuple-set mismatch: " + "; ".join(detail))
+if len(source_rows) != 36:
+    fail(f"expected 36 evaluated tuples after in-PR scoping, found {len(source_rows)}")
+
+print("PASS: wildcard evaluation tuple-set equality (36 tuples, 33 distinct actions)")
+PY_WILDCARD_EVALUATION
+
+run_wildcard_negative_fixtures() {
+  local fixture_tmp="$1"
+  local roles_copy="$fixture_tmp/roles.tf"
+  local doc_copy="$fixture_tmp/iam-matrix.md"
+  local output rc fail_line
+
+  expect_wildcard_fail() {
+    local label="$1"
+    local expected="$2"
+    shift 2
+    set +e
+    output="$("$@" 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL: wildcard evaluation' <<< "$output" || true)"
+    if [ "$rc" -eq 0 ] || [ -z "$fail_line" ] || ! grep -Fq "$expected" <<< "$output"; then
+      fail "wildcard negative fixture $label did not fail as required: rc=$rc output=$output"
+    fi
+    echo "PASS: wildcard negative fixture $label -> $fail_line"
+  }
+
+  python3 - "$wildcard_roles" "$roles_copy" <<'PY_EXTRA_WILDCARD_SID'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+anchor = '''  }
+}
+
+resource "aws_iam_role_policy" "plan_reader_deny" {'''
+replacement = '''  }
+
+  statement {
+    sid       = "UnexpectedWildcard"
+    effect    = "Allow"
+    actions   = ["ecs:ListClusters"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_reader_deny" {'''
+if source.count(anchor) != 1:
+    raise SystemExit("extra Sid mutation anchor mismatch")
+Path(sys.argv[2]).write_text(source.replace(anchor, replacement, 1))
+PY_EXTRA_WILDCARD_SID
+  expect_wildcard_fail extra-sid "tuple-set mismatch: missing plan_reader_deny/UnexpectedWildcard/Allow/ecs:ListClusters" \
+    env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_ROLES_OVERRIDE="$roles_copy" "$0"
+
+  python3 - "$wildcard_roles" "$roles_copy" <<'PY_APPEND_WILDCARD_ACTION'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+anchor = '''      "ecs:DescribeTaskDefinition",
+    ]'''
+replacement = '''      "ecs:DescribeTaskDefinition",
+      "ecs:ListClusters",
+    ]'''
+if source.count(anchor) != 1:
+    raise SystemExit("existing Sid action mutation anchor mismatch")
+Path(sys.argv[2]).write_text(source.replace(anchor, replacement, 1))
+PY_APPEND_WILDCARD_ACTION
+  expect_wildcard_fail appended-action "tuple-set mismatch: missing deployer_elb_ecs/EcsStarOnly/Allow/ecs:ListClusters" \
+    env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_ROLES_OVERRIDE="$roles_copy" "$0"
+
+  python3 - "$wildcard_doc" "$doc_copy" <<'PY_REMOVE_WILDCARD_ROW'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+start = source.index("<!-- wildcard-evaluation:start -->")
+end = source.index("<!-- wildcard-evaluation:end -->")
+lines = source[start:end].splitlines(keepends=True)
+for index, line in enumerate(lines):
+    if line.startswith("| `"):
+        del lines[index]
+        break
+else:
+    raise SystemExit("wildcard table row removal found no row")
+Path(sys.argv[2]).write_text(source[:start] + "".join(lines) + source[end:])
+PY_REMOVE_WILDCARD_ROW
+  expect_wildcard_fail removed-row "tuple-set mismatch: missing" \
+    env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_DOC_OVERRIDE="$doc_copy" "$0"
+
+  for occurrence in first second; do
+    python3 - "$wildcard_roles" "$roles_copy" "$occurrence" <<'PY_MUTATE_ECR_AUTH'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+needle = 'actions   = ["ecr:GetAuthorizationToken"]'
+positions = [index for index in range(len(source)) if source.startswith(needle, index)]
+if len(positions) != 3:
+    raise SystemExit(f"expected two EcrAuth anchors around EcrVerificationAuth, found {len(positions)} total ECR auth actions")
+selected = positions[0 if sys.argv[3] == "first" else 2]
+replacement = 'actions   = ["ecr:GetAuthorizationToken", "ecr:DescribeRegistry"]'
+source = source[:selected] + replacement + source[selected + len(needle):]
+Path(sys.argv[2]).write_text(source)
+PY_MUTATE_ECR_AUTH
+    expect_wildcard_fail "ecr-auth-${occurrence}" "tuple-set mismatch: missing" \
+      env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_ROLES_OVERRIDE="$roles_copy" "$0"
+  done
+  while IFS='|' read -r label sid old new; do
+    python3 - "$wildcard_roles" "$roles_copy" "$sid" "$old" "$new" <<'PY_MUTATE_SCOPED_STATEMENT'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+sid, old, new = sys.argv[3:]
+sid_anchor = f'sid       = "{sid}"'
+if sid == "Ec2DescribeStarOnly":
+    sid_anchor = f'sid    = "{sid}"'
+start = source.find(sid_anchor)
+if start == -1:
+    raise SystemExit(f"scoped mutation Sid anchor missing: {sid}")
+end = source.find("\n  statement {", start)
+if end == -1:
+    raise SystemExit(f"scoped mutation statement end missing: {sid}")
+statement = source[start:end]
+if statement.count(old) != 1:
+    raise SystemExit(f"scoped mutation field anchor mismatch for {sid}: {old}")
+statement = statement.replace(old, new, 1)
+Path(sys.argv[2]).write_text(source[:start] + statement + source[end:])
+PY_MUTATE_SCOPED_STATEMENT
+    expect_wildcard_fail "scoped-${label}" "scoped statement mismatch" \
+      env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_ROLES_OVERRIDE="$roles_copy" "$0"
+  done <<'SCOPED_MUTATIONS'
+ec2-region|Ec2DescribeStarOnly|values   = [var.region]|values   = [var.project_tag]
+ecs-cluster|EcsListServicesClusterScoped|variable = "ecs:cluster"|variable = "ecs:service"
+cloud-map-project|ServiceDiscoveryGetOperationWithResourceTag|values   = [var.project_tag]|values   = [var.region]
+cloud-map-tag-keys|ServiceDiscoveryUntagResource|        "env_id",|        "Name",
+SCOPED_MUTATIONS
+
+  echo "PASS: wildcard evaluation negative fixtures (8 fixture types, 9 cases)"
+}
+
+if [ "${IAM_WILDCARD_SKIP_NEGATIVES:-0}" != 1 ]; then
+  wildcard_tmp="$(mktemp -d)"
+  trap 'rm -rf "$wildcard_tmp"' EXIT
+  run_wildcard_negative_fixtures "$wildcard_tmp"
+fi
+
 run_negative_fixtures() {
   local fixture_tmp="$1"
   local child_env=(env IAM_MATRIX_SKIP_NEGATIVES=1)
@@ -1221,7 +1634,7 @@ elif mutation == "na-resource-not-wildcard":
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
 elif mutation == "na-with-trailing-instructions":
-    line = next(line for line in source.splitlines() if "| `DenySecretsAndParams` |" in line)
+    line = next(line for line in source.splitlines() if line.startswith("| `aws_iam_role_policy.plan_reader_deny` | `DenySecretsAndParams` |"))
     cells = re.findall(r"`([^`]*)`", line)
     reason = "N/A(Resource * leaves no non-protected resource of the same action type)"
     if cells[7].count(reason) != 1:
@@ -1731,4 +2144,4 @@ if [ "${IAM_MATRIX_SKIP_NEGATIVES:-0}" != 1 ]; then
   run_negative_fixtures "$tmp_dir"
 fi
 
-echo "PASS: IAM matrix contracts (85 statements, 13 bindings)"
+echo "PASS: IAM matrix contracts (87 statements, 13 bindings)"

@@ -518,10 +518,11 @@ gh workflow run sign-images.yml --ref main -f upstream_sha="$UPSTREAM_SHA"
 gh workflow run mirror-images.yml --ref main
 ```
 
-3. Inspect both runs. Each workflow re-runs its scans and final verification.
-   An existing valid signature is not duplicated, and an attestation is added
-   only when no existing predicate matches the current lock inputs. Existing
-   destination images must still match the locked digest; a mismatch fails.
+3. Inspect both runs. Each workflow re-runs its scans, publishes a fresh scan
+   attestation, and performs final verification. An existing valid signature is
+   not duplicated; build and canonical SBOM attestations are added only when no
+   matching predicate exists. Existing destination images must still match the
+   locked digest; a mismatch fails.
 
 ```
 gh run list --workflow sign-images.yml --branch main --event workflow_dispatch --limit 3
@@ -529,6 +530,28 @@ gh run list --workflow mirror-images.yml --branch main --event workflow_dispatch
 ```
 
 Executed: CODE-ONLY — promote with `gh workflow run sign-images.yml --ref main -f upstream_sha="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"` and `gh workflow run mirror-images.yml --ref main` after P0-3b.
+
+## Refresh a stale scan attestation
+
+AWS applies accept a passing scan attestation for at most 10 days by default.
+`scan_freshness_days` may override that window with an integer from 1 through
+60. The weekly `mirror-images` schedule runs Monday at 06:00 UTC, leaving a
+three-day margin inside the default window. Upstream mode has no scheduled
+producer: dispatch `sign-images.yml` for the locked commit within the selected
+window before starting an upstream-mode apply.
+
+A stale-scan failure names the affected digest. Re-run `sign-images.yml` when
+the digest is an upstream API or ClickHouse image. Re-run `mirror-images.yml`
+when it is the placeholder, Redis, or mirrored ClickHouse digest, then retry the
+apply. A missing, malformed, future-dated, failed, wrong-digest, or wrong-Trivy-
+version predicate is also refused and must be replaced by a successful producer
+run; do not widen the window to accept an invalid predicate.
+
+The hash-locked placeholder dependency set changes its image digest. The first
+real-AWS `mirror-images.yml` run after this change is therefore expected to
+publish a new placeholder digest for `mirror-images.lock`.
+
+Executed: CODE-ONLY — the producer and apply paths require the real-AWS bootstrap after P0-3b.
 
 ## Image bump
 
