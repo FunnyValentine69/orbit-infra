@@ -25,11 +25,11 @@ Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot 
 | IAM action-condition matrix | source and post-apply plan contracts; executable cases CODE-ONLY until P0-3d |
 | Recorded LocalStack demo | LOCALSTACK-VERIFIED recording; provenance and generator drift contract-verified in CI |
 | Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
-| SBOM (syft) + Trivy scan + KMS-backed cosign signatures/attestations | in progress |
+| Canonical SBOM comparison + Trivy scan predicates + KMS-backed cosign signatures/attestations | CODE-ONLY until real-AWS publication and apply; offline canonicalization, ordering, and freshness contracts pass |
 | In-job LocalStack Stage 2 | LOCALSTACK-VERIFIED in CI (run 33825140591) |
 | AWS nightly sweeper | CODE-ONLY until P0-3b |
 | Scheduled drift detection on persistent resources | planned |
-| Cost guardrails: infracost PR comment + AWS Budgets alarm | in progress |
+| Cost guardrails: infracost PR comment + AWS Budgets alarm | infracost PR comment landed as a per-PR delta: 60 resources (17 estimated, 42 free, 1 unsupported); the AWS Budgets alarm waits for real AWS (P0-3b) |
 | Observability: CloudWatch logs, two alarms, one written SLO | done |
 | ADRs, runbooks, threat model | documents done; controls carry their own labels, mostly CODE-ONLY until P0-3d |
 

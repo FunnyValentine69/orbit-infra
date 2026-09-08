@@ -277,6 +277,885 @@ if ! import_err="$(python3 -c 'import yaml' 2>&1 >/dev/null)"; then
   exit 1
 fi
 
+
+# Supply-chain closures: canonical SBOM comparison, hash-locked placeholder
+# dependencies, scan-attestation producer ordering, scanner pinning, and apply
+# freshness verification all stay offline-contractable.
+bash "$REPO_ROOT/tests/sbom-canon.sh"
+
+run_requirement_hash_contract() {
+  local compiled_requirements="$1"
+  python3 - "$REPO_ROOT/placeholder/requirements.in" \
+    "$compiled_requirements" \
+    "$REPO_ROOT/placeholder/Dockerfile" \
+    "$REPO_ROOT/tools.lock" <<'PY_REQUIREMENT_HASHES'
+from pathlib import Path
+import re
+import sys
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: {message}")
+
+
+requirements_in = Path(sys.argv[1]).read_text().splitlines()
+compiled_text = Path(sys.argv[2]).read_text()
+dockerfile = Path(sys.argv[3]).read_text()
+tools_lock = Path(sys.argv[4]).read_text()
+
+header = "uv pip compile --universal --generate-hashes --python-version 3.12 requirements.in -o requirements.txt"
+if header not in compiled_text:
+    fail("placeholder/requirements.txt must retain the uv universal hash-generation header")
+
+logical = []
+current = []
+previous_ended_with_backslash = False
+for raw_line in compiled_text.splitlines():
+    stripped = raw_line.strip()
+    if not stripped or stripped.startswith("#"):
+        previous_ended_with_backslash = False
+        continue
+    if raw_line[:1].isspace():
+        if not current:
+            fail(f"placeholder/requirements.txt has a continuation line with no requirement: {stripped}")
+        if not previous_ended_with_backslash:
+            fail(f"placeholder/requirements.txt has an indented line that is not a continuation: {stripped}")
+        current.append(stripped.rstrip("\\").strip())
+        previous_ended_with_backslash = raw_line.endswith("\\")
+        continue
+    if current:
+        logical.append(" ".join(current))
+    current = [stripped.rstrip("\\").strip()]
+    previous_ended_with_backslash = raw_line.endswith("\\")
+if current:
+    logical.append(" ".join(current))
+if not logical:
+    fail("placeholder/requirements.txt has no logical requirement lines")
+missing_hashes = [line.split()[0] for line in logical if "--hash=sha256:" not in line]
+if missing_hashes:
+    fail("logical requirements lack sha256 hashes: " + ", ".join(missing_hashes))
+
+top_level = []
+for raw_line in requirements_in:
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    match = re.match(r"([A-Za-z0-9_.-]+)(?:\[[^]]+\])?==", line)
+    if match is None:
+        fail(f"unsupported requirements.in entry: {line}")
+    top_level.append(match.group(1).lower().replace("_", "-"))
+compiled_names = {
+    re.match(r"([A-Za-z0-9_.-]+)(?:\[[^]]+\])?==", line).group(1).lower().replace("_", "-")
+    for line in logical
+}
+missing_top_level = [name for name in top_level if name not in compiled_names]
+if missing_top_level:
+    fail("requirements.in entries missing from compiled requirements: " + ", ".join(missing_top_level))
+if not re.search(r"^RUN pip install\b[^\n]*--require-hashes\b[^\n]*-r requirements\.txt$", dockerfile, re.MULTILINE):
+    fail("placeholder Dockerfile must install requirements with --require-hashes")
+if not re.search(r"^uv 0\.10\.4$", tools_lock, re.MULTILINE):
+    fail("tools.lock must pin uv 0.10.4")
+if not re.search(r"^uv b4a21408a169f66ffe2e91d4d416d5b08bd72d2780e99c700b3d79c311972a57$", tools_lock, re.MULTILINE):
+    fail("tools.lock must carry the supplied uv Homebrew bottle checksum")
+
+print(f"PASS: placeholder requirements hashes ({len(logical)} logical packages, {len(top_level)} top-level pins)")
+PY_REQUIREMENT_HASHES
+}
+
+run_requirement_hash_contract "$REPO_ROOT/placeholder/requirements.txt"
+
+requirements_continuation_mutant="$tmp_dir/requirements-continuation-before-first.txt"
+python3 - "$REPO_ROOT/placeholder/requirements.txt" "$requirements_continuation_mutant" <<'PY_REQUIREMENTS_CONTINUATION_MUTANT'
+from pathlib import Path
+import sys
+
+
+lines = Path(sys.argv[1]).read_text().splitlines(keepends=True)
+for index, line in enumerate(lines):
+    stripped = line.strip()
+    if stripped and not stripped.startswith("#"):
+        lines.insert(index, "    unhashed-demo==1.0\n")
+        break
+else:
+    raise SystemExit("requirements continuation mutant found no first requirement")
+Path(sys.argv[2]).write_text("".join(lines))
+PY_REQUIREMENTS_CONTINUATION_MUTANT
+set +e
+requirements_continuation_output="$(run_requirement_hash_contract "$requirements_continuation_mutant" 2>&1)"
+requirements_continuation_rc=$?
+set -e
+if [ "$requirements_continuation_rc" -eq 0 ] ||
+   ! grep -Fq "FAIL: placeholder/requirements.txt has a continuation line with no requirement: unhashed-demo==1.0" \
+     <<< "$requirements_continuation_output"; then
+  echo "requirements continuation-before-first mutant did not fail as required: rc=$requirements_continuation_rc output=$requirements_continuation_output" >&2
+  exit 1
+fi
+echo "PASS: placeholder requirements continuation-before-first mutant rejected"
+
+requirements_indented_after_complete_mutant="$tmp_dir/requirements-indented-after-complete.txt"
+python3 - "$REPO_ROOT/placeholder/requirements.txt" "$requirements_indented_after_complete_mutant" <<'PY_REQUIREMENTS_INDENTED_AFTER_COMPLETE_MUTANT'
+from pathlib import Path
+import sys
+
+
+lines = Path(sys.argv[1]).read_text().splitlines(keepends=True)
+for index in range(len(lines) - 1, -1, -1):
+    stripped = lines[index].strip()
+    if stripped and not stripped.startswith("#"):
+        lines.insert(index + 1, "    unhashed-demo==1.0\n")
+        break
+else:
+    raise SystemExit("requirements indented-after-complete mutant found no final requirement line")
+Path(sys.argv[2]).write_text("".join(lines))
+PY_REQUIREMENTS_INDENTED_AFTER_COMPLETE_MUTANT
+set +e
+requirements_indented_after_complete_output="$(
+  run_requirement_hash_contract "$requirements_indented_after_complete_mutant" 2>&1
+)"
+requirements_indented_after_complete_rc=$?
+set -e
+if [ "$requirements_indented_after_complete_rc" -eq 0 ] ||
+   ! grep -Fq "FAIL: placeholder/requirements.txt has an indented line that is not a continuation: unhashed-demo==1.0" \
+     <<< "$requirements_indented_after_complete_output"; then
+  echo "requirements indented-after-complete mutant did not fail as required: rc=$requirements_indented_after_complete_rc output=$requirements_indented_after_complete_output" >&2
+  exit 1
+fi
+echo "PASS: placeholder requirements indented-after-complete mutant rejected"
+
+sign_workflow="$REPO_ROOT/.github/workflows/sign-images.yml"
+scan_calls_public_only_mutant="$tmp_dir/session-apply-scan-calls-public-only.yml"
+attest_comment_only_mutant="$tmp_dir/sign-images-attest-comment-only.yml"
+python3 - "$sign_workflow" "$mirror_workflow" "$apply_workflow" "$scan_calls_public_only_mutant" \
+  "$attest_comment_only_mutant" <<'PY_SCAN_STRUCTURE'
+from copy import deepcopy
+from pathlib import Path
+import re
+import sys
+import yaml
+
+
+VULN_TYPE = "https://github.com/FunnyValentine69/orbit-infra/vuln-scan/v1"
+TRIVY_VERSION_EXPR = "v${{ steps.tool-versions.outputs.trivy }}"
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: {message}")
+
+
+def load(path):
+    value = yaml.safe_load(Path(path).read_text())
+    if not isinstance(value, dict):
+        fail(f"workflow is not a mapping: {path}")
+    return value
+
+
+def one_index(steps, predicate, label):
+    matches = [index for index, step in enumerate(steps) if predicate(step)]
+    if len(matches) != 1:
+        fail(f"expected one {label}, found {len(matches)}")
+    return matches[0]
+
+
+def strip_unquoted_comment(line):
+    quote = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in ("'", '"'):
+            quote = char
+        elif char == "#":
+            return line[:index]
+    return line
+
+
+def attest_commands(run):
+    commands = []
+    current = None
+    for physical_line in run.splitlines():
+        uncommented = strip_unquoted_comment(physical_line)
+        continued = uncommented.endswith("\\")
+        line = uncommented.rstrip()
+        if current is None:
+            if re.search(r"\bcosign\s+attest(?:\s|$)", line) is None:
+                continue
+            current = line.strip()
+        else:
+            current += " " + line.strip()
+        if continued:
+            current = current[:-1].rstrip()
+        else:
+            commands.append(current)
+            current = None
+    if current is not None:
+        commands.append(current)
+    return commands
+
+
+def assert_attest_flags(run, label):
+    commands = attest_commands(run)
+    if not commands:
+        fail(f"{label} has no cosign attest command")
+    for index, command in enumerate(commands, start=1):
+        for flag in ("--tlog-upload=false", "--use-signing-config=false"):
+            if re.search(rf"(?<!\S){re.escape(flag)}(?!\S)", command) is None:
+                fail(f"{label} attest command {index} must carry {flag}")
+    return len(commands)
+
+
+def assert_trivy_action_version(step, label):
+    if step.get("with", {}).get("version") != TRIVY_VERSION_EXPR:
+        fail(f"{label} must carry the tools.lock Trivy version")
+
+
+sign = load(sys.argv[1])
+mirror = load(sys.argv[2])
+apply = load(sys.argv[3])
+sign_steps = sign["jobs"]["sign"]["steps"]
+mirror_steps = mirror["jobs"]["mirror"]["steps"]
+apply_steps = apply["jobs"]["apply"]["steps"]
+
+sign_index = one_index(
+    sign_steps,
+    lambda step: step.get("name") == "Generate SBOMs, scan, sign, and attest upstream images",
+    "upstream supply-chain step",
+)
+sign_step = sign_steps[sign_index]
+sign_run = sign_step.get("run", "")
+if sign_step.get("shell") != "bash" or not sign_run.startswith("set -euo pipefail\n"):
+    fail("sign-images supply-chain step must use shell bash with explicit strict mode")
+sign_attest_count = assert_attest_flags(sign_run, "sign-images supply-chain step")
+mirror_attest_count = 0
+for step in mirror_steps:
+    step_run = step.get("run", "")
+    if attest_commands(step_run):
+        mirror_attest_count += assert_attest_flags(
+            step_run,
+            f"mirror-images {step.get('name', 'unnamed step')}",
+        )
+if mirror_attest_count == 0:
+    fail("mirror-images has no cosign attest commands")
+print(
+    f"PASS: attest command flags ({sign_attest_count} sign-images commands, "
+    f"{mirror_attest_count} mirror-images commands)"
+)
+slurp_decode = "jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)'"
+if slurp_decode not in sign_run:
+    fail("sign-images prior-attestation decode must slurp the complete verification stream")
+if "jq -c '(.payload" in sign_run:
+    fail("sign-images prior-attestation decode must not use the non-slurp form")
+print("PASS: sign-images prior-attestation slurp decode structure")
+if "done < <(jq" in sign_run:
+    fail("sign-images must decode prior attestations before entering the predicate loop")
+for marker in (
+    "could not decode attestations",
+    "current SBOM canonicalization failed",
+    "prior SBOM canonicalization failed; re-attesting",
+):
+    if marker not in sign_run:
+        fail(f"sign-images lacks fail-closed SBOM guard diagnostic: {marker}")
+if '.name + "@" + (.versionInfo // "")' in sign_run:
+    fail("sign-images must not retain the name@version SBOM inventory filter")
+if sign_run.count("scripts/sbom-canon.sh") < 2:
+    fail("sign-images must canonicalise the new SBOM and every decoded prior predicate")
+sign_markers = (
+    'trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1',
+    '--type spdxjson --predicate',
+    f"--type {VULN_TYPE}",
+    "cosign sign --yes",
+)
+positions = [sign_run.find(marker) for marker in sign_markers]
+if any(position < 0 for position in positions) or positions != sorted(positions):
+    fail("sign-images order must be Trivy, SBOM attest, scan attest, signature")
+for field in ("scanner", "trivyVersion", "severityGate", "exitCode", "scannedAt", "digest"):
+    if field not in sign_run:
+        fail(f"sign-images vulnerability predicate lacks {field}")
+
+artifacts = (
+    ("placeholder", "KMS sign and attest placeholder"),
+    ("redis mirror", "KMS sign and attest redis mirror"),
+    ("clickhouse mirror", "KMS sign and attest clickhouse mirror"),
+)
+for artifact, sign_name in artifacts:
+    scan_name = f"Trivy scan {artifact}"
+    attest_name = f"Attest vulnerability scan {artifact}"
+    scan_step_index = one_index(mirror_steps, lambda step, name=scan_name: step.get("name") == name, scan_name)
+    attest_step_index = one_index(mirror_steps, lambda step, name=attest_name: step.get("name") == name, attest_name)
+    image_sign_index = one_index(mirror_steps, lambda step, name=sign_name: step.get("name") == name, sign_name)
+    if not scan_step_index < attest_step_index < image_sign_index:
+        fail(f"mirror-images order must be Trivy, scan attest, signature for {artifact}")
+    scan_step = mirror_steps[scan_step_index]
+    if not str(scan_step.get("uses", "")).startswith("aquasecurity/trivy-action@"):
+        fail(f"{scan_name} must use trivy-action")
+    assert_trivy_action_version(scan_step, scan_name)
+    severity_expression = scan_step.get("with", {}).get("severity")
+    if severity_expression != "${{ env.TRIVY_SEVERITY_GATE }}":
+        fail(f"{scan_name} must read the shared TRIVY_SEVERITY_GATE")
+    attest_run = mirror_steps[attest_step_index].get("run", "")
+    assert_attest_flags(attest_run, attest_name)
+    if f"--type {VULN_TYPE}" not in attest_run:
+        fail(f"{attest_name} must use the vulnerability predicate type")
+    for field in ("scanner", "trivyVersion", "severityGate", "exitCode", "scannedAt", "digest"):
+        if field not in attest_run:
+            fail(f"{attest_name} predicate lacks {field}")
+    if "trivy --version" not in attest_run or "trivy version mismatch" not in attest_run:
+        fail(f"{attest_name} must attest the executed binary version after checking the pin")
+    if '--arg severity_gate "$TRIVY_SEVERITY_GATE"' not in attest_run:
+        fail(f"{attest_name} must attest the shared TRIVY_SEVERITY_GATE")
+
+mirror_gate = mirror["jobs"]["mirror"].get("env", {}).get("TRIVY_SEVERITY_GATE")
+if mirror_gate != "CRITICAL,HIGH":
+    fail("mirror-images must define the shared CRITICAL,HIGH severity gate once at job scope")
+
+first_attest = next(step for step in mirror_steps if step.get("name") == "Attest vulnerability scan placeholder")
+for removed_flag in ("--tlog-upload=false", "--use-signing-config=false"):
+    mutant = first_attest["run"].replace(removed_flag, "", 1)
+    try:
+        assert_attest_flags(mutant, "mutated placeholder vulnerability attestation")
+    except SystemExit:
+        pass
+    else:
+        fail(f"scan-attestation flag mutant survived removal of {removed_flag}")
+print("PASS: scan-attestation flag mutants killed (2 mutations)")
+
+sign_source = Path(sys.argv[1]).read_text()
+attest_anchor = "              cosign attest --yes --tlog-upload=false --use-signing-config=false " + "\\"
+attest_replacement = (
+    "              # --tlog-upload=false\n"
+    "              cosign attest --yes --use-signing-config=false " + "\\"
+)
+if attest_anchor not in sign_source:
+    fail("comment-only attest flag mutation anchor missing")
+Path(sys.argv[5]).write_text(sign_source.replace(attest_anchor, attest_replacement, 1))
+mutated_sign = load(sys.argv[5])
+mutated_sign_steps = mutated_sign["jobs"]["sign"]["steps"]
+mutated_sign_step = next(
+    step
+    for step in mutated_sign_steps
+    if step.get("name") == "Generate SBOMs, scan, sign, and attest upstream images"
+)
+try:
+    assert_attest_flags(mutated_sign_step["run"], "comment-only flag mutant")
+except SystemExit as exc:
+    if "--tlog-upload=false" not in str(exc):
+        raise
+else:
+    fail("comment-only attest flag mutant survived")
+print("PASS: comment-only attest flag mutant killed")
+
+mutated_mirror = deepcopy(mirror_steps)
+mutated_scan = next(step for step in mutated_mirror if step.get("name") == "Trivy scan placeholder")
+mutated_scan["with"]["version"] = "v0.0.0"
+try:
+    assert_trivy_action_version(mutated_scan, "mutated placeholder Trivy step")
+except SystemExit:
+    pass
+else:
+    fail("divergent Trivy version mutant survived validation")
+print("PASS: divergent trivy-action version fixture rejected")
+
+trigger = mirror.get("on", mirror.get(True))
+cron_entries = trigger.get("schedule") if isinstance(trigger, dict) else None
+cron_values = [entry.get("cron") for entry in cron_entries or [] if isinstance(entry, dict)]
+if cron_values != ["0 6 * * 1"]:
+    fail(f"mirror-images schedule must be Monday 06:00 UTC weekly, found {cron_values}")
+
+apply_trigger = apply.get("on", apply.get(True))
+inputs = apply_trigger.get("workflow_dispatch", {}).get("inputs", {}) if isinstance(apply_trigger, dict) else {}
+freshness = inputs.get("scan_freshness_days")
+default_days = freshness.get("default") if isinstance(freshness, dict) else None
+if default_days != 10:
+    fail("session-apply scan_freshness_days must default to 10")
+cron_parts = cron_values[0].split()
+if cron_parts != ["0", "6", "*", "*", "1"]:
+    fail("mirror-images cadence parser requires the Monday 06:00 UTC weekly cron")
+scheduled_interval_days = 7
+if default_days < scheduled_interval_days + 3:
+    fail("scan freshness default must cover the parsed producer interval plus three days")
+
+verify_index = one_index(
+    apply_steps,
+    lambda step: step.get("name") == "Verify selected image signatures and attestations",
+    "session-apply image verification step",
+)
+verify_step = apply_steps[verify_index]
+verify_run = verify_step.get("run", "")
+if verify_step.get("shell") != "bash" or not verify_run.startswith("set -euo pipefail\n"):
+    fail("session-apply image verification step must use shell bash with explicit strict mode")
+if "done < <(jq" in verify_run:
+    fail("session-apply must decode scan attestations before entering the predicate loop")
+if "could not decode attestations" not in verify_run:
+    fail("session-apply lacks the malformed-attestation decode diagnostic")
+if "verify_scan_attestation()" not in verify_run:
+    fail("session-apply must define verify_scan_attestation")
+def extract_mode_branches(run):
+    lines = run.splitlines()
+    case_indexes = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(r'\s*case\s+"?\$\{?MODE\}?"?\s+in\s*', line)
+    ]
+    if len(case_indexes) == 1:
+        branches = {"upstream": [], "public": []}
+        current = None
+        found_esac = False
+        for line in lines[case_indexes[0] + 1 :]:
+            label = re.fullmatch(r"\s*(upstream|public)\)\s*", line)
+            if label:
+                current = label.group(1)
+                continue
+            if re.fullmatch(r"\s*;;\s*", line):
+                current = None
+                continue
+            if re.fullmatch(r"\s*esac\s*", line):
+                found_esac = True
+                break
+            if current:
+                branches[current].append(line)
+        if not found_esac or any(not branch for branch in branches.values()):
+            fail("session-apply deployment mode case must have non-empty upstream and public branches")
+        return branches
+    if case_indexes:
+        fail(f"session-apply must have one deployment mode case, found {len(case_indexes)}")
+
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if re.match(r'^\s*if\s+\[\[?.*\$\{?MODE\}?.*upstream.*;\s*then\s*$', line)
+    ]
+    if len(starts) != 1:
+        fail("session-apply must guard scan verification with a deployment mode case or if/else")
+    start = starts[0]
+    else_indexes = [index for index in range(start + 1, len(lines)) if re.fullmatch(r"\s*else\s*", lines[index])]
+    fi_indexes = [index for index in range(start + 1, len(lines)) if re.fullmatch(r"\s*fi\s*", lines[index])]
+    if not else_indexes or not fi_indexes or not start < else_indexes[0] < fi_indexes[0]:
+        fail("session-apply deployment mode if/else branches are malformed")
+    return {
+        "upstream": lines[start + 1 : else_indexes[0]],
+        "public": lines[else_indexes[0] + 1 : fi_indexes[0]],
+    }
+
+
+def selected_images(branch):
+    selected = []
+    patterns = (
+        r"^\s*verify_(?:upstream|mirror)_attestation\s+([a-z_]+)\s+",
+        r'^\s*verify_placeholder_attestation\s+"\$([a-z_]+)"\s*$',
+    )
+    for line in branch:
+        for pattern in patterns:
+            match = re.match(pattern, line)
+            if match:
+                selected.append(match.group(1))
+                break
+    if not selected:
+        fail("session-apply deployment mode branch selects no images")
+    if len(selected) != len(set(selected)):
+        fail(f"session-apply deployment mode branch selects an image more than once: {selected}")
+    return selected
+
+
+def assert_mode_scan_calls(run):
+    branches = extract_mode_branches(run)
+    counts = {}
+    for mode, branch in branches.items():
+        expected = selected_images(branch)
+        branch_text = "\n".join(branch)
+        for label in expected:
+            call = f'verify_scan_attestation {label} "${label}"'
+            count = branch_text.count(call)
+            if count != 1:
+                fail(f"session-apply {mode} branch must contain one scan call for {label}, found {count}")
+        scan_calls = re.findall(r"^\s*verify_scan_attestation\s+([a-z_]+)\s+", branch_text, re.MULTILINE)
+        if sorted(scan_calls) != sorted(expected):
+            fail(f"session-apply {mode} branch scan calls do not match selected images")
+        counts[mode] = len(scan_calls)
+    return counts
+
+
+mode_scan_counts = assert_mode_scan_calls(verify_run)
+print(
+    "PASS: scan verification call sites "
+    f"(upstream={mode_scan_counts['upstream']}, public={mode_scan_counts['public']})"
+)
+
+mutated_apply = deepcopy(apply)
+mutated_steps = mutated_apply["jobs"]["apply"]["steps"]
+mutated_verify = next(
+    step for step in mutated_steps if step.get("name") == "Verify selected image signatures and attestations"
+)
+mutant_lines = []
+in_mode_case = False
+current_mode = None
+for line in mutated_verify["run"].splitlines():
+    if re.fullmatch(r'\s*case\s+"?\$\{?MODE\}?"?\s+in\s*', line):
+        in_mode_case = True
+    label = re.fullmatch(r"\s*(upstream|public)\)\s*", line) if in_mode_case else None
+    if label:
+        current_mode = label.group(1)
+    if not (current_mode == "upstream" and re.match(r"^\s*verify_scan_attestation\s+", line)):
+        mutant_lines.append(line)
+    if in_mode_case and re.fullmatch(r"\s*;;\s*", line):
+        current_mode = None
+    if in_mode_case and re.fullmatch(r"\s*esac\s*", line):
+        in_mode_case = False
+mutated_verify["run"] = "\n".join(mutant_lines) + "\n"
+Path(sys.argv[4]).write_text(yaml.safe_dump(mutated_apply, sort_keys=False))
+mutant_workflow = yaml.safe_load(Path(sys.argv[4]).read_text())
+mutant_verify_run = next(
+    step["run"]
+    for step in mutant_workflow["jobs"]["apply"]["steps"]
+    if step.get("name") == "Verify selected image signatures and attestations"
+)
+try:
+    assert_mode_scan_calls(mutant_verify_run)
+except SystemExit as exc:
+    if "upstream branch" not in str(exc):
+        fail(f"public-only scan-call mutant failed for the wrong reason: {exc}")
+else:
+    fail("public-only scan-call mutant survived upstream validation")
+print("PASS: public-only scan-call placement mutant rejected")
+print("PASS: scan producer ordering, predicate fields, version pins, and weekly cadence")
+PY_SCAN_STRUCTURE
+
+prior_attestation_script="$tmp_dir/prior-attestation-compare.sh"
+prior_attestation_mutant="$tmp_dir/prior-attestation-compare-mutant.sh"
+# Runtime contract: execute the minimal contiguous sign-images region from
+# prior_predicates_file="$(mktemp)" through the rm after its comparison loop.
+# That region's only workflow-specific external is stubbed cosign;
+# scripts/sbom-canon.sh and jq remain real so the stream decode is exercised.
+python3 - "$sign_workflow" "$prior_attestation_script" "$prior_attestation_mutant" <<'PY_EXTRACT_PRIOR_ATTESTATION'
+from pathlib import Path
+import sys
+import textwrap
+import yaml
+
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+steps = workflow["jobs"]["sign"]["steps"]
+runs = [
+    step.get("run", "")
+    for step in steps
+    if step.get("name") == "Generate SBOMs, scan, sign, and attest upstream images"
+]
+if len(runs) != 1:
+    raise SystemExit(f"FAIL: expected one upstream supply-chain run block, found {len(runs)}")
+lines = runs[0].splitlines()
+start_marker = 'prior_predicates_file="$(mktemp)"'
+end_marker = 'rm -f "$prior_predicates_file"'
+starts = [index for index, line in enumerate(lines) if line.strip() == start_marker]
+if len(starts) != 1:
+    raise SystemExit(f"FAIL: expected one prior-attestation region start, found {len(starts)}")
+ends = [
+    index
+    for index, line in enumerate(lines[starts[0] + 1 :], starts[0] + 1)
+    if line.strip() == end_marker
+]
+if len(ends) != 2:
+    raise SystemExit(f"FAIL: expected two prior-attestation cleanup lines, found {len(ends)}")
+region = textwrap.dedent("\n".join(lines[starts[0] : ends[1] + 1]))
+script = (
+    "#!/usr/bin/env bash\n"
+    "set -euo pipefail\n"
+    "run_prior_attestation_compare() {\n"
+    + textwrap.indent(region, "  ")
+    + "\n}\n"
+    "run_prior_attestation_compare\n"
+    "printf 'matching_sbom=%s\\n' \"${matching_sbom:-false}\"\n"
+)
+Path(sys.argv[2]).write_text(script)
+slurp_decode = "jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)'"
+non_slurp_decode = "jq -c '(.payload | @base64d | fromjson | .predicate)'"
+if script.count(slurp_decode) != 1:
+    raise SystemExit("FAIL: prior-attestation decode mutation anchor must occur exactly once")
+Path(sys.argv[3]).write_text(script.replace(slurp_decode, non_slurp_decode, 1))
+PY_EXTRACT_PRIOR_ATTESTATION
+
+mkdir -p "$tmp_dir/prior-attestation-bin"
+cat > "$tmp_dir/prior-attestation-bin/cosign" <<'EOF_PRIOR_COSIGN'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -n "${PRIOR_COSIGN_EXIT:-}" ]; then exit "$PRIOR_COSIGN_EXIT"; fi
+while IFS= read -r line || [ -n "$line" ]; do
+  printf '%s\n' "$line"
+done < "$PRIOR_ATTESTATIONS_FILE"
+EOF_PRIOR_COSIGN
+chmod +x "$tmp_dir/prior-attestation-bin/cosign"
+
+prior_predicate="$REPO_ROOT/tests/fixtures/sbom/base.spdx.json"
+prior_attestations="$tmp_dir/prior-attestations.jsonl"
+prior_statement="$(jq -cn --argjson predicate "$(<"$prior_predicate")" '{predicate:$predicate}')"
+prior_payload="$(printf '%s' "$prior_statement" | base64 | tr -d '\n')"
+# The malformed envelope must come FIRST: streaming jq exits nonzero only when the last value fails, so this ordering is what the non-slurp mutant case relies on to exit 0.
+printf '%s\n' '{"payload":"%%%"}' > "$prior_attestations"
+jq -cn --arg payload "$prior_payload" '{payload:$payload}' >> "$prior_attestations"
+prior_attestations_valid="$tmp_dir/prior-attestations-valid.jsonl"
+jq -cn --arg payload "$prior_payload" '{payload:$payload}' > "$prior_attestations_valid"
+prior_other_predicate="$REPO_ROOT/tests/fixtures/sbom/same-inventory-different-checksum.spdx.json"
+prior_other_statement="$(jq -cn --argjson predicate "$(<"$prior_other_predicate")" '{predicate:$predicate}')"
+prior_other_payload="$(printf '%s' "$prior_other_statement" | base64 | tr -d '\n')"
+prior_attestations_other="$tmp_dir/prior-attestations-other.jsonl"
+jq -cn --arg payload "$prior_other_payload" '{payload:$payload}' > "$prior_attestations_other"
+prior_new_canon="$("$REPO_ROOT/scripts/sbom-canon.sh" < "$prior_predicate")"
+
+run_prior_attestation_case() {
+  local label="$1"
+  local expected_rc="$2"
+  local expected_message="$3"
+  local script="$4"
+  local attestations_file="${5:-$prior_attestations}"
+  local cosign_exit="${6:-}"
+  local output rc
+  set +e
+  output="$(
+    cd "$REPO_ROOT" &&
+      PATH="$tmp_dir/prior-attestation-bin:$PATH" \
+      PRIOR_ATTESTATIONS_FILE="$attestations_file" \
+      PRIOR_COSIGN_EXIT="$cosign_exit" \
+      PUBLIC_KEY="$tmp_dir/test-public-key.pem" \
+      image="example.invalid/image" \
+      digest="sha256:$(printf 'a%.0s' {1..64})" \
+      repository="test/repository" \
+      new_canon="$prior_new_canon" \
+        bash "$script" 2>&1
+  )"
+  rc=$?
+  set -e
+  if [ "$rc" -ne "$expected_rc" ]; then
+    echo "sign-images prior-attestation case $label exited $rc, expected $expected_rc: $output" >&2
+    exit 1
+  fi
+  if [ -n "$expected_message" ] && ! grep -Fq "$expected_message" <<< "$output"; then
+    echo "sign-images prior-attestation case $label lacked message '$expected_message': $output" >&2
+    exit 1
+  fi
+  echo "PASS: sign-images prior-attestation case $label"
+}
+
+run_prior_attestation_case malformed-first 1 "could not decode attestations" \
+  "$prior_attestation_script"
+run_prior_attestation_case malformed-first-non-slurp-mutant 0 "" \
+  "$prior_attestation_mutant"
+echo "PASS: sign-images prior-attestation non-slurp mutant killed"
+run_prior_attestation_case no-prior 0 "matching_sbom=false" "$prior_attestation_script" "$prior_attestations" 1
+run_prior_attestation_case matching-prior 0 "matching_sbom=true" "$prior_attestation_script" "$prior_attestations_valid"
+run_prior_attestation_case different-prior 0 "matching_sbom=false" "$prior_attestation_script" "$prior_attestations_other"
+echo "PASS: sign-images prior-attestation decode contracts (5 cases)"
+
+scan_verify_script="$tmp_dir/verify-scan-attestation.sh"
+scan_verify_mutant="$tmp_dir/verify-scan-attestation-mutant.sh"
+python3 - "$apply_workflow" "$scan_verify_script" "$scan_verify_mutant" <<'PY_EXTRACT_SCAN_VERIFY'
+from pathlib import Path
+import re
+import sys
+import yaml
+
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+steps = workflow["jobs"]["apply"]["steps"]
+runs = [
+    step.get("run", "")
+    for step in steps
+    if step.get("name") == "Verify selected image signatures and attestations"
+]
+if len(runs) != 1:
+    raise SystemExit(f"FAIL: expected one image verification run block, found {len(runs)}")
+source = runs[0]
+
+
+def function(name):
+    match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{\n.*?^\}}$", source)
+    if match is None:
+        raise SystemExit(f"FAIL: could not extract {name} from image verification step")
+    return match.group(0)
+
+
+extracted = function("iso_to_epoch") + "\n" + function("verify_scan_attestation")
+script = "#!/usr/bin/env bash\nset -euo pipefail\n" + extracted + '\nverify_scan_attestation test_image "$TEST_IMAGE"\n'
+Path(sys.argv[2]).write_text(script)
+needle = 'if [ "$age_seconds" -gt "$window_seconds" ]; then'
+if script.count(needle) != 1:
+    raise SystemExit("FAIL: freshness comparison mutation anchor must occur exactly once")
+Path(sys.argv[3]).write_text(script.replace(needle, "if false; then", 1))
+PY_EXTRACT_SCAN_VERIFY
+
+mkdir -p "$tmp_dir/scan-bin"
+cat > "$tmp_dir/scan-bin/cosign" <<'EOF_SCAN_COSIGN'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${SCAN_NO_ATTESTATION:-0}" = 1 ]; then
+  exit 1
+fi
+if [ "${SCAN_MALFORMED_ENVELOPE:-0}" = 1 ]; then
+  printf '%s\n' '{"payload":"%%%"}'
+  exit 0
+fi
+while IFS= read -r predicate; do
+  statement="$(jq -cn --argjson predicate "$predicate" '{predicate:$predicate}')"
+  payload="$(printf '%s' "$statement" | base64 | tr -d '\n')"
+  jq -cn --arg payload "$payload" '{payload:$payload}'
+done < <(jq -c 'if type == "array" then .[] else . end' "$SCAN_PREDICATE_FILE")
+EOF_SCAN_COSIGN
+chmod +x "$tmp_dir/scan-bin/cosign" "$scan_verify_script" "$scan_verify_mutant"
+
+scan_digest="sha256:$(printf 'a%.0s' {1..64})"
+scan_now_epoch=2000000000
+trivy_pin="$("$REPO_ROOT"/scripts/tool-version.sh trivy)"
+scan_iso() {
+  python3 - "$1" <<'PY_SCAN_ISO'
+from datetime import datetime, timezone
+import sys
+print(datetime.fromtimestamp(int(sys.argv[1]), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY_SCAN_ISO
+}
+
+write_scan_predicate() {
+  local destination="$1"
+  local scanned_at="$2"
+  local digest="$3"
+  local scanner="$4"
+  local version="$5"
+  local exit_code="$6"
+  local severity="${7:-CRITICAL}"
+  jq -cn \
+    --arg scanner "$scanner" \
+    --arg version "$version" \
+    --arg severity "$severity" \
+    --arg scanned_at "$scanned_at" \
+    --arg digest "$digest" \
+    --argjson exit_code "$exit_code" \
+    '{scanner:$scanner,trivyVersion:$version,severityGate:$severity,exitCode:$exit_code,scannedAt:$scanned_at,digest:$digest}' \
+    > "$destination"
+}
+
+run_scan_case() {
+  local label="$1"
+  local expected_rc="$2"
+  local expected_message="$3"
+  local script="$4"
+  local predicate_file="$5"
+  local freshness_days="$6"
+  local no_attestation="${7:-0}"
+  local malformed_envelope="${8:-0}"
+  local output rc
+  set +e
+  output="$(
+    PATH="$tmp_dir/scan-bin:$PATH" \
+    PUBLIC_KEY="$tmp_dir/test-public-key.pem" \
+    TEST_IMAGE="example.invalid/image@${scan_digest}" \
+    TRIVY_VERSION="$trivy_pin" \
+    SCAN_FRESHNESS_DAYS="$freshness_days" \
+    SCAN_NOW_EPOCH="$scan_now_epoch" \
+    SCAN_PREDICATE_FILE="$predicate_file" \
+    SCAN_NO_ATTESTATION="$no_attestation" \
+    SCAN_MALFORMED_ENVELOPE="$malformed_envelope" \
+      bash "$script" 2>&1
+  )"
+  rc=$?
+  set -e
+  if [ "$expected_rc" = 0 ] && [ "$rc" -ne 0 ]; then
+    echo "scan-attestation case $label unexpectedly failed: $output" >&2
+    exit 1
+  fi
+  if [ "$expected_rc" != 0 ] && [ "$rc" -eq 0 ]; then
+    echo "scan-attestation case $label unexpectedly passed" >&2
+    exit 1
+  fi
+  if [ -n "$expected_message" ] && ! grep -Fq "$expected_message" <<< "$output"; then
+    echo "scan-attestation case $label lacked message '$expected_message': $output" >&2
+    exit 1
+  fi
+  echo "PASS: scan-attestation case $label"
+}
+
+scan_predicate="$tmp_dir/scan-predicate.json"
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case fresh 0 "" "$scan_verify_script" "$scan_predicate" 10
+
+stale_predicate="$tmp_dir/scan-stale-predicate.json"
+fresh_predicate="$tmp_dir/scan-fresh-predicate.json"
+write_scan_predicate "$stale_predicate" "$(scan_iso $((scan_now_epoch - 11 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
+write_scan_predicate "$fresh_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+jq -s '.' "$stale_predicate" "$fresh_predicate" > "$scan_predicate"
+run_scan_case stale-then-fresh 0 "" "$scan_verify_script" "$scan_predicate" 10
+
+stale_scan_time="$(scan_iso $((scan_now_epoch - 11 * 86400)))"
+write_scan_predicate "$scan_predicate" "$stale_scan_time" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case stale 1 \
+  "scan attestation stale: scannedAt $stale_scan_time older than 10 days for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+run_scan_case missing 1 "no scan attestation for $scan_digest" "$scan_verify_script" "$scan_predicate" 10 1
+run_scan_case malformed-envelope 1 "could not decode attestations" \
+  "$scan_verify_script" "$scan_predicate" 10 0 1
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 1
+run_scan_case failed-scan 1 \
+  "scan attestation reports a failed scan for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+
+wrong_digest="sha256:$(printf 'b%.0s' {1..64})"
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$wrong_digest" trivy "$trivy_pin" 0
+run_scan_case digest-mismatch 1 "no scan attestation for $scan_digest" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch + 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case future 1 \
+  "scan attestation scannedAt is in the future for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" yesterday "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case malformed 1 \
+  "scan attestation scannedAt is malformed for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 10 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case boundary 0 "" "$scan_verify_script" "$scan_predicate" 10
+past_boundary_scan_time="$(scan_iso $((scan_now_epoch - 10 * 86400 - 1)))"
+write_scan_predicate "$scan_predicate" "$past_boundary_scan_time" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case past-boundary 1 \
+  "scan attestation stale: scannedAt $past_boundary_scan_time older than 10 days for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case window-60 0 "" "$scan_verify_script" "$scan_predicate" 60
+for invalid_window in 0 61 100 999999999999999999999999999999999999 abc 08 07; do
+  run_scan_case "window-${invalid_window}" 1 "SCAN_FRESHNESS_DAYS out of range" \
+    "$scan_verify_script" "$scan_predicate" "$invalid_window"
+done
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0 CRITICAL,HIGH
+run_scan_case severity-critical-high 0 "" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0 HIGH
+run_scan_case severity-high 1 \
+  "scan attestation severity gate mismatch for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" grype "$trivy_pin" 0
+run_scan_case scanner-mismatch 1 \
+  "scan attestation scanner or version mismatch for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy 0.73.0 0
+run_scan_case version-mismatch 1 \
+  "scan attestation scanner or version mismatch for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$stale_scan_time" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case stale-original 1 \
+  "scan attestation stale: scannedAt $stale_scan_time older than 10 days for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
+run_scan_case stale-mutant 0 "" "$scan_verify_mutant" "$scan_predicate" 10
+echo "PASS: scan-attestation freshness mutant killed"
+echo "PASS: scan-attestation verification contracts (22 cases)"
+
 # P5-26: fixture hygiene must reject global IPv6 addresses while accepting
 # explicit policy markers and non-routable/documentation ranges.
 ipv6_global_fixture="$tmp_dir/ipv6-global.json"

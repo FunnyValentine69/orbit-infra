@@ -152,15 +152,18 @@ jobs:
             -out "$RUNNER_TEMP/kms-public-key.pem"
 
       - name: Generate SBOMs, scan, sign, and attest upstream images
+        shell: bash
         env:
           KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
           PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
           REGISTRY: ${{ steps.registry.outputs.registry }}
           SYFT_CMD: ${{ steps.syft.outputs.cmd }}
+          TRIVY_VERSION: ${{ steps.tool-versions.outputs.trivy }}
           UPSTREAM_SHA: ${{ steps.lock.outputs.upstream_sha }}
           UPSTREAM_ARCHIVE_SHA256: ${{ steps.lock.outputs.upstream_archive_sha256 }}
           REPO_BUILD_INPUTS_SHA256: ${{ steps.lock.outputs.repo_build_inputs_sha256 }}
         run: |
+          set -euo pipefail
           tag="${UPSTREAM_SHA:0:12}"
           built_on="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -189,12 +192,35 @@ jobs:
 
             trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1 "${image}@${digest}"
 
-            # SBOM stays private; re-runs skip only an attestation with a matching package inventory (ADR 0007 amendment 2026-09-04).
-            new_inv=$(jq -c '[.packages[] | (.name + "@" + (.versionInfo // ""))] | sort' "${name}-sbom.spdx.json")
-            if cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
-              --type spdxjson "${image}@${digest}" 2>/dev/null \
-              | jq -e -s --argjson new_inv "$new_inv" 'any(.[]; try ((.payload | @base64d | fromjson | .predicate) as $p | ($p | type == "object" and has("spdxVersion") and has("SPDXID")) and (([$p.packages[]? | (.name + "@" + (.versionInfo // ""))] | sort) == $new_inv)) catch false)' >/dev/null; then
-              echo "${repository}: SBOM attestation with matching inventory already exists"
+            # SBOM stays private; re-runs skip only an attestation with the same canonical package metadata and graph.
+            if ! new_canon="$(scripts/sbom-canon.sh < "${name}-sbom.spdx.json")"; then
+              echo "${repository}: current SBOM canonicalization failed" >&2
+              exit 1
+            fi
+            matching_sbom=false
+            prior_predicates_file="$(mktemp)"
+            if prior_attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
+              --type spdxjson "${image}@${digest}" 2>/dev/null)"; then
+              if ! jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)' \
+                <<< "$prior_attestations" > "$prior_predicates_file"; then
+                echo "${repository}: could not decode attestations" >&2
+                rm -f "$prior_predicates_file"
+                exit 1
+              fi
+              while IFS= read -r prior_predicate; do
+                if ! prior_canon="$(printf '%s\n' "$prior_predicate" | scripts/sbom-canon.sh)"; then
+                  echo "${repository}: prior SBOM canonicalization failed; re-attesting" >&2
+                  continue
+                fi
+                if [ "$prior_canon" = "$new_canon" ]; then
+                  matching_sbom=true
+                  break
+                fi
+              done < "$prior_predicates_file"
+            fi
+            rm -f "$prior_predicates_file"
+            if [ "$matching_sbom" = true ]; then
+              echo "${repository}: matching canonical SBOM attestation already exists"
             else
               cosign attest --yes --tlog-upload=false --use-signing-config=false \
                 --key "awskms:///${KMS_KEY_ARN}" \
@@ -210,6 +236,26 @@ jobs:
               echo "${repository}: no SBOM attestation found" >&2
               exit 1
             }
+
+            installed_trivy="$(trivy --version | awk '$1 == "Version:" { print $2; exit }')"
+            if [ "$installed_trivy" != "$TRIVY_VERSION" ]; then
+              echo "trivy version mismatch: installed $installed_trivy, expected $TRIVY_VERSION" >&2
+              exit 1
+            fi
+            scan_predicate="$(mktemp)"
+            jq -cn \
+              --arg scanner trivy \
+              --arg trivy_version "$installed_trivy" \
+              --arg severity_gate CRITICAL \
+              --arg scanned_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --arg digest "$digest" \
+              '{scanner:$scanner,trivyVersion:$trivy_version,severityGate:$severity_gate,exitCode:0,scannedAt:$scanned_at,digest:$digest}' \
+              > "$scan_predicate"
+            cosign attest --yes --tlog-upload=false --use-signing-config=false \
+              --key "awskms:///${KMS_KEY_ARN}" \
+              --type https://github.com/FunnyValentine69/orbit-infra/vuln-scan/v1 \
+              --predicate "$scan_predicate" "${image}@${digest}"
+            rm -f "$scan_predicate"
 
             if cosign verify --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               "${image}@${digest}" >/dev/null 2>&1; then

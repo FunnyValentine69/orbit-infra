@@ -18,6 +18,7 @@ An always-on ECS/ALB/ClickHouse/Redis stack would cost money whether or not it i
 - No-NAT private networking: every AWS API call a task makes goes through interface VPC endpoints or the S3 gateway endpoint.
 - Lease lifecycle with compare-and-swap on S3 and a two-stage close (destroy-and-verify, then re-probe and remove state).
 - Policy gates and contract suites that prove their own predicates by mutation testing.
+- Supply-chain checks use hash-locked placeholder dependencies, re-attest corrected SBOM metadata or relationships, and require a fresh passing scan attestation before AWS apply.
 
 ## System overview
 

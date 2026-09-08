@@ -6,6 +6,33 @@ Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 all
 in `tools.lock`, read with `scripts/tool-version.sh pyyaml`, and installed
 explicitly in the `terraform-plan.yml` gates job before `scripts/gates.sh`.
 
+`tests/sbom-canon.sh` checks that the real-syft-derived fixtures preserve the
+creator string and that timestamp-only changes, consistent identifier
+renumbering, and reversed package order compare equal. Five separate assertions
+require checksum, license, relationship, identifier-swap, and same-name
+relationship-switch changes to compare different; a missing optional
+relationships array proves null safety. Two fail-closed assertions reject a
+missing `spdxVersion` and a
+non-array `packages` field, for 14 assertions total.
+
+The phase-3 suite also joins every logical requirements line and requires a hash,
+checks the three direct pins and Dockerfile `--require-hashes` flag, and
+structurally verifies scan producer order, attestation flags, pinned Trivy
+versions, per-mode verifier call sites, weekly cadence, and the 10-day default.
+Its extracted verifier runs 22 cases across freshness boundaries, multiple
+attestations, malformed envelopes and timestamps, future timestamps, predicate
+contents, scanner versions, severity lists, and input range including
+leading-zero values. A removed-freshness mutant and flag/version mutations must
+be rejected. The call-site check extracts the upstream and public branches of
+the deployment-mode case separately and requires one `verify_scan_attestation`
+call per selected image in each branch; a fixture that moves every call into the
+public branch must fail the upstream assertion. An indented requirements line
+that arrives with no open requirement is rejected rather than dropped, and a
+scratch copy with an unhashed continuation inserted before the first requirement
+must fail.
+
+The sign-images SBOM idempotency guard is also executed, not only pattern-matched: the region from the prior-predicate temp file through its comparison loop is extracted from the workflow, wrapped in a function, and run with a stubbed `cosign` while jq and `scripts/sbom-canon.sh` stay real. Five cases cover a malformed envelope ahead of a valid one (the step must fail with `could not decode attestations`), a failing `cosign verify-attestation` (no prior attestation, so the image is re-attested), a matching prior predicate, and a differing prior predicate; a mutant that restores the streaming `jq -c` decode must exit 0 on the malformed-first stream, which is the killed-mutant proof that the slurped decode is load-bearing.
+
 Run the cleanup regression suite without AWS or LocalStack:
 
 ```
@@ -231,7 +258,7 @@ Run source mode without LocalStack:
 bash tests/iam-matrix-contracts.sh
 ```
 
-Source mode requires exactly 85 statement rows and 13 binding rows. It verifies
+Source mode requires exactly 86 statement rows and 13 binding rows. It verifies
 source Sid and document order, all seven condition-operator truth tables and
 their prescribed decisions, and exactly one unambiguous `expect <decision>`
 clause in every ordinary executable case. Every executable non-KMS `:absent`
@@ -268,6 +295,21 @@ validated mechanically. The `absent-key-passed`, `arn-real-account`,
 `trust-mutable-name-executable`, `unquoted-wildcard`,
 `uncommented-extra-sid`, and `wrong-audience-bare-na` mutations must print the
 `FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
+
+The wildcard evaluation contract derives every unconditioned
+`Resource = "*"` tuple from comment-stripped `bootstrap/roles.tf` and requires
+exact equality with the 37-row reference table. Six tuple-set mutations add a
+Sid, append an action, remove or fabricate a table row, and alter each duplicate
+`EcrAuth` statement independently; three more break the static condition scopes.
+The authored `base-plan.json` includes the invalid Lambda-action removal plus the
+three conditions and one statement split. Because the bootstrap policy changed,
+the host worker must run `make bootstrap-apply TARGET=localstack` followed by
+`make iam-matrix-plan` to refresh plan-mode evidence; the fixture was not
+presented as a LocalStack recording. A second equality covers the 14 tuples
+condition-scoped in this PR: the tuples of the three scoped Sids in
+`bootstrap/roles.tf` must equal the rows of the condition-scoped table, each
+with both conclusions filled and a follow-up cited where resource scope is
+possible, with a removed-row and an appended-action fixture that must fail.
 
 After bootstrap has been applied to LocalStack, render and compare plan mode
 through the one hardened render path:

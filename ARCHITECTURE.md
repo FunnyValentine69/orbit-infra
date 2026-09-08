@@ -213,13 +213,18 @@ key as the private upstream images, always with `--tlog-upload=false` and
 verification through the exported public key; no private-ECR reference is
 sent to Rekor. Private upstream images are built locally, never in hosted CI,
 from a `git archive` of the pinned, verified upstream commit — never a working
-tree. Each private upstream image gets a syft SBOM attestation (never published
-as an Actions artifact, ADR 0007 amendment 2026-09-04) and a fail-closed Trivy
-scan; the placeholder and mirror images get their own Trivy scans in
-mirror-images.yml. Every scan explicitly selects the deployed
-`linux/arm64` image and blocks (`exit-code: 1`) on its own severity set: the
-private upstream images on CRITICAL, the placeholder and mirrors on
-CRITICAL and HIGH with unfixed findings ignored. See ADR 0007.
+tree. The placeholder installs a universally compiled requirements lock with
+distribution hashes required by pip. Each private upstream image gets a syft
+SBOM attestation (never published as an Actions artifact, ADR 0007 amendment
+2026-09-04); re-runs compare package metadata and the relationship graph through
+`scripts/sbom-canon.sh`, so a corrected checksum, license, external reference,
+or relationship is re-attested. Upstream images receive a fail-closed CRITICAL
+Trivy scan; placeholder and mirror scans retain the stricter CRITICAL-and-HIGH
+gate. Each successful scan is followed by a fresh vulnerability-scan
+attestation. Before AWS apply, `session-apply.yml` requires that predicate to
+match the selected digest, pinned scanner version, passing severity gate, and
+freshness window. Every scan selects the deployed `linux/arm64` image. See ADR
+0007.
 
 `scripts/build-upstream.sh` implements the local build side: it asserts
 the local upstream clone's origin, HEAD, and working-tree cleanliness

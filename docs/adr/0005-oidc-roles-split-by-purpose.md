@@ -63,22 +63,23 @@ bootstrap step; CI never uses static keys.
   is branch protection on main, not the subject. Hardening candidate for
   Phase 5: per-workflow subject binding via GitHub's OIDC subject
   customization (`workflow` claim), to be verified against a real token
-  before adoption.
+  before adoption. P5-37 separately tracks a fourth scan-only role whose
+  trust is pinned to the scan job through `job_workflow_ref` and whose
+  attesting principal can be enforced by the apply verifier.
 - The `deployer` role's environment-mutation rights are an enumerated,
   least-privilege policy (`bootstrap/roles.tf`), not the broad
   `EnvironmentMutationPlaceholder` statement used through Phase 2's
   module-building work: separate statements cover EC2 networking, ALB,
   ECS, Cloud Map, CloudWatch log groups, Secrets Manager, the preview
   data bucket, and the ECS execution/task IAM roles, each scoped to a
-  resource ARN pattern where AWS supports resource-level permissions and
-  to `resources = ["*"]` only where it documents none (EC2 VPC/subnet/
-  route-table/IGW/endpoint/SG lifecycle, ELBv2 create/register/tag
-  calls, ECS `RegisterTaskDefinition`/`CreateService` plus close-time
-  `ListServices`, Cloud Map namespace/service, and the
-  close-time full-inventory read `tag:GetResources`). Close-time
-  `ecs:ListTasks` and `ecs:DescribeTasks` are the exception among the
-  ECS reads: they carry an `ecs:cluster` ARN condition restricting them to
-  project clusters (statement `EcsListDescribeTasksForProjectClusters`). An explicit `Deny`
+  resource ARN pattern where AWS supports resource-level permissions.
+  `resources = ["*"]` remains where ARN scoping is unavailable, paired with
+  documented request, resource-tag, region, cluster, or tag-key conditions
+  whenever their values are static. Close-time `ecs:ListServices`,
+  `ecs:ListTasks`, and `ecs:DescribeTasks` carry an `ecs:cluster` ARN
+  condition restricting them to project clusters (statements
+  `EcsListServicesClusterScoped` and
+  `EcsListDescribeTasksForProjectClusters`). An explicit `Deny`
   statement caps the name-substring-scoped IAM grants so the deployer can
   never mutate or pass its own role, `plan-reader`, or `publisher`
   (TODO.md P2-7).
@@ -122,8 +123,20 @@ flagged in a roles.tf comment as not table-backed rather than presented
 as verified. `resources` stays `["*"]` on these statements — AWS does not
 support resource-level ARN scoping for freshly-created resources with
 unknown IDs, but IAM still evaluates the tag conditions against a `"*"`
-resource, so the scoping is real even though the wildcard-count grep does
-not shrink.
+resource, so the scoping is real even though a raw `Resource = "*"` grep does
+not shrink; the unconditioned wildcard tuple set does shrink.
+
+The AWS Service Authorization Reference was re-evaluated for every
+unconditioned wildcard action on 2026-09-08. The resulting table and follow-ups
+are in `docs/iam-matrix.md`; that review also removed the non-existent
+`lambda:GetLayerVersionByArn` action string because the valid IAM action is
+`lambda:GetLayerVersion`, which was already present. Static reference-backed
+values now scope all 12 EC2 describe actions by `ec2:Region`,
+`ecs:ListServices` by the project cluster ARN, and Cloud Map `UntagResource` to
+the `Project`, `ManagedBy`, and `env_id` keys. The runtime instance ARN and
+per-session VPC id scopes remain filed as P5-38 and P5-39; P5-40 tracks whether
+Cloud Map can resolve a `GetOperation` operation id to taggable namespace or
+service context on real AWS.
 
 Two new service-linked-role allowances (`AWSServiceRoleForElasticLoadBalancing`,
 `AWSServiceRoleForECS`) are pinned to their exact ARNs and gated by
