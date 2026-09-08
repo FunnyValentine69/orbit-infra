@@ -31,6 +31,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      TRIVY_SEVERITY_GATE: CRITICAL,HIGH
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -196,7 +198,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/placeholder@${{ steps.placeholder-digest.outputs.digest }}
-          severity: CRITICAL,HIGH
+          severity: ${{ env.TRIVY_SEVERITY_GATE }}
           exit-code: '1'
           version: v${{ steps.tool-versions.outputs.trivy }}
           ignore-unfixed: true
@@ -217,7 +219,7 @@ jobs:
           jq -cn \
             --arg scanner trivy \
             --arg trivy_version "$installed_trivy" \
-            --arg severity_gate CRITICAL \
+            --arg severity_gate "$TRIVY_SEVERITY_GATE" \
             --arg scanned_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg digest "$DIGEST" \
             '{scanner:$scanner,trivyVersion:$trivy_version,severityGate:$severity_gate,exitCode:0,scannedAt:$scanned_at,digest:$digest}' \
@@ -319,7 +321,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/redis@${{ steps.mirror-redis.outputs.digest }}
-          severity: CRITICAL,HIGH
+          severity: ${{ env.TRIVY_SEVERITY_GATE }}
           exit-code: '1'
           version: v${{ steps.tool-versions.outputs.trivy }}
 
@@ -339,7 +341,7 @@ jobs:
           jq -cn \
             --arg scanner trivy \
             --arg trivy_version "$installed_trivy" \
-            --arg severity_gate CRITICAL \
+            --arg severity_gate "$TRIVY_SEVERITY_GATE" \
             --arg scanned_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg digest "$DIGEST" \
             '{scanner:$scanner,trivyVersion:$trivy_version,severityGate:$severity_gate,exitCode:0,scannedAt:$scanned_at,digest:$digest}' \
@@ -457,7 +459,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.registry.outputs.registry }}/orbit-infra-79s5rw/mirror/clickhouse@${{ steps.mirror-clickhouse.outputs.digest }}
-          severity: CRITICAL,HIGH
+          severity: ${{ env.TRIVY_SEVERITY_GATE }}
           exit-code: '1'
           version: v${{ steps.tool-versions.outputs.trivy }}
 
@@ -477,7 +479,7 @@ jobs:
           jq -cn \
             --arg scanner trivy \
             --arg trivy_version "$installed_trivy" \
-            --arg severity_gate CRITICAL \
+            --arg severity_gate "$TRIVY_SEVERITY_GATE" \
             --arg scanned_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg digest "$DIGEST" \
             '{scanner:$scanner,trivyVersion:$trivy_version,severityGate:$severity_gate,exitCode:0,scannedAt:$scanned_at,digest:$digest}' \

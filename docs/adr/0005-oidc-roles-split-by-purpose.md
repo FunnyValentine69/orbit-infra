@@ -132,10 +132,11 @@ are in `docs/iam-matrix.md`; that review also removed the non-existent
 `lambda:GetLayerVersionByArn` action string because the valid IAM action is
 `lambda:GetLayerVersion`, which was already present. Static reference-backed
 values now scope all 12 EC2 describe actions by `ec2:Region`,
-`ecs:ListServices` by the project cluster ARN, Cloud Map `GetOperation` by the
-Project resource tag, and Cloud Map `UntagResource` to the `Project`,
-`ManagedBy`, and `env_id` keys. Only the runtime instance ARN and per-session
-VPC id scopes remain filed as P5-38 and P5-39.
+`ecs:ListServices` by the project cluster ARN, and Cloud Map `UntagResource` to
+the `Project`, `ManagedBy`, and `env_id` keys. The runtime instance ARN and
+per-session VPC id scopes remain filed as P5-38 and P5-39; P5-40 tracks whether
+Cloud Map can resolve a `GetOperation` operation id to taggable namespace or
+service context on real AWS.
 
 Two new service-linked-role allowances (`AWSServiceRoleForElasticLoadBalancing`,
 `AWSServiceRoleForECS`) are pinned to their exact ARNs and gated by

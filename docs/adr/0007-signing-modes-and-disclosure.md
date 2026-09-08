@@ -126,13 +126,16 @@ and ignores document-only timestamps and identifiers.
 
 Every successful producer scan now publishes a fresh
 `https://github.com/FunnyValentine69/orbit-infra/vuln-scan/v1` predicate with the
-digest, scanner name, pinned Trivy version, CRITICAL severity gate, zero exit
-code, and UTC scan time. As with every private-ECR attestation, the command uses
+digest, scanner name, pinned Trivy version, exact scan severity gate, zero exit
+code, and UTC scan time. The upstream workflow scans at `CRITICAL`; the mirror
+workflow uses one shared `CRITICAL,HIGH` value for both each Trivy step and its
+predicate. As with every private-ECR attestation, the command uses
 `--tlog-upload=false` and `--use-signing-config=false`. Before AWS apply, each
 selected digest must have a matching passing predicate produced by the current
-Trivy pin and no more than 10 days old by default; future or malformed times are
-refused. The mirror producer runs weekly, while upstream applies require a
-manual `sign-images.yml` run within the configured window.
+Trivy pin, a comma-separated severity gate containing `CRITICAL`, and an age no
+more than 10 days old by default; future or malformed times are refused. The
+mirror producer runs weekly, while upstream applies require a manual
+`sign-images.yml` run within the configured window.
 
 This closes scan-status and freshness enforcement, but not attesting-identity
 separation: the existing publisher role remains assumable by every eligible

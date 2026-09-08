@@ -906,10 +906,10 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   }
 
   # --- (e) Cloud Map namespace + service. ---
-  # ListTagsForResource/ListNamespaces/ListServices have no published
-  # resource type or condition key.
+  # ListTagsForResource is table-confirmed * only with zero condition
+  # keys; ListNamespaces/ListServices are not covered by the table.
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed no resource type or condition key for these Cloud Map list actions
+    #checkov:skip=CKV_AWS_111:table-confirmed * only (ListTagsForResource) or uncovered (ListNamespaces/ListServices) Cloud Map actions (iam-condition-keys.md Cloud Map section)
     #checkov:skip=CKV_AWS_356:same as above
     sid    = "ServiceDiscoveryStarOnlyNoCondition"
     effect = "Allow"
@@ -917,25 +917,12 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
       "servicediscovery:ListTagsForResource",
       "servicediscovery:ListNamespaces",
       "servicediscovery:ListServices",
+      # T2: GetOperation polls an operation ID, which is not taggable, so
+      # it cannot carry the aws:ResourceTag/Project condition the other
+      # actions below use; kept unconditioned here instead.
+      "servicediscovery:GetOperation",
     ]
     resources = ["*"]
-  }
-
-  # GetOperation supports the generic Project resource-tag condition on its
-  # published namespace and service resource types.
-  statement {
-    #checkov:skip=CKV_AWS_111:GetOperation is restricted through aws:ResourceTag/Project
-    #checkov:skip=CKV_AWS_356:same as above
-    sid       = "ServiceDiscoveryGetOperationWithResourceTag"
-    effect    = "Allow"
-    actions   = ["servicediscovery:GetOperation"]
-    resources = ["*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:ResourceTag/Project"
-      values   = [var.project_tag]
-    }
   }
 
   # CreatePrivateDnsNamespace is table-confirmed * only but supports

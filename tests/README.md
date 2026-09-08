@@ -10,17 +10,20 @@ explicitly in the `terraform-plan.yml` gates job before `scripts/gates.sh`.
 creator string and that timestamp-only changes, consistent identifier
 renumbering, and reversed package order compare equal. Five separate assertions
 require checksum, license, relationship, identifier-swap, and same-name
-relationship-switch changes to compare different; a missing-array case proves
-null safety.
+relationship-switch changes to compare different; a missing optional
+relationships array proves null safety. Two fail-closed assertions reject a
+missing `spdxVersion` and a
+non-array `packages` field, for 14 assertions total.
 
 The phase-3 suite also joins every logical requirements line and requires a hash,
 checks the three direct pins and Dockerfile `--require-hashes` flag, and
 structurally verifies scan producer order, attestation flags, pinned Trivy
 versions, per-mode verifier call sites, weekly cadence, and the 10-day default.
-Its extracted verifier runs 17 cases across freshness boundaries, multiple
-attestations, malformed and
-future timestamps, predicate contents, scanner versions, and input range. A
-removed-freshness mutant and flag/version mutations must be rejected.
+Its extracted verifier runs 22 cases across freshness boundaries, multiple
+attestations, malformed envelopes and timestamps, future timestamps, predicate
+contents, scanner versions, severity lists, and input range including
+leading-zero values. A removed-freshness mutant and flag/version mutations must
+be rejected.
 
 Run the cleanup regression suite without AWS or LocalStack:
 
@@ -287,12 +290,12 @@ validated mechanically. The `absent-key-passed`, `arn-real-account`,
 
 The wildcard evaluation contract derives every unconditioned
 `Resource = "*"` tuple from comment-stripped `bootstrap/roles.tf` and requires
-exact equality with the 36-row reference table. Scratch mutations add a Sid,
-append an action, remove a table row, alter each duplicate `EcrAuth` statement
-independently, and break each of the four static condition scopes. The authored
-`base-plan.json` includes the invalid Lambda-action removal plus the four
-conditions and two statement splits. Because the bootstrap policy changed, the
-host worker must run `make bootstrap-apply TARGET=localstack` followed by
+exact equality with the 37-row reference table. Six tuple-set mutations add a
+Sid, append an action, remove or fabricate a table row, and alter each duplicate
+`EcrAuth` statement independently; three more break the static condition scopes.
+The authored `base-plan.json` includes the invalid Lambda-action removal plus the
+three conditions and one statement split. Because the bootstrap policy changed,
+the host worker must run `make bootstrap-apply TARGET=localstack` followed by
 `make iam-matrix-plan` to refresh plan-mode evidence; the fixture was not
 presented as a LocalStack recording.
 

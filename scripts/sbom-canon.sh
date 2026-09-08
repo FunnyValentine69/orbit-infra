@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+input_file="$(mktemp)"
+trap 'rm -f "$input_file"' EXIT
+cat > "$input_file"
+
+if ! jq -e '
+  (.spdxVersion | type == "string" and startswith("SPDX-"))
+  and (.packages | type == "array")
+' "$input_file" >/dev/null 2>&1; then
+  echo "sbom-canon: input is not an SPDX document" >&2
+  exit 1
+fi
+
 jq -cS '
   def canonical_package:
     {
@@ -16,7 +28,7 @@ jq -cS '
         | sort_by([.referenceCategory, .referenceType, .referenceLocator]))
     };
 
-  (.packages // []) as $source_packages
+  .packages as $source_packages
   | ($source_packages
       | map(.SPDXID as $id | {key: $id, value: (canonical_package | tojson)})
       | from_entries) as $package_identities
@@ -41,4 +53,4 @@ jq -cS '
         })
       | sort_by([.spdxElementId, .relationshipType, .relatedSpdxElement]))
   }
-'
+' "$input_file"

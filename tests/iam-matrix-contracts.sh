@@ -155,8 +155,8 @@ for line_no, line in enumerate(text.splitlines(), 1):
             fail(f"bare pipe inside binding table cell at line {line_no}")
         binding_rows.append((line_no, cells))
 
-if len(statement_rows) != 87:
-    fail(f"expected 87 statement rows, found {len(statement_rows)}")
+if len(statement_rows) != 86:
+    fail(f"expected 86 statement rows, found {len(statement_rows)}")
 if len(binding_rows) != 13:
     fail(f"expected 13 binding rows, found {len(binding_rows)}")
 
@@ -1251,13 +1251,9 @@ expected_scoped_statements = {
     ("deployer_elb_ecs", "ServiceDiscoveryStarOnlyNoCondition"): (
         tuple(sorted((
             "servicediscovery:ListTagsForResource", "servicediscovery:ListNamespaces",
-            "servicediscovery:ListServices",
+            "servicediscovery:ListServices", "servicediscovery:GetOperation",
         ))),
         (),
-    ),
-    ("deployer_elb_ecs", "ServiceDiscoveryGetOperationWithResourceTag"): (
-        ("servicediscovery:GetOperation",),
-        (("StringEquals", "aws:ResourceTag/Project", ("var.project_tag",)),),
     ),
     ("deployer_elb_ecs", "ServiceDiscoveryUntagResource"): (
         ("servicediscovery:UntagResource",),
@@ -1348,10 +1344,12 @@ if missing or extra:
     if extra:
         detail.append("extra " + "/".join(extra[0]))
     fail("tuple-set mismatch: " + "; ".join(detail))
-if len(source_rows) != 36:
-    fail(f"expected 36 evaluated tuples after in-PR scoping, found {len(source_rows)}")
+if len(source_rows) != 37:
+    fail(f"expected 37 evaluated tuples after in-PR scoping, found {len(source_rows)}")
+if len({action for _, _, _, action in source_rows}) != 34:
+    fail("expected 34 distinct evaluated actions")
 
-print("PASS: wildcard evaluation tuple-set equality (36 tuples, 33 distinct actions)")
+print("PASS: wildcard evaluation tuple-set equality (37 tuples, 34 distinct actions)")
 PY_WILDCARD_EVALUATION
 
 run_wildcard_negative_fixtures() {
@@ -1438,6 +1436,24 @@ PY_REMOVE_WILDCARD_ROW
   expect_wildcard_fail removed-row "tuple-set mismatch: missing" \
     env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_DOC_OVERRIDE="$doc_copy" "$0"
 
+  python3 - "$wildcard_doc" "$doc_copy" <<'PY_APPEND_WILDCARD_ROW'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+marker = "<!-- wildcard-evaluation:end -->"
+row = (
+    "| `deployer_elb_ecs` | `FabricatedWildcard` | `Allow` | `ecs:ListClusters` | `[]` | `[]` | "
+    "`none` | `none` | `AWS reference has neither scope` | "
+    "`https://docs.aws.amazon.com/service-authorization/latest/reference/list_ecs.html; fetched 2026-09-08` |\n"
+)
+if source.count(marker) != 1:
+    raise SystemExit("wildcard table end marker mismatch")
+Path(sys.argv[2]).write_text(source.replace(marker, row + marker, 1))
+PY_APPEND_WILDCARD_ROW
+  expect_wildcard_fail appended-row "tuple-set mismatch: extra deployer_elb_ecs/FabricatedWildcard/Allow/ecs:ListClusters" \
+    env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_DOC_OVERRIDE="$doc_copy" "$0"
+
   for occurrence in first second; do
     python3 - "$wildcard_roles" "$roles_copy" "$occurrence" <<'PY_MUTATE_ECR_AUTH'
 from pathlib import Path
@@ -1483,11 +1499,10 @@ PY_MUTATE_SCOPED_STATEMENT
   done <<'SCOPED_MUTATIONS'
 ec2-region|Ec2DescribeStarOnly|values   = [var.region]|values   = [var.project_tag]
 ecs-cluster|EcsListServicesClusterScoped|variable = "ecs:cluster"|variable = "ecs:service"
-cloud-map-project|ServiceDiscoveryGetOperationWithResourceTag|values   = [var.project_tag]|values   = [var.region]
 cloud-map-tag-keys|ServiceDiscoveryUntagResource|        "env_id",|        "Name",
 SCOPED_MUTATIONS
 
-  echo "PASS: wildcard evaluation negative fixtures (8 fixture types, 9 cases)"
+  echo "PASS: wildcard evaluation negative fixtures (6 tuple-set cases, 3 scoped-condition cases)"
 }
 
 if [ "${IAM_WILDCARD_SKIP_NEGATIVES:-0}" != 1 ]; then
@@ -2144,4 +2159,4 @@ if [ "${IAM_MATRIX_SKIP_NEGATIVES:-0}" != 1 ]; then
   run_negative_fixtures "$tmp_dir"
 fi
 
-echo "PASS: IAM matrix contracts (87 statements, 13 bindings)"
+echo "PASS: IAM matrix contracts (86 statements, 13 bindings)"

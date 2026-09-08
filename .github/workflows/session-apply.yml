@@ -94,7 +94,7 @@ jobs:
             upstream|public) ;;
             *) echo "mode must be upstream or public" >&2; exit 1 ;;
           esac
-          if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[0-9]+$ ]] ||
+          if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[1-9][0-9]*$ ]] ||
              [ "$SCAN_FRESHNESS_DAYS" -lt 1 ] || [ "$SCAN_FRESHNESS_DAYS" -gt 60 ]; then
             echo "SCAN_FRESHNESS_DAYS out of range" >&2
             exit 1
@@ -447,6 +447,7 @@ jobs:
 
       - name: Verify selected image signatures and attestations
         if: inputs.target == 'aws'
+        shell: bash
         env:
           MODE: ${{ inputs.mode }}
           PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
@@ -466,6 +467,7 @@ jobs:
           REDIS_SOURCE: ${{ steps.images.outputs.redis_source }}
           CLICKHOUSE_SOURCE: ${{ steps.images.outputs.clickhouse_source }}
         run: |
+          set -euo pipefail
           verify_signature() {
             local label="$1"
             local image="$2"
@@ -489,14 +491,15 @@ jobs:
             local label="$1"
             local image="$2"
             local digest="${image##*@}"
-            local attestations predicate scanned_at scanned_epoch now_epoch age_seconds window_seconds
+            local attestations predicates_file predicate scanned_at scanned_epoch now_epoch age_seconds window_seconds
             local found_digest=false
             local saw_mismatch=false
             local saw_failed=false
+            local saw_severity_mismatch=false
             local saw_malformed=false
             local saw_future=false
             local stale_at=""
-            if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[0-9]+$ ]] ||
+            if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[1-9][0-9]*$ ]] ||
                [ "$SCAN_FRESHNESS_DAYS" -lt 1 ] || [ "$SCAN_FRESHNESS_DAYS" -gt 60 ]; then
               echo "SCAN_FRESHNESS_DAYS out of range" >&2
               return 1
@@ -505,6 +508,16 @@ jobs:
               --type https://github.com/FunnyValentine69/orbit-infra/vuln-scan/v1 \
               "$image" 2>/dev/null)"; then
               echo "no scan attestation for $digest" >&2
+              return 1
+            fi
+            predicates_file="$(mktemp)"
+            if ! jq -c -s --arg digest "$digest" '
+              .[]
+              | (.payload | @base64d | fromjson | .predicate)
+              | select(type == "object" and .digest == $digest)
+            ' <<< "$attestations" > "$predicates_file"; then
+              echo "scan attestation for $digest: could not decode attestations" >&2
+              rm -f "$predicates_file"
               return 1
             fi
             now_epoch="${SCAN_NOW_EPOCH:-$(date -u +%s)}"
@@ -517,9 +530,17 @@ jobs:
                 saw_mismatch=true
                 continue
               fi
-              if ! jq -e '.exitCode == 0 and .severityGate == "CRITICAL"' \
-                <<< "$predicate" >/dev/null; then
+              if ! jq -e '.exitCode == 0' <<< "$predicate" >/dev/null; then
                 saw_failed=true
+                continue
+              fi
+              if ! jq -e '
+                try (
+                  (.severityGate | type) == "string"
+                  and ((.severityGate | split(",")) | index("CRITICAL") != null)
+                ) catch false
+              ' <<< "$predicate" >/dev/null; then
+                saw_severity_mismatch=true
                 continue
               fi
               scanned_at="$(jq -r '.scannedAt // empty' <<< "$predicate")"
@@ -537,12 +558,10 @@ jobs:
                 stale_at="$scanned_at"
                 continue
               fi
+              rm -f "$predicates_file"
               return 0
-            done < <(jq -c -s --arg digest "$digest" '
-              .[]
-              | try (.payload | @base64d | fromjson | .predicate) catch empty
-              | select(type == "object" and .digest == $digest)
-            ' <<< "$attestations")
+            done < "$predicates_file"
+            rm -f "$predicates_file"
             if [ "$found_digest" = false ]; then
               echo "no scan attestation for $digest" >&2
             elif [ -n "$stale_at" ]; then
@@ -553,6 +572,8 @@ jobs:
               echo "scan attestation scannedAt is malformed" >&2
             elif [ "$saw_failed" = true ]; then
               echo "scan attestation reports a failed scan" >&2
+            elif [ "$saw_severity_mismatch" = true ]; then
+              echo "scan attestation severity gate mismatch" >&2
             elif [ "$saw_mismatch" = true ]; then
               echo "scan attestation scanner or version mismatch" >&2
             else

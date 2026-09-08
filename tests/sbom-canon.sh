@@ -59,11 +59,37 @@ for different_fixture in \
   echo "PASS: SBOM canonical difference base != ${different_fixture}"
 done
 
-jq 'del(.packages, .relationships)' "$FIXTURES/base.spdx.json" \
+jq '{spdxVersion, packages: []}' "$FIXTURES/base.spdx.json" \
   | "$CANON" > "$tmp_dir/null-safe.canon"
 if [ "$(cat "$tmp_dir/null-safe.canon")" != '{"packages":[],"relationships":[]}' ]; then
-  fail "missing package and relationship arrays must canonicalise to empty arrays"
+  fail "an SPDX document with an empty packages array and missing relationships must canonicalise to empty arrays"
 fi
 echo "PASS: SBOM canonicalizer is null-safe"
 
-echo "PASS: SBOM canonicalization contracts (12 assertions)"
+assert_not_spdx() {
+  local label="$1"
+  local document="$2"
+  local output_file="$tmp_dir/${label}.out"
+  local error_file="$tmp_dir/${label}.err"
+  local rc
+
+  set +e
+  printf '%s\n' "$document" | "$CANON" > "$output_file" 2> "$error_file"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 1 ]; then
+    fail "$label must exit 1, got $rc"
+  fi
+  if [ -s "$output_file" ]; then
+    fail "$label must not emit canonical output"
+  fi
+  if [ "$(cat "$error_file")" != "sbom-canon: input is not an SPDX document" ]; then
+    fail "$label must emit the non-SPDX diagnostic"
+  fi
+  echo "PASS: SBOM canonicalizer rejects $label"
+}
+
+assert_not_spdx missing-spdx-version '{"packages":[]}'
+assert_not_spdx packages-not-array '{"spdxVersion":"SPDX-2.3","packages":{}}'
+
+echo "PASS: SBOM canonicalization contracts (14 assertions)"

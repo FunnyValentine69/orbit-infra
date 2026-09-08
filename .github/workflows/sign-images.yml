@@ -152,6 +152,7 @@ jobs:
             -out "$RUNNER_TEMP/kms-public-key.pem"
 
       - name: Generate SBOMs, scan, sign, and attest upstream images
+        shell: bash
         env:
           KMS_KEY_ARN: ${{ secrets.AWS_KMS_SIGNING_KEY_ARN }}
           PUBLIC_KEY: ${{ runner.temp }}/kms-public-key.pem
@@ -162,6 +163,7 @@ jobs:
           UPSTREAM_ARCHIVE_SHA256: ${{ steps.lock.outputs.upstream_archive_sha256 }}
           REPO_BUILD_INPUTS_SHA256: ${{ steps.lock.outputs.repo_build_inputs_sha256 }}
         run: |
+          set -euo pipefail
           tag="${UPSTREAM_SHA:0:12}"
           built_on="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -191,19 +193,32 @@ jobs:
             trivy image --platform linux/arm64 --severity CRITICAL --exit-code 1 "${image}@${digest}"
 
             # SBOM stays private; re-runs skip only an attestation with the same canonical package metadata and graph.
-            new_canon="$(scripts/sbom-canon.sh < "${name}-sbom.spdx.json")"
+            if ! new_canon="$(scripts/sbom-canon.sh < "${name}-sbom.spdx.json")"; then
+              echo "${repository}: current SBOM canonicalization failed" >&2
+              exit 1
+            fi
             matching_sbom=false
+            prior_predicates_file="$(mktemp)"
             if prior_attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               --type spdxjson "${image}@${digest}" 2>/dev/null)"; then
+              if ! jq -c '(.payload | @base64d | fromjson | .predicate)' \
+                <<< "$prior_attestations" > "$prior_predicates_file"; then
+                echo "${repository}: could not decode attestations" >&2
+                rm -f "$prior_predicates_file"
+                exit 1
+              fi
               while IFS= read -r prior_predicate; do
-                if prior_canon="$(printf '%s\n' "$prior_predicate" | scripts/sbom-canon.sh 2>/dev/null)" && \
-                   [ "$prior_canon" = "$new_canon" ]; then
+                if ! prior_canon="$(printf '%s\n' "$prior_predicate" | scripts/sbom-canon.sh)"; then
+                  echo "${repository}: prior SBOM canonicalization failed; re-attesting" >&2
+                  continue
+                fi
+                if [ "$prior_canon" = "$new_canon" ]; then
                   matching_sbom=true
                   break
                 fi
-              done < <(jq -c 'try (.payload | @base64d | fromjson | .predicate) catch empty' \
-                <<< "$prior_attestations")
+              done < "$prior_predicates_file"
             fi
+            rm -f "$prior_predicates_file"
             if [ "$matching_sbom" = true ]; then
               echo "${repository}: matching canonical SBOM attestation already exists"
             else

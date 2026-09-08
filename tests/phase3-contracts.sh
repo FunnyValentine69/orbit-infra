@@ -405,7 +405,19 @@ sign_index = one_index(
     lambda step: step.get("name") == "Generate SBOMs, scan, sign, and attest upstream images",
     "upstream supply-chain step",
 )
-sign_run = sign_steps[sign_index].get("run", "")
+sign_step = sign_steps[sign_index]
+sign_run = sign_step.get("run", "")
+if sign_step.get("shell") != "bash" or not sign_run.startswith("set -euo pipefail\n"):
+    fail("sign-images supply-chain step must use shell bash with explicit strict mode")
+if "done < <(jq" in sign_run:
+    fail("sign-images must decode prior attestations before entering the predicate loop")
+for marker in (
+    "could not decode attestations",
+    "current SBOM canonicalization failed",
+    "prior SBOM canonicalization failed; re-attesting",
+):
+    if marker not in sign_run:
+        fail(f"sign-images lacks fail-closed SBOM guard diagnostic: {marker}")
 if '.name + "@" + (.versionInfo // "")' in sign_run:
     fail("sign-images must not retain the name@version SBOM inventory filter")
 if sign_run.count("scripts/sbom-canon.sh") < 2:
@@ -443,8 +455,9 @@ for artifact, sign_name in artifacts:
     if not str(scan_step.get("uses", "")).startswith("aquasecurity/trivy-action@"):
         fail(f"{scan_name} must use trivy-action")
     assert_trivy_action_version(scan_step, scan_name)
-    if scan_step.get("with", {}).get("severity") != "CRITICAL,HIGH":
-        fail(f"{scan_name} must retain the CRITICAL,HIGH severity gate")
+    severity_expression = scan_step.get("with", {}).get("severity")
+    if severity_expression != "${{ env.TRIVY_SEVERITY_GATE }}":
+        fail(f"{scan_name} must read the shared TRIVY_SEVERITY_GATE")
     attest_run = mirror_steps[attest_step_index].get("run", "")
     assert_attest_flags(attest_run, attest_name)
     if f"--type {VULN_TYPE}" not in attest_run:
@@ -454,6 +467,12 @@ for artifact, sign_name in artifacts:
             fail(f"{attest_name} predicate lacks {field}")
     if "trivy --version" not in attest_run or "trivy version mismatch" not in attest_run:
         fail(f"{attest_name} must attest the executed binary version after checking the pin")
+    if '--arg severity_gate "$TRIVY_SEVERITY_GATE"' not in attest_run:
+        fail(f"{attest_name} must attest the shared TRIVY_SEVERITY_GATE")
+
+mirror_gate = mirror["jobs"]["mirror"].get("env", {}).get("TRIVY_SEVERITY_GATE")
+if mirror_gate != "CRITICAL,HIGH":
+    fail("mirror-images must define the shared CRITICAL,HIGH severity gate once at job scope")
 
 first_attest = next(step for step in mirror_steps if step.get("name") == "Attest vulnerability scan placeholder")
 for removed_flag in ("--tlog-upload=false", "--use-signing-config=false"):
@@ -501,7 +520,14 @@ verify_index = one_index(
     lambda step: step.get("name") == "Verify selected image signatures and attestations",
     "session-apply image verification step",
 )
-verify_run = apply_steps[verify_index].get("run", "")
+verify_step = apply_steps[verify_index]
+verify_run = verify_step.get("run", "")
+if verify_step.get("shell") != "bash" or not verify_run.startswith("set -euo pipefail\n"):
+    fail("session-apply image verification step must use shell bash with explicit strict mode")
+if "done < <(jq" in verify_run:
+    fail("session-apply must decode scan attestations before entering the predicate loop")
+if "could not decode attestations" not in verify_run:
+    fail("session-apply lacks the malformed-attestation decode diagnostic")
 if "verify_scan_attestation()" not in verify_run:
     fail("session-apply must define verify_scan_attestation")
 required_calls = (
@@ -560,6 +586,10 @@ set -euo pipefail
 if [ "${SCAN_NO_ATTESTATION:-0}" = 1 ]; then
   exit 1
 fi
+if [ "${SCAN_MALFORMED_ENVELOPE:-0}" = 1 ]; then
+  printf '%s\n' '{"payload":"%%%"}'
+  exit 0
+fi
 while IFS= read -r predicate; do
   statement="$(jq -cn --argjson predicate "$predicate" '{predicate:$predicate}')"
   payload="$(printf '%s' "$statement" | base64 | tr -d '\n')"
@@ -586,10 +616,11 @@ write_scan_predicate() {
   local scanner="$4"
   local version="$5"
   local exit_code="$6"
+  local severity="${7:-CRITICAL}"
   jq -cn \
     --arg scanner "$scanner" \
     --arg version "$version" \
-    --arg severity CRITICAL \
+    --arg severity "$severity" \
     --arg scanned_at "$scanned_at" \
     --arg digest "$digest" \
     --argjson exit_code "$exit_code" \
@@ -605,6 +636,7 @@ run_scan_case() {
   local predicate_file="$5"
   local freshness_days="$6"
   local no_attestation="${7:-0}"
+  local malformed_envelope="${8:-0}"
   local output rc
   set +e
   output="$(
@@ -616,6 +648,7 @@ run_scan_case() {
     SCAN_NOW_EPOCH="$scan_now_epoch" \
     SCAN_PREDICATE_FILE="$predicate_file" \
     SCAN_NO_ATTESTATION="$no_attestation" \
+    SCAN_MALFORMED_ENVELOPE="$malformed_envelope" \
       bash "$script" 2>&1
   )"
   rc=$?
@@ -649,6 +682,8 @@ run_scan_case stale-then-fresh 0 "" "$scan_verify_script" "$scan_predicate" 10
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 11 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
 run_scan_case stale 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
 run_scan_case missing 1 "no scan attestation for $scan_digest" "$scan_verify_script" "$scan_predicate" 10 1
+run_scan_case malformed-envelope 1 "could not decode attestations" \
+  "$scan_verify_script" "$scan_predicate" 10 0 1
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 1
 run_scan_case failed-scan 1 "scan attestation reports a failed scan" "$scan_verify_script" "$scan_predicate" 10
@@ -669,10 +704,16 @@ write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 10 * 8640
 run_scan_case past-boundary 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
-for invalid_window in 0 61 abc; do
+for invalid_window in 0 61 abc 08 07; do
   run_scan_case "window-${invalid_window}" 1 "SCAN_FRESHNESS_DAYS out of range" \
     "$scan_verify_script" "$scan_predicate" "$invalid_window"
 done
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0 CRITICAL,HIGH
+run_scan_case severity-critical-high 0 "" "$scan_verify_script" "$scan_predicate" 10
+
+write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0 HIGH
+run_scan_case severity-high 1 "scan attestation severity gate mismatch" "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" grype "$trivy_pin" 0
 run_scan_case scanner-mismatch 1 "scan attestation scanner or version mismatch" "$scan_verify_script" "$scan_predicate" 10
@@ -684,7 +725,7 @@ write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 11 * 8640
 run_scan_case stale-original 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
 run_scan_case stale-mutant 0 "" "$scan_verify_mutant" "$scan_predicate" 10
 echo "PASS: scan-attestation freshness mutant killed"
-echo "PASS: scan-attestation verification contracts (17 cases)"
+echo "PASS: scan-attestation verification contracts (22 cases)"
 
 # P5-26: fixture hygiene must reject global IPv6 addresses while accepting
 # explicit policy markers and non-routable/documentation ranges.
