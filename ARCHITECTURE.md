@@ -15,7 +15,9 @@ It ships a placeholder image built from public source so it applies end to
 end without private code, and separately deploys the upstream workload
 (`SuperGokou/happyCoding`) for demonstration; upstream source and images
 are never publicly published. It targets two backends: LocalStack for
-development and CI, real AWS as the final promotion step (see ADR 0008).
+development and CI, and real AWS, to which the composition stays
+portable although promotion is not planned for this portfolio (see
+ADR 0008).
 
 ## Topology
 

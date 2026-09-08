@@ -84,11 +84,11 @@ The boundaries are the internet-facing ALB, GitHub-to-AWS federation, the ALB ha
 
 | Id or ADR | Risk | Why it is open or accepted | Where tracked |
 |---|---|---|---|
-| P0-3b | The paid-plan prerequisite has not been completed. | Real-AWS bootstrap, image publication, and promotion depend on the account decision. | [`../TODO.md`](../TODO.md) |
+| P0-3b | The paid-plan upgrade is not planned (decided 2026-09-08). | Real-AWS bootstrap, image publication, and promotion stay parked; the runbook remains executable if the account is ever upgraded. | [`../TODO.md`](../TODO.md) |
 | P0-3d | Real-AWS OIDC, IAM, KMS, and ECR behavior remains unvalidated although the IAM matrix is authored. | The promotion gate has not executed the trust, ten permission-document, task-boundary, KMS, and read-only spot-check cases in [`iam-matrix.md`](iam-matrix.md). | [`../TODO.md`](../TODO.md) |
 | P5-31 | A fork PR can carry field-level IAM drift until a same-repository run. | IAM matrix source mode is Sid-keyed, while exact Action, Resource, Condition, trust-body, and KMS-principal comparison runs only in the same-repository `plan-localstack` job. | [`../TODO.md`](../TODO.md) |
 | P3-2b | The placeholder dependency lock is universally compiled and hash-pinned, but its changed image has not yet been built on both repository target platforms. | The offline hash and Dockerfile contracts pass; host builds for `linux/arm64` and `linux/amd64` remain required before PR closure. | [`../TODO.md`](../TODO.md) |
-| P3-3b | Deployable images have not been pushed and signed. | Publication waits on P0-3b. | [`../TODO.md`](../TODO.md) |
+| P3-3b | Deployable images have not been pushed and signed. | Publication is parked with P0-3b. | [`../TODO.md`](../TODO.md) |
 | P5-1 | Scheduled drift detection is absent. | The drift workflow and deliberate-change acceptance test have not started. | [`../TODO.md`](../TODO.md) |
 | P5-x | Every CI role trusts the same main-ref subject. | Per-workflow OIDC subject binding requires validation against a real token before adoption. | [`../TODO.md`](../TODO.md) |
 | P5-5 and P5-6 | Bootstrap preflight can misread an uninitialized backend or fail to carry the external-provider setting into apply. | The two preflight fixes are not implemented. | [`../TODO.md`](../TODO.md) |

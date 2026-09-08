@@ -1,6 +1,6 @@
 # ADR 0008: LocalStack development lane
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02); amended 2026-09-08 — real-AWS promotion is not planned, see the amendment below
 
 ## Context
 
@@ -44,3 +44,14 @@ state bucket exists.
 - **Another cloud's free credits:** rejected — rewrites the AWS-specific
   design (OIDC provider, IAM roles, ECS Fargate) this project is built
   around.
+
+## Amendment 2026-09-08: promotion not planned
+
+The owner decided on 2026-09-08 not to upgrade the account to the Paid
+Plan for this portfolio. The Free Plan's service control policies still
+deny the services listed in the context above, and its unused credit
+balance cannot lift those denials, so real AWS is no longer a pending
+promotion step: the project closes at the LocalStack-verified level, the
+composition stays portable to real AWS, and the real-AWS runbook sequence
+in `TODO.md` (P0-3b) remains executable should the account ever be
+upgraded.
