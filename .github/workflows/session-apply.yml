@@ -94,7 +94,7 @@ jobs:
             upstream|public) ;;
             *) echo "mode must be upstream or public" >&2; exit 1 ;;
           esac
-          if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[1-9][0-9]*$ ]] ||
+          if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[1-9][0-9]?$ ]] ||
              [ "$SCAN_FRESHNESS_DAYS" -lt 1 ] || [ "$SCAN_FRESHNESS_DAYS" -gt 60 ]; then
             echo "SCAN_FRESHNESS_DAYS out of range" >&2
             exit 1
@@ -499,7 +499,7 @@ jobs:
             local saw_malformed=false
             local saw_future=false
             local stale_at=""
-            if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[1-9][0-9]*$ ]] ||
+            if [[ ! "$SCAN_FRESHNESS_DAYS" =~ ^[1-9][0-9]?$ ]] ||
                [ "$SCAN_FRESHNESS_DAYS" -lt 1 ] || [ "$SCAN_FRESHNESS_DAYS" -gt 60 ]; then
               echo "SCAN_FRESHNESS_DAYS out of range" >&2
               return 1

@@ -309,18 +309,24 @@ if header not in compiled_text:
 
 logical = []
 current = []
+previous_ended_with_backslash = False
 for raw_line in compiled_text.splitlines():
     stripped = raw_line.strip()
     if not stripped or stripped.startswith("#"):
+        previous_ended_with_backslash = False
         continue
     if raw_line[:1].isspace():
         if not current:
             fail(f"placeholder/requirements.txt has a continuation line with no requirement: {stripped}")
+        if not previous_ended_with_backslash:
+            fail(f"placeholder/requirements.txt has an indented line that is not a continuation: {stripped}")
         current.append(stripped.rstrip("\\").strip())
+        previous_ended_with_backslash = raw_line.endswith("\\")
         continue
     if current:
         logical.append(" ".join(current))
     current = [stripped.rstrip("\\").strip()]
+    previous_ended_with_backslash = raw_line.endswith("\\")
 if current:
     logical.append(" ".join(current))
 if not logical:
@@ -386,9 +392,41 @@ if [ "$requirements_continuation_rc" -eq 0 ] ||
 fi
 echo "PASS: placeholder requirements continuation-before-first mutant rejected"
 
+requirements_indented_after_complete_mutant="$tmp_dir/requirements-indented-after-complete.txt"
+python3 - "$REPO_ROOT/placeholder/requirements.txt" "$requirements_indented_after_complete_mutant" <<'PY_REQUIREMENTS_INDENTED_AFTER_COMPLETE_MUTANT'
+from pathlib import Path
+import sys
+
+
+lines = Path(sys.argv[1]).read_text().splitlines(keepends=True)
+for index in range(len(lines) - 1, -1, -1):
+    stripped = lines[index].strip()
+    if stripped and not stripped.startswith("#"):
+        lines.insert(index + 1, "    unhashed-demo==1.0\n")
+        break
+else:
+    raise SystemExit("requirements indented-after-complete mutant found no final requirement line")
+Path(sys.argv[2]).write_text("".join(lines))
+PY_REQUIREMENTS_INDENTED_AFTER_COMPLETE_MUTANT
+set +e
+requirements_indented_after_complete_output="$(
+  run_requirement_hash_contract "$requirements_indented_after_complete_mutant" 2>&1
+)"
+requirements_indented_after_complete_rc=$?
+set -e
+if [ "$requirements_indented_after_complete_rc" -eq 0 ] ||
+   ! grep -Fq "FAIL: placeholder/requirements.txt has an indented line that is not a continuation: unhashed-demo==1.0" \
+     <<< "$requirements_indented_after_complete_output"; then
+  echo "requirements indented-after-complete mutant did not fail as required: rc=$requirements_indented_after_complete_rc output=$requirements_indented_after_complete_output" >&2
+  exit 1
+fi
+echo "PASS: placeholder requirements indented-after-complete mutant rejected"
+
 sign_workflow="$REPO_ROOT/.github/workflows/sign-images.yml"
 scan_calls_public_only_mutant="$tmp_dir/session-apply-scan-calls-public-only.yml"
-python3 - "$sign_workflow" "$mirror_workflow" "$apply_workflow" "$scan_calls_public_only_mutant" <<'PY_SCAN_STRUCTURE'
+attest_comment_only_mutant="$tmp_dir/sign-images-attest-comment-only.yml"
+python3 - "$sign_workflow" "$mirror_workflow" "$apply_workflow" "$scan_calls_public_only_mutant" \
+  "$attest_comment_only_mutant" <<'PY_SCAN_STRUCTURE'
 from copy import deepcopy
 from pathlib import Path
 import re
@@ -418,10 +456,59 @@ def one_index(steps, predicate, label):
     return matches[0]
 
 
+def strip_unquoted_comment(line):
+    quote = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in ("'", '"'):
+            quote = char
+        elif char == "#":
+            return line[:index]
+    return line
+
+
+def attest_commands(run):
+    commands = []
+    current = None
+    for physical_line in run.splitlines():
+        uncommented = strip_unquoted_comment(physical_line)
+        continued = uncommented.endswith("\\")
+        line = uncommented.rstrip()
+        if current is None:
+            if re.search(r"\bcosign\s+attest(?:\s|$)", line) is None:
+                continue
+            current = line.strip()
+        else:
+            current += " " + line.strip()
+        if continued:
+            current = current[:-1].rstrip()
+        else:
+            commands.append(current)
+            current = None
+    if current is not None:
+        commands.append(current)
+    return commands
+
+
 def assert_attest_flags(run, label):
-    for flag in ("--tlog-upload=false", "--use-signing-config=false"):
-        if flag not in run:
-            fail(f"{label} must carry {flag}")
+    commands = attest_commands(run)
+    if not commands:
+        fail(f"{label} has no cosign attest command")
+    for index, command in enumerate(commands, start=1):
+        for flag in ("--tlog-upload=false", "--use-signing-config=false"):
+            if re.search(rf"(?<!\S){re.escape(flag)}(?!\S)", command) is None:
+                fail(f"{label} attest command {index} must carry {flag}")
+    return len(commands)
 
 
 def assert_trivy_action_version(step, label):
@@ -445,6 +532,21 @@ sign_step = sign_steps[sign_index]
 sign_run = sign_step.get("run", "")
 if sign_step.get("shell") != "bash" or not sign_run.startswith("set -euo pipefail\n"):
     fail("sign-images supply-chain step must use shell bash with explicit strict mode")
+sign_attest_count = assert_attest_flags(sign_run, "sign-images supply-chain step")
+mirror_attest_count = 0
+for step in mirror_steps:
+    step_run = step.get("run", "")
+    if attest_commands(step_run):
+        mirror_attest_count += assert_attest_flags(
+            step_run,
+            f"mirror-images {step.get('name', 'unnamed step')}",
+        )
+if mirror_attest_count == 0:
+    fail("mirror-images has no cosign attest commands")
+print(
+    f"PASS: attest command flags ({sign_attest_count} sign-images commands, "
+    f"{mirror_attest_count} mirror-images commands)"
+)
 slurp_decode = "jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)'"
 if slurp_decode not in sign_run:
     fail("sign-images prior-attestation decode must slurp the complete verification stream")
@@ -473,9 +575,6 @@ sign_markers = (
 positions = [sign_run.find(marker) for marker in sign_markers]
 if any(position < 0 for position in positions) or positions != sorted(positions):
     fail("sign-images order must be Trivy, SBOM attest, scan attest, signature")
-scan_attest_start = sign_run.find(f"--type {VULN_TYPE}")
-scan_attest_context = sign_run[max(0, scan_attest_start - 260):scan_attest_start + 260]
-assert_attest_flags(scan_attest_context, "sign-images vulnerability attestation")
 for field in ("scanner", "trivyVersion", "severityGate", "exitCode", "scannedAt", "digest"):
     if field not in sign_run:
         fail(f"sign-images vulnerability predicate lacks {field}")
@@ -526,6 +625,31 @@ for removed_flag in ("--tlog-upload=false", "--use-signing-config=false"):
     else:
         fail(f"scan-attestation flag mutant survived removal of {removed_flag}")
 print("PASS: scan-attestation flag mutants killed (2 mutations)")
+
+sign_source = Path(sys.argv[1]).read_text()
+attest_anchor = "              cosign attest --yes --tlog-upload=false --use-signing-config=false " + "\\"
+attest_replacement = (
+    "              # --tlog-upload=false\n"
+    "              cosign attest --yes --use-signing-config=false " + "\\"
+)
+if attest_anchor not in sign_source:
+    fail("comment-only attest flag mutation anchor missing")
+Path(sys.argv[5]).write_text(sign_source.replace(attest_anchor, attest_replacement, 1))
+mutated_sign = load(sys.argv[5])
+mutated_sign_steps = mutated_sign["jobs"]["sign"]["steps"]
+mutated_sign_step = next(
+    step
+    for step in mutated_sign_steps
+    if step.get("name") == "Generate SBOMs, scan, sign, and attest upstream images"
+)
+try:
+    assert_attest_flags(mutated_sign_step["run"], "comment-only flag mutant")
+except SystemExit as exc:
+    if "--tlog-upload=false" not in str(exc):
+        raise
+else:
+    fail("comment-only attest flag mutant survived")
+print("PASS: comment-only attest flag mutant killed")
 
 mutated_mirror = deepcopy(mirror_steps)
 mutated_scan = next(step for step in mutated_mirror if step.get("name") == "Trivy scan placeholder")
@@ -1000,7 +1124,8 @@ run_scan_case past-boundary 1 \
   "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
-for invalid_window in 0 61 abc 08 07; do
+run_scan_case window-60 0 "" "$scan_verify_script" "$scan_predicate" 60
+for invalid_window in 0 61 100 999999999999999999999999999999999999 abc 08 07; do
   run_scan_case "window-${invalid_window}" 1 "SCAN_FRESHNESS_DAYS out of range" \
     "$scan_verify_script" "$scan_predicate" "$invalid_window"
 done

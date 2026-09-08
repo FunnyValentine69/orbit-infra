@@ -1195,6 +1195,78 @@ def blocks(source, pattern):
     return found
 
 
+RESOURCE_REFERENCE = re.compile(
+    r'^(?:local|var|data|aws_[a-z0-9_]+|module)\.[A-Za-z0-9_.\[\]"]+$'
+)
+RESOURCE_STRING = r'"(?:\\.|[^"\\])*"'
+RESOURCE_ELEMENT = rf'(?:{RESOURCE_STRING}|{RESOURCE_REFERENCE.pattern[1:-1]})'
+RESOURCE_LIST = re.compile(
+    rf'^\[\s*(?:{RESOURCE_ELEMENT}\s*,\s*)*(?:{RESOURCE_ELEMENT})?\s*\]$',
+    re.DOTALL,
+)
+
+
+def extract_resource_expressions(statement):
+    expressions = []
+    for match in re.finditer(
+        r"^[ \t]*(resources|not_resources)[ \t]*=[ \t]*",
+        statement,
+        re.MULTILINE,
+    ):
+        start = match.end()
+        line_end = statement.find("\n", start)
+        if line_end == -1:
+            line_end = len(statement)
+        if start >= len(statement) or statement[start] != "[":
+            expressions.append((match.group(1), statement[start:line_end].strip()))
+            continue
+        depth = 0
+        in_string = False
+        escaped = False
+        end = None
+        for index in range(start, len(statement)):
+            char = statement[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "[":
+                depth += 1
+            elif char == "]":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        if end is None:
+            expressions.append((match.group(1), statement[start:line_end].strip()))
+            continue
+        trailing_end = statement.find("\n", end)
+        if trailing_end == -1:
+            trailing_end = len(statement)
+        expression_end = trailing_end if statement[end:trailing_end].strip() else end
+        expressions.append((match.group(1), statement[start:expression_end].strip()))
+    return expressions
+
+
+def parse_resource_expression(expression, sid):
+    if RESOURCE_REFERENCE.fullmatch(expression):
+        return "bare reference", ()
+    if RESOURCE_LIST.fullmatch(expression):
+        elements = tuple(
+            match.group(0)
+            for match in re.finditer(RESOURCE_ELEMENT, expression[1:-1])
+        )
+        return "literal list", elements
+    display = " ".join(expression.split())
+    fail(f"unrecognised resources expression in {sid}: {display}")
+
+
 roles = strip_hcl_comments(Path(sys.argv[1]).read_text())
 documents = blocks(roles, r'^\s*data\s+"aws_iam_policy_document"\s+"([^\"]+)"\s*\{')
 
@@ -1222,16 +1294,32 @@ def statement_conditions(statement):
 
 
 statement_map = {}
+resource_attributes_by_statement = {}
+resource_expression_counts = {"literal list": 0, "bare reference": 0}
 for document_match, document_block in documents:
     document = document_match.group(1)
     for _, statement in blocks(document_block, r"^\s*statement\s*\{"):
         sid_match = re.search(r'^\s*sid\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
+        sid = sid_match.group(1) if sid_match is not None else "<missing Sid>"
+        parsed_resources = []
+        for attribute, expression in extract_resource_expressions(statement):
+            kind, elements = parse_resource_expression(expression, sid)
+            resource_expression_counts[kind] += 1
+            parsed_resources.append((attribute, kind, elements))
         if sid_match is None:
             continue
-        key = (document, sid_match.group(1))
+        key = (document, sid)
         if key in statement_map:
-            fail(f"duplicate scoped statement key {document}/{sid_match.group(1)}")
+            fail(f"duplicate scoped statement key {document}/{sid}")
         statement_map[key] = statement
+        resource_attributes_by_statement[key] = tuple(parsed_resources)
+
+resource_attribute_count = sum(resource_expression_counts.values())
+print(
+    f"PASS: wildcard resource expressions ({resource_attribute_count} attributes: "
+    f"{resource_expression_counts['literal list']} literal lists, "
+    f"{resource_expression_counts['bare reference']} bare references)"
+)
 
 condition_scoped_keys = {
     ("deployer_ec2", "Ec2DescribeStarOnly"),
@@ -1353,18 +1441,25 @@ for document_match, document_block in documents:
     for _, statement in blocks(document_block, r"^\s*statement\s*\{"):
         if re.search(r"^\s*condition\s*\{", statement, re.MULTILINE):
             continue
-        resource_match = re.search(r"^\s*resources\s*=\s*\[(.*?)\]", statement, re.MULTILINE | re.DOTALL)
-        if resource_match is None or re.findall(r'"([^\"]+)"', resource_match.group(1)) != ["*"]:
-            continue
         sid_match = re.search(r'^\s*sid\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
         effect_match = re.search(r'^\s*effect\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
         actions_match = re.search(r"^\s*actions\s*=\s*\[(.*?)\]", statement, re.MULTILINE | re.DOTALL)
-        if sid_match is None or effect_match is None or actions_match is None:
+        if sid_match is None:
+            continue
+        sid = sid_match.group(1)
+        resource_attributes = resource_attributes_by_statement[(document, sid)]
+        has_literal_wildcard = any(
+            attribute == "resources" and kind == "literal list" and elements == ('"*"',)
+            for attribute, kind, elements in resource_attributes
+        )
+        if not has_literal_wildcard:
+            continue
+        if effect_match is None or actions_match is None:
             fail(f"cannot parse unconditioned wildcard statement in {document}")
         actions = re.findall(r'"([^\"]+)"', actions_match.group(1))
         if not actions:
-            fail(f"has an empty Action list in {document}/{sid_match.group(1)}")
-        source_rows.extend((document, sid_match.group(1), effect_match.group(1), action) for action in actions)
+            fail(f"has an empty Action list in {document}/{sid}")
+        source_rows.extend((document, sid, effect_match.group(1), action) for action in actions)
 
 if len(source_rows) != len(set(source_rows)):
     fail("source tuple set contains a duplicate")
@@ -1477,6 +1572,34 @@ if source.count(anchor) != 1:
 Path(sys.argv[2]).write_text(source.replace(anchor, replacement, 1))
 PY_EXTRA_WILDCARD_SID
   expect_wildcard_fail extra-sid "tuple-set mismatch: missing plan_reader_deny/UnexpectedWildcard/Allow/ecs:ListClusters" \
+    env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_ROLES_OVERRIDE="$roles_copy" "$0"
+
+  python3 - "$wildcard_roles" "$roles_copy" <<'PY_WILDCARD_EXPRESSION_RESOURCES'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+anchor = '''  }
+}
+
+resource "aws_iam_role_policy" "plan_reader_deny" {'''
+replacement = '''  }
+
+  statement {
+    sid       = "WildcardExpressionResources"
+    effect    = "Allow"
+    actions   = ["ecs:ListClusters"]
+    resources = concat(["*"], [])
+  }
+}
+
+resource "aws_iam_role_policy" "plan_reader_deny" {'''
+if source.count(anchor) != 1:
+    raise SystemExit("wildcard-expression resources mutation anchor mismatch")
+Path(sys.argv[2]).write_text(source.replace(anchor, replacement, 1))
+PY_WILDCARD_EXPRESSION_RESOURCES
+  expect_wildcard_fail wildcard-expression-resources \
+    'unrecognised resources expression in WildcardExpressionResources: concat(["*"], [])' \
     env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_ROLES_OVERRIDE="$roles_copy" "$0"
 
   python3 - "$wildcard_roles" "$roles_copy" <<'PY_APPEND_WILDCARD_ACTION'
@@ -1615,7 +1738,7 @@ ecs-cluster|EcsListServicesClusterScoped|variable = "ecs:cluster"|variable = "ec
 cloud-map-tag-keys|ServiceDiscoveryUntagResource|        "env_id",|        "Name",
 SCOPED_MUTATIONS
 
-  echo "PASS: wildcard evaluation negative fixtures (6 unconditioned tuple-set cases, 2 condition-scoped tuple-set cases, 3 scoped-condition cases)"
+  echo "PASS: wildcard evaluation negative fixtures (7 unconditioned tuple-set cases, 2 condition-scoped tuple-set cases, 3 scoped-condition cases)"
 }
 
 if [ "${IAM_WILDCARD_SKIP_NEGATIVES:-0}" != 1 ]; then
