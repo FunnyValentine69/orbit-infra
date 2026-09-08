@@ -108,7 +108,7 @@ Full evidence table and gate descriptions: `docs/EVIDENCE.md`. Pinned tool versi
 
 ## Status
 
-The platform runs end to end on LocalStack in CI; promotion to real AWS waits on a paid-account upgrade, after which the signing pipeline, nightly sweeper, and OIDC role checks execute for real.
+The platform runs end to end on LocalStack in CI. Promotion to real AWS is not planned for this portfolio, because the free-tier account's service control policies deny the stack's services, so the signing pipeline, nightly sweeper, and OIDC role checks stay contract-tested and would execute for real on a paid account.
 
 ## Repository layout
 
