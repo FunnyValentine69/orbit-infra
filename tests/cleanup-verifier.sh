@@ -491,6 +491,198 @@ jq -e --argjson proof "$(cat "$contract_proof")" '
 }
 pass "generation-bound Stage 1 and claimed atomic Stage 2 enforce the lease interface"
 
+# Stage-2 failures have a counter and mutation path independent from Stage 1.
+stage2_failure_env=stage2-failure-counter
+stage2_failure_claim=stage2-failure-1
+stage2_failure_store="$tmp_dir/fake-s3/leases_${stage2_failure_env}.json"
+env "${lease_env[@]}" "$LEASE" open "$stage2_failure_env" >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage2_failure_env" \
+  --generation 1 --from open --claim stage1-before-stage2-failure >/dev/null
+env "${lease_env[@]}" "$LEASE" complete-stage1 "$stage2_failure_env" \
+  --generation 1 --claim stage1-before-stage2-failure >/dev/null
+jq '.cleanup_attempt = 3
+  | .next_retry_at = "2033-05-18T04:00:00Z"
+  | .updated_at = "2033-05-18T03:00:00Z"' \
+  "$stage2_failure_store" > "$stage2_failure_store.next"
+mv "$stage2_failure_store.next" "$stage2_failure_store"
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_failure_env" \
+  --generation 1 --claim "$stage2_failure_claim" >/dev/null
+env "${lease_env[@]}" "$LEASE" fail-stage2 "$stage2_failure_env" \
+  --generation 1 --claim "$stage2_failure_claim" --error "Stage 2 failed once" >/dev/null
+stage2_failure_once="$(env "${lease_env[@]}" "$LEASE" get "$stage2_failure_env")"
+assert_jq "$stage2_failure_once" '
+  .status == "closing"
+  and .stage2_attempt == 1
+  and .stage2_claim == null
+  and .cleanup_attempt == 3
+  and .next_retry_at == "2033-05-18T04:00:00Z"
+  and .stage1_claim == null
+  and .manual_intervention_required == false
+  and .error == "Stage 2 failed once"
+' "first Stage-2 failure must preserve the Stage-1 budget and release its claim"
+for stage2_failure_index in 2 3; do
+  stage2_failure_claim="stage2-failure-$stage2_failure_index"
+  env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_failure_env" \
+    --generation 1 --claim "$stage2_failure_claim" >/dev/null
+  env "${lease_env[@]}" "$LEASE" fail-stage2 "$stage2_failure_env" \
+    --generation 1 --claim "$stage2_failure_claim" --error "Stage 2 failed $stage2_failure_index" >/dev/null
+done
+stage2_failure_three="$(env "${lease_env[@]}" "$LEASE" get "$stage2_failure_env")"
+assert_jq "$stage2_failure_three" '
+  .status == "closing"
+  and .stage2_attempt == 3
+  and .stage2_claim == null
+  and .cleanup_attempt == 3
+  and .next_retry_at == "2033-05-18T04:00:00Z"
+  and .manual_intervention_required == true
+' "third Stage-2 failure must exhaust only the Stage-2 automatic budget"
+pass "Stage-2 failures use an independent three-attempt budget"
+
+stage2_guard_env=stage2-failure-guard
+stage2_guard_claim=stage2-guard-claim
+stage2_guard_store="$tmp_dir/fake-s3/leases_${stage2_guard_env}.json"
+env "${lease_env[@]}" "$LEASE" open "$stage2_guard_env" >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage2_guard_env" \
+  --generation 1 --from open --claim stage1-before-stage2-guard >/dev/null
+env "${lease_env[@]}" "$LEASE" complete-stage1 "$stage2_guard_env" \
+  --generation 1 --claim stage1-before-stage2-guard >/dev/null
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_guard_env" \
+  --generation 1 --claim "$stage2_guard_claim" >/dev/null
+stage2_guard_before="$(env "${lease_env[@]}" "$LEASE" get "$stage2_guard_env")"
+for bad_stage2_args in \
+  '--generation 1 --claim wrong-stage2-claim' \
+  '--generation 2 --claim stage2-guard-claim'; do
+  set +e
+  # shellcheck disable=SC2086 # Deliberately exercise the CLI with two literal invalid argument sets.
+  bad_stage2_out="$(env "${lease_env[@]}" "$LEASE" fail-stage2 "$stage2_guard_env" \
+    $bad_stage2_args --error refused 2>&1)"
+  bad_stage2_rc=$?
+  set -e
+  bad_stage2_after="$(env "${lease_env[@]}" "$LEASE" get "$stage2_guard_env")"
+  if [ "$bad_stage2_rc" -ne 3 ] || [ "$bad_stage2_after" != "$stage2_guard_before" ]; then
+    echo "FAIL: fail-stage2 must refuse a wrong token or generation without a write: $bad_stage2_out" >&2
+    exit 1
+  fi
+done
+set +e
+old_stage2_transition_out="$(env "${lease_env[@]}" "$LEASE" transition "$stage2_guard_env" \
+  closing cleanup_failed --generation 1 --claim "$stage2_guard_claim" --error refused 2>&1)"
+old_stage2_transition_rc=$?
+set -e
+old_stage2_transition_after="$(env "${lease_env[@]}" "$LEASE" get "$stage2_guard_env")"
+if [ "$old_stage2_transition_rc" -ne 3 ] || \
+   ! grep -Fq 'Stage-2 failures use fail-stage2' <<< "$old_stage2_transition_out" || \
+   [ "$old_stage2_transition_after" != "$stage2_guard_before" ]; then
+  echo "FAIL: generic cleanup_failed transition must refuse a Stage-2 claim" >&2
+  exit 1
+fi
+pass "fail-stage2 is generation-bound and guards the old transition path"
+
+# A flag that lands while Stage 2 holds its claim must never be cleared by the
+# failure mutation.
+jq '.manual_intervention_required = true' "$stage2_guard_store" > "$stage2_guard_store.next"
+mv "$stage2_guard_store.next" "$stage2_guard_store"
+env "${lease_env[@]}" "$LEASE" fail-stage2 "$stage2_guard_env" \
+  --generation 1 --claim "$stage2_guard_claim" --error "flag preservation" >/dev/null
+stage2_flagged="$(env "${lease_env[@]}" "$LEASE" get "$stage2_guard_env")"
+assert_jq "$stage2_flagged" '
+  .status == "closing"
+  and .stage2_attempt == 1
+  and .stage2_claim == null
+  and .manual_intervention_required == true
+' "fail-stage2 must preserve a previously true manual-intervention flag"
+pass "fail-stage2 preserves an existing manual-intervention flag"
+
+# Reaching the Stage-1 cap while closing must publish the operator signal under
+# the fresh ETag while leaving every status, counter, and claim field intact.
+cap_env=closing-budget-cap
+cap_store="$tmp_dir/fake-s3/leases_${cap_env}.json"
+env "${lease_env[@]}" "$LEASE" open "$cap_env" >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_env" \
+  --generation 1 --from open --claim cap-stage1 >/dev/null
+env "${lease_env[@]}" "$LEASE" complete-stage1 "$cap_env" \
+  --generation 1 --claim cap-stage1 >/dev/null
+jq '.cleanup_attempt = 3
+  | .updated_at = "2033-05-18T03:00:00Z"' "$cap_store" > "$cap_store.next"
+mv "$cap_store.next" "$cap_store"
+cap_before="$(env "${lease_env[@]}" "$LEASE" get "$cap_env")"
+set +e
+cap_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_env" \
+  --generation 1 --from closing --claim refused-cap-stage1 2>&1)"
+cap_rc=$?
+set -e
+cap_after="$(env "${lease_env[@]}" "$LEASE" get "$cap_env")"
+if [ "$cap_rc" -ne 3 ] || \
+   ! grep -Fq 'automatic retry budget exhausted' <<< "$cap_out" || \
+   ! jq -e --argjson before "$cap_before" '
+     .manual_intervention_required == true
+     and .error == "automatic retry budget exhausted"
+     and .updated_at != $before.updated_at
+     and (del(.manual_intervention_required,.error,.updated_at)
+       == ($before | del(.manual_intervention_required,.error,.updated_at)))
+   ' <<< "$cap_after" >/dev/null; then
+  echo "FAIL: closing Stage-1 cap must write only the manual signal, error, and updated_at" >&2
+  exit 1
+fi
+pass "closing Stage-1 cap publishes a minimal manual-intervention escalation"
+
+cap_race_env=closing-budget-race
+cap_race_store="$tmp_dir/fake-s3/leases_${cap_race_env}.json"
+env "${lease_env[@]}" "$LEASE" open "$cap_race_env" >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_race_env" \
+  --generation 1 --from open --claim cap-race-stage1 >/dev/null
+env "${lease_env[@]}" "$LEASE" complete-stage1 "$cap_race_env" \
+  --generation 1 --claim cap-race-stage1 >/dev/null
+jq '.cleanup_attempt = 3' "$cap_race_store" > "$cap_race_store.next"
+mv "$cap_race_store.next" "$cap_race_store"
+cap_race_before="$(env "${lease_env[@]}" "$LEASE" get "$cap_race_env")"
+set +e
+cap_race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup "$cap_race_env" \
+  --generation 1 --from closing --claim refused-cap-race 2>&1)"
+cap_race_rc=$?
+set -e
+cap_race_after="$(env "${lease_env[@]}" "$LEASE" get "$cap_race_env")"
+if [ "$cap_race_rc" -ne 3 ] || ! grep -Fq 'lost the CAS race' <<< "$cap_race_out" || \
+   [ "$cap_race_after" != "$cap_race_before" ]; then
+  echo "FAIL: closing Stage-1 cap escalation must lose a stale ETag without mutation" >&2
+  exit 1
+fi
+pass "closing Stage-1 cap escalation is CAS-bound"
+
+# Pruning preserves the generation in a minimal tombstone, which can be opened
+# only as the next generation.
+contract_record="$(env "${lease_env[@]}" "$LEASE" get-with-etag "$contract_env_id")"
+contract_etag="$(jq -r '.etag' <<< "$contract_record")"
+contract_opened_at="$(jq -r '.lease.opened_at' <<< "$contract_record")"
+env "${lease_env[@]}" "$LEASE" delete-closed "$contract_env_id" "$contract_etag" >/dev/null
+contract_tombstone="$(env "${lease_env[@]}" "$LEASE" get "$contract_env_id")"
+if ! jq -e --arg opened_at "$contract_opened_at" '
+    .status == "deleted"
+    and .generation == 1
+    and .opened_at == $opened_at
+    and (.deleted_at | type == "string" and length > 0)
+    and (keys | sort == ["deleted_at","env_id","generation","opened_at","status","updated_at"])
+  ' <<< "$contract_tombstone" >/dev/null; then
+  echo "FAIL: delete-closed must leave the generation tombstone contract" >&2
+  exit 1
+fi
+contract_tombstone_etag="$(env "${lease_env[@]}" "$LEASE" get-with-etag "$contract_env_id" | jq -r '.etag')"
+set +e
+contract_redelete_out="$(env "${lease_env[@]}" "$LEASE" delete-closed \
+  "$contract_env_id" "$contract_tombstone_etag" 2>&1)"
+contract_redelete_rc=$?
+set -e
+if [ "$contract_redelete_rc" -ne 3 ] || \
+   ! grep -Fq 'already a tombstone' <<< "$contract_redelete_out"; then
+  echo "FAIL: delete-closed must refuse an existing generation tombstone" >&2
+  exit 1
+fi
+contract_reopened="$(env "${lease_env[@]}" "$LEASE" open "$contract_env_id")"
+assert_jq "$contract_reopened" '
+  .status == "open" and .generation == 2 and .stage2_attempt == 0
+' "opening a generation tombstone must continue at generation two"
+pass "delete-closed tombstone preserves generation across reopen"
+
 force_claim_env=force-claim
 force_claim_token=force-claim-token
 force_stage1_claim=force-stage1-claim

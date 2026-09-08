@@ -83,12 +83,43 @@ case "$service $operation" in
       echo 'An error occurred (NoSuchKey) when calling the GetObject operation' >&2
       exit 254
     fi
+    if [[ "$key" == leases/* ]] && [ -n "${FAKE_LEASE_GET_COUNT_FILE:-}" ]; then
+      lease_get_count=1
+      if [ -f "$FAKE_LEASE_GET_COUNT_FILE" ]; then
+        lease_get_count=$(( $(cat "$FAKE_LEASE_GET_COUNT_FILE") + 1 ))
+      fi
+      printf '%s\n' "$lease_get_count" > "$FAKE_LEASE_GET_COUNT_FILE"
+      if [ "${FAKE_MANUAL_ON_CLAIM_READ:-0}" = 1 ] && [ "$lease_get_count" -eq 2 ]; then
+        jq '.manual_intervention_required = true
+          | .error = "automatic retry budget exhausted"' "$store" > "$store.next"
+        mv "$store.next" "$store"
+        printf '%s\n' "$(( $(cat "$etag_file") + 1 ))" > "$etag_file"
+        printf '%s\n' 'MANUAL_RACE' >> "$FAKE_AWS_CALL_LOG"
+      fi
+      # get-object #1 on a lease key is the sweep's own classification read;
+      # get-object #2 is claim-stage2's fresh read (see FAKE_MANUAL_ON_CLAIM_READ
+      # above). Signal there so TERM lands mid-claim, before refusal returns.
+      if [ "${FAKE_SIGNAL_ON_CLAIM_READ:-0}" = 1 ] && [ "$lease_get_count" -eq 2 ]; then
+        printf '%s\n' 'SIGNAL claim-read' >> "$FAKE_AWS_CALL_LOG"
+        kill -TERM "$(cat "$FAKE_SWEEP_PID_FILE")"
+      fi
+    fi
     cp "$store" "$destination"
     printf '{"ETag":"%s"}\n' "$(cat "$etag_file")"
     ;;
   "s3api put-object")
     current=""
     [ ! -f "$etag_file" ] || current="$(cat "$etag_file")"
+    if [ -n "${FAKE_LEASE_BODY_LOG:-}" ] && [[ "$key" == leases/* ]]; then
+      jq -c . "$body" >> "$FAKE_LEASE_BODY_LOG"
+    fi
+    if [ "${FAKE_PRUNE_CAS_LOSS:-0}" = 1 ] && \
+       [ "$(jq -r '.status // empty' "$body")" = deleted ]; then
+      jq '.status = "open" | .generation += 1' "$store" > "$store.next"
+      mv "$store.next" "$store"
+      current=$((current + 1))
+      printf '%s\n' "$current" > "$etag_file"
+    fi
     if { [ "$if_none" = "*" ] && [ -n "$current" ]; } || \
        { [ -n "$etag_match" ] && [ "$etag_match" != "$current" ]; }; then
       echo 'An error occurred (PreconditionFailed) when calling the PutObject operation' >&2
@@ -117,6 +148,13 @@ case "$service $operation" in
     next=$(( ${current:-0} + 1 ))
     cp "$body" "$store"
     printf '%s\n' "$next" > "$etag_file"
+    if { [ "${FAKE_SIGNAL_AFTER_CLAIM_PUT:-0}" = 1 ] &&
+         jq -e '(.stage2_claim | type) == "object"' "$body" >/dev/null; } || \
+       { [ "${FAKE_SIGNAL_DURING_COMPLETE:-0}" = 1 ] &&
+         [ "$(jq -r '.status // empty' "$body")" = closed ]; }; then
+      printf '%s\n' 'SIGNAL committed-put' >> "$FAKE_AWS_CALL_LOG"
+      kill -TERM "$(cat "$FAKE_SWEEP_PID_FILE")"
+    fi
     printf '{"ETag":"%s"}\n' "$next"
     ;;
   "s3api delete-object")
@@ -208,6 +246,7 @@ case "$service $operation" in
     payload="${delete_arg#file://}"
     deleted="$(jq -c '.Objects' "$payload")"
     key="$(jq -r '.Objects[0].Key' "$payload")"
+    key="${key%.tflock}"
     state_file="$FAKE_STATE_DIR/${key//\//_}.json"
     jq --argjson deleted "$deleted" '
       map(. as $entry
@@ -226,6 +265,10 @@ case "$service $operation" in
     jq -cn --argjson deleted "$deleted" '{Deleted:$deleted,Errors:[]}'
     ;;
   "ecs describe-task-definition")
+    if [ "${FAKE_SIGNAL_ON_DESCRIBE:-0}" = 1 ]; then
+      printf '%s\n' 'SIGNAL describe-task-definition' >> "$FAKE_AWS_CALL_LOG"
+      kill -TERM "$(cat "$FAKE_SWEEP_PID_FILE")"
+    fi
     expected="$(jq -r '.task_definition_arn' "$FAKE_SCENARIO_FILE")"
     [ "$task_definition" = "$expected" ] || {
       echo "unexpected task definition" >&2
@@ -260,6 +303,19 @@ if [[ "$*" == *--force-retry* ]]; then
   echo "sweeper must never force stage 1" >&2
   exit 90
 fi
+if [ "${FAKE_CLOSE_BEGIN_CLEANUP:-0}" = 1 ]; then
+  generation=""
+  from=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --generation) generation="$2"; shift 2 ;;
+      --from) from="$2"; shift 2 ;;
+      *) env_id="$1"; shift ;;
+    esac
+  done
+  exec "$LEASE_SH" begin-cleanup "$env_id" \
+    --generation "$generation" --from "$from" --claim closing-budget-cap
+fi
 if [ "${FAKE_REOPEN_BEFORE_CLOSE:-0}" = 1 ]; then
   env_id="${*: -1}"
   lease_store="$FAKE_S3_DIR/leases_${env_id}.json.body"
@@ -279,18 +335,29 @@ fi
 EOF
 chmod +x "$tmp_dir/bin/close-env"
 
+cat > "$tmp_dir/bin/run-sweep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$$" > "$FAKE_SWEEP_PID_FILE"
+exec "$SWEEPER" env "$FAKE_SWEEP_ENV_ID"
+EOF
+chmod +x "$tmp_dir/bin/run-sweep"
+
 common_env=(
   "AWS_CLI_BIN=$tmp_dir/bin/aws"
   "AWS_CLI_SH=$AWS_WRAPPER"
   "CLOSE_ENV_SH=$tmp_dir/bin/close-env"
   "FAKE_AWS_CALL_LOG=$tmp_dir/aws-calls.log"
   "FAKE_CLOSE_LOG=$tmp_dir/close-calls.log"
+  "FAKE_LEASE_BODY_LOG=$tmp_dir/lease-bodies.log"
+  "FAKE_LEASE_GET_COUNT_FILE=$tmp_dir/lease-get-count"
   "FAKE_DELETE_CALLS_FILE=$tmp_dir/delete-calls"
   "FAKE_S3_DIR=$fake_s3"
   "FAKE_STATE_DIR=$fake_state"
   "LEASE_BUCKET=test-state"
   "LEASE_SH=$LEASE"
   "STATE_BUCKET=test-state"
+  "SWEEPER=$SWEEPER"
   "SWEEP_NOW_EPOCH=2000000000"
 )
 
@@ -312,9 +379,17 @@ run_localstack() {
 }
 
 reset_store() {
-  rm -f "$fake_s3"/* "$fake_state"/* "$tmp_dir/delete-calls"
+  rm -f "$fake_s3"/* "$fake_state"/* "$tmp_dir/delete-calls" \
+    "$tmp_dir/lease-get-count" "$tmp_dir/sweep.pid"
   : > "$tmp_dir/aws-calls.log"
   : > "$tmp_dir/close-calls.log"
+  : > "$tmp_dir/lease-bodies.log"
+}
+
+test_epoch_to_iso() {
+  local epoch="$1"
+  date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ
 }
 
 store_lease() {
@@ -394,6 +469,24 @@ lease_status() {
   fi
 }
 
+assert_stage2_failure_lease() {
+  local lease_json="$1"
+  local expected_error="$2"
+  local message="$3"
+  if ! jq -e --arg error "$expected_error" '
+      .status == "closing"
+      and .stage2_attempt == 1
+      and .stage2_claim == null
+      and .cleanup_attempt == 1
+      and .next_retry_at == null
+      and .manual_intervention_required == false
+      and .error == $error
+      and ((.manifest.stage2_runs // []) | length) == 0
+    ' <<< "$lease_json" >/dev/null; then
+    fail "$message"
+  fi
+}
+
 reset_store
 while IFS= read -r lease; do
   store_lease "$lease"
@@ -405,7 +498,8 @@ if ! jq -e --argjson expected "$expected" '
   length == ($expected | length)
   and all(.[];
     has("env_id") and has("status") and has("generation") and has("updated_at")
-    and has("cleanup_attempt") and has("next_retry_at")
+    and has("cleanup_attempt") and has("stage2_attempt") and has("stage2_claim")
+    and has("next_retry_at")
     and has("manual_intervention_required") and has("classification") and has("reason")
     and .classification == $expected[.env_id].classification
     and .reason == $expected[.env_id].reason)
@@ -413,6 +507,17 @@ if ! jq -e --argjson expected "$expected" '
   fail "discover did not classify every status/age boundary correctly: $discover_json"
 fi
 pass "discover emits the lease inventory and classifies status/age boundaries"
+
+if ! jq -e '
+  map(select(.env_id == "stage2-claim"))
+  | length == 1
+  and .[0].classification == "stage2"
+  and .[0].stage2_attempt == 2
+  and .[0].stage2_claim.token == "live-stage2-token"
+' <<< "$discover_json" >/dev/null; then
+  fail "discover did not classify a live Stage-2 claim ahead of the non-task-pending rule: $discover_json"
+fi
+pass "discover classifies a live Stage-2 claim before the non-task-pending rule"
 
 reset_store
 bad_inventory="$(jq -c '.leases[0] | .env_id = "bad_id"' "$FIXTURES/discover-cases.json")"
@@ -502,6 +607,200 @@ if grep -Eq '^s3api (list-object-versions|delete-objects) ' "$tmp_dir/aws-calls.
 fi
 pass "closing lease with a pending non-task result returns to Stage 1"
 
+# A closing lease that reaches the Stage-1 cap must publish an operator signal
+# on the first sweep and become a write-free manual no-op on the next sweep.
+reset_store
+store_fixture "$non_task_pending_fixture"
+closing_cap_seed="$(run_aws "$LEASE" get non-task | jq -c '.cleanup_attempt = 3')"
+store_lease "$closing_cap_seed"
+set +e
+closing_cap_output="$(FAKE_SCENARIO_FILE="$non_task_pending_fixture" \
+  FAKE_CLOSE_BEGIN_CLEANUP=1 run_aws "$SWEEPER" env non-task 2>&1)"
+closing_cap_rc=$?
+set -e
+closing_cap_lease="$(run_aws "$LEASE" get non-task)"
+if [ "$closing_cap_rc" -ne 3 ] || \
+   ! grep -Fq 'automatic retry budget exhausted' <<< "$closing_cap_output" || \
+   ! jq -e '
+     .status == "closing"
+     and .cleanup_attempt == 3
+     and .stage1_claim == null
+     and .stage2_claim == null
+     and .manual_intervention_required == true
+     and .error == "automatic retry budget exhausted"
+   ' <<< "$closing_cap_lease" >/dev/null; then
+  fail "closing Stage-1 cap did not publish the manual-intervention signal"
+fi
+: > "$tmp_dir/aws-calls.log"
+: > "$tmp_dir/close-calls.log"
+rm -f "$tmp_dir/lease-get-count"
+closing_cap_second_output="$(FAKE_SCENARIO_FILE="$non_task_pending_fixture" \
+  FAKE_CLOSE_BEGIN_CLEANUP=1 run_aws "$SWEEPER" env non-task)"
+grep -Fq 'manual intervention is required' <<< "$closing_cap_second_output" || \
+  fail "flagged closing lease did not classify as the manual no-op"
+[ ! -s "$tmp_dir/close-calls.log" ] || fail "manual closing no-op invoked Stage 1"
+if grep -q '^s3api put-object ' "$tmp_dir/aws-calls.log"; then
+  fail "manual closing no-op wrote the lease"
+fi
+pass "closing Stage-1 cap escalates once and then classifies as a write-free manual no-op"
+
+stale_claimed_at="$(test_epoch_to_iso "$(( $(date -u +%s) - 7201 ))")"
+young_claimed_at="$(test_epoch_to_iso "$(( $(date -u +%s) - 600 ))")"
+
+# A stale claim reaches Stage 2, is replaced under CAS, is audited, and hands
+# back cleanly when the task definition is still pending.
+reset_store
+pending_fixture="$FIXTURES/aws-delete-in-progress.json"
+store_fixture "$pending_fixture"
+stale_pending_seed="$(run_aws "$LEASE" get aws-pending | jq -c \
+  --arg claimed_at "$stale_claimed_at" \
+  '.stage2_claim = {token:"old-stage2-token",claimed_at:$claimed_at}')"
+store_lease "$stale_pending_seed"
+stale_takeover_output="$(FAKE_SCENARIO_FILE="$pending_fixture" \
+  run_aws "$SWEEPER" env aws-pending)"
+stale_takeover_lease="$(run_aws "$LEASE" get aws-pending)"
+if ! jq -e '
+    .status == "closing"
+    and .cleanup_attempt == 1
+    and .stage2_claim == null
+    and .cleanup_retry_audit[-1].cleared_stage2_claim.token == "old-stage2-token"
+    and (.cleanup_retry_audit[-1].takeover_at | type == "string" and length > 0)
+  ' <<< "$stale_takeover_lease" >/dev/null || \
+   ! jq -se '
+     map(select((.stage2_claim | type) == "object"))
+     | length == 1 and .[0].stage2_claim.token != "old-stage2-token"
+   ' "$tmp_dir/lease-bodies.log" >/dev/null; then
+  fail "stale Stage-2 claim was not replaced, audited, and handed back"
+fi
+grep -Fq 'DELETE_IN_PROGRESS' <<< "$stale_takeover_output" || \
+  fail "stale takeover did not execute the Stage-2 task-definition check"
+pass "stale Stage-2 claim is taken over under CAS and audited"
+
+# A young claim, a simultaneous Stage-1 claim, and omission of the explicit
+# takeover option each refuse without any lease write.
+reset_store
+store_fixture "$pending_fixture"
+young_claim_seed="$(run_aws "$LEASE" get aws-pending | jq -c \
+  --arg claimed_at "$young_claimed_at" \
+  '.stage2_claim = {token:"young-stage2-token",claimed_at:$claimed_at}')"
+store_lease "$young_claim_seed"
+set +e
+FAKE_SCENARIO_FILE="$pending_fixture" \
+  run_aws "$SWEEPER" env aws-pending >"$tmp_dir/young-claim.out" 2>&1
+young_claim_rc=$?
+set -e
+[ "$young_claim_rc" -eq 3 ] || fail "young Stage-2 takeover must exit 3"
+[ "$(cat "$fake_s3/leases_aws-pending.json.body")" = "$young_claim_seed" ] || \
+  fail "young Stage-2 takeover mutated the lease"
+[ ! -s "$tmp_dir/lease-bodies.log" ] || fail "young Stage-2 takeover attempted a lease write"
+
+young_claim_before="$(cat "$fake_s3/leases_aws-pending.json.body")"
+set +e
+missing_takeover_output="$(run_aws "$LEASE" claim-stage2 aws-pending \
+  --generation 1 --token prospective-without-takeover 2>&1)"
+missing_takeover_rc=$?
+set -e
+if [ "$missing_takeover_rc" -ne 3 ] || \
+   [ "$(cat "$fake_s3/leases_aws-pending.json.body")" != "$young_claim_before" ]; then
+  fail "existing Stage-2 claim must refuse when --takeover-stale is omitted: $missing_takeover_output"
+fi
+
+reset_store
+store_fixture "$pending_fixture"
+stage1_and_stage2_seed="$(run_aws "$LEASE" get aws-pending | jq -c \
+  --arg claimed_at "$stale_claimed_at" \
+  '.stage1_claim = {token:"active-stage1",claimed_at:$claimed_at}
+   | .stage2_claim = {token:"old-stage2-token",claimed_at:$claimed_at}')"
+store_lease "$stage1_and_stage2_seed"
+set +e
+FAKE_SCENARIO_FILE="$pending_fixture" \
+  run_aws "$SWEEPER" env aws-pending >"$tmp_dir/dual-claim.out" 2>&1
+stage1_and_stage2_rc=$?
+set -e
+[ "$stage1_and_stage2_rc" -eq 3 ] || fail "Stage-2 takeover with a Stage-1 claim must exit 3"
+[ "$(cat "$fake_s3/leases_aws-pending.json.body")" = "$stage1_and_stage2_seed" ] || \
+  fail "Stage-2 takeover with a Stage-1 claim mutated the lease"
+[ ! -s "$tmp_dir/lease-bodies.log" ] || fail "refused dual-claim takeover attempted a write"
+pass "young, dual-claim, and unflagged Stage-2 takeovers refuse without writes"
+
+# A takeover whose replacement token equals the existing stale Stage-2 claim's
+# token must refuse before any put, leaving the lease byte-identical.
+reset_store
+store_fixture "$pending_fixture"
+same_token_seed="$(run_aws "$LEASE" get aws-pending | jq -c \
+  --arg claimed_at "$stale_claimed_at" \
+  '.stage2_claim = {token:"same-token",claimed_at:$claimed_at}')"
+store_lease "$same_token_seed"
+same_token_before="$(cat "$fake_s3/leases_aws-pending.json.body")"
+set +e
+same_token_output="$(run_aws "$LEASE" claim-stage2 aws-pending \
+  --generation 1 --token same-token --takeover-stale 7200 2>&1)"
+same_token_rc=$?
+set -e
+[ "$same_token_rc" -eq 3 ] || fail "same-token Stage-2 takeover must exit 3"
+grep -Fq 'replacement token must differ from the existing Stage-2 claim' <<< "$same_token_output" || \
+  fail "same-token Stage-2 takeover did not emit the refusal message: $same_token_output"
+[ "$(cat "$fake_s3/leases_aws-pending.json.body")" = "$same_token_before" ] || \
+  fail "same-token Stage-2 takeover mutated the lease"
+[ ! -s "$tmp_dir/lease-bodies.log" ] || fail "same-token Stage-2 takeover attempted a lease write"
+pass "Stage-2 takeover with a replacement token equal to the existing claim refuses without writes"
+
+# The claim's fresh read must observe a manual escalation that lands after the
+# initial classification and refuse before any workload or state call.
+reset_store
+happy_fixture="$FIXTURES/aws-deleted-client-exception.json"
+store_fixture "$happy_fixture"
+set +e
+manual_race_output="$(FAKE_SCENARIO_FILE="$happy_fixture" FAKE_MANUAL_ON_CLAIM_READ=1 \
+  run_aws "$SWEEPER" env aws-happy 2>&1)"
+manual_race_rc=$?
+set -e
+manual_race_lease="$(cat "$fake_s3/leases_aws-happy.json.body")"
+manual_race_tail="$(awk 'seen { print } /^MANUAL_RACE$/ { seen=1 }' "$tmp_dir/aws-calls.log")"
+if [ "$manual_race_rc" -ne 3 ] || \
+   ! jq -e '.status == "closing" and .stage2_claim == null
+     and .manual_intervention_required == true' <<< "$manual_race_lease" >/dev/null || \
+   grep -Eq '^ecs |^s3api (put-object|list-object-versions|delete-objects) ' <<< "$manual_race_tail"; then
+  fail "claim-stage2 did not fail closed on the classification-to-claim manual race: $manual_race_output"
+fi
+pass "claim-stage2 fresh read refuses a concurrent manual escalation"
+
+# A stale claim with pending non-task evidence must take the Stage-2 path first,
+# hand back there, then finish state deletion after Stage 1 evidence is resolved.
+reset_store
+store_fixture "$non_task_pending_fixture"
+stale_non_task_seed="$(run_aws "$LEASE" get non-task | jq -c \
+  --arg claimed_at "$stale_claimed_at" \
+  '.stage2_claim = {token:"stale-non-task-token",claimed_at:$claimed_at}')"
+store_lease "$stale_non_task_seed"
+stale_non_task_output="$(FAKE_SCENARIO_FILE="$non_task_pending_fixture" \
+  run_aws "$SWEEPER" env non-task)"
+stale_non_task_lease="$(run_aws "$LEASE" get non-task)"
+if ! jq -e '
+    .status == "closing"
+    and .stage2_claim == null
+    and .cleanup_retry_audit[-1].cleared_stage2_claim.token == "stale-non-task-token"
+  ' <<< "$stale_non_task_lease" >/dev/null || \
+   ! grep -Fq 'stage 1 re-verification required' <<< "$stale_non_task_output" || \
+   [ -s "$tmp_dir/close-calls.log" ]; then
+  fail "stale claimed non-task lease bypassed Stage-2 takeover and hand-back"
+fi
+resolved_non_task="$(jq -c '
+  .manifest.verification_runs[-1].summary.pending = 0
+  | .manifest.verification_runs[-1].results = [
+      .manifest.verification_runs[-1].results[] | select(.outcome != "pending")
+    ]
+' <<< "$stale_non_task_lease")"
+store_lease "$resolved_non_task"
+: > "$tmp_dir/aws-calls.log"
+rm -f "$tmp_dir/lease-get-count"
+FAKE_SCENARIO_FILE="$non_task_pending_fixture" run_aws "$SWEEPER" env non-task >/dev/null
+[ "$(lease_status aws non-task)" = closed ] || \
+  fail "resolved non-task evidence did not reach state deletion and close"
+[ "$(jq 'length' "$fake_state/envs_preview_non-task.tfstate.json")" -eq 0 ] || \
+  fail "resolved non-task follow-up retained state"
+pass "claimed closing lease reaches Stage 2 before non-task hand-back and later closes"
+
 reset_store
 happy_fixture="$FIXTURES/aws-deleted-client-exception.json"
 store_fixture "$happy_fixture"
@@ -521,6 +820,117 @@ if [ "$(grep -c '^s3api delete-objects ' "$tmp_dir/aws-calls.log")" -ne 2 ]; the
   fail "paginated state inventory must delete versions and markers in bounded batches"
 fi
 pass "AWS Stage 2 accepts only the exact deleted ClientException, deletes every state version, and closes"
+
+# The prospective claim token is installed before the claim call so a deferred
+# TERM can always release a claim written immediately before or during work.
+reset_store
+store_fixture "$happy_fixture"
+set +e
+signal_describe_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_SIGNAL_ON_DESCRIBE=1 \
+  FAKE_SWEEP_ENV_ID=aws-happy \
+  FAKE_SWEEP_PID_FILE="$tmp_dir/sweep.pid" \
+  run_aws "$tmp_dir/bin/run-sweep" 2>&1)"
+signal_describe_rc=$?
+set -e
+signal_describe_lease="$(cat "$fake_s3/leases_aws-happy.json.body")"
+signal_describe_tail="$(awk 'seen { print } /^SIGNAL describe-task-definition$/ { seen=1 }' \
+  "$tmp_dir/aws-calls.log")"
+if [ "$signal_describe_rc" -ne 143 ] || \
+   ! jq -e '.status == "closing" and .stage2_claim == null' \
+     <<< "$signal_describe_lease" >/dev/null || \
+   [ "$(wc -l <<< "$signal_describe_tail" | tr -d ' ')" -ne 2 ] || \
+   ! sed -n '1p' <<< "$signal_describe_tail" | \
+     grep -Eq '^s3api get-object .*--key leases/aws-happy.json ' || \
+   ! sed -n '2p' <<< "$signal_describe_tail" | \
+     grep -Eq '^s3api put-object .*--key leases/aws-happy.json .*--if-match ' || \
+   grep -Eq '^ecs |^s3api (list-object-versions|delete-objects) ' <<< "$signal_describe_tail"; then
+  fail "TERM during Stage 2 must permit only the claim release and exit 143: $signal_describe_output"
+fi
+pass "TERM during Stage-2 workload releases the claim and exits 143"
+
+reset_store
+store_fixture "$happy_fixture"
+set +e
+signal_claim_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_SIGNAL_AFTER_CLAIM_PUT=1 \
+  FAKE_SWEEP_ENV_ID=aws-happy \
+  FAKE_SWEEP_PID_FILE="$tmp_dir/sweep.pid" \
+  run_aws "$tmp_dir/bin/run-sweep" 2>&1)"
+signal_claim_rc=$?
+set -e
+signal_claim_lease="$(cat "$fake_s3/leases_aws-happy.json.body")"
+signal_claim_token="$(jq -sr '
+  [.[] | select((.stage2_claim | type) == "object")][0].stage2_claim.token
+' "$tmp_dir/lease-bodies.log")"
+signal_claim_tail="$(awk 'seen { print } /^SIGNAL committed-put$/ { seen=1 }' \
+  "$tmp_dir/aws-calls.log")"
+if [ "$signal_claim_rc" -ne 143 ] || [ -z "$signal_claim_token" ] || \
+   ! jq -e '.status == "closing" and .stage2_claim == null' \
+     <<< "$signal_claim_lease" >/dev/null || \
+   ! grep -Fq "$signal_claim_token" <<< "$signal_claim_output" || \
+   [ "$(wc -l <<< "$signal_claim_tail" | tr -d ' ')" -ne 2 ] || \
+   ! sed -n '1p' <<< "$signal_claim_tail" | \
+     grep -Eq '^s3api get-object .*--key leases/aws-happy.json ' || \
+   ! sed -n '2p' <<< "$signal_claim_tail" | \
+     grep -Eq '^s3api put-object .*--key leases/aws-happy.json .*--if-match ' || \
+   grep -Eq '^ecs |^s3api (list-object-versions|delete-objects) ' <<< "$signal_claim_tail"; then
+  fail "TERM after the committed claim PUT did not release the prospective token: $signal_claim_output"
+fi
+pass "TERM after the claim CAS sees and releases the prospective token"
+
+reset_store
+store_fixture "$happy_fixture"
+set +e
+signal_complete_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_SIGNAL_DURING_COMPLETE=1 \
+  FAKE_SWEEP_ENV_ID=aws-happy \
+  FAKE_SWEEP_PID_FILE="$tmp_dir/sweep.pid" \
+  run_aws "$tmp_dir/bin/run-sweep" 2>&1)"
+signal_complete_rc=$?
+set -e
+signal_complete_lease="$(cat "$fake_s3/leases_aws-happy.json.body")"
+if [ "$signal_complete_rc" -ne 143 ] || \
+   ! jq -e '.status == "closed" and .stage2_claim == null' \
+     <<< "$signal_complete_lease" >/dev/null || \
+   ! grep -Fq 'release refused' <<< "$signal_complete_output"; then
+  fail "TERM across complete-stage2 must preserve closed and log the harmless release refusal"
+fi
+pass "TERM across the claim-ending CAS cannot strand or restore a claim"
+
+# TERM delivered while claim-stage2's own fresh read is in flight, for a
+# takeover whose prospective token equals the incumbent's, must not release
+# the incumbent claim this process never acquired.
+reset_store
+store_fixture "$happy_fixture"
+refused_claim_token="refused-takeover-token"
+refused_claim_seed="$(jq -c \
+  --arg claimed_at "$stale_claimed_at" --arg token "$refused_claim_token" \
+  '.stage2_claim = {token:$token,claimed_at:$claimed_at}' \
+  "$fake_s3/leases_aws-happy.json.body")"
+store_lease "$refused_claim_seed"
+set +e
+refused_claim_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_SIGNAL_ON_CLAIM_READ=1 \
+  FAKE_SWEEP_ENV_ID=aws-happy \
+  FAKE_SWEEP_PID_FILE="$tmp_dir/sweep.pid" \
+  SWEEP_STAGE2_TOKEN_OVERRIDE="$refused_claim_token" \
+  run_aws "$tmp_dir/bin/run-sweep" 2>&1)"
+refused_claim_rc=$?
+set -e
+refused_claim_lease="$(cat "$fake_s3/leases_aws-happy.json.body")"
+refused_claim_tail="$(awk 'seen { print } /^SIGNAL claim-read$/ { seen=1 }' \
+  "$tmp_dir/aws-calls.log")"
+if [ "$refused_claim_rc" -ne 143 ] || \
+   ! jq -e --arg token "$refused_claim_token" \
+     '.stage2_claim.token == $token' <<< "$refused_claim_lease" >/dev/null || \
+   grep -Fq 's3api put-object' <<< "$refused_claim_tail" || \
+   ! grep -Fq 'replacement token must differ from the existing Stage-2 claim' \
+     <<< "$refused_claim_output" || \
+   ! grep -Fq 'stage2: no acquired claim to release' <<< "$refused_claim_output"; then
+  fail "TERM during a refused claim released or altered the incumbent claim: $refused_claim_output"
+fi
+pass "TERM during a refused claim leaves the incumbent claim untouched"
 
 reset_store
 non_task_reread_fixture="$FIXTURES/aws-non-task-pending-reread.json"
@@ -545,12 +955,14 @@ reset_store
 pending_fixture="$FIXTURES/aws-delete-in-progress.json"
 store_fixture "$pending_fixture"
 pending_output="$(FAKE_SCENARIO_FILE="$pending_fixture" run_aws "$SWEEPER" env aws-pending)"
+pending_release_gets="$(grep -c '^s3api get-object .*--key leases/aws-pending.json ' "$tmp_dir/aws-calls.log")"
 pending_lease="$(run_aws "$LEASE" get aws-pending)"
 jq -e '.status == "closing" and .stage2_claim == null' <<< "$pending_lease" >/dev/null || \
   fail "DELETE_IN_PROGRESS must keep closing without stranding a Stage 2 claim"
 grep -Fq 'DELETE_IN_PROGRESS' <<< "$pending_output" || fail "pending task definition ARN/status was not printed"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-pending.tfstate.json")" -eq 1 ] || fail "pending Stage 2 touched retained state"
-pass "DELETE_IN_PROGRESS remains pending with state retained"
+[ "$pending_release_gets" -eq 3 ] || fail "pending hand-back invoked an exit-handler release after its explicit release"
+pass "DELETE_IN_PROGRESS remains pending with state retained and one release"
 
 reset_store
 malformed_fixture="$FIXTURES/aws-malformed-describe.json"
@@ -559,11 +971,15 @@ set +e
 malformed_output="$(FAKE_SCENARIO_FILE="$malformed_fixture" run_aws "$SWEEPER" env aws-bad 2>&1)"
 malformed_rc=$?
 set -e
+malformed_failure_gets="$(grep -c '^s3api get-object .*--key leases/aws-bad.json ' "$tmp_dir/aws-calls.log")"
 [ "$malformed_rc" -eq 1 ] || fail "malformed describe must exit 1, got $malformed_rc"
-[ "$(lease_status aws aws-bad)" = cleanup_failed ] || fail "malformed describe did not record cleanup_failed"
+malformed_lease="$(run_aws "$LEASE" get aws-bad)"
+assert_stage2_failure_lease "$malformed_lease" "task-definition describe was indeterminate" \
+  "malformed describe did not retain closing with one Stage-2 failure"
 grep -Fq 'indeterminate' <<< "$malformed_output" || fail "malformed describe failure reason missing"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-bad.tfstate.json")" -eq 1 ] || fail "indeterminate Stage 2 touched retained state"
-pass "malformed DescribeTaskDefinition fails closed through a lease transition"
+[ "$malformed_failure_gets" -eq 3 ] || fail "Stage-2 failure invoked an exit-handler release after fail-stage2"
+pass "malformed DescribeTaskDefinition records one Stage-2 failure without an extra release"
 
 reset_store
 describe_error_fixture="$FIXTURES/aws-clientexception-mismatch.json"
@@ -575,8 +991,8 @@ describe_error_rc=$?
 set -e
 describe_error_lease="$(run_aws "$LEASE" get aws-denied)"
 [ "$describe_error_rc" -eq 1 ] || fail "non-deleted ClientException must exit 1"
-jq -e '.status == "cleanup_failed" and .error == "task-definition describe was indeterminate"' \
-  <<< "$describe_error_lease" >/dev/null || fail "non-deleted ClientException did not record cleanup_failed"
+assert_stage2_failure_lease "$describe_error_lease" "task-definition describe was indeterminate" \
+  "non-deleted ClientException did not retain closing with one Stage-2 failure"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-denied.tfstate.json")" -eq 1 ] || \
   fail "non-deleted ClientException touched retained state"
 grep -Fq 'task-definition describe was indeterminate' <<< "$describe_error_output" || \
@@ -594,7 +1010,9 @@ bad_candidate_output="$(FAKE_SCENARIO_FILE="$happy_fixture" run_aws "$SWEEPER" e
 bad_candidate_rc=$?
 set -e
 [ "$bad_candidate_rc" -eq 1 ] || fail "malformed candidate must exit 1, got $bad_candidate_rc"
-[ "$(lease_status aws aws-happy)" = cleanup_failed ] || fail "malformed candidate did not record cleanup_failed"
+bad_candidate_lease="$(run_aws "$LEASE" get aws-happy)"
+assert_stage2_failure_lease "$bad_candidate_lease" "Stage 2 task-definition candidates are malformed" \
+  "malformed candidate did not retain closing with one Stage-2 failure"
 grep -Fq 'candidates are malformed' <<< "$bad_candidate_output" || fail "malformed candidate reason missing"
 if grep -q '^ecs describe-task-definition ' "$tmp_dir/aws-calls.log"; then
   fail "malformed candidate reached the ECS API"
@@ -658,9 +1076,9 @@ verification_failed_rc=$?
 set -e
 verification_failed_lease="$(run_aws "$LEASE" get verify-fail)"
 [ "$verification_failed_rc" -eq 1 ] || fail "passed:false Stage-1 verification must exit 1"
-jq -e '.status == "cleanup_failed"
-  and .error == "last Stage-1 verification did not pass with zero live and indeterminate results"' \
-  <<< "$verification_failed_lease" >/dev/null || fail "passed:false Stage-1 verification did not fail closed"
+assert_stage2_failure_lease "$verification_failed_lease" \
+  "last Stage-1 verification did not pass with zero live and indeterminate results" \
+  "passed:false Stage-1 verification did not retain closing with one Stage-2 failure"
 [ "$(jq 'length' "$fake_state/envs_preview_verify-fail.tfstate.json")" -eq 1 ] || \
   fail "passed:false Stage-1 verification touched retained state"
 grep -Fq 'last Stage-1 verification did not pass' <<< "$verification_failed_output" || \
@@ -678,10 +1096,9 @@ delete_errors_rc=$?
 set -e
 delete_errors_lease="$(run_aws "$LEASE" get aws-happy)"
 [ "$delete_errors_rc" -eq 1 ] || fail "delete-objects Errors must exit 1"
-jq -e '.status == "cleanup_failed"
-  and .error == "state deletion failed before all versions were removed"
-  and ((.manifest.stage2_runs // []) | length) == 0' \
-  <<< "$delete_errors_lease" >/dev/null || fail "delete-objects Errors reached closed"
+assert_stage2_failure_lease "$delete_errors_lease" \
+  "state deletion failed before all versions were removed" \
+  "delete-objects Errors did not retain closing with one Stage-2 failure"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-happy.tfstate.json")" -eq 3 ] || \
   fail "delete-objects Errors did not retain remaining versions"
 grep -Fq 'delete-objects reported 1 object-version errors' <<< "$delete_errors_output" || \
@@ -699,7 +1116,12 @@ null_versions_rc=$?
 set -e
 null_versions_lease="$(run_aws "$LEASE" get aws-happy)"
 if [ "$null_versions_rc" -ne 1 ] || \
-   ! jq -e '.status == "cleanup_failed"
+   ! jq -e '.status == "closing"
+     and .stage2_attempt == 1
+     and .stage2_claim == null
+     and .cleanup_attempt == 1
+     and .next_retry_at == null
+     and .manual_intervention_required == false
      and .error == "state deletion failed while listing retained versions"
      and ((.manifest.stage2_runs // []) | length) == 0' \
      <<< "$null_versions_lease" >/dev/null || \
@@ -719,7 +1141,12 @@ null_deleted_rc=$?
 set -e
 null_deleted_lease="$(run_aws "$LEASE" get aws-happy)"
 if [ "$null_deleted_rc" -ne 1 ] || \
-   ! jq -e '.status == "cleanup_failed"
+   ! jq -e '.status == "closing"
+     and .stage2_attempt == 1
+     and .stage2_claim == null
+     and .cleanup_attempt == 1
+     and .next_retry_at == null
+     and .manual_intervention_required == false
      and .error == "state deletion failed before all versions were removed"
      and ((.manifest.stage2_runs // []) | length) == 0' \
      <<< "$null_deleted_lease" >/dev/null || \
@@ -739,7 +1166,12 @@ incomplete_ack_rc=$?
 set -e
 incomplete_ack_lease="$(run_aws "$LEASE" get aws-happy)"
 if [ "$incomplete_ack_rc" -ne 1 ] || \
-   ! jq -e '.status == "cleanup_failed"
+   ! jq -e '.status == "closing"
+     and .stage2_attempt == 1
+     and .stage2_claim == null
+     and .cleanup_attempt == 1
+     and .next_retry_at == null
+     and .manual_intervention_required == false
      and .error == "state deletion failed before all versions were removed"
      and ((.manifest.stage2_runs // []) | length) == 0' \
      <<< "$incomplete_ack_lease" >/dev/null || \
@@ -761,23 +1193,36 @@ post_delete_rc=$?
 set -e
 post_delete_lease="$(run_aws "$LEASE" get aws-relist)"
 [ "$post_delete_rc" -eq 1 ] || fail "post-delete retained version must exit 1"
-jq -e '.status == "cleanup_failed"
-  and .error == "state deletion failed: versions remain"
-  and ((.manifest.stage2_runs // []) | length) == 0' \
-  <<< "$post_delete_lease" >/dev/null || fail "post-delete retained version reached closed"
+assert_stage2_failure_lease "$post_delete_lease" "state deletion failed: versions remain" \
+  "post-delete retained version did not retain closing with one Stage-2 failure"
 grep -Fq 'state deletion failed: versions remain' <<< "$post_delete_output" || \
   fail "post-delete retained version failure reason missing"
 pass "post-delete re-list with a retained version fails closed"
 
 reset_store
 store_fixture "$happy_fixture"
+partial_failure_seed="$(run_aws "$LEASE" get aws-happy | jq -c '
+  .cleanup_attempt = 3
+  | .next_retry_at = "2033-05-18T04:00:00Z"')"
+store_lease "$partial_failure_seed"
 set +e
 delete_failure_output="$(FAKE_SCENARIO_FILE="$happy_fixture" FAKE_DELETE_FAIL_CALL=2 SWEEP_DELETE_BATCH_SIZE=2 \
   run_aws "$SWEEPER" env aws-happy 2>&1)"
 delete_failure_rc=$?
 set -e
 [ "$delete_failure_rc" -eq 1 ] || fail "partial state deletion failure must exit 1"
-[ "$(lease_status aws aws-happy)" = cleanup_failed ] || fail "partial state deletion failure did not record cleanup_failed"
+delete_failure_lease="$(run_aws "$LEASE" get aws-happy)"
+jq -e '
+  .status == "closing"
+  and .stage2_attempt == 1
+  and .stage2_claim == null
+  and .cleanup_attempt == 3
+  and .next_retry_at == "2033-05-18T04:00:00Z"
+  and .manual_intervention_required == false
+  and .error == "state deletion failed before all versions were removed"
+  and ((.manifest.stage2_runs // []) | length) == 0
+' <<< "$delete_failure_lease" >/dev/null || \
+  fail "partial state deletion failure consumed the Stage-1 budget or did not release its claim"
 [ "$(jq 'length' "$fake_state/envs_preview_aws-happy.tfstate.json")" -gt 0 ] || fail "failure fixture did not fail after a partial delete"
 grep -Fq 'state deletion failed' <<< "$delete_failure_output" || fail "state deletion failure reason missing"
 pass "partial state deletion failure never sets closed"
@@ -816,8 +1261,78 @@ jq -e 'any(.[]; .VersionId == "late-version")' \
 grep -Fq 'lost the CAS race' <<< "$cas_output" || fail "CAS race did not report the lease refusal"
 pass "atomic Stage 2 completion refuses an ETag race and leaves the new state version untouched"
 
+seed_lock_key_inventory() {
+  jq '. + [
+    {Key:"envs/preview/aws-happy.tfstate.tflock",VersionId:"lock-version-1",type:"version"},
+    {Key:"envs/preview/aws-happy.tfstate.tflock",VersionId:"lock-marker-1",type:"delete-marker"},
+    {Key:"envs/preview/aws-happy-two.tfstate",VersionId:"sibling-state-1",type:"version"},
+    {Key:"envs/preview/aws-happy-two.tfstate.tflock",VersionId:"sibling-lock-1",type:"version"}
+  ]' "$fake_state/envs_preview_aws-happy.tfstate.json" \
+    > "$fake_state/envs_preview_aws-happy.tfstate.json.next"
+  mv "$fake_state/envs_preview_aws-happy.tfstate.json.next" \
+    "$fake_state/envs_preview_aws-happy.tfstate.json"
+}
+
+assert_lock_key_postcondition() {
+  local state_file="$1"
+  if jq -e 'any(.[];
+      .Key == "envs/preview/aws-happy.tfstate"
+      or .Key == "envs/preview/aws-happy.tfstate.tflock")' \
+      "$state_file" >/dev/null; then
+    echo "mutant survived the lock-key check" >&2
+    return 1
+  fi
+  jq -e '
+    map({Key,VersionId}) == [
+      {Key:"envs/preview/aws-happy-two.tfstate",VersionId:"sibling-state-1"},
+      {Key:"envs/preview/aws-happy-two.tfstate.tflock",VersionId:"sibling-lock-1"}
+    ]
+  ' "$state_file" >/dev/null
+}
+
 reset_store
-old_closed="$(jq -c '.leases[] | select(.env_id == "prune-old")' "$FIXTURES/discover-cases.json")"
+store_fixture "$happy_fixture"
+seed_lock_key_inventory
+FAKE_SCENARIO_FILE="$happy_fixture" SWEEP_DELETE_BATCH_SIZE=2 \
+  run_aws "$SWEEPER" env aws-happy >/dev/null
+[ "$(lease_status aws aws-happy)" = closed ] || fail "lock-key Stage 2 did not close the lease"
+assert_lock_key_postcondition "$fake_state/envs_preview_aws-happy.tfstate.json" || \
+  fail "production Stage 2 left its state or lock versions, or touched a sibling environment"
+
+lock_mutant="$tmp_dir/sweep-single-key-mutant.sh"
+# shellcheck disable=SC2016 # Match the literal jq selector, including its $key variable.
+selector_count="$(grep -c 'select(.Key == $key or .Key == ($key + ".tflock"))' "$SWEEPER")"
+[ "$selector_count" -eq 2 ] || fail "production Stage-2 selector must cover versions and delete markers"
+# shellcheck disable=SC2016 # Mutate the literal jq selector, not a shell expansion.
+sed 's/select(.Key == $key or .Key == ($key + ".tflock"))/select(.Key == $key)/g' \
+  "$SWEEPER" > "$lock_mutant"
+chmod +x "$lock_mutant"
+# shellcheck disable=SC2016 # Count the literal single-key jq selector in the mutant.
+[ "$(grep -c 'select(.Key == $key)' "$lock_mutant")" -eq 2 ] || \
+  fail "lock-key mutation oracle did not revert both selectors"
+reset_store
+store_fixture "$happy_fixture"
+seed_lock_key_inventory
+FAKE_SCENARIO_FILE="$happy_fixture" SWEEP_DELETE_BATCH_SIZE=2 \
+  run_aws "$lock_mutant" env aws-happy >/dev/null
+set +e
+lock_mutant_output="$(assert_lock_key_postcondition \
+  "$fake_state/envs_preview_aws-happy.tfstate.json" 2>&1)"
+lock_mutant_rc=$?
+set -e
+if [ "$lock_mutant_rc" -ne 1 ] || \
+   ! grep -Fq 'mutant survived the lock-key check' <<< "$lock_mutant_output" || \
+   [ "$(lease_status aws aws-happy)" != closed ] || \
+   [ "$(jq '[.[] | select(.Key == "envs/preview/aws-happy.tfstate.tflock")] | length' \
+       "$fake_state/envs_preview_aws-happy.tfstate.json")" -ne 2 ]; then
+  fail "single-key mutant was not closed-with-locks-retained and rejected by the postcondition"
+fi
+pass "Stage 2 deletes exact state and lock versions while the executable single-key mutant fails"
+
+reset_store
+old_closed="$(jq -c '.leases[] | select(.env_id == "prune-old")
+  | .generation = 1
+  | .opened_at = "2033-05-01T03:32:20Z"' "$FIXTURES/discover-cases.json")"
 store_lease "$old_closed"
 expected_reopened="$(jq -c '.status = "open" | .generation += 1' <<< "$old_closed")"
 set +e
@@ -834,23 +1349,44 @@ set -e
 jq -e --argjson expected "$expected_reopened" '. == $expected' \
   <<< "$prune_race_lease" >/dev/null || fail "prune loser deleted or otherwise mutated the reopened lease"
 grep -Fq 'lost the CAS race' <<< "$prune_race_output" || fail "prune If-Match 412 reason missing"
-grep -E '^s3api delete-object .*--if-match ' "$tmp_dir/aws-calls.log" >/dev/null || \
-  fail "prune CAS-loss case did not exercise the If-Match request"
-pass "prune If-Match 412 exits 3 without deleting the concurrently changed lease"
+grep -E '^s3api put-object .*--if-match ' "$tmp_dir/aws-calls.log" >/dev/null || \
+  fail "prune CAS-loss case did not exercise the tombstone If-Match request"
+if grep -q '^s3api delete-object ' "$tmp_dir/aws-calls.log"; then
+  fail "prune CAS-loss case used object deletion instead of a tombstone PUT"
+fi
+pass "prune tombstone CAS loss exits 3 without replacing the concurrently reopened lease"
 
 reset_store
 fresh_closed="$(jq -c '.leases[] | select(.env_id == "closed-seven")' "$FIXTURES/discover-cases.json")"
 store_lease "$old_closed"
 store_lease "$fresh_closed"
 run_aws "$SWEEPER" env prune-old >/dev/null
-set +e
-run_aws "$LEASE" get prune-old >/dev/null 2>&1
-pruned_get_rc=$?
-set -e
-[ "$pruned_get_rc" -eq 1 ] || fail "closed lease older than seven days was not pruned"
+prune_put_count="$(grep -Ec '^s3api put-object .*--if-match ' "$tmp_dir/aws-calls.log" || true)"
+[ "$prune_put_count" -eq 1 ] || fail "lease prune did not make exactly one ETag-conditional tombstone PUT"
+if grep -q '^s3api delete-object ' "$tmp_dir/aws-calls.log"; then
+  fail "lease prune deleted the object instead of replacing it with a tombstone"
+fi
+pruned_lease="$(run_aws "$LEASE" get prune-old)"
+if ! jq -e '
+    .status == "deleted"
+    and .generation == 1
+    and (.deleted_at | type == "string" and length > 0)
+    and (keys | sort == ["deleted_at","env_id","generation","opened_at","status","updated_at"])
+  ' <<< "$pruned_lease" >/dev/null; then
+  fail "closed lease older than seven days was not replaced by its generation tombstone: $pruned_lease"
+fi
+: > "$tmp_dir/aws-calls.log"
+tombstone_output="$(run_aws "$SWEEPER" env prune-old)"
+grep -Fq 'generation tombstone' <<< "$tombstone_output" || \
+  fail "generation tombstone did not classify with the explicit skip reason"
+if grep -q '^s3api put-object ' "$tmp_dir/aws-calls.log"; then
+  fail "generation tombstone skip attempted a write"
+fi
+reopened_after_prune="$(run_aws "$LEASE" open prune-old)"
+jq -e '.status == "open" and .generation == 2' <<< "$reopened_after_prune" >/dev/null || \
+  fail "prune tombstone did not reopen at generation two"
 run_aws "$SWEEPER" env closed-seven >/dev/null
 [ "$(lease_status aws closed-seven)" = closed ] || fail "seven-day boundary lease was pruned early"
-grep -E '^s3api delete-object .*--if-match ' "$tmp_dir/aws-calls.log" >/dev/null || fail "lease prune did not use an ETag precondition"
-pass "prune removes only closed leases older than seven days with an ETag precondition"
+pass "prune leaves a conditional tombstone, skips it explicitly, and reopens at generation two"
 
 echo "PASS: sweeper suite ($pass_count cases)"

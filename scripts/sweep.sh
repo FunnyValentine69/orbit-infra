@@ -12,6 +12,8 @@ TARGET="${TARGET:-}"
 SWEEP_IN_JOB="${SWEEP_IN_JOB:-false}"
 SWEEP_DELETE_BATCH_SIZE="${SWEEP_DELETE_BATCH_SIZE:-1000}"
 STAGE1_STALE_SECONDS=86400
+# Twice the sweeper job's 60-minute timeout so a timed-out worker is gone before takeover.
+STAGE2_CLAIM_STALE_SECONDS=7200
 PRUNE_AFTER_SECONDS=604800
 DELETED_TASK_DEFINITION_ERROR='An error occurred (ClientException) when calling the DescribeTaskDefinition operation: Unable to describe task definition.'
 
@@ -89,6 +91,7 @@ validate_inventory_lease() {
     and (.generation | type == "number" and . >= 1 and floor == .)
     and (.updated_at | type == "string")
     and ((.cleanup_attempt // 0) | type == "number" and . >= 0 and floor == .)
+    and ((.stage2_attempt // 0) | type == "number" and . >= 0 and floor == .)
     and ((.next_retry_at == null) or (.next_retry_at | type == "string"))
     and ((.manual_intervention_required // false) | type == "boolean")
   ' <<< "$lease" >/dev/null 2>&1
@@ -153,7 +156,12 @@ classify_lease() {
       fi
       ;;
     closing)
-      if non_task_pending_present "$lease"; then
+      if [ "$manual" = true ]; then
+        CLASSIFICATION_REASON="manual intervention is required"
+      elif jq -e '(.stage2_claim // null) != null' <<< "$lease" >/dev/null; then
+        CLASSIFICATION=stage2
+        CLASSIFICATION_REASON=""
+      elif non_task_pending_present "$lease"; then
         CLASSIFICATION=stage1-retry
         CLASSIFICATION_REASON="pending non-task resources require Stage 1 re-verification"
       else
@@ -168,6 +176,9 @@ classify_lease() {
       else
         CLASSIFICATION_REASON="closed lease is within the seven-day retention window"
       fi
+      ;;
+    deleted)
+      CLASSIFICATION_REASON="generation tombstone"
       ;;
   esac
 }
@@ -201,6 +212,62 @@ require_closing_generation_claim() {
   fi
 }
 
+STAGE2_ACTIVE_CLAIM=""
+STAGE2_ACTIVE_ENV_ID=""
+STAGE2_ACTIVE_GENERATION=""
+STAGE2_CLAIM_OUT=""
+
+stage2_release_active_claim() {
+  local reason="$1"
+  local token="$STAGE2_ACTIVE_CLAIM"
+  local release_out release_rc
+  if [ -z "$token" ] || [ ! -s "${STAGE2_CLAIM_OUT:-/nonexistent}" ]; then
+    err "stage2: no acquired claim to release"
+    return 0
+  fi
+  set +e
+  release_out="$("$LEASE_SH" release-stage2 "$STAGE2_ACTIVE_ENV_ID" \
+    --generation "$STAGE2_ACTIVE_GENERATION" --claim "$token" 2>&1)"
+  release_rc=$?
+  set -e
+  if [ "$release_rc" -eq 0 ]; then
+    err "released Stage-2 claim $token after $reason"
+  else
+    err "Stage-2 claim release refused for claim $token after $reason (exit $release_rc): $release_out"
+  fi
+  STAGE2_ACTIVE_CLAIM=""
+}
+
+stage2_disarm_claim_handlers() {
+  STAGE2_ACTIVE_CLAIM=""
+  STAGE2_ACTIVE_ENV_ID=""
+  STAGE2_ACTIVE_GENERATION=""
+  STAGE2_CLAIM_OUT=""
+  trap - EXIT TERM INT HUP
+}
+
+stage2_exit_handler() {
+  local exit_code=$?
+  trap - EXIT TERM INT HUP
+  stage2_release_active_claim EXIT
+  exit "$exit_code"
+}
+
+stage2_signal_handler() {
+  local signal_name="$1"
+  local signal_number="$2"
+  trap - EXIT TERM INT HUP
+  stage2_release_active_claim "$signal_name"
+  exit "$((128 + signal_number))"
+}
+
+stage2_arm_claim_handlers() {
+  trap stage2_exit_handler EXIT
+  trap 'stage2_signal_handler TERM 15' TERM
+  trap 'stage2_signal_handler INT 2' INT
+  trap 'stage2_signal_handler HUP 1' HUP
+}
+
 transition_stage2_failure() {
   local env_id="$1"
   local generation="$2"
@@ -209,12 +276,15 @@ transition_stage2_failure() {
   local rc
   err "$message"
   set +e
-  "$LEASE_SH" transition "$env_id" closing cleanup_failed \
+  "$LEASE_SH" fail-stage2 "$env_id" \
     --generation "$generation" --claim "$claim" --error "$message" >/dev/null
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || exit "$rc"
-  exit 1
+  if [ "$rc" -eq 0 ]; then
+    stage2_disarm_claim_handlers
+    exit 1
+  fi
+  exit "$rc"
 }
 
 set_manifest() {
@@ -284,8 +354,8 @@ list_state_versions() {
       return 1
     fi
     page_entries="$(jq -c --arg key "$state_key" '
-      [(.Versions // [])[] | select(.Key == $key) | {Key,VersionId}]
-      + [(.DeleteMarkers // [])[] | select(.Key == $key) | {Key,VersionId}]
+      [(.Versions // [])[] | select(.Key == $key or .Key == ($key + ".tflock")) | {Key,VersionId}]
+      + [(.DeleteMarkers // [])[] | select(.Key == $key or .Key == ($key + ".tflock")) | {Key,VersionId}]
     ' <<< "$response")"
     entries="$(jq -c --argjson page "$page_entries" '. + $page' <<< "$entries")"
     is_truncated="$(jq -r '.IsTruncated' <<< "$response")"
@@ -359,13 +429,28 @@ delete_state_versions() {
 stage2() {
   local env_id="$1"
   local initial_lease="$2"
-  local generation claim manifest_target arns arn describe_out describe_rc status
+  local generation claim manifest_target arns arn describe_out describe_rc status claim_rc
   local pending=false allowance_recorded=false lease latest_run state_key entries remaining rc
   local deleted_arns='[]' verified_empty_at proof_file
   generation="$(jq -r '.generation' <<< "$initial_lease")"
-  claim="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
-  initial_lease="$("$LEASE_SH" claim-stage2 "$env_id" \
-    --generation "$generation" --claim "$claim")"
+  # SWEEP_STAGE2_TOKEN_OVERRIDE is test-only: honoured only when set, to let
+  # fixtures pre-seed a lease with the exact claim token the sweep will use.
+  claim="${SWEEP_STAGE2_TOKEN_OVERRIDE:-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$}"
+  STAGE2_ACTIVE_ENV_ID="$env_id"
+  STAGE2_ACTIVE_GENERATION="$generation"
+  STAGE2_ACTIVE_CLAIM="$claim"
+  STAGE2_CLAIM_OUT="$(mktemp)"
+  : > "$STAGE2_CLAIM_OUT"
+  stage2_arm_claim_handlers
+  if "$LEASE_SH" claim-stage2 "$env_id" \
+      --generation "$generation" --token "$STAGE2_ACTIVE_CLAIM" \
+      --takeover-stale "$STAGE2_CLAIM_STALE_SECONDS" > "$STAGE2_CLAIM_OUT"; then
+    initial_lease="$(cat "$STAGE2_CLAIM_OUT")"
+  else
+    claim_rc=$?
+    stage2_disarm_claim_handlers
+    return "$claim_rc"
+  fi
   manifest_target="$(jq -r '.manifest.target // empty' <<< "$initial_lease")"
   if [ "$manifest_target" != "$TARGET" ]; then
     transition_stage2_failure "$env_id" "$generation" "$claim" "Stage 2 target does not match the lease manifest"
@@ -439,6 +524,7 @@ stage2() {
   if [ "$pending" = true ]; then
     "$LEASE_SH" release-stage2 "$env_id" \
       --generation "$generation" --claim "$claim" >/dev/null
+    stage2_disarm_claim_handlers
     echo "sweep.sh: $env_id remains closing while task-definition deletion is pending"
     return 0
   fi
@@ -466,6 +552,7 @@ stage2() {
   if non_task_pending_present "$lease"; then
     "$LEASE_SH" release-stage2 "$env_id" \
       --generation "$generation" --claim "$claim" >/dev/null
+    stage2_disarm_claim_handlers
     echo "sweep.sh: $env_id remains closing while non-task resources are pending; stage 1 re-verification required"
     return 0
   fi
@@ -512,6 +599,7 @@ stage2() {
   set -e
   rm -f "$proof_file"
   [ "$rc" -eq 0 ] || exit "$rc"
+  stage2_disarm_claim_handlers
   echo "sweep.sh: $env_id Stage 2 complete; lease is closed"
 }
 
@@ -568,6 +656,8 @@ cmd_discover() {
           generation,
           updated_at,
           cleanup_attempt:(.cleanup_attempt // 0),
+          stage2_attempt:(.stage2_attempt // 0),
+          stage2_claim:(.stage2_claim // null),
           next_retry_at:(.next_retry_at // null),
           manual_intervention_required:(.manual_intervention_required // false),
           classification:$classification,

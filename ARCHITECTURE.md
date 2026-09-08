@@ -112,8 +112,9 @@ threat-to-control mapping.
 ## Environment lifecycle summary
 
 Each `env_id` will have its own state key and a durable lease with states
-`open → closing → closed | cleanup_failed` and a monotonically increasing
-`generation`; every transition is a compare-and-swap on the object's S3
+`open → closing → closed → deleted`, plus a Stage-1-only `cleanup_failed`
+branch, and a monotonically increasing `generation` that continues through the
+`deleted` tombstone; every transition is a compare-and-swap on the object's S3
 ETag, so two writers can never both win. The lease is created only after
 the pre-plan gates (runner-CIDR rejection, lint, checkov) and selected-image
 signature/attestation checks pass, so a rejected config or supply-chain
@@ -133,20 +134,28 @@ validates every outcome, recomputes all four counts, and rejects summary,
 scheduled tag observation adds a durable sentinel; later success cannot erase
 it. Tag presence alone is never liveness. Stage 1 CAS-acquires an exclusive,
 generation-bound claim before cleanup; every manifest and failure write
-requires the `closing` status and token. Success clears the claim while leaving
-`closing` with state retained, and failure clears it while setting
-`cleanup_failed`. A repeat Stage 1 and Stage 2 both refuse an active Stage-1
+requires the `closing` status and token. Stage 1 success clears the claim while leaving
+`closing` with state retained, and Stage 1 failure clears it while setting
+`cleanup_failed`.
+A repeat Stage 1 and Stage 2 both refuse an active Stage-1
 claim. Stage 1 retries for five minutes; only deadline-expired `live` or
-`indeterminate` results set `cleanup_failed`. Stage 2 re-reads the lease,
+`indeterminate` results set `cleanup_failed`.
+Stage 2 re-reads the lease,
 requires the persisted Stage 1 verification to have passed with zero live or
 indeterminate results, and probes only the recorded task-definition candidates.
 The exact deleted `ClientException` is gone; `DELETE_IN_PROGRESS` remains
 pending. LocalStack may additionally accept exact `INACTIVE` only for the same
 ARN's recorded Stage 1 allowance. Once all candidates are gone and the
-Stage-1 claim is null, Stage 2 holds its exclusive generation-bound claim,
-deletes every version and delete marker for
-`envs/preview/<env_id>.tfstate`, verifies none remain, and atomically records
-the proof, transitions to `closed`, and consumes the claim.
+Stage-1 claim is null, Stage 2 holds its exclusive generation-bound claim.
+`claim-stage2 --takeover-stale 7200` can replace a two-hour-old claim only in
+the fresh-read CAS mutation and records the cleared token and timestamp in the
+retry audit. A superseded worker fails closed at its next lease precondition;
+between checks it may issue only retry-safe AWS operations. Stage 2 deletes and
+verifies every version and delete marker for both
+`envs/preview/<env_id>.tfstate` and its exact `.tflock` sibling, then atomically
+records the proof, transitions to `closed`, and consumes the claim. An
+indeterminate or partial Stage 2 execution uses `fail-stage2`: the lease stays
+`closing`, its claim is cleared, and `stage2_attempt` increments independently.
 
 Cleanup execution is bound to an explicit `TARGET`. The LocalStack branch
 requires a localhost endpoint, test credentials, disabled metadata lookup, and
@@ -158,17 +167,19 @@ predicate changes: only an exact unsupported task-definition delete for an alrea
 accepted. The prior host-port plan-drift allowance is withdrawn: every Fargate
 `awsvpc` port mapping now sets `hostPort` equal to `containerPort`.
 
-The lease admits three automatic stage-1 executions per generation, with the
-attempt, next retry time, and manual-intervention flag persisted by ETag CAS.
-After the third failure only an audited force retry can claim stage 1. The
+The lease admits three automatic Stage 1 executions and three automatic Stage 2
+executions per generation. `cleanup_attempt`, `stage2_attempt`, the next retry
+time, and the manual-intervention flag are persisted by ETag CAS. Each stage
+escalates against its own counter; after either budget is exhausted, only an
+audited force retry can claim Stage 1. The
 sweeper shares the `preview-<env_id>` concurrency group with manual
 apply/destroy so running jobs do not overlap. Both session workflows use the
 documented `queue: max` property with `cancel-in-progress: false`, retaining
 pending dispatches up to GitHub's queue limit. Apply failure/cancellation close
 re-reads the lease and proceeds only for this workflow run's owner token in
 `open` or `closing`; it does not trust lease-step outputs. The lease owner,
-generation, and CAS checks remain the correctness boundary. Closed leases prune
-after 7 days.
+generation, and CAS checks remain the correctness boundary. Closed leases are
+replaced after 7 days by minimal `deleted` tombstones that retain the generation.
 
 The dispatch workflows accept `target=aws|localstack`. AWS keeps independent
 apply and destroy jobs. LocalStack cannot preserve its emulator or state
@@ -180,8 +191,10 @@ than real-AWS OIDC, IAM, KMS/ECR, or packet-level security-group enforcement.
 Every LocalStack CI run has a fresh runner and fresh emulator, so the gh-driven
 dispatch test proves only GitHub queueing on that target. The preview override
 uses the emulator's versioned state bucket and the same state key as AWS;
-`session-apply` therefore runs Stage 2 immediately after successful Stage 1 and
-records `in_job:true` before closing the lease. The nightly sweeper refuses
+`session-apply` therefore runs up to 20 in-job sweep attempts, three seconds
+apart by default, after successful Stage 1 and requires the lease to become
+`closed`; a failure can leave state versions behind for the manual-release
+procedure. Successful Stage 2 records `in_job:true`. The nightly sweeper refuses
 LocalStack because a later runner cannot recover that emulator. Lifecycle
 refusals, generation increments, and two-environment state isolation are
 proved locally against one emulator by `tests/localstack-concurrency.sh`; the
