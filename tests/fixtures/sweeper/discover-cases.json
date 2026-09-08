@@ -91,15 +91,76 @@
       "next_retry_at": null,
       "manual_intervention_required": false,
       "manifest": null
+    },
+    {
+      "env_id": "stage2-claim",
+      "status": "closing",
+      "generation": 3,
+      "updated_at": "2033-05-18T03:32:20Z",
+      "cleanup_attempt": 1,
+      "next_retry_at": null,
+      "manual_intervention_required": false,
+      "stage2_attempt": 2,
+      "stage2_claim": {
+        "token": "live-stage2-token",
+        "claimed_at": "2033-05-18T03:23:20Z"
+      },
+      "manifest": {
+        "candidates": [
+          {
+            "resource_type": "ecs:task-definition",
+            "id": "arn:aws:ecs:us-east-1:000000000000:task-definition/fixture-task:10",
+            "arn": "arn:aws:ecs:us-east-1:000000000000:task-definition/fixture-task:10",
+            "parent_id": null,
+            "sources": [
+              "terraform-state"
+            ],
+            "tag_entry": null,
+            "force_delete": false
+          }
+        ],
+        "allowances": [],
+        "verification_runs": [
+          {
+            "passed": true,
+            "summary": {
+              "gone": 1,
+              "pending": 1,
+              "live": 0,
+              "indeterminate": 0
+            },
+            "results": [
+              {
+                "resource_type": "ecs:task-definition",
+                "id": "arn:aws:ecs:us-east-1:000000000000:task-definition/fixture-task:10",
+                "arn": "arn:aws:ecs:us-east-1:000000000000:task-definition/fixture-task:10",
+                "outcome": "gone"
+              },
+              {
+                "resource_type": "ec2:vpc-endpoint",
+                "id": "vpce-pending",
+                "arn": "arn:aws:ec2:us-east-1:000000000000:vpc-endpoint/vpce-pending",
+                "outcome": "pending"
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "expected": {
-    "stale-open": { "classification": "stage1-stale-open", "reason": null },
+    "stale-open": {
+      "classification": "stage1-stale-open",
+      "reason": null
+    },
     "fresh-open": {
       "classification": "skip",
       "reason": "open lease is not older than 24 hours"
     },
-    "retry-due": { "classification": "stage1-retry", "reason": null },
+    "retry-due": {
+      "classification": "stage1-retry",
+      "reason": null
+    },
     "retry-future": {
       "classification": "skip",
       "reason": "cleanup retry is not due"
@@ -112,11 +173,21 @@
       "classification": "skip",
       "reason": "automatic cleanup retry budget is exhausted"
     },
-    "stage-two": { "classification": "stage2", "reason": null },
-    "prune-old": { "classification": "prune", "reason": null },
+    "stage-two": {
+      "classification": "stage2",
+      "reason": null
+    },
+    "prune-old": {
+      "classification": "prune",
+      "reason": null
+    },
     "closed-seven": {
       "classification": "skip",
       "reason": "closed lease is within the seven-day retention window"
+    },
+    "stage2-claim": {
+      "classification": "stage2",
+      "reason": null
     }
   }
 }

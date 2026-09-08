@@ -648,6 +648,7 @@ cmd_discover() {
           updated_at,
           cleanup_attempt:(.cleanup_attempt // 0),
           stage2_attempt:(.stage2_attempt // 0),
+          stage2_claim:(.stage2_claim // null),
           next_retry_at:(.next_retry_at // null),
           manual_intervention_required:(.manual_intervention_required // false),
           classification:$classification,

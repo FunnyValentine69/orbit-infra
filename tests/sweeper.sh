@@ -491,7 +491,8 @@ if ! jq -e --argjson expected "$expected" '
   length == ($expected | length)
   and all(.[];
     has("env_id") and has("status") and has("generation") and has("updated_at")
-    and has("cleanup_attempt") and has("next_retry_at")
+    and has("cleanup_attempt") and has("stage2_attempt") and has("stage2_claim")
+    and has("next_retry_at")
     and has("manual_intervention_required") and has("classification") and has("reason")
     and .classification == $expected[.env_id].classification
     and .reason == $expected[.env_id].reason)
@@ -499,6 +500,17 @@ if ! jq -e --argjson expected "$expected" '
   fail "discover did not classify every status/age boundary correctly: $discover_json"
 fi
 pass "discover emits the lease inventory and classifies status/age boundaries"
+
+if ! jq -e '
+  map(select(.env_id == "stage2-claim"))
+  | length == 1
+  and .[0].classification == "stage2"
+  and .[0].stage2_attempt == 2
+  and .[0].stage2_claim.token == "live-stage2-token"
+' <<< "$discover_json" >/dev/null; then
+  fail "discover did not classify a live Stage-2 claim ahead of the non-task-pending rule: $discover_json"
+fi
+pass "discover classifies a live Stage-2 claim before the non-task-pending rule"
 
 reset_store
 bad_inventory="$(jq -c '.leases[0] | .env_id = "bad_id"' "$FIXTURES/discover-cases.json")"
@@ -703,6 +715,28 @@ set -e
   fail "Stage-2 takeover with a Stage-1 claim mutated the lease"
 [ ! -s "$tmp_dir/lease-bodies.log" ] || fail "refused dual-claim takeover attempted a write"
 pass "young, dual-claim, and unflagged Stage-2 takeovers refuse without writes"
+
+# A takeover whose replacement token equals the existing stale Stage-2 claim's
+# token must refuse before any put, leaving the lease byte-identical.
+reset_store
+store_fixture "$pending_fixture"
+same_token_seed="$(run_aws "$LEASE" get aws-pending | jq -c \
+  --arg claimed_at "$stale_claimed_at" \
+  '.stage2_claim = {token:"same-token",claimed_at:$claimed_at}')"
+store_lease "$same_token_seed"
+same_token_before="$(cat "$fake_s3/leases_aws-pending.json.body")"
+set +e
+same_token_output="$(run_aws "$LEASE" claim-stage2 aws-pending \
+  --generation 1 --token same-token --takeover-stale 7200 2>&1)"
+same_token_rc=$?
+set -e
+[ "$same_token_rc" -eq 3 ] || fail "same-token Stage-2 takeover must exit 3"
+grep -Fq 'replacement token must differ from the existing Stage-2 claim' <<< "$same_token_output" || \
+  fail "same-token Stage-2 takeover did not emit the refusal message: $same_token_output"
+[ "$(cat "$fake_s3/leases_aws-pending.json.body")" = "$same_token_before" ] || \
+  fail "same-token Stage-2 takeover mutated the lease"
+[ ! -s "$tmp_dir/lease-bodies.log" ] || fail "same-token Stage-2 takeover attempted a lease write"
+pass "Stage-2 takeover with a replacement token equal to the existing claim refuses without writes"
 
 # The claim's fresh read must observe a manual escalation that lands after the
 # initial classification and refuse before any workload or state call.

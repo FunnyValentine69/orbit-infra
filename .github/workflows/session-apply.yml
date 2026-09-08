@@ -826,7 +826,8 @@ jobs:
           fi
           scripts/close-env.sh --generation "$generation" --from "$lease_status" --owner "$owner" "$ENV_ID"
           # Match the bounded ECS deletion poll: 20 attempts with a three-second default interval.
-          for sweep_attempt in $(seq 1 20); do
+          sweep_closed=false
+          for ((sweep_attempt = 1; sweep_attempt <= 20; sweep_attempt++)); do
             if ! SWEEP_IN_JOB=true scripts/sweep.sh env "$ENV_ID"; then
               echo "in-job LocalStack sweep failed" >&2
               exit 1
@@ -841,13 +842,10 @@ jobs:
             fi
             case "$lease_status" in
               closed)
+                sweep_closed=true
                 break
                 ;;
               closing)
-                if [ "$sweep_attempt" -eq 20 ]; then
-                  echo "still closing after 20 in-job sweep attempts; state versions may remain" >&2
-                  exit 1
-                fi
                 sleep "${SWEEP_LOOP_SLEEP_SECONDS:-3}"
                 ;;
               *)
@@ -856,6 +854,10 @@ jobs:
                 ;;
             esac
           done
+          if [ "$sweep_closed" != true ]; then
+            echo "still closing after 20 in-job sweep attempts; state versions may remain" >&2
+            exit 1
+          fi
 
       - name: Masked summary
         if: always()

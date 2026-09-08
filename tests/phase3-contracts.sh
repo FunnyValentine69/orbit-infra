@@ -642,6 +642,16 @@ for name, destination in (
         raise SystemExit(f"expected one {name!r} step, found {len(matches)}")
     Path(destination).write_text(matches[0])
 PY
+if grep -Fq 'seq ' "$workflow_localstack_run_block"; then
+  echo "session-apply LocalStack sweep loop must not depend on an external seq command" >&2
+  exit 1
+fi
+if [ "$(grep -Fc 'sweep_closed' "$workflow_localstack_run_block")" -lt 2 ]; then
+  echo "session-apply LocalStack sweep loop must set sweep_closed before and check it after the loop" >&2
+  exit 1
+fi
+echo "PASS: session-apply LocalStack sweep loop is a bounded C-style loop guarded by sweep_closed"
+
 cat > "$workflow_exec_root/scripts/lease.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail

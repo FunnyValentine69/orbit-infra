@@ -567,6 +567,10 @@ cmd_claim_stage2() {
   fi
   existing_claim="$(jq -c '.stage2_claim // null' <<< "$lease_json")"
   if [ "$existing_claim" != null ]; then
+    if jq -e --arg token "$claim" '(.token // null) == $token' <<< "$existing_claim" >/dev/null; then
+      err "claim-stage2 $env_id: replacement token must differ from the existing Stage-2 claim"
+      exit 3
+    fi
     if [ -z "$takeover_stale" ] || ! jq -e '
         type == "object"
         and (.token | type == "string" and length > 0)
@@ -949,7 +953,7 @@ cmd_list() {
     rm -f "$body_file"
     updated_epoch="$(iso_to_epoch "$(jq -r '.updated_at' <<< "$lease")")"
     age=$((now - updated_epoch))
-    results="$(jq -c --argjson entry "$(jq --argjson age "$age" '{env_id,status,generation,opened_at,updated_at,cleanup_attempt,next_retry_at,manual_intervention_required,age_seconds:$age}' <<< "$lease")" '. + [$entry]' <<< "$results")"
+    results="$(jq -c --argjson entry "$(jq --argjson age "$age" '{env_id,status,generation,opened_at,updated_at,cleanup_attempt,stage2_attempt: (.stage2_attempt // 0),stage2_claim,next_retry_at,manual_intervention_required,age_seconds:$age}' <<< "$lease")" '. + [$entry]' <<< "$results")"
   done <<< "$keys"
   jq -c '.[]' <<< "$results"
 }
