@@ -2,7 +2,7 @@
 
 - [x] P0-1 Install terraform, awscli, tflint, OrbStack
 - [x] P0-2 Install scanners, signing tools, gitleaks, session-manager-plugin; write tools.lock
-- [ ] P0-3 AWS account: Free Plan, IAM Identity Center user, SSO login, permission simulation (deferred: upgrade to Paid Plan when ready; Free Plan SCPs block the stack)
+- [ ] P0-3 AWS account: Free Plan, IAM Identity Center user, SSO login, permission simulation (the Paid Plan upgrade is not planned, see P0-3b; Free Plan SCPs block the stack)
 - [ ] P0-4 Create repo, skeleton, .gitignore, leak checks, secrets — blocked on P0-3b: AWS_ROLE_DEPLOYER, AWS_ROLE_PLAN_READER, AWS_ROLE_PUBLISHER, and AWS_KMS_SIGNING_KEY_ARN are real-account ARNs
 - [ ] P0-5 bootstrap/preflight.sh ownership discovery (in progress: written, not yet run)
 - [ ] P0-6 bootstrap/ Terraform: state bucket, OIDC + 3 roles, KMS key, ECR repos, Budget (authored; apply deferred with P0-3)
