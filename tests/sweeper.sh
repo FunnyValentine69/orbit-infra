@@ -96,6 +96,13 @@ case "$service $operation" in
         printf '%s\n' "$(( $(cat "$etag_file") + 1 ))" > "$etag_file"
         printf '%s\n' 'MANUAL_RACE' >> "$FAKE_AWS_CALL_LOG"
       fi
+      # get-object #1 on a lease key is the sweep's own classification read;
+      # get-object #2 is claim-stage2's fresh read (see FAKE_MANUAL_ON_CLAIM_READ
+      # above). Signal there so TERM lands mid-claim, before refusal returns.
+      if [ "${FAKE_SIGNAL_ON_CLAIM_READ:-0}" = 1 ] && [ "$lease_get_count" -eq 2 ]; then
+        printf '%s\n' 'SIGNAL claim-read' >> "$FAKE_AWS_CALL_LOG"
+        kill -TERM "$(cat "$FAKE_SWEEP_PID_FILE")"
+      fi
     fi
     cp "$store" "$destination"
     printf '{"ETag":"%s"}\n' "$(cat "$etag_file")"
@@ -890,6 +897,40 @@ if [ "$signal_complete_rc" -ne 143 ] || \
   fail "TERM across complete-stage2 must preserve closed and log the harmless release refusal"
 fi
 pass "TERM across the claim-ending CAS cannot strand or restore a claim"
+
+# TERM delivered while claim-stage2's own fresh read is in flight, for a
+# takeover whose prospective token equals the incumbent's, must not release
+# the incumbent claim this process never acquired.
+reset_store
+store_fixture "$happy_fixture"
+refused_claim_token="refused-takeover-token"
+refused_claim_seed="$(jq -c \
+  --arg claimed_at "$stale_claimed_at" --arg token "$refused_claim_token" \
+  '.stage2_claim = {token:$token,claimed_at:$claimed_at}' \
+  "$fake_s3/leases_aws-happy.json.body")"
+store_lease "$refused_claim_seed"
+set +e
+refused_claim_output="$(FAKE_SCENARIO_FILE="$happy_fixture" \
+  FAKE_SIGNAL_ON_CLAIM_READ=1 \
+  FAKE_SWEEP_ENV_ID=aws-happy \
+  FAKE_SWEEP_PID_FILE="$tmp_dir/sweep.pid" \
+  SWEEP_STAGE2_TOKEN_OVERRIDE="$refused_claim_token" \
+  run_aws "$tmp_dir/bin/run-sweep" 2>&1)"
+refused_claim_rc=$?
+set -e
+refused_claim_lease="$(cat "$fake_s3/leases_aws-happy.json.body")"
+refused_claim_tail="$(awk 'seen { print } /^SIGNAL claim-read$/ { seen=1 }' \
+  "$tmp_dir/aws-calls.log")"
+if [ "$refused_claim_rc" -ne 143 ] || \
+   ! jq -e --arg token "$refused_claim_token" \
+     '.stage2_claim.token == $token' <<< "$refused_claim_lease" >/dev/null || \
+   grep -Fq 's3api put-object' <<< "$refused_claim_tail" || \
+   ! grep -Fq 'replacement token must differ from the existing Stage-2 claim' \
+     <<< "$refused_claim_output" || \
+   ! grep -Fq 'stage2: no acquired claim to release' <<< "$refused_claim_output"; then
+  fail "TERM during a refused claim released or altered the incumbent claim: $refused_claim_output"
+fi
+pass "TERM during a refused claim leaves the incumbent claim untouched"
 
 reset_store
 non_task_reread_fixture="$FIXTURES/aws-non-task-pending-reread.json"

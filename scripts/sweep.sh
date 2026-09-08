@@ -215,12 +215,16 @@ require_closing_generation_claim() {
 STAGE2_ACTIVE_CLAIM=""
 STAGE2_ACTIVE_ENV_ID=""
 STAGE2_ACTIVE_GENERATION=""
+STAGE2_CLAIM_OUT=""
 
 stage2_release_active_claim() {
   local reason="$1"
   local token="$STAGE2_ACTIVE_CLAIM"
   local release_out release_rc
-  [ -n "$token" ] || return 0
+  if [ -z "$token" ] || [ ! -s "${STAGE2_CLAIM_OUT:-/nonexistent}" ]; then
+    err "stage2: no acquired claim to release"
+    return 0
+  fi
   set +e
   release_out="$("$LEASE_SH" release-stage2 "$STAGE2_ACTIVE_ENV_ID" \
     --generation "$STAGE2_ACTIVE_GENERATION" --claim "$token" 2>&1)"
@@ -238,6 +242,7 @@ stage2_disarm_claim_handlers() {
   STAGE2_ACTIVE_CLAIM=""
   STAGE2_ACTIVE_ENV_ID=""
   STAGE2_ACTIVE_GENERATION=""
+  STAGE2_CLAIM_OUT=""
   trap - EXIT TERM INT HUP
 }
 
@@ -428,15 +433,19 @@ stage2() {
   local pending=false allowance_recorded=false lease latest_run state_key entries remaining rc
   local deleted_arns='[]' verified_empty_at proof_file
   generation="$(jq -r '.generation' <<< "$initial_lease")"
-  claim="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
+  # SWEEP_STAGE2_TOKEN_OVERRIDE is test-only: honoured only when set, to let
+  # fixtures pre-seed a lease with the exact claim token the sweep will use.
+  claim="${SWEEP_STAGE2_TOKEN_OVERRIDE:-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$}"
   STAGE2_ACTIVE_ENV_ID="$env_id"
   STAGE2_ACTIVE_GENERATION="$generation"
   STAGE2_ACTIVE_CLAIM="$claim"
+  STAGE2_CLAIM_OUT="$(mktemp)"
+  : > "$STAGE2_CLAIM_OUT"
   stage2_arm_claim_handlers
-  if initial_lease="$("$LEASE_SH" claim-stage2 "$env_id" \
+  if "$LEASE_SH" claim-stage2 "$env_id" \
       --generation "$generation" --token "$STAGE2_ACTIVE_CLAIM" \
-      --takeover-stale "$STAGE2_CLAIM_STALE_SECONDS")"; then
-    :
+      --takeover-stale "$STAGE2_CLAIM_STALE_SECONDS" > "$STAGE2_CLAIM_OUT"; then
+    initial_lease="$(cat "$STAGE2_CLAIM_OUT")"
   else
     claim_rc=$?
     stage2_disarm_claim_handlers

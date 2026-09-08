@@ -341,8 +341,9 @@ classification-to-claim manual escalation, signal release before and after
 claim-ending CAS operations, pending-resource hand-back, separate Stage 2
 failure accounting, cap escalation, exact state and `.tflock` cleanup with
 sibling isolation, an executable single-key selector mutant, prune-time
-If-Match loss, and ETag-conditional tombstone replacement. The suite currently
-reports 38 cases.
+If-Match loss, and ETag-conditional tombstone replacement, plus a TERM
+delivered during a refused Stage-2 takeover claim's own fresh read. The suite
+currently reports 39 cases.
 
 Fixture provenance:
 
