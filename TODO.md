@@ -18,7 +18,7 @@
 
 ## Phase 1 — Repo docs + save-file
 
-- [ ] P1-1 layout — repository layout verified against README; tick at PR time
+- [x] P1-1 layout — repository layout verified against README (closed in PR #21)
 - [x] P1-2 README
 - [x] P1-3 ARCHITECTURE + ADRs 0001-0007
 - [x] P1-4 STATE/TODO
@@ -34,7 +34,7 @@
 - [x] P2-3 modules/redis + modules/clickhouse; preview secret, data bucket, service wiring; uniform IAM naming; live S3 round-trip
 - [x] P2-4 envs/preview composition: ALB with operator_cidr allowlist, per-environment S3 state keys, env-scoped LocalStack override; two concurrent environments verified
 - [x] P2-5 policy gates: repo-wide .tflint.hcl + .checkov.yaml, make validate/lint/test, scripts/gates.sh
-- [ ] P2-6 infracost breakdown and README cost line — PR comment landed as a 60-resource delta (17 estimated, 42 free, 1 unsupported); AWS Budgets waits on P0-3b; tick at PR time
+- [x] P2-6 infracost breakdown and README cost line — PR comment landed as a 60-resource delta (17 estimated, 42 free, 1 unsupported); AWS Budgets waits on P0-3b (closed in PR #21)
 - [x] P2-7 narrow the deployer IAM statement in bootstrap/roles.tf: the policy covers the Phase 2 module actions plus the Phase 3 alarm resources (SNS topic and subscription, CloudWatch alarms) that are pre-provisioned on this branch by decision; remove the five checkov skips there
 
 ## Phase 3 — CI/CD
@@ -43,7 +43,7 @@
 - [x] P3-1 terraform-plan.yml: gates + LocalStack plan + sticky PR comment + gated infracost job; no AWS credentials (P2-6's cost line lands from the first CI run)
 - [x] P3-x: documented 2026-09-03 in README and RUNBOOKS "PR review gates": fork PRs and runs whose github.actor is dependabot[bot] skip all four oidc-smoke jobs (green-by-skip); other same-repository PR runs execute them and each assume-* job fails at its first step until P0-3b because the role secrets are not yet published
 - [x] P3-2: digest-pin the placeholder base image; write .github/workflows/mirror-images.yml (placeholder build/sign/attest + redis/clickhouse mirror with KMS signing, ADR 0007); needs real-AWS bootstrap + AWS_ROLE_PUBLISHER/AWS_KMS_SIGNING_KEY_ARN secrets before it can run
-- [ ] P3-2b: hash-pinned universal placeholder dependency lock and required-hashes install implemented; host dual-platform builds and PR-time tick remain
+- [x] P3-2b: hash-pinned universal placeholder dependency lock and required-hashes install implemented; host dual-platform builds and PR-time tick remain (closed in PR #21)
 - [x] P3-3: scripts/build-upstream.sh (locked-commit `git archive`-only local build of orbit-api/orbit-worker/orbit-clickhouse, three negative tests verified) + images/clickhouse/Dockerfile (named `upstream` build context) + .github/workflows/sign-images.yml (KMS signing/attestation of already-pushed images); upstream.lock records upstream_archive_sha256, repo_build_inputs_sha256, and local_id per image
 - [x] P3-14: stage-1 close redesign (typed outcomes, monotonic indeterminate tag evidence, recomputed verifier summaries and `passed`, strict tagging/verifier response schemas, AWS CLI wrapper with timeouts, LocalStack allowances in the manifest, three-attempt retry budget, atomic owner-plus-manifest lease open, owner-bound cancellation close) LOCALSTACK-VERIFIED for the earlier live path (see ADR 0006, "Live-proof findings 2026-09-02"); fixture suite tests/cleanup-verifier.sh (48 cases; one recorded backend response, remaining fixtures authored)
 - [ ] P3-3b: push the three images with PUSH=1 after P0-3b, then dispatch sign-images.yml
@@ -91,10 +91,10 @@
 - [x] P5-17: the in-job LocalStack Stage 2 in session-apply.yml calls `sweep.sh env` once and does not check the resulting status, so a lease left `closing` (INACTIVE task definition still pending, or a non-task resource handed back to Stage 1) lets the job succeed before state versions are deleted while the runner-local emulator disappears; loop the in-job sweep until `closed` with a bounded retry, or fail the job when the lease is still `closing` (Tier-3 P2 on PR #7 head 0aef665) (closed in PR #20)
 - [x] P5-18: `use_lockfile` makes Terraform write the sibling `<state-key>.tflock` object, and on the versioned state bucket its release leaves versions and delete markers that Stage 2's exact-key selectors skip, so a lease can close while lock history remains; include the lock key in Stage 2's deletion set and in the final empty-state verification, with a fixture (Tier-3 P2 on PR #7 head 0aef665) (closed in PR #20)
 - [x] P5-19: `docs/iam-matrix.md` is the authored IAM action-condition and binding specification for P0-3d, with source/plan drift contracts and negative fixtures — 2026-09-05; PR #15
-- [ ] P5-20: both IAM wildcard evaluation tables cover all 51 current tuples against 48 AWS reference actions: 37 remain unconditioned and 14 are condition-scoped in this PR; the remaining service-specific checks are filed as P5-38, P5-39, P5-40, and P5-41; tick at PR time
-- [ ] P5-21: scan status and 10-day default freshness are enforced for every selected AWS image; shared publisher-role identity separation remains P5-37; tick at PR time
+- [x] P5-20: both IAM wildcard evaluation tables cover all 51 current tuples against 48 AWS reference actions: 37 remain unconditioned and 14 are condition-scoped in this PR; the remaining service-specific checks are filed as P5-38, P5-39, P5-40, and P5-41 (closed in PR #21)
+- [x] P5-21: scan status and 10-day default freshness are enforced for every selected AWS image; shared publisher-role identity separation remains P5-37 (closed in PR #21)
 - [ ] P5-22: real-AWS preview ingress test after P0-3d — apply one preview environment, confirm a source outside the operator CIDR is refused at the ALB security group and the operator CIDR is admitted, then relabel the ALB row of docs/THREAT_MODEL.md (Tier-3 P2 on PR #10; P0-3d itself applies bootstrap only)
-- [ ] P5-23: canonical SBOM comparison now includes checksums, licenses, external references, and relationship identity; tick at PR time
+- [x] P5-23: canonical SBOM comparison now includes checksums, licenses, external references, and relationship identity (closed in PR #21)
 - [x] P5-24: `aws_s3_bucket.data` in `envs/preview/main.tf` has no `aws_s3_bucket_lifecycle_configuration` (the bootstrap state bucket aborts incomplete multipart uploads after 7 days); a local `infracost scan` of envs/preview fails the FinOps multipart-upload and lifecycle policies plus S3.5 (SSL-only bucket policy) and ELB.1 (HTTP to HTTPS redirect); add the lifecycle rule mirroring bootstrap and triage the rest (found while triaging the Infracost app comment on PR #12, which flagged only the fixture roots, now outside the project list pinned in `infracost.yml`) Done in PR #18 (2026-09-07): lifecycle rule and SSL-only bucket policy added and contract-checked in CI; ELB.1 accepted under ADR 0004.
 - [x] P5-25: the conftest ALB exemption cannot see a workload attachment that reaches `aws_security_group.alb` only through a `local` when the group is a fresh create (plan JSON does not serialize locals; known ids are correlated against planned values); add a dedicated-ALB-group invariant that does not depend on plan JSON, for example a shell contract asserting the only references to the ALB group in `envs/preview` are `aws_lb.this` and the service group's ingress source (Tier-3 P1 on PR #12, resolved for known ids, residual for fresh creates) Done in PR #19 (2026-09-07): source-level ALB group invariant with 22 mutants.
 - [x] P5-26: `scripts/fixture-hygiene.sh` inspects IPv4 literals only (a globally routable IPv6 address in a fixture root would pass) and the conftest world-open check compares CIDR strings exactly (a non-canonical IPv6 default route such as `0::/0` is not recognised); add IPv6 literal checks and treat any prefix length of zero as world-open (Tier-3 P2s on PR #12, final head 613be9e, deferred so the reviewed head stayed fixed) Done in PR #19 (2026-09-07): IPv6 literal hygiene and zero-prefix world-open.
