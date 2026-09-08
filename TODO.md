@@ -116,6 +116,6 @@
 - [x] P5-2b: Tier-3 P2 follow-ups from PR #10 — STATE ranges through P5-22, trust-boundary diagram shows deployer control-plane reach and plan-reader account-wide read, upstream SBOM Actions-artifact upload removed and ADR 0007 amended (2026-09-04); cosign 3.1.3 compatibility — `--use-signing-config=false` on all nine sign/attest calls, explicit predicate-type URIs instead of `--type custom`, `jq -s` over per-line envelopes in all thirteen attestation checks (found by Tier 1, proven on a local registry) — PR #11 (2026-09-04)
 
 ## End-of-project decisions (user, low priority)
-- [x] Rewrite or keep the institutional author email on early commits of main — decided 2026-09-08: keep; 39 commits from 2026-09-02 carry the author's two school addresses and a history rewrite of the public repository is not worth the SHA churn
+- [x] Rewrite or keep the institutional author email on early commits of main — decided 2026-09-08: keep; 39 commits on main carry the author's two school addresses and a history rewrite of the public repository is not worth the SHA churn
 - [x] Delete the superseded remote branch feat/phase2-modules — deleted 2026-09-08 together with the merged branches feat/bootstrap, feat/phase3 and feat/phase4; the remote holds only main
 - [x] Delete the superseded remote branch feat/phase3-ci (PR #3 closed as stale; PR #4 is the real one) — deleted 2026-09-08

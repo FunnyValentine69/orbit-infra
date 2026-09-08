@@ -1,6 +1,6 @@
 # ADR 0008: LocalStack development lane
 
-Status: Accepted (2026-09-02)
+Status: Accepted (2026-09-02); amended 2026-09-08 — real-AWS promotion is not planned, see the amendment below
 
 ## Context
 
