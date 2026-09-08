@@ -201,7 +201,7 @@ jobs:
             prior_predicates_file="$(mktemp)"
             if prior_attestations="$(cosign verify-attestation --key "$PUBLIC_KEY" --insecure-ignore-tlog \
               --type spdxjson "${image}@${digest}" 2>/dev/null)"; then
-              if ! jq -c '(.payload | @base64d | fromjson | .predicate)' \
+              if ! jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)' \
                 <<< "$prior_attestations" > "$prior_predicates_file"; then
                 echo "${repository}: could not decode attestations" >&2
                 rm -f "$prior_predicates_file"

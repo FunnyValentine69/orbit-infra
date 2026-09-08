@@ -409,6 +409,12 @@ sign_step = sign_steps[sign_index]
 sign_run = sign_step.get("run", "")
 if sign_step.get("shell") != "bash" or not sign_run.startswith("set -euo pipefail\n"):
     fail("sign-images supply-chain step must use shell bash with explicit strict mode")
+slurp_decode = "jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)'"
+if slurp_decode not in sign_run:
+    fail("sign-images prior-attestation decode must slurp the complete verification stream")
+if "jq -c '(.payload" in sign_run:
+    fail("sign-images prior-attestation decode must not use the non-slurp form")
+print("PASS: sign-images prior-attestation slurp decode structure")
 if "done < <(jq" in sign_run:
     fail("sign-images must decode prior attestations before entering the predicate loop")
 for marker in (
@@ -541,6 +547,114 @@ for call in required_calls:
 print("PASS: scan verification call sites (upstream=3, public=3)")
 print("PASS: scan producer ordering, predicate fields, version pins, and weekly cadence")
 PY_SCAN_STRUCTURE
+
+prior_attestation_script="$tmp_dir/prior-attestation-compare.sh"
+prior_attestation_mutant="$tmp_dir/prior-attestation-compare-mutant.sh"
+# Runtime contract: execute the minimal contiguous sign-images region from
+# prior_predicates_file="$(mktemp)" through the rm after its comparison loop.
+# That region's only workflow-specific external is stubbed cosign;
+# scripts/sbom-canon.sh and jq remain real so the stream decode is exercised.
+python3 - "$sign_workflow" "$prior_attestation_script" "$prior_attestation_mutant" <<'PY_EXTRACT_PRIOR_ATTESTATION'
+from pathlib import Path
+import sys
+import textwrap
+import yaml
+
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+steps = workflow["jobs"]["sign"]["steps"]
+runs = [
+    step.get("run", "")
+    for step in steps
+    if step.get("name") == "Generate SBOMs, scan, sign, and attest upstream images"
+]
+if len(runs) != 1:
+    raise SystemExit(f"FAIL: expected one upstream supply-chain run block, found {len(runs)}")
+lines = runs[0].splitlines()
+start_marker = 'prior_predicates_file="$(mktemp)"'
+end_marker = 'rm -f "$prior_predicates_file"'
+starts = [index for index, line in enumerate(lines) if line.strip() == start_marker]
+if len(starts) != 1:
+    raise SystemExit(f"FAIL: expected one prior-attestation region start, found {len(starts)}")
+ends = [
+    index
+    for index, line in enumerate(lines[starts[0] + 1 :], starts[0] + 1)
+    if line.strip() == end_marker
+]
+if len(ends) != 2:
+    raise SystemExit(f"FAIL: expected two prior-attestation cleanup lines, found {len(ends)}")
+region = textwrap.dedent("\n".join(lines[starts[0] : ends[1] + 1]))
+script = (
+    "#!/usr/bin/env bash\n"
+    "set -euo pipefail\n"
+    "run_prior_attestation_compare() {\n"
+    + textwrap.indent(region, "  ")
+    + "\n}\n"
+    "run_prior_attestation_compare\n"
+)
+Path(sys.argv[2]).write_text(script)
+slurp_decode = "jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)'"
+non_slurp_decode = "jq -c '(.payload | @base64d | fromjson | .predicate)'"
+if script.count(slurp_decode) != 1:
+    raise SystemExit("FAIL: prior-attestation decode mutation anchor must occur exactly once")
+Path(sys.argv[3]).write_text(script.replace(slurp_decode, non_slurp_decode, 1))
+PY_EXTRACT_PRIOR_ATTESTATION
+
+mkdir -p "$tmp_dir/prior-attestation-bin"
+cat > "$tmp_dir/prior-attestation-bin/cosign" <<'EOF_PRIOR_COSIGN'
+#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line || [ -n "$line" ]; do
+  printf '%s\n' "$line"
+done < "$PRIOR_ATTESTATIONS_FILE"
+EOF_PRIOR_COSIGN
+chmod +x "$tmp_dir/prior-attestation-bin/cosign"
+
+prior_predicate="$REPO_ROOT/tests/fixtures/sbom/base.spdx.json"
+prior_attestations="$tmp_dir/prior-attestations.jsonl"
+prior_statement="$(jq -cn --argjson predicate "$(<"$prior_predicate")" '{predicate:$predicate}')"
+prior_payload="$(printf '%s' "$prior_statement" | base64 | tr -d '\n')"
+printf '%s\n' '{"payload":"%%%"}' > "$prior_attestations"
+jq -cn --arg payload "$prior_payload" '{payload:$payload}' >> "$prior_attestations"
+prior_new_canon="$("$REPO_ROOT/scripts/sbom-canon.sh" < "$prior_predicate")"
+
+run_prior_attestation_case() {
+  local label="$1"
+  local expected_rc="$2"
+  local expected_message="$3"
+  local script="$4"
+  local output rc
+  set +e
+  output="$(
+    cd "$REPO_ROOT" &&
+      PATH="$tmp_dir/prior-attestation-bin:$PATH" \
+      PRIOR_ATTESTATIONS_FILE="$prior_attestations" \
+      PUBLIC_KEY="$tmp_dir/test-public-key.pem" \
+      image="example.invalid/image" \
+      digest="sha256:$(printf 'a%.0s' {1..64})" \
+      repository="test/repository" \
+      new_canon="$prior_new_canon" \
+        bash "$script" 2>&1
+  )"
+  rc=$?
+  set -e
+  if [ "$rc" -ne "$expected_rc" ]; then
+    echo "sign-images prior-attestation case $label exited $rc, expected $expected_rc: $output" >&2
+    exit 1
+  fi
+  if [ -n "$expected_message" ] && ! grep -Fq "$expected_message" <<< "$output"; then
+    echo "sign-images prior-attestation case $label lacked message '$expected_message': $output" >&2
+    exit 1
+  fi
+  echo "PASS: sign-images prior-attestation case $label"
+}
+
+run_prior_attestation_case malformed-first 1 "could not decode attestations" \
+  "$prior_attestation_script"
+run_prior_attestation_case malformed-first-non-slurp-mutant 0 "" \
+  "$prior_attestation_mutant"
+echo "PASS: sign-images prior-attestation non-slurp mutant killed"
+echo "PASS: sign-images prior-attestation decode contracts (2 cases)"
 
 scan_verify_script="$tmp_dir/verify-scan-attestation.sh"
 scan_verify_mutant="$tmp_dir/verify-scan-attestation-mutant.sh"

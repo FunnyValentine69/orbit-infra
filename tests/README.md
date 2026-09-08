@@ -250,7 +250,7 @@ Run source mode without LocalStack:
 bash tests/iam-matrix-contracts.sh
 ```
 
-Source mode requires exactly 85 statement rows and 13 binding rows. It verifies
+Source mode requires exactly 86 statement rows and 13 binding rows. It verifies
 source Sid and document order, all seven condition-operator truth tables and
 their prescribed decisions, and exactly one unambiguous `expect <decision>`
 clause in every ordinary executable case. Every executable non-KMS `:absent`

@@ -10,7 +10,7 @@ The attacker model includes an external internet source, a same-repository pull-
 
 `LOCALSTACK-VERIFIED locally` means the named path executed against one local emulator. `LOCALSTACK-VERIFIED in CI` means the named path executed on a hosted runner against that runner's fresh emulator. `AWS-VERIFIED` would require recorded real-AWS execution evidence, and no row currently qualifies. `CODE-ONLY` means the mechanism is present in code but its relevant runtime enforcement has not been recorded.
 
-The IAM action-condition matrix now exists in [`iam-matrix.md`](iam-matrix.md), and its source/plan contract locks 85 statement rows plus 13 principal-binding rows to the rendered bootstrap policies. The matrix is an authored test specification: IAM rows remain `CODE-ONLY` until P0-3d executes their cases. `AWS-SIMULATED` will mean the real-account IAM simulator evaluated a case, while `AWS-VERIFIED` requires a recorded live call under the named principal; simulation does not prove service-side condition-key enforcement.
+The IAM action-condition matrix now exists in [`iam-matrix.md`](iam-matrix.md), and its source/plan contract locks 86 statement rows plus 13 principal-binding rows to the rendered bootstrap policies. The matrix is an authored test specification: IAM rows remain `CODE-ONLY` until P0-3d executes their cases. `AWS-SIMULATED` will mean the real-account IAM simulator evaluated a case, while `AWS-VERIFIED` requires a recorded live call under the named principal; simulation does not prove service-side condition-key enforcement.
 
 ## Trust boundaries
 
