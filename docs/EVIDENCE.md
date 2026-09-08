@@ -37,7 +37,7 @@ Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot 
 
 ## PR checks
 
-Checks that must be green are `gates` on every PR and, on repository-owner-authored same-repository PRs, `plan-localstack` and `infracost`. The separate `oidc-smoke.yml` jobs skip fork PRs and runs whose `github.actor` is `dependabot[bot]`; their three `assume-*` jobs stay red on same-repository PRs because the role-ARN and KMS secrets those jobs assume are real-account values that were never published (P0-3b, not planned).
+Checks that must be green are `gates` on every PR and, on repository-owner-authored same-repository PRs, `plan-localstack` and `infracost`. The separate `oidc-smoke.yml` jobs skip fork PRs and runs whose `github.actor` is `dependabot[bot]`; their three `assume-*` jobs stay red on same-repository PRs because the three role-ARN secrets those jobs assume are real-account values that were never published (P0-3b, not planned).
 
 ## Two targets
 
