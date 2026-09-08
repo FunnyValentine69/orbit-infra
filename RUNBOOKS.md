@@ -540,8 +540,8 @@ three-day margin inside the default window. Upstream mode has no scheduled
 producer: dispatch `sign-images.yml` for the locked commit within the selected
 window before starting an upstream-mode apply.
 
-A stale-scan failure names the affected digest. Re-run `sign-images.yml` when
-the digest is an upstream API or ClickHouse image. Re-run `mirror-images.yml`
+A stale-scan failure names the affected image label and digest. Re-run
+`sign-images.yml` when the digest is an upstream API or ClickHouse image. Re-run `mirror-images.yml`
 when it is the placeholder, Redis, or mirrored ClickHouse digest, then retry the
 apply. A missing, malformed, future-dated, failed, wrong-digest, or wrong-Trivy-
 version predicate is also refused and must be replaced by a successful producer

@@ -283,10 +283,12 @@ fi
 # freshness verification all stay offline-contractable.
 bash "$REPO_ROOT/tests/sbom-canon.sh"
 
-python3 - "$REPO_ROOT/placeholder/requirements.in" \
-  "$REPO_ROOT/placeholder/requirements.txt" \
-  "$REPO_ROOT/placeholder/Dockerfile" \
-  "$REPO_ROOT/tools.lock" <<'PY_REQUIREMENT_HASHES'
+run_requirement_hash_contract() {
+  local compiled_requirements="$1"
+  python3 - "$REPO_ROOT/placeholder/requirements.in" \
+    "$compiled_requirements" \
+    "$REPO_ROOT/placeholder/Dockerfile" \
+    "$REPO_ROOT/tools.lock" <<'PY_REQUIREMENT_HASHES'
 from pathlib import Path
 import re
 import sys
@@ -312,8 +314,9 @@ for raw_line in compiled_text.splitlines():
     if not stripped or stripped.startswith("#"):
         continue
     if raw_line[:1].isspace():
-        if current:
-            current.append(stripped.rstrip("\\").strip())
+        if not current:
+            fail(f"placeholder/requirements.txt has a continuation line with no requirement: {stripped}")
+        current.append(stripped.rstrip("\\").strip())
         continue
     if current:
         logical.append(" ".join(current))
@@ -351,11 +354,44 @@ if not re.search(r"^uv b4a21408a169f66ffe2e91d4d416d5b08bd72d2780e99c700b3d79c31
 
 print(f"PASS: placeholder requirements hashes ({len(logical)} logical packages, {len(top_level)} top-level pins)")
 PY_REQUIREMENT_HASHES
+}
+
+run_requirement_hash_contract "$REPO_ROOT/placeholder/requirements.txt"
+
+requirements_continuation_mutant="$tmp_dir/requirements-continuation-before-first.txt"
+python3 - "$REPO_ROOT/placeholder/requirements.txt" "$requirements_continuation_mutant" <<'PY_REQUIREMENTS_CONTINUATION_MUTANT'
+from pathlib import Path
+import sys
+
+
+lines = Path(sys.argv[1]).read_text().splitlines(keepends=True)
+for index, line in enumerate(lines):
+    stripped = line.strip()
+    if stripped and not stripped.startswith("#"):
+        lines.insert(index, "    unhashed-demo==1.0\n")
+        break
+else:
+    raise SystemExit("requirements continuation mutant found no first requirement")
+Path(sys.argv[2]).write_text("".join(lines))
+PY_REQUIREMENTS_CONTINUATION_MUTANT
+set +e
+requirements_continuation_output="$(run_requirement_hash_contract "$requirements_continuation_mutant" 2>&1)"
+requirements_continuation_rc=$?
+set -e
+if [ "$requirements_continuation_rc" -eq 0 ] ||
+   ! grep -Fq "FAIL: placeholder/requirements.txt has a continuation line with no requirement: unhashed-demo==1.0" \
+     <<< "$requirements_continuation_output"; then
+  echo "requirements continuation-before-first mutant did not fail as required: rc=$requirements_continuation_rc output=$requirements_continuation_output" >&2
+  exit 1
+fi
+echo "PASS: placeholder requirements continuation-before-first mutant rejected"
 
 sign_workflow="$REPO_ROOT/.github/workflows/sign-images.yml"
-python3 - "$sign_workflow" "$mirror_workflow" "$apply_workflow" <<'PY_SCAN_STRUCTURE'
+scan_calls_public_only_mutant="$tmp_dir/session-apply-scan-calls-public-only.yml"
+python3 - "$sign_workflow" "$mirror_workflow" "$apply_workflow" "$scan_calls_public_only_mutant" <<'PY_SCAN_STRUCTURE'
 from copy import deepcopy
 from pathlib import Path
+import re
 import sys
 import yaml
 
@@ -536,15 +572,133 @@ if "could not decode attestations" not in verify_run:
     fail("session-apply lacks the malformed-attestation decode diagnostic")
 if "verify_scan_attestation()" not in verify_run:
     fail("session-apply must define verify_scan_attestation")
-required_calls = (
-    'verify_scan_attestation api_image "$api_image"',
-    'verify_scan_attestation redis_image "$redis_image"',
-    'verify_scan_attestation clickhouse_image "$clickhouse_image"',
+def extract_mode_branches(run):
+    lines = run.splitlines()
+    case_indexes = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(r'\s*case\s+"?\$\{?MODE\}?"?\s+in\s*', line)
+    ]
+    if len(case_indexes) == 1:
+        branches = {"upstream": [], "public": []}
+        current = None
+        found_esac = False
+        for line in lines[case_indexes[0] + 1 :]:
+            label = re.fullmatch(r"\s*(upstream|public)\)\s*", line)
+            if label:
+                current = label.group(1)
+                continue
+            if re.fullmatch(r"\s*;;\s*", line):
+                current = None
+                continue
+            if re.fullmatch(r"\s*esac\s*", line):
+                found_esac = True
+                break
+            if current:
+                branches[current].append(line)
+        if not found_esac or any(not branch for branch in branches.values()):
+            fail("session-apply deployment mode case must have non-empty upstream and public branches")
+        return branches
+    if case_indexes:
+        fail(f"session-apply must have one deployment mode case, found {len(case_indexes)}")
+
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if re.match(r'^\s*if\s+\[\[?.*\$\{?MODE\}?.*upstream.*;\s*then\s*$', line)
+    ]
+    if len(starts) != 1:
+        fail("session-apply must guard scan verification with a deployment mode case or if/else")
+    start = starts[0]
+    else_indexes = [index for index in range(start + 1, len(lines)) if re.fullmatch(r"\s*else\s*", lines[index])]
+    fi_indexes = [index for index in range(start + 1, len(lines)) if re.fullmatch(r"\s*fi\s*", lines[index])]
+    if not else_indexes or not fi_indexes or not start < else_indexes[0] < fi_indexes[0]:
+        fail("session-apply deployment mode if/else branches are malformed")
+    return {
+        "upstream": lines[start + 1 : else_indexes[0]],
+        "public": lines[else_indexes[0] + 1 : fi_indexes[0]],
+    }
+
+
+def selected_images(branch):
+    selected = []
+    patterns = (
+        r"^\s*verify_(?:upstream|mirror)_attestation\s+([a-z_]+)\s+",
+        r'^\s*verify_placeholder_attestation\s+"\$([a-z_]+)"\s*$',
+    )
+    for line in branch:
+        for pattern in patterns:
+            match = re.match(pattern, line)
+            if match:
+                selected.append(match.group(1))
+                break
+    if not selected:
+        fail("session-apply deployment mode branch selects no images")
+    if len(selected) != len(set(selected)):
+        fail(f"session-apply deployment mode branch selects an image more than once: {selected}")
+    return selected
+
+
+def assert_mode_scan_calls(run):
+    branches = extract_mode_branches(run)
+    counts = {}
+    for mode, branch in branches.items():
+        expected = selected_images(branch)
+        branch_text = "\n".join(branch)
+        for label in expected:
+            call = f'verify_scan_attestation {label} "${label}"'
+            count = branch_text.count(call)
+            if count != 1:
+                fail(f"session-apply {mode} branch must contain one scan call for {label}, found {count}")
+        scan_calls = re.findall(r"^\s*verify_scan_attestation\s+([a-z_]+)\s+", branch_text, re.MULTILINE)
+        if sorted(scan_calls) != sorted(expected):
+            fail(f"session-apply {mode} branch scan calls do not match selected images")
+        counts[mode] = len(scan_calls)
+    return counts
+
+
+mode_scan_counts = assert_mode_scan_calls(verify_run)
+print(
+    "PASS: scan verification call sites "
+    f"(upstream={mode_scan_counts['upstream']}, public={mode_scan_counts['public']})"
 )
-for call in required_calls:
-    if verify_run.count(call) != 1:
-        fail(f"session-apply must contain one scan call site: {call}")
-print("PASS: scan verification call sites (upstream=3, public=3)")
+
+mutated_apply = deepcopy(apply)
+mutated_steps = mutated_apply["jobs"]["apply"]["steps"]
+mutated_verify = next(
+    step for step in mutated_steps if step.get("name") == "Verify selected image signatures and attestations"
+)
+mutant_lines = []
+in_mode_case = False
+current_mode = None
+for line in mutated_verify["run"].splitlines():
+    if re.fullmatch(r'\s*case\s+"?\$\{?MODE\}?"?\s+in\s*', line):
+        in_mode_case = True
+    label = re.fullmatch(r"\s*(upstream|public)\)\s*", line) if in_mode_case else None
+    if label:
+        current_mode = label.group(1)
+    if not (current_mode == "upstream" and re.match(r"^\s*verify_scan_attestation\s+", line)):
+        mutant_lines.append(line)
+    if in_mode_case and re.fullmatch(r"\s*;;\s*", line):
+        current_mode = None
+    if in_mode_case and re.fullmatch(r"\s*esac\s*", line):
+        in_mode_case = False
+mutated_verify["run"] = "\n".join(mutant_lines) + "\n"
+Path(sys.argv[4]).write_text(yaml.safe_dump(mutated_apply, sort_keys=False))
+mutant_workflow = yaml.safe_load(Path(sys.argv[4]).read_text())
+mutant_verify_run = next(
+    step["run"]
+    for step in mutant_workflow["jobs"]["apply"]["steps"]
+    if step.get("name") == "Verify selected image signatures and attestations"
+)
+try:
+    assert_mode_scan_calls(mutant_verify_run)
+except SystemExit as exc:
+    if "upstream branch" not in str(exc):
+        fail(f"public-only scan-call mutant failed for the wrong reason: {exc}")
+else:
+    fail("public-only scan-call mutant survived upstream validation")
+print("PASS: public-only scan-call placement mutant rejected")
 print("PASS: scan producer ordering, predicate fields, version pins, and weekly cadence")
 PY_SCAN_STRUCTURE
 
@@ -809,29 +963,41 @@ write_scan_predicate "$fresh_predicate" "$(scan_iso $((scan_now_epoch - 3600)))"
 jq -s '.' "$stale_predicate" "$fresh_predicate" > "$scan_predicate"
 run_scan_case stale-then-fresh 0 "" "$scan_verify_script" "$scan_predicate" 10
 
-write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 11 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
-run_scan_case stale 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
+stale_scan_time="$(scan_iso $((scan_now_epoch - 11 * 86400)))"
+write_scan_predicate "$scan_predicate" "$stale_scan_time" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case stale 1 \
+  "scan attestation stale: scannedAt $stale_scan_time older than 10 days for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 run_scan_case missing 1 "no scan attestation for $scan_digest" "$scan_verify_script" "$scan_predicate" 10 1
 run_scan_case malformed-envelope 1 "could not decode attestations" \
   "$scan_verify_script" "$scan_predicate" 10 0 1
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 1
-run_scan_case failed-scan 1 "scan attestation reports a failed scan" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case failed-scan 1 \
+  "scan attestation reports a failed scan for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 
 wrong_digest="sha256:$(printf 'b%.0s' {1..64})"
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$wrong_digest" trivy "$trivy_pin" 0
 run_scan_case digest-mismatch 1 "no scan attestation for $scan_digest" "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch + 3600)))" "$scan_digest" trivy "$trivy_pin" 0
-run_scan_case future 1 "scan attestation scannedAt is in the future" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case future 1 \
+  "scan attestation scannedAt is in the future for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" yesterday "$scan_digest" trivy "$trivy_pin" 0
-run_scan_case malformed 1 "scan attestation scannedAt is malformed" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case malformed 1 \
+  "scan attestation scannedAt is malformed for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 10 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
 run_scan_case boundary 0 "" "$scan_verify_script" "$scan_predicate" 10
-write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 10 * 86400 - 1)))" "$scan_digest" trivy "$trivy_pin" 0
-run_scan_case past-boundary 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
+past_boundary_scan_time="$(scan_iso $((scan_now_epoch - 10 * 86400 - 1)))"
+write_scan_predicate "$scan_predicate" "$past_boundary_scan_time" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case past-boundary 1 \
+  "scan attestation stale: scannedAt $past_boundary_scan_time older than 10 days for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0
 for invalid_window in 0 61 abc 08 07; do
@@ -843,16 +1009,24 @@ write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" 
 run_scan_case severity-critical-high 0 "" "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy "$trivy_pin" 0 HIGH
-run_scan_case severity-high 1 "scan attestation severity gate mismatch" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case severity-high 1 \
+  "scan attestation severity gate mismatch for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" grype "$trivy_pin" 0
-run_scan_case scanner-mismatch 1 "scan attestation scanner or version mismatch" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case scanner-mismatch 1 \
+  "scan attestation scanner or version mismatch for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 
 write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 3600)))" "$scan_digest" trivy 0.73.0 0
-run_scan_case version-mismatch 1 "scan attestation scanner or version mismatch" "$scan_verify_script" "$scan_predicate" 10
+run_scan_case version-mismatch 1 \
+  "scan attestation scanner or version mismatch for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 
-write_scan_predicate "$scan_predicate" "$(scan_iso $((scan_now_epoch - 11 * 86400)))" "$scan_digest" trivy "$trivy_pin" 0
-run_scan_case stale-original 1 "scan attestation stale:" "$scan_verify_script" "$scan_predicate" 10
+write_scan_predicate "$scan_predicate" "$stale_scan_time" "$scan_digest" trivy "$trivy_pin" 0
+run_scan_case stale-original 1 \
+  "scan attestation stale: scannedAt $stale_scan_time older than 10 days for test_image $scan_digest" \
+  "$scan_verify_script" "$scan_predicate" 10
 run_scan_case stale-mutant 0 "" "$scan_verify_mutant" "$scan_predicate" 10
 echo "PASS: scan-attestation freshness mutant killed"
 echo "PASS: scan-attestation verification contracts (22 cases)"

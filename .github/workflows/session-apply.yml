@@ -565,17 +565,17 @@ jobs:
             if [ "$found_digest" = false ]; then
               echo "no scan attestation for $digest" >&2
             elif [ -n "$stale_at" ]; then
-              echo "scan attestation stale: scannedAt $stale_at older than $SCAN_FRESHNESS_DAYS days" >&2
+              echo "scan attestation stale: scannedAt $stale_at older than $SCAN_FRESHNESS_DAYS days for $label $digest" >&2
             elif [ "$saw_future" = true ]; then
-              echo "scan attestation scannedAt is in the future" >&2
+              echo "scan attestation scannedAt is in the future for $label $digest" >&2
             elif [ "$saw_malformed" = true ]; then
-              echo "scan attestation scannedAt is malformed" >&2
+              echo "scan attestation scannedAt is malformed for $label $digest" >&2
             elif [ "$saw_failed" = true ]; then
-              echo "scan attestation reports a failed scan" >&2
+              echo "scan attestation reports a failed scan for $label $digest" >&2
             elif [ "$saw_severity_mismatch" = true ]; then
-              echo "scan attestation severity gate mismatch" >&2
+              echo "scan attestation severity gate mismatch for $label $digest" >&2
             elif [ "$saw_mismatch" = true ]; then
-              echo "scan attestation scanner or version mismatch" >&2
+              echo "scan attestation scanner or version mismatch for $label $digest" >&2
             else
               echo "no scan attestation for $digest" >&2
             fi
@@ -638,17 +638,21 @@ jobs:
           verify_signature api_image "$api_image"
           verify_signature redis_image "$redis_image"
           verify_signature clickhouse_image "$clickhouse_image"
-          verify_scan_attestation api_image "$api_image"
-          verify_scan_attestation redis_image "$redis_image"
-          verify_scan_attestation clickhouse_image "$clickhouse_image"
-          verify_mirror_attestation redis_image "$redis_image" "$REDIS_SOURCE" "$REDIS_DIGEST"
           case "$MODE" in
             upstream)
+              verify_scan_attestation api_image "$api_image"
               verify_upstream_attestation api_image "$api_image"
+              verify_scan_attestation clickhouse_image "$clickhouse_image"
               verify_upstream_attestation clickhouse_image "$clickhouse_image"
+              verify_scan_attestation redis_image "$redis_image"
+              verify_mirror_attestation redis_image "$redis_image" "$REDIS_SOURCE" "$REDIS_DIGEST"
               ;;
             public)
+              verify_scan_attestation api_image "$api_image"
               verify_placeholder_attestation "$api_image"
+              verify_scan_attestation redis_image "$redis_image"
+              verify_mirror_attestation redis_image "$redis_image" "$REDIS_SOURCE" "$REDIS_DIGEST"
+              verify_scan_attestation clickhouse_image "$clickhouse_image"
               verify_mirror_attestation clickhouse_image "$clickhouse_image" "$CLICKHOUSE_SOURCE" "$CLICKHOUSE_DIGEST"
               ;;
           esac

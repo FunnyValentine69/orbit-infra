@@ -1233,6 +1233,85 @@ for document_match, document_block in documents:
             fail(f"duplicate scoped statement key {document}/{sid_match.group(1)}")
         statement_map[key] = statement
 
+condition_scoped_keys = {
+    ("deployer_ec2", "Ec2DescribeStarOnly"),
+    ("deployer_elb_ecs", "EcsListServicesClusterScoped"),
+    ("deployer_elb_ecs", "ServiceDiscoveryUntagResource"),
+}
+condition_scoped_source_rows = []
+condition_scoped_effects = {}
+for key in sorted(condition_scoped_keys):
+    statement = statement_map.get(key)
+    if statement is None:
+        fail(f"condition-scoped statement missing {key[0]}/{key[1]}")
+    effect_match = re.search(r'^\s*effect\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
+    if effect_match is None:
+        fail(f"cannot parse effect in condition-scoped statement {key[0]}/{key[1]}")
+    if not statement_conditions(statement):
+        fail(f"condition-scoped statement has no condition {key[0]}/{key[1]}")
+    for action in statement_actions(statement):
+        row = (key[0], key[1], action)
+        condition_scoped_source_rows.append(row)
+        condition_scoped_effects[row] = effect_match.group(1)
+
+condition_start_marker = "<!-- condition-scoped-evaluation:start -->"
+condition_end_marker = "<!-- condition-scoped-evaluation:end -->"
+text = Path(sys.argv[2]).read_text()
+if text.count(condition_start_marker) != 1 or text.count(condition_end_marker) != 1:
+    fail("condition-scoped table markers must each occur exactly once")
+condition_section = text.split(condition_start_marker, 1)[1].split(condition_end_marker, 1)[0]
+condition_scoped_table_rows = []
+for line in condition_section.splitlines():
+    if not line.startswith("| `"):
+        continue
+    cells = re.findall(r"`([^`]*)`", line)
+    if len(cells) != 11:
+        fail(f"condition-scoped row must have eleven code cells: {line}")
+    (
+        document, sid, effect, action, resource_cell, condition_cell,
+        resource_scope, condition_scope, follow_up, reference, applied_condition,
+    ) = cells
+    row = (document, sid, action)
+    try:
+        resource_types = json.loads(resource_cell)
+        condition_keys = json.loads(condition_cell)
+    except json.JSONDecodeError as exc:
+        fail(f"condition-scoped reference cells must be JSON arrays for {document}/{sid}/{action}: {exc}")
+    if not isinstance(resource_types, list) or not isinstance(condition_keys, list):
+        fail(f"condition-scoped reference cells must be JSON arrays for {document}/{sid}/{action}")
+    expected_resource = "possible" if resource_types else "none"
+    expected_condition = "possible" if condition_keys else "none"
+    if resource_scope != expected_resource or condition_scope != expected_condition:
+        fail(f"condition-scoped conclusion does not match reference cells for {document}/{sid}/{action}")
+    if effect != condition_scoped_effects.get(row):
+        fail(f"condition-scoped effect does not match source for {document}/{sid}/{action}")
+    if resource_scope == "possible" and "TODO P5-41" not in follow_up:
+        fail(f"condition-scoped possible resource scope lacks TODO P5-41 for {document}/{sid}/{action}")
+    if not applied_condition:
+        fail(f"condition-scoped applied condition is empty for {document}/{sid}/{action}")
+    if "https://docs.aws.amazon.com/service-authorization/" not in reference or "fetched 2026-09-08" not in reference:
+        fail(f"condition-scoped reference URL/date missing for {document}/{sid}/{action}")
+    condition_scoped_table_rows.append(row)
+
+if len(condition_scoped_table_rows) != len(set(condition_scoped_table_rows)):
+    fail("condition-scoped table tuple set contains a duplicate")
+condition_scoped_source_set = set(condition_scoped_source_rows)
+condition_scoped_table_set = set(condition_scoped_table_rows)
+condition_missing = sorted(condition_scoped_source_set - condition_scoped_table_set)
+condition_extra = sorted(condition_scoped_table_set - condition_scoped_source_set)
+if condition_missing or condition_extra:
+    detail = []
+    if condition_missing:
+        detail.append("missing " + "/".join(condition_missing[0]))
+    if condition_extra:
+        detail.append("extra " + "/".join(condition_extra[0]))
+    fail("condition-scoped tuple-set mismatch: " + "; ".join(detail))
+if len(condition_scoped_source_rows) != 14:
+    fail(f"expected 14 condition-scoped tuples, found {len(condition_scoped_source_rows)}")
+
+print("PASS: condition-scoped wildcard tuple-set equality (14 tuples across 3 Sids)")
+
+
 expected_scoped_statements = {
     ("deployer_ec2", "Ec2DescribeStarOnly"): (
         tuple(sorted((
@@ -1454,6 +1533,40 @@ PY_APPEND_WILDCARD_ROW
   expect_wildcard_fail appended-row "tuple-set mismatch: extra deployer_elb_ecs/FabricatedWildcard/Allow/ecs:ListClusters" \
     env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_DOC_OVERRIDE="$doc_copy" "$0"
 
+  python3 - "$wildcard_doc" "$doc_copy" <<'PY_REMOVE_CONDITION_SCOPED_ROW'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+start = source.index("<!-- condition-scoped-evaluation:start -->")
+end = source.index("<!-- condition-scoped-evaluation:end -->")
+lines = source[start:end].splitlines(keepends=True)
+for index, line in enumerate(lines):
+    if line.startswith("| `"):
+        del lines[index]
+        break
+else:
+    raise SystemExit("condition-scoped table row removal found no row")
+Path(sys.argv[2]).write_text(source[:start] + "".join(lines) + source[end:])
+PY_REMOVE_CONDITION_SCOPED_ROW
+  expect_wildcard_fail condition-scoped-removed-row "condition-scoped tuple-set mismatch: missing" \
+    env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_DOC_OVERRIDE="$doc_copy" "$0"
+
+  python3 - "$wildcard_roles" "$roles_copy" <<'PY_APPEND_CONDITION_SCOPED_ACTION'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+anchor = '      "ec2:DescribeNetworkInterfaces", # F6: ENI discovery only for SG-delete-path lookups; no ENI deletion granted'
+replacement = anchor + '\n      "ec2:DescribeInstances",'
+if source.count(anchor) != 1:
+    raise SystemExit("condition-scoped action mutation anchor mismatch")
+Path(sys.argv[2]).write_text(source.replace(anchor, replacement, 1))
+PY_APPEND_CONDITION_SCOPED_ACTION
+  expect_wildcard_fail condition-scoped-appended-action \
+    "condition-scoped tuple-set mismatch: missing deployer_ec2/Ec2DescribeStarOnly/ec2:DescribeInstances" \
+    env IAM_WILDCARD_SKIP_NEGATIVES=1 IAM_WILDCARD_ROLES_OVERRIDE="$roles_copy" "$0"
+
   for occurrence in first second; do
     python3 - "$wildcard_roles" "$roles_copy" "$occurrence" <<'PY_MUTATE_ECR_AUTH'
 from pathlib import Path
@@ -1502,7 +1615,7 @@ ecs-cluster|EcsListServicesClusterScoped|variable = "ecs:cluster"|variable = "ec
 cloud-map-tag-keys|ServiceDiscoveryUntagResource|        "env_id",|        "Name",
 SCOPED_MUTATIONS
 
-  echo "PASS: wildcard evaluation negative fixtures (6 tuple-set cases, 3 scoped-condition cases)"
+  echo "PASS: wildcard evaluation negative fixtures (6 unconditioned tuple-set cases, 2 condition-scoped tuple-set cases, 3 scoped-condition cases)"
 }
 
 if [ "${IAM_WILDCARD_SKIP_NEGATIVES:-0}" != 1 ]; then
