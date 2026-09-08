@@ -822,10 +822,18 @@ signal_claim_lease="$(cat "$fake_s3/leases_aws-happy.json.body")"
 signal_claim_token="$(jq -sr '
   [.[] | select((.stage2_claim | type) == "object")][0].stage2_claim.token
 ' "$tmp_dir/lease-bodies.log")"
+signal_claim_tail="$(awk 'seen { print } /^SIGNAL committed-put$/ { seen=1 }' \
+  "$tmp_dir/aws-calls.log")"
 if [ "$signal_claim_rc" -ne 143 ] || [ -z "$signal_claim_token" ] || \
    ! jq -e '.status == "closing" and .stage2_claim == null' \
      <<< "$signal_claim_lease" >/dev/null || \
-   ! grep -Fq "$signal_claim_token" <<< "$signal_claim_output"; then
+   ! grep -Fq "$signal_claim_token" <<< "$signal_claim_output" || \
+   [ "$(wc -l <<< "$signal_claim_tail" | tr -d ' ')" -ne 2 ] || \
+   ! sed -n '1p' <<< "$signal_claim_tail" | \
+     grep -Eq '^s3api get-object .*--key leases/aws-happy.json ' || \
+   ! sed -n '2p' <<< "$signal_claim_tail" | \
+     grep -Eq '^s3api put-object .*--key leases/aws-happy.json .*--if-match ' || \
+   grep -Eq '^ecs |^s3api (list-object-versions|delete-objects) ' <<< "$signal_claim_tail"; then
   fail "TERM after the committed claim PUT did not release the prospective token: $signal_claim_output"
 fi
 pass "TERM after the claim CAS sees and releases the prospective token"

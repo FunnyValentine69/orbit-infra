@@ -271,8 +271,9 @@ sweeper_workflow="$REPO_ROOT/.github/workflows/sweeper.yml"
 plan_workflow="$REPO_ROOT/.github/workflows/terraform-plan.yml"
 iam_matrix_workflow="${IAM_MATRIX_WORKFLOW_OVERRIDE:-$REPO_ROOT/.github/workflows/iam-matrix-plan.yml}"
 
-if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+if ! import_err="$(python3 -c 'import yaml' 2>&1 >/dev/null)"; then
   echo "PyYAML is required; install the version pinned by scripts/tool-version.sh pyyaml" >&2
+  echo "python3 said: $(tail -n 1 <<< "$import_err")" >&2
   exit 1
 fi
 
