@@ -84,6 +84,9 @@ jobs:
           sudo install -m 0755 conftest /usr/local/bin/conftest
           conftest --version
 
+      - name: Install PyYAML
+        run: pip install pyyaml==$(scripts/tool-version.sh pyyaml)
+
       - name: tflint --init
         run: tflint --init
 

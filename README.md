@@ -69,14 +69,16 @@ stateDiagram-v2
         stage2 --> stage1: release-stage2 on pending non-task, next sweep runs begin-cleanup
         stage2 --> stage2: release-stage2 on pending task definition
     }
-    closing --> cleanup_failed: cleanup_failed on any Stage 1 failure or Stage 2 indeterminate or partial failure
+    closing --> cleanup_failed: Stage 1 failure increments cleanup_attempt
+    closing --> closing: Stage 2 failure increments stage2_attempt and releases stage2_claim
     cleanup_failed --> closing: due begin-cleanup below three automatic attempts per generation, or audited begin-cleanup --force-retry
     closing --> closed: sweeper removes and verifies state versions, complete-stage2 records proof and sets closed
     closed --> open: reopen within retention, generation N plus 1
-    closed --> [*]: prune after seven days
+    closed --> deleted: prune after seven days leaves a generation tombstone
+    deleted --> open: generation N plus 1
 ```
 
-Every mutation is a compare-and-swap on the lease object's S3 ETag, so two writers can never both win. See ADR 0006 for the full state machine and the sweeper's `discover`/`env` split.
+Every mutation is a compare-and-swap on the lease object's S3 ETag, so two writers can never both win. Prune retains a generation tombstone, and Stage 1 and Stage 2 escalate independently after three automatic executions. See ADR 0006 for the full state machine and the sweeper's `discover`/`env` split.
 
 ## Demo
 

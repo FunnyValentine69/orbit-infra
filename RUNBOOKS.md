@@ -256,8 +256,11 @@ manifest, the same job runs `make apply`, waits for every enabled ECS service,
 checks that each service reached its applied task definition, probes the
 Terraform `api_url` output (the LocalStack ALB) from the excluded runner CIDR,
 records the ALB URL in the summary, and always runs Stage 1. After a successful
-Stage 1, which clears its claim, it immediately runs `SWEEP_IN_JOB=true
-scripts/sweep.sh env "$ENV_ID"`. Stage 2 consumes the recorded LocalStack
+Stage 1, which clears its claim, it runs up to 20 `SWEEP_IN_JOB=true
+scripts/sweep.sh env "$ENV_ID"` attempts, sleeping three seconds between a
+remaining `closing` status. The step succeeds only when the lease is `closed`;
+an in-job failure or exhausted bound means state versions may remain and must be
+handled with the manual-release procedure below. Stage 2 consumes the recorded LocalStack
 allowance, deletes all
 versions and delete markers for the emulator's S3 state key, records
 `in_job:true`, and sets the lease `closed`. A refused or
@@ -327,19 +330,28 @@ A printed `DELETE_IN_PROGRESS` ARN is pending, not an error; the sweeper
 releases its matching claim and leaves the lease `closing` for the next nightly
 run. Stage 2 also requires zero pending non-task results; otherwise it releases
 its claim and hands the `closing` lease back to Stage 1 for re-verification
-before any state deletion. An indeterminate describe or state delete sets
-`cleanup_failed`, clears the matching claim, and retains state wherever deletion
-stopped. Resolve that exact failure and use the normal due Stage 1 retry only
-when Stage 1 must be
-repeated; the sweeper never forces the three-attempt budget. A Stage 2 CAS loss
+before any state deletion.
+
+### Exhausted closing retry budget
+
+A `closing` lease with `manual_intervention_required=true` and either
+`cleanup_attempt >= 3` or `stage2_attempt >= 3` has spent its automatic budget.
+Inspect `manifest.verification_runs[-1]` for a Stage 1 hand-back or `error` for a
+Stage 2 failure, resolve that exact condition, then use the audited
+`begin-cleanup --force-retry` path through `close-env.sh --force-retry`. The
+sweeper never supplies `--force-retry`.
+
+An indeterminate describe or state delete invokes `fail-stage2`, clears the
+matching claim, increments `stage2_attempt`, leaves the lease `closing`, and
+retains state wherever deletion stopped. A Stage 2 CAS loss
 exits 3 without closing the lease or deleting a concurrently added state
 version. Re-read the lease; do not rerun while it carries an active claim.
 
 After Stage 2 records zero state versions, `closed` leases remain readable for
-seven days. The first later sweep prunes the current lease object with its ETag
-precondition. A lease exactly seven days old is retained; only an older lease
-is pruned. `sweep.sh env` on a younger `closed` lease prints the retention
-no-op reason.
+seven days. The first later sweep replaces the current lease with a minimal
+`deleted` generation tombstone under its ETag precondition. A lease exactly
+seven days old is retained; only an older lease becomes a tombstone. `sweep.sh
+env` on a younger `closed` lease prints the retention no-op reason.
 
 LocalStack Stage 2 is proved only inside the owner-bound `session-apply` job.
 The promotion dispatch that produced run 33825140591 was:
@@ -361,15 +373,18 @@ workflow remains CODE-ONLY until P0-3b.
 ```
 ENV_ID=demo1
 LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
-jq '{status,generation,owner,stage1_claim,stage2_claim,cleanup_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
+jq '{status,generation,owner,stage1_claim,stage2_claim,cleanup_attempt,stage2_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
 ```
 
 If `stage1_claim` is present, Stage 1 owns the lease; do not start Stage 2
 or another close. If `status` is `closing` and `stage2_claim` is present after
 an interrupted or CAS-refused sweep, first confirm that the recorded claimant
 is no longer running. Release only that token and generation, then re-read before rerunning
-the sweeper. The release itself is one fresh-read CAS and refuses changed state
-with exit 3:
+the sweeper. The nightly sweeper automatically attempts the same CAS-safe
+takeover after a claim is two hours old and records the cleared claim in
+`cleanup_retry_audit`; manual release remains available for an earlier confirmed
+failure. The release itself is one fresh-read CAS and refuses changed state with
+exit 3:
 
 ```
 GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"

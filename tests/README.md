@@ -2,6 +2,10 @@
 
 Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b.
 
+`tests/phase3-contracts.sh` requires PyYAML. Its version is pinned as `pyyaml`
+in `tools.lock`, read with `scripts/tool-version.sh pyyaml`, and installed
+explicitly in the `terraform-plan.yml` gates job before `scripts/gates.sh`.
+
 Run the cleanup regression suite without AWS or LocalStack:
 
 ```
@@ -166,14 +170,21 @@ generation/status-bound Stage 1, exclusive Stage-1 and Stage-2 claims,
 claim-bound manifest writes, duplicate-close refusal, generic-transition
 refusal of `closed`, atomic proof-plus-close, force-cleared claim audit,
 owner- and generation-bound close refusals, the three-attempt lease limit,
-audited force retry, and end-to-end Stage-1 claim release with state retention.
-The suite currently reports 48 cases.
+audited force retry, independent Stage 2 attempts and escalation, the
+Stage-2 generic-transition guard, cap escalation with CAS-loss refusal, generation
+tombstone pruning and reopening, and end-to-end Stage-1 claim release with state
+retention. The suite currently reports 54 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
 signal-path test below. It also executes both the AWS close and LocalStack
-close-and-sweep workflow blocks against controlled lease/close/sweep scripts
-and verifies the observed generation, status, and owner arguments. It runs
+close-and-sweep workflow blocks against controlled lease/close/sweep scripts.
+The in-job sweep block must close on attempt three, stop at 20 `closing`
+attempts, reject an unexpected status after one attempt, and fail immediately
+when the sweep command fails. The suite verifies the observed generation,
+status, and owner arguments, derives the two-hour Stage 2 takeover threshold
+from the sweeper workflow timeout, checks the PyYAML import guard, and requires
+the gates job to install the pinned PyYAML before `scripts/gates.sh`. It runs
 `tests/dispatch-ordering-contracts.sh`, whose jq-level probes extract the live
 jobs aggregation and timestamp-comparison filters from
 `tests/dispatch-ordering.sh`. It also verifies five IPv6 hygiene negative,
@@ -325,8 +336,13 @@ incomplete `delete-objects` acknowledgements, zero-exit per-object errors,
 post-delete re-list refusal, partial deletion, a lease change between batches,
 stale-open generation replacement before Stage 1, exclusive Stage 2 claim and
 proof recording, an atomic-completion race that adds a new state version,
-prune-time If-Match loss, and ETag-conditional prune. The suite currently
-reports 27 cases.
+stale-claim takeover and audit, young-claim and Stage-1-claim refusals,
+classification-to-claim manual escalation, signal release before and after
+claim-ending CAS operations, pending-resource hand-back, separate Stage 2
+failure accounting, cap escalation, exact state and `.tflock` cleanup with
+sibling isolation, an executable single-key selector mutant, prune-time
+If-Match loss, and ETag-conditional tombstone replacement. The suite currently
+reports 36 cases.
 
 Fixture provenance:
 

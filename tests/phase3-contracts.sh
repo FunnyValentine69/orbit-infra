@@ -271,6 +271,11 @@ sweeper_workflow="$REPO_ROOT/.github/workflows/sweeper.yml"
 plan_workflow="$REPO_ROOT/.github/workflows/terraform-plan.yml"
 iam_matrix_workflow="${IAM_MATRIX_WORKFLOW_OVERRIDE:-$REPO_ROOT/.github/workflows/iam-matrix-plan.yml}"
 
+if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  echo "PyYAML is required; install the version pinned by scripts/tool-version.sh pyyaml" >&2
+  exit 1
+fi
+
 # P5-26: fixture hygiene must reject global IPv6 addresses while accepting
 # explicit policy markers and non-routable/documentation ranges.
 ipv6_global_fixture="$tmp_dir/ipv6-global.json"
@@ -457,8 +462,9 @@ if not isinstance(checkout_with, dict) or checkout_with.get("persist-credentials
     fail("iam-matrix-plan checkout step must set persist-credentials: false")
 print("PASS: iam-matrix-plan workflow contracts")
 PY_IAM_MATRIX_WORKFLOW
-python3 - "$sweeper_workflow" "$plan_workflow" <<'PY'
+python3 - "$sweeper_workflow" "$plan_workflow" "$REPO_ROOT/scripts/sweep.sh" <<'PY'
 from pathlib import Path
+import re
 import sys
 import yaml
 
@@ -471,7 +477,18 @@ def one_index(steps, predicate, label):
 
 
 sweeper = yaml.safe_load(Path(sys.argv[1]).read_text())
-sweep_steps = sweeper["jobs"]["sweep"]["steps"]
+sweep_job = sweeper["jobs"]["sweep"]
+sweep_steps = sweep_job["steps"]
+timeout_minutes = sweep_job["timeout-minutes"]
+constant_match = re.search(
+    r'^STAGE2_CLAIM_STALE_SECONDS="?([0-9]+)"?$',
+    Path(sys.argv[3]).read_text(),
+    re.MULTILINE,
+)
+if constant_match is None:
+    raise SystemExit("sweep.sh must declare STAGE2_CLAIM_STALE_SECONDS")
+if int(constant_match.group(1)) != 2 * timeout_minutes * 60:
+    raise SystemExit("Stage-2 stale-claim threshold must equal twice the sweeper timeout")
 setup_index = one_index(
     sweep_steps,
     lambda step: step.get("uses") == "hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e",
@@ -628,7 +645,30 @@ cat > "$workflow_exec_root/scripts/lease.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [ "$1" = get ]
-printf '%s\n' '{"status":"open","generation":7,"owner":"workflow-run-1"}'
+lease_calls=1
+if [ -f "$WORKFLOW_LEASE_CALLS" ]; then
+  lease_calls=$(( $(cat "$WORKFLOW_LEASE_CALLS") + 1 ))
+fi
+printf '%s\n' "$lease_calls" > "$WORKFLOW_LEASE_CALLS"
+if [ "$lease_calls" -eq 1 ]; then
+  printf '%s\n' '{"status":"open","generation":7,"owner":"workflow-run-1"}'
+  exit 0
+fi
+case "$WORKFLOW_SWEEP_SCENARIO" in
+  closes-after-three)
+    sweep_calls="$(cat "$WORKFLOW_SWEEP_CALLS")"
+    if [ "$sweep_calls" -ge 3 ]; then
+      status=closed
+    else
+      status=closing
+    fi
+    ;;
+  closing-forever) status=closing ;;
+  unexpected-status) status=cleanup_failed ;;
+  sweep-fails) status=closing ;;
+  *) echo "unexpected workflow scenario" >&2; exit 2 ;;
+esac
+jq -cn --arg status "$status" '{status:$status,generation:7,owner:"workflow-run-1"}'
 EOF
 cat > "$workflow_exec_root/scripts/close-env.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -638,7 +678,15 @@ EOF
 cat > "$workflow_exec_root/scripts/sweep.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" > "$WORKFLOW_SWEEP_ARGS_LOG"
+printf '%s\n' "$*" >> "$WORKFLOW_SWEEP_ARGS_LOG"
+sweep_calls=1
+if [ -f "$WORKFLOW_SWEEP_CALLS" ]; then
+  sweep_calls=$(( $(cat "$WORKFLOW_SWEEP_CALLS") + 1 ))
+fi
+printf '%s\n' "$sweep_calls" > "$WORKFLOW_SWEEP_CALLS"
+if [ "$WORKFLOW_SWEEP_SCENARIO" = sweep-fails ]; then
+  exit 1
+fi
 EOF
 chmod +x "$workflow_exec_root/scripts/lease.sh" \
   "$workflow_exec_root/scripts/close-env.sh" "$workflow_exec_root/scripts/sweep.sh"
@@ -647,7 +695,10 @@ chmod +x "$workflow_exec_root/scripts/lease.sh" \
   ENV_ID=contract \
   GITHUB_RUN_ID=workflow-run \
   GITHUB_RUN_ATTEMPT=1 \
+  WORKFLOW_LEASE_CALLS="$workflow_exec_root/aws-lease-calls" \
   WORKFLOW_CLOSE_ARGS_LOG="$workflow_exec_root/aws-close-args.log" \
+  WORKFLOW_SWEEP_CALLS="$workflow_exec_root/aws-sweep-calls" \
+  WORKFLOW_SWEEP_SCENARIO=closes-after-three \
     bash "$workflow_aws_run_block"
 )
 if [ "$(cat "$workflow_exec_root/aws-close-args.log")" != \
@@ -655,24 +706,71 @@ if [ "$(cat "$workflow_exec_root/aws-close-args.log")" != \
   echo "session-apply AWS close must forward its observed generation, status, and owner" >&2
   exit 1
 fi
-(
-  cd "$workflow_exec_root"
-  ENV_ID=contract \
-  GITHUB_RUN_ID=workflow-run \
-  GITHUB_RUN_ATTEMPT=1 \
-  WORKFLOW_CLOSE_ARGS_LOG="$workflow_exec_root/close-args.log" \
-  WORKFLOW_SWEEP_ARGS_LOG="$workflow_exec_root/sweep-args.log" \
-    bash "$workflow_localstack_run_block"
-)
+run_localstack_workflow_case() {
+  local scenario="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+  : > "$workflow_exec_root/sweep-args.log"
+  rm -f "$workflow_exec_root/lease-calls" "$workflow_exec_root/sweep-calls"
+  set +e
+  (
+    cd "$workflow_exec_root"
+    ENV_ID=contract \
+    GITHUB_RUN_ID=workflow-run \
+    GITHUB_RUN_ATTEMPT=1 \
+    SWEEP_LOOP_SLEEP_SECONDS=0 \
+    WORKFLOW_CLOSE_ARGS_LOG="$workflow_exec_root/close-args.log" \
+    WORKFLOW_LEASE_CALLS="$workflow_exec_root/lease-calls" \
+    WORKFLOW_SWEEP_ARGS_LOG="$workflow_exec_root/sweep-args.log" \
+    WORKFLOW_SWEEP_CALLS="$workflow_exec_root/sweep-calls" \
+    WORKFLOW_SWEEP_SCENARIO="$scenario" \
+      bash "$workflow_localstack_run_block"
+  ) >"$stdout_file" 2>"$stderr_file"
+  workflow_case_rc=$?
+  set -e
+}
+
+run_localstack_workflow_case closes-after-three \
+  "$workflow_exec_root/closes.stdout" "$workflow_exec_root/closes.stderr"
+if [ "$workflow_case_rc" -ne 0 ] || [ "$(cat "$workflow_exec_root/sweep-calls")" -ne 3 ]; then
+  echo "session-apply LocalStack sweep must stop after the lease closes on attempt three" >&2
+  exit 1
+fi
 if [ "$(cat "$workflow_exec_root/close-args.log")" != \
      "--generation 7 --from open --owner workflow-run-1 contract" ]; then
   echo "session-apply LocalStack close must forward its observed generation, status, and owner" >&2
   exit 1
 fi
-if [ "$(cat "$workflow_exec_root/sweep-args.log")" != "env contract" ]; then
+if [ "$(sort -u "$workflow_exec_root/sweep-args.log")" != "env contract" ]; then
   echo "session-apply LocalStack close must invoke its in-job sweep" >&2
   exit 1
 fi
+
+run_localstack_workflow_case closing-forever \
+  "$workflow_exec_root/closing.stdout" "$workflow_exec_root/closing.stderr"
+if [ "$workflow_case_rc" -eq 0 ] || [ "$(cat "$workflow_exec_root/sweep-calls")" -ne 20 ] || \
+   ! grep -Fq 'still closing after 20 in-job sweep attempts; state versions may remain' \
+     "$workflow_exec_root/closing.stderr"; then
+  echo "session-apply LocalStack sweep must fail after twenty closing results" >&2
+  exit 1
+fi
+
+run_localstack_workflow_case unexpected-status \
+  "$workflow_exec_root/unexpected.stdout" "$workflow_exec_root/unexpected.stderr"
+if [ "$workflow_case_rc" -eq 0 ] || [ "$(cat "$workflow_exec_root/sweep-calls")" -ne 1 ] || \
+   ! grep -Fq "unexpected lease status 'cleanup_failed'" "$workflow_exec_root/unexpected.stderr"; then
+  echo "session-apply LocalStack sweep must fail on the first unexpected lease status" >&2
+  exit 1
+fi
+
+run_localstack_workflow_case sweep-fails \
+  "$workflow_exec_root/sweep-fails.stdout" "$workflow_exec_root/sweep-fails.stderr"
+if [ "$workflow_case_rc" -eq 0 ] || [ "$(cat "$workflow_exec_root/sweep-calls")" -ne 1 ] || \
+   ! grep -Fq 'in-job LocalStack sweep failed' "$workflow_exec_root/sweep-fails.stderr"; then
+  echo "session-apply LocalStack sweep must fail immediately on a sweep error" >&2
+  exit 1
+fi
+echo "PASS: session-apply bounded LocalStack sweep loop (4 cases)"
 
 # P5-3: Conftest is checksum-pinned in both PR jobs and in session apply;
 # each rendered plan is gated before its consumer can apply or report success.
@@ -720,13 +818,19 @@ def assert_conftest_install(steps, job_label):
 plan = yaml.safe_load(Path(sys.argv[1]).read_text())
 gates_steps = plan["jobs"]["gates"]["steps"]
 gates_install_index = assert_conftest_install(gates_steps, "terraform-plan gates job")
+pyyaml_install_index = one_index(
+    gates_steps,
+    lambda step: step.get("name") == "Install PyYAML"
+    and step.get("run") == "pip install pyyaml==$(scripts/tool-version.sh pyyaml)",
+    "PyYAML install in terraform-plan gates job",
+)
 run_gates_index = one_index(
     gates_steps,
     lambda step: step.get("name") == "Run gates",
     "Run gates in terraform-plan gates job",
 )
-if not gates_install_index < run_gates_index:
-    raise SystemExit("terraform-plan gates job must install Conftest before Run gates")
+if not gates_install_index < pyyaml_install_index < run_gates_index:
+    raise SystemExit("terraform-plan gates job must install Conftest and pinned PyYAML before Run gates")
 
 plan_steps = plan["jobs"]["plan-localstack"]["steps"]
 plan_install_index = assert_conftest_install(plan_steps, "terraform-plan plan-localstack job")

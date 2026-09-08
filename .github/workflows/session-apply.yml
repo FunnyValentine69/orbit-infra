@@ -825,7 +825,37 @@ jobs:
             exit 0
           fi
           scripts/close-env.sh --generation "$generation" --from "$lease_status" --owner "$owner" "$ENV_ID"
-          SWEEP_IN_JOB=true scripts/sweep.sh env "$ENV_ID"
+          # Match the bounded ECS deletion poll: 20 attempts with a three-second default interval.
+          for sweep_attempt in $(seq 1 20); do
+            if ! SWEEP_IN_JOB=true scripts/sweep.sh env "$ENV_ID"; then
+              echo "in-job LocalStack sweep failed" >&2
+              exit 1
+            fi
+            if ! lease_json="$(scripts/lease.sh get "$ENV_ID")"; then
+              echo "lease for $ENV_ID could not be read after in-job LocalStack sweep" >&2
+              exit 1
+            fi
+            if ! lease_status="$(jq -er '.status | select(type == "string")' <<< "$lease_json")"; then
+              echo "lease for $ENV_ID has no valid status after in-job LocalStack sweep" >&2
+              exit 1
+            fi
+            case "$lease_status" in
+              closed)
+                break
+                ;;
+              closing)
+                if [ "$sweep_attempt" -eq 20 ]; then
+                  echo "still closing after 20 in-job sweep attempts; state versions may remain" >&2
+                  exit 1
+                fi
+                sleep "${SWEEP_LOOP_SLEEP_SECONDS:-3}"
+                ;;
+              *)
+                echo "unexpected lease status '$lease_status' after in-job LocalStack sweep" >&2
+                exit 1
+                ;;
+            esac
+          done
 
       - name: Masked summary
         if: always()
