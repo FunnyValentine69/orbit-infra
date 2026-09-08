@@ -110,11 +110,11 @@ state_list() {
     return 1
   }
   if out=$(env TF_DATA_DIR=.terraform-localstack \
-    terraform -chdir="$PREVIEW_ROOT" state list 2>"$err"); then
+    terraform -chdir="$PREVIEW_ROOT" state list -no-color 2>"$err"); then
     rc=0
   else
     rc=$?
-    # Terraform's canonical diagnostic for an absent state is
+    # Terraform's canonical diagnostic for an absent state (plain text only with -no-color) is
     # "No state file was found!" followed by an explanatory paragraph;
     # accept it only with empty stdout and no other error line.
     if [ -z "$out" ] && awk '

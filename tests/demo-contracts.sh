@@ -1103,7 +1103,8 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '          leftover) echo aws_leftover.example ;;' \
     '          teardown_nonempty) [ ! -e .fake-destroyed ] || echo aws_leftover.example ;;' \
     '          post_apply) [ ! -e .fake-live ] || { [ -e .fake-destroyed ] || echo aws_live.example; } ;;' \
-    '          nostate) printf "%s\\n" "No state file was found!" "" "State management commands require a state file. Run this command" "in a directory where Terraform has been run or use the -state flag" "to point the command to a specific state location." >&2; exit 1 ;;' \
+    '          nostate) case " $* " in *" -no-color "*) first="No state file was found!" ;; *) first=$(printf "\\033[31mNo state file was found!\\033[0m") ;; esac' \
+    '            printf "%s\\n" "$first" "" "State management commands require a state file. Run this command" "in a directory where Terraform has been run or use the -state flag" "to point the command to a specific state location." >&2; exit 1 ;;' \
     '          nostate-plus-error) printf "%s\n" "No state file was found" "Error: backend unavailable" >&2; exit 1 ;;' \
     '          nostate-plus-stdout) echo "aws_live.example"; echo "No state file was found" >&2; exit 1 ;;' \
     '        esac' \
@@ -1494,7 +1495,7 @@ for lifecycle_case in \
 done
 
 run_lifecycle state-nostate '' normal nostate '' none
-nostate_state_calls="$(grep -c '^terraform .* state list$' "$LIFECYCLE_CALLS" || true)"
+nostate_state_calls="$(grep -c '^terraform .* state list -no-color$' "$LIFECYCLE_CALLS" || true)"
 if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$nostate_state_calls" -eq 3 ] && \
    grep -Fq 'teardown:ok' "$LIFECYCLE_RUN/lifecycle.log" && \
    grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
