@@ -591,6 +591,7 @@ script = (
     + textwrap.indent(region, "  ")
     + "\n}\n"
     "run_prior_attestation_compare\n"
+    "printf 'matching_sbom=%s\\n' \"${matching_sbom:-false}\"\n"
 )
 Path(sys.argv[2]).write_text(script)
 slurp_decode = "jq -c -s '.[] | (.payload | @base64d | fromjson | .predicate)'"
@@ -604,6 +605,7 @@ mkdir -p "$tmp_dir/prior-attestation-bin"
 cat > "$tmp_dir/prior-attestation-bin/cosign" <<'EOF_PRIOR_COSIGN'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ -n "${PRIOR_COSIGN_EXIT:-}" ]; then exit "$PRIOR_COSIGN_EXIT"; fi
 while IFS= read -r line || [ -n "$line" ]; do
   printf '%s\n' "$line"
 done < "$PRIOR_ATTESTATIONS_FILE"
@@ -614,8 +616,16 @@ prior_predicate="$REPO_ROOT/tests/fixtures/sbom/base.spdx.json"
 prior_attestations="$tmp_dir/prior-attestations.jsonl"
 prior_statement="$(jq -cn --argjson predicate "$(<"$prior_predicate")" '{predicate:$predicate}')"
 prior_payload="$(printf '%s' "$prior_statement" | base64 | tr -d '\n')"
+# The malformed envelope must come FIRST: streaming jq exits nonzero only when the last value fails, so this ordering is what the non-slurp mutant case relies on to exit 0.
 printf '%s\n' '{"payload":"%%%"}' > "$prior_attestations"
 jq -cn --arg payload "$prior_payload" '{payload:$payload}' >> "$prior_attestations"
+prior_attestations_valid="$tmp_dir/prior-attestations-valid.jsonl"
+jq -cn --arg payload "$prior_payload" '{payload:$payload}' > "$prior_attestations_valid"
+prior_other_predicate="$REPO_ROOT/tests/fixtures/sbom/same-inventory-different-checksum.spdx.json"
+prior_other_statement="$(jq -cn --argjson predicate "$(<"$prior_other_predicate")" '{predicate:$predicate}')"
+prior_other_payload="$(printf '%s' "$prior_other_statement" | base64 | tr -d '\n')"
+prior_attestations_other="$tmp_dir/prior-attestations-other.jsonl"
+jq -cn --arg payload "$prior_other_payload" '{payload:$payload}' > "$prior_attestations_other"
 prior_new_canon="$("$REPO_ROOT/scripts/sbom-canon.sh" < "$prior_predicate")"
 
 run_prior_attestation_case() {
@@ -623,12 +633,15 @@ run_prior_attestation_case() {
   local expected_rc="$2"
   local expected_message="$3"
   local script="$4"
+  local attestations_file="${5:-$prior_attestations}"
+  local cosign_exit="${6:-}"
   local output rc
   set +e
   output="$(
     cd "$REPO_ROOT" &&
       PATH="$tmp_dir/prior-attestation-bin:$PATH" \
-      PRIOR_ATTESTATIONS_FILE="$prior_attestations" \
+      PRIOR_ATTESTATIONS_FILE="$attestations_file" \
+      PRIOR_COSIGN_EXIT="$cosign_exit" \
       PUBLIC_KEY="$tmp_dir/test-public-key.pem" \
       image="example.invalid/image" \
       digest="sha256:$(printf 'a%.0s' {1..64})" \
@@ -654,7 +667,10 @@ run_prior_attestation_case malformed-first 1 "could not decode attestations" \
 run_prior_attestation_case malformed-first-non-slurp-mutant 0 "" \
   "$prior_attestation_mutant"
 echo "PASS: sign-images prior-attestation non-slurp mutant killed"
-echo "PASS: sign-images prior-attestation decode contracts (2 cases)"
+run_prior_attestation_case no-prior 0 "matching_sbom=false" "$prior_attestation_script" "$prior_attestations" 1
+run_prior_attestation_case matching-prior 0 "matching_sbom=true" "$prior_attestation_script" "$prior_attestations_valid"
+run_prior_attestation_case different-prior 0 "matching_sbom=false" "$prior_attestation_script" "$prior_attestations_other"
+echo "PASS: sign-images prior-attestation decode contracts (5 cases)"
 
 scan_verify_script="$tmp_dir/verify-scan-attestation.sh"
 scan_verify_mutant="$tmp_dir/verify-scan-attestation-mutant.sh"

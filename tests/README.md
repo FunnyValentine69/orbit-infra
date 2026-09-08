@@ -25,6 +25,8 @@ contents, scanner versions, severity lists, and input range including
 leading-zero values. A removed-freshness mutant and flag/version mutations must
 be rejected.
 
+The sign-images SBOM idempotency guard is also executed, not only pattern-matched: the region from the prior-predicate temp file through its comparison loop is extracted from the workflow, wrapped in a function, and run with a stubbed `cosign` while jq and `scripts/sbom-canon.sh` stay real. Five cases cover a malformed envelope ahead of a valid one (the step must fail with `could not decode attestations`), a failing `cosign verify-attestation` (no prior attestation, so the image is re-attested), a matching prior predicate, and a differing prior predicate; a mutant that restores the streaming `jq -c` decode must exit 0 on the malformed-first stream, which is the killed-mutant proof that the slurped decode is load-bearing.
+
 Run the cleanup regression suite without AWS or LocalStack:
 
 ```
