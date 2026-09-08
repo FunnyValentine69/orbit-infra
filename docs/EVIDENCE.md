@@ -10,7 +10,7 @@ This document collects every evidence claim made about orbit-infra: the labels u
 
 ## Evidence gates
 
-LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b — the deferred upgrade of the AWS account from the Free Plan to the Paid Plan, which every item labeled "until P0-3b" waits on. Phase 5 IAM-matrix and recorded-demo evidence is summarized in the table below.
+LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY behind P0-3b — the paid upgrade of the AWS account from the Free Plan, which the owner decided on 2026-09-08 not to pursue for this portfolio, so every item labeled "until P0-3b" stays parked. Phase 5 IAM-matrix and recorded-demo evidence is summarized in the table below.
 
 ## Evidence table
 
@@ -37,11 +37,11 @@ Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot 
 
 ## PR checks
 
-Checks that must be green are `gates` on every PR and, on repository-owner-authored same-repository PRs, `plan-localstack` and `infracost`. The separate `oidc-smoke.yml` jobs skip fork PRs and runs whose `github.actor` is `dependabot[bot]`; their three `assume-*` jobs stay red on same-repository PRs until the paid account upgrade (P0-3b), because the role-ARN and KMS secrets those jobs assume are not yet published.
+Checks that must be green are `gates` on every PR and, on repository-owner-authored same-repository PRs, `plan-localstack` and `infracost`. The separate `oidc-smoke.yml` jobs skip fork PRs and runs whose `github.actor` is `dependabot[bot]`; their three `assume-*` jobs stay red on same-repository PRs because the role-ARN and KMS secrets those jobs assume are real-account values that were never published (P0-3b, not planned).
 
 ## Two targets
 
-Development runs against LocalStack, using the GitHub Student Developer Pack's LocalStack Student plan (Ultimate-tier service coverage), so the stack can be built and tested without AWS spend. The Phase 3 `terraform-plan` workflow has landed: static gates run on every pull request, while its secret-bearing LocalStack and Infracost jobs run only for the repository owner's own same-repository pull requests. Real AWS is the promotion target once the platform is proven. Three things are verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact OIDC trust-condition semantics. See ADR 0008. The three `assume-*` checks of `oidc-smoke.yml` fail on same-repository PRs until P0-3b (role secrets not yet published) and are skipped on fork PRs and on runs whose `github.actor` is `dependabot[bot]`; see RUNBOOKS "PR review gates".
+Development runs against LocalStack, using the GitHub Student Developer Pack's LocalStack Student plan (Ultimate-tier service coverage), so the stack can be built and tested without AWS spend. The Phase 3 `terraform-plan` workflow has landed: static gates run on every pull request, while its secret-bearing LocalStack and Infracost jobs run only for the repository owner's own same-repository pull requests. Promotion to real AWS is not planned for this portfolio (decided 2026-09-08); the composition stays portable to it. Three things are verified only on real AWS: AWS Budgets (not emulated), ECS Exec, and exact OIDC trust-condition semantics. See ADR 0008. The three `assume-*` checks of `oidc-smoke.yml` fail on same-repository PRs until P0-3b (role secrets not yet published) and are skipped on fork PRs and on runs whose `github.actor` is `dependabot[bot]`; see RUNBOOKS "PR review gates".
 
 ## CI
 
