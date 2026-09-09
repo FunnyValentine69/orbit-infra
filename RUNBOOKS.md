@@ -290,6 +290,29 @@ fresh runner cannot recover the prior emulator or local state. LocalStack CI
 uses licensed credits, so this lane is dispatch-only and must never be added to
 a schedule.
 
+## Front-page evidence
+
+Generate the storyboard only from the clean commit that contains its generator:
+
+```
+make storyboard
+```
+
+That command writes `docs/assets/storyboard.svg` and
+`docs/assets/STORYBOARD_PROVENANCE.md`; do not edit either output. Re-run
+`bash tests/storyboard-contracts.sh` before publishing them together.
+
+For the recordings, start LocalStack, apply the LocalStack bootstrap once, and
+build the placeholder image. Record lifecycle, lease, and supply-chain evidence
+in order with `make demo`, `make demo NAME=lease`, and `make demo NAME=supply`,
+or run the same sequence with `make demo-all`. Each recorder invocation runs
+validation, teardown, provenance rendering, and publication as one guarded sequence;
+publication uses two independent renames, so interruption can leave a mixed pair
+that the provenance contract exposes and a rerun repairs. Do not edit those
+generated files. The lease recording owns only its unique owner token and
+generation, and points here when a claim or manual-recovery state prevents safe
+cleanup.
+
 ## Sweeper
 
 The workflow runs nightly at 03:17 UTC; the odd minute avoids common
@@ -364,7 +387,7 @@ The post-merge dispatch above ran as run 33825140591 (main 9b253b6); the
 in-job LocalStack Stage 2 is LOCALSTACK-VERIFIED in CI. The nightly AWS
 workflow remains CODE-ONLY until P0-3b.
 
-## Stuck-environment force-destroy
+## Manual lease recovery
 
 1. Bind the environment, read the durable lease once, and inspect only its
    lifecycle fields and most recent exact-resource outcomes. Keep the retained

@@ -335,6 +335,22 @@ fi
 EOF
 chmod +x "$tmp_dir/bin/close-env"
 
+cat > "$tmp_dir/bin/recording-lease" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_LEASE_ARGV_LOG"
+exec "$REAL_LEASE_SH" "$@"
+EOF
+chmod +x "$tmp_dir/bin/recording-lease"
+
+cat > "$tmp_dir/bin/stage2-probe-lease" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_STAGE2_PROBE_LOG"
+exit 3
+EOF
+chmod +x "$tmp_dir/bin/stage2-probe-lease"
+
 cat > "$tmp_dir/bin/run-sweep" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -376,6 +392,15 @@ run_localstack() {
     AWS_DEFAULT_REGION=test-region \
     AWS_EC2_METADATA_DISABLED=true \
     "$@"
+}
+
+run_aws_with_recording_lease() {
+  env -u AWS_ENDPOINT_URL -u AWS_PROFILE \
+    "${common_env[@]}" \
+    LEASE_SH="$tmp_dir/bin/recording-lease" \
+    REAL_LEASE_SH="$LEASE" \
+    FAKE_LEASE_ARGV_LOG="$tmp_dir/lease-argv.log" \
+    TARGET=aws "$@"
 }
 
 reset_store() {
@@ -764,6 +789,54 @@ if [ "$manual_race_rc" -ne 3 ] || \
   fail "claim-stage2 did not fail closed on the classification-to-claim manual race: $manual_race_output"
 fi
 pass "claim-stage2 fresh read refuses a concurrent manual escalation"
+
+reset_store
+store_fixture "$happy_fixture"
+generation_bound_seed="$(run_aws "$LEASE" get aws-happy | jq -c \
+  '.owner = "generation-bound-owner"')"
+store_lease "$generation_bound_seed"
+: > "$tmp_dir/lease-argv.log"
+FAKE_SCENARIO_FILE="$happy_fixture" run_aws_with_recording_lease "$SWEEPER" \
+  env aws-happy --expect-owner generation-bound-owner \
+  --expect-generation 1 >/dev/null
+if ! grep -Eq \
+    '^claim-stage2 aws-happy --generation 1 --token [^ ]+ --takeover-stale [0-9]+$' \
+    "$tmp_dir/lease-argv.log"; then
+  fail "generation-bound sweep did not pass expected generation 1 to claim-stage2"
+fi
+
+: > "$tmp_dir/stage2-probe.log"
+sweeper_tail="$(tail -n 1 "$SWEEPER")"
+[ "$sweeper_tail" = 'main "$@"' ] || \
+  fail 'sweep.sh library seam requires final line main "$@"'
+sed '$d' "$SWEEPER" > "$tmp_dir/sweep-library.sh"
+set +e
+(
+  LEASE_SH="$tmp_dir/bin/stage2-probe-lease"
+  FAKE_STAGE2_PROBE_LOG="$tmp_dir/stage2-probe.log"
+  TARGET=aws
+  export LEASE_SH FAKE_STAGE2_PROBE_LOG TARGET
+  # shellcheck source=/dev/null
+  source "$tmp_dir/sweep-library.sh"
+  SCRIPT_DIR="$REPO_ROOT/scripts"
+  CLOSE_ENV_SH="$SCRIPT_DIR/close-env.sh"
+  AWS_CLI_SH="$SCRIPT_DIR/aws-cli.sh"
+  export CLOSE_ENV_SH AWS_CLI_SH
+  [[ "$SCRIPT_DIR" == */scripts ]] || \
+    fail "sweep.sh library seam SCRIPT_DIR does not end in /scripts: $SCRIPT_DIR"
+  [ -f "$SCRIPT_DIR/close-env.sh" ] || \
+    fail "sweep.sh library seam close-env.sh is missing: $SCRIPT_DIR/close-env.sh"
+  stage2 aws-happy '{"generation":2}' 1 >/dev/null 2>&1
+)
+stage2_probe_rc=$?
+set -e
+if [ "$stage2_probe_rc" -ne 3 ] || \
+   ! grep -Eq \
+     '^claim-stage2 aws-happy --generation 1 --token [^ ]+ --takeover-stale [0-9]+$' \
+     "$tmp_dir/stage2-probe.log"; then
+  fail "Stage 2 did not override the initial lease generation with expected generation 1"
+fi
+pass "generation-bound sweep forwards the expected generation to the Stage-2 claim"
 
 # A stale claim with pending non-task evidence must take the Stage-2 path first,
 # hand back there, then finish state deletion after Stage 1 evidence is resolved.

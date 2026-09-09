@@ -194,13 +194,13 @@ zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
 their `failures` array, atomic owner-plus-manifest lease open with one PUT,
 same-environment second-open refusal, empty-`--from` refusal,
 generation/status-bound Stage 1, exclusive Stage-1 and Stage-2 claims,
-claim-bound manifest writes, duplicate-close refusal, generic-transition
+expected-generation forwarding into Stage 2 claims, claim-bound manifest writes, duplicate-close refusal, generic-transition
 refusal of `closed`, atomic proof-plus-close, force-cleared claim audit,
 owner- and generation-bound close refusals, the three-attempt lease limit,
 audited force retry, independent Stage 2 attempts and escalation, the
 Stage-2 generic-transition guard, cap escalation with CAS-loss refusal, generation
 tombstone pruning and reopening, and end-to-end Stage-1 claim release with state
-retention. The suite currently reports 54 cases.
+retention. The suite currently reports 40 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
@@ -237,7 +237,34 @@ Run the recorder regression suite without LocalStack, vhs, ffprobe, or network a
 bash tests/demo-contracts.sh
 ```
 
-Its four groups cover the exact constructed environment and `MAKEFLAGS` refusals; transaction lifecycle failures, teardown-before-publish ordering, and fake-only network calls; the six tape steps and fail-closed timing parser; and CIDR containment, artifact/provenance integrity, and generator drift. The lifecycle group includes `inspect-frames`, `inspect-frames-fractional`, `inspect-frames-norate`, and `inspect-frames-zero-rate` for the encoded-rate frame floor; `preflight-ls-version-null`, `preflight-ls-version-missing`, `preflight-ls-version-empty`, `preflight-ls-version-array`, and `preflight-ls-version-http-fail` for version capture; and `render-generator-drift` for a generator change after preflight. Mutation checks remove the version-capture fail flag and the frame-rate validator to prove those negative cases fail without their target guards. Negative generator cases use temporary Git repositories and cover committed, staged or unstaged, untracked, and ignored Terraform-consumable changes while permitting ignored recorder output and Terraform caches. The provenance commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a shallow checkout fails with `generator commit unreachable; fetch full history`. The suite is chained from `tests/phase3-contracts.sh` after the IAM matrix contract.
+Its six groups cover the exact per-name environment and unknown-name refusal;
+all three tapes and their required output; kind-specific provenance and generator
+closures, including ignored Terraform and Rego input refusal; the bounded,
+owner- and generation-fenced lease recovery helper; the existing lifecycle
+transaction failure table; and fake end-to-end lease and supply-chain recordings.
+Lease cases include repeat recording from `closed`, abort and claim states,
+terminal foreign-owner refusals, mid-loop manual and Stage 2 claim races, teardown
+generation replacement, one- and two-pass sleeps, exhaustion, and an injected
+post-inventory display failure proving the no-backend-call boundary. Drift mutants
+cover each kind's scripts, templates, contracts, and fixtures. The provenance
+commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a
+shallow checkout fails with `generator commit unreachable; fetch full history`. The suite
+remains chained through `tests/phase3-contracts.sh`.
+
+Run the storyboard generator contracts separately or through `make test`:
+
+```
+bash tests/storyboard-contracts.sh
+```
+
+The generator group checks exact captions, byte determinism, accessibility,
+hygiene, reduced motion, and static snapshot scheduling. It also uses
+Git-initialized scratch roots to require the explicit one-missing failure, reject
+a tampered SVG even when its local provenance hash matches, and preserve the
+both-absent skip branch. Until both committed storyboard outputs exist, the
+asset group alone reports
+`SKIP: storyboard asset not committed yet`; once present, it validates byte
+identity, provenance hash, commit reachability, and the generator closure.
 
 Run the process-group signal test directly without LocalStack:
 

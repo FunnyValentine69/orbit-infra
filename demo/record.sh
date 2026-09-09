@@ -32,6 +32,28 @@ die() {
   exit 1
 }
 
+load_recording_config() {
+  local key value
+  CONFIG_TAPE=
+  CONFIG_DOC=
+  CONFIG_GIF=
+  CONFIG_ENV_ID=
+  CONFIG_KIND=
+  while IFS='=' read -r key value; do
+    case "$key" in
+      TAPE) CONFIG_TAPE=$value ;;
+      DOC) CONFIG_DOC=$value ;;
+      GIF) CONFIG_GIF=$value ;;
+      ENV_ID) CONFIG_ENV_ID=$value ;;
+      KIND) CONFIG_KIND=$value ;;
+      *) die "invalid recording config key: $key" ;;
+    esac
+  done < <(demo_recording_config "${DEMO_NAME:-demo}")
+  [ -n "$CONFIG_TAPE" ] && [ -n "$CONFIG_DOC" ] && \
+    [ -n "$CONFIG_GIF" ] && [ -n "$CONFIG_KIND" ] || \
+    die "recording config is incomplete"
+}
+
 guard() {
   local assignment name value
   [ "${DEMO_BOUNDARY:-}" = 1 ] || \
@@ -42,20 +64,40 @@ guard() {
     [ "${!name-}" = "$value" ] || \
       die "constructed environment differs from DEMO_ENV_FIXED: $name"
   done
-  [ -n "${OPERATOR_CIDR:-}" ] || die "OPERATOR_CIDR unset"
-  cidr_in_test_net_3 "$OPERATOR_CIDR" || \
-    die "set OPERATOR_CIDR to a network within 203.0.113.0/24 with prefix /24 to /32, e.g. OPERATOR_CIDR=203.0.113.0/24 make demo"
+  load_recording_config
+  if [ -n "$CONFIG_ENV_ID" ]; then
+    [ "${ENV_ID:-}" = "$CONFIG_ENV_ID" ] || \
+      die "constructed environment differs from recording config: ENV_ID"
+    [ "${PREVIEW_ROOT:-}" = ".preview-runs/$CONFIG_ENV_ID" ] || \
+      die "constructed environment differs from recording config: PREVIEW_ROOT"
+    [ -n "${OPERATOR_CIDR:-}" ] || die "OPERATOR_CIDR unset"
+    cidr_in_test_net_3 "$OPERATOR_CIDR" || \
+      die "set OPERATOR_CIDR to a network within 203.0.113.0/24 with prefix /24 to /32, e.g. OPERATOR_CIDR=203.0.113.0/24 make demo"
+  elif [ "${ENV_ID+x}" = x ] || [ "${PREVIEW_ROOT+x}" = x ]; then
+    die "constructed environment differs from recording config: environment must be unset"
+  fi
 }
 
 setup() {
   local repo_root
   repo_root=${DEMO_REPO_ROOT:-$PWD}
   cd -- "$repo_root"
-  DEMO_DOC=${DEMO_DOC:-docs/assets/DEMO_PROVENANCE.md}
-  DEMO_GIF=${DEMO_GIF:-docs/assets/demo.gif}
+  load_recording_config
+  DEMO_TAPE=$CONFIG_TAPE
+  DEMO_DOC=$CONFIG_DOC
+  DEMO_GIF=$CONFIG_GIF
+  RECORDING_KIND=$CONFIG_KIND
+  case "$RECORDING_KIND" in
+    lifecycle) DEMO_TEMPLATE=demo/provenance/lifecycle.md ;;
+    lease) DEMO_TEMPLATE=demo/provenance/lease.md ;;
+    verify) DEMO_TEMPLATE=demo/provenance/supply.md ;;
+    *) die "unsupported recording kind: $RECORDING_KIND" ;;
+  esac
   mkdir -p demo/out docs/assets
   RUN=$(mktemp -d demo/out/run-XXXXXXXX)
   export RUN
+  DEMO_OWNER="demo-recording-${RUN##*/}"
+  export DEMO_OWNER
   touch "$RUN/.started"
   : > "$RUN/lifecycle.log"
   printf '%s\n' 'guard:ok' 'setup:ok' >> "$RUN/lifecycle.log"
@@ -68,11 +110,11 @@ state_list() {
     return 1
   }
   if out=$(env TF_DATA_DIR=.terraform-localstack \
-    terraform -chdir="$PREVIEW_ROOT" state list 2>"$err"); then
+    terraform -chdir="$PREVIEW_ROOT" state list -no-color 2>"$err"); then
     rc=0
   else
     rc=$?
-    # Terraform's canonical diagnostic for an absent state is
+    # Terraform's canonical diagnostic for an absent state (plain text only with -no-color) is
     # "No state file was found!" followed by an explanatory paragraph;
     # accept it only with empty stdout and no other error line.
     if [ -z "$out" ] && awk '
@@ -140,11 +182,30 @@ assert_execution_root() {
 }
 
 preflight() {
-  local existing
+  local existing lease_json lease_error lease_rc lease_status
   phase_begin preflight
   command -v vhs >/dev/null || die "vhs is required"
-  command -v ffprobe >/dev/null || die "ffprobe is required"
   command -v ffmpeg >/dev/null || die "ffmpeg is required"
+  command -v ffprobe >/dev/null || die "ffprobe is required"
+
+  if [ "$RECORDING_KIND" = verify ]; then
+    command -v tesseract >/dev/null || die "tesseract is required"
+    command -v jq >/dev/null || die "jq is required"
+    assert_generator_clean
+    GENERATOR_COMMIT=$(git rev-parse --short=7 HEAD) || \
+      die "could not resolve generator commit"
+    {
+      vhs --version
+      ffmpeg -version | head -1
+      tesseract --version 2>&1 | head -1
+      jq --version
+    } > "$RUN/versions.txt" || die "could not record tool versions"
+    [ "$(grep -c . "$RUN/versions.txt")" -eq 4 ] || \
+      die "tool version capture incomplete"
+    cat "$RUN/versions.txt" || die "could not print tool versions"
+    phase_ok
+    return
+  fi
 
   curl -sf localhost:4566/_localstack/health >/dev/null || \
     die "LocalStack is not reachable on localhost:4566"
@@ -152,6 +213,27 @@ preflight() {
     die "placeholder:local image missing; run make placeholder-build"
   aws s3api head-bucket --bucket orbit-infra-79s5rw-tfstate >/dev/null 2>&1 || \
     die "state bucket missing; run make bootstrap-apply TARGET=localstack first"
+
+  if [ "$RECORDING_KIND" = lease ]; then
+    lease_error="$RUN/preflight-lease.err"
+    set +e
+    lease_json="$(scripts/lease.sh get "$ENV_ID" 2> "$lease_error")"
+    lease_rc=$?
+    set -e
+    if [ "$lease_rc" -eq 0 ]; then
+      lease_status="$(jq -r '.status // empty' <<< "$lease_json")"
+      case "$lease_status" in
+        closed|deleted) ;;
+        open|closing|cleanup_failed)
+          die "environment $ENV_ID has lease status '$lease_status'; close it before recording"
+          ;;
+        *) die "environment $ENV_ID has invalid lease status '$lease_status'" ;;
+      esac
+    elif [ "$lease_rc" -ne 1 ] || \
+         ! grep -Fxq "lease.sh: no lease for $ENV_ID" "$lease_error"; then
+      die "could not read lease for $ENV_ID"
+    fi
+  fi
 
   assert_generator_clean
   GENERATOR_COMMIT=$(git rev-parse --short=7 HEAD) || \
@@ -164,7 +246,7 @@ preflight() {
 
   existing=$(state_list) || die "terraform state list failed"
   [ -z "$existing" ] || \
-    die "environment demo already has state; run make destroy TARGET=localstack ENV_ID=demo first"
+    die "environment $ENV_ID already has state; run make destroy TARGET=localstack ENV_ID=$ENV_ID first"
 
   {
     vhs --version
@@ -179,15 +261,15 @@ preflight() {
   cat "$RUN/versions.txt" || die "could not print tool versions"
   phase_ok
 }
-
 record() {
   phase_begin record
-  if [ "${DEMO_INJECT_FAIL:-}" = post-apply ]; then
-    awk '/^# DEMO-SECTION destroy/{exit} {print}' demo/demo.tape | \
+  if [ "$RECORDING_KIND" = lifecycle ] && \
+     [ "${DEMO_INJECT_FAIL:-}" = post-apply ]; then
+    awk '/^# DEMO-SECTION destroy/{exit} {print}' "$DEMO_TAPE" | \
       sed "s#demo/out/#$RUN/#g" > "$RUN/demo.tape" || \
       die "could not generate the run tape"
   else
-    sed "s#demo/out/#$RUN/#g" demo/demo.tape > "$RUN/demo.tape" || \
+    sed "s#demo/out/#$RUN/#g" "$DEMO_TAPE" > "$RUN/demo.tape" || \
       die "could not generate the run tape"
   fi
   vhs "$RUN/demo.tape" || die "vhs failed"
@@ -197,7 +279,7 @@ record() {
 inject_check() {
   local live
   phase_begin inject_check
-  if [ "${DEMO_INJECT_FAIL:-}" = post-apply ]; then
+  if [ "$RECORDING_KIND" = lifecycle ] && [ "${DEMO_INJECT_FAIL:-}" = post-apply ]; then
     live=$(state_list) || die "state list failed"
     [ -n "$live" ] || die "injection expected live state but found none"
     printf '%s\n' "$live" | sed -n '1,5p'
@@ -207,7 +289,8 @@ inject_check() {
 }
 
 assert_steps() {
-  local expected produced step value after file name
+  local expected produced step value after file name final_lease inventory
+  local version_count marker_count state_bucket
   phase_begin assert_steps
   expected="$RUN/expected-steps.txt"
   produced="$RUN/produced-steps.txt"
@@ -228,17 +311,68 @@ assert_steps() {
 
   [ -f "$RUN/env.ok" ] && [ "$(cat "$RUN/env.ok")" = 1 ] || \
     die "RUN did not reach the recorded shell"
-  grep -q '^Plan:' "$RUN/plan.log" || die "plan.log missing 'Plan:' line"
-  grep -q 'Apply complete' "$RUN/apply.log" || \
-    die "apply.log missing 'Apply complete'"
-  grep -q 'Destroy complete' "$RUN/destroy.log" || \
-    die "destroy.log missing 'Destroy complete'"
-
-  after=$(state_list) || die "terraform state list failed after the recorded destroy"
-  [ -z "$after" ] || die "state is not empty after the recorded destroy"
+  case "$RECORDING_KIND" in
+    lifecycle)
+      grep -q '^Plan:' "$RUN/plan.log" || die "plan.log missing 'Plan:' line"
+      grep -q 'Apply complete' "$RUN/apply.log" || \
+        die "apply.log missing 'Apply complete'"
+      grep -q 'Destroy complete' "$RUN/destroy.log" || \
+        die "destroy.log missing 'Destroy complete'"
+      after=$(state_list) || die "terraform state list failed after the recorded destroy"
+      [ -z "$after" ] || die "state is not empty after the recorded destroy"
+      ;;
+    lease)
+      grep -Fxq 'Plan: 61 to add, 0 to change, 0 to destroy.' \
+        "$RUN/plan.log" || die "plan.log missing the expected resource count"
+      grep -Fxq 'Apply complete! Resources: 61 added, 0 changed, 0 destroyed.' \
+        "$RUN/apply.log" || die "apply.log missing the expected resource count"
+      [ -s "$RUN/lease.expected" ] && [ -s "$RUN/lease.generation" ] || \
+        die "lease generation capture is incomplete"
+      [ "$(cat "$RUN/lease.expected")" = "$(cat "$RUN/lease.generation")" ] || \
+        die "opened generation differs from the expected next generation"
+      grep -Fxq "status=open generation=$(cat "$RUN/lease.generation")" \
+        "$RUN/open.log" || die "open.log lacks the expected generation"
+      grep -Fq '"status": "open"' "$RUN/lease-active.log" || \
+        die "lease-active.log lacks open status"
+      grep -Fxq "close-env.sh: $ENV_ID stage 1 complete; lease remains 'closing' for the sweeper" \
+        "$RUN/close.log" || die "close.log lacks the Stage-1 completion line"
+      tail -n 1 "$RUN/sweep.log" | grep -Fxq 'final_status=closed' || \
+        die "sweep.log lacks the closed terminal status"
+      final_lease="$(scripts/lease.sh get "$ENV_ID")" || \
+        die "could not read the final lease"
+      jq -e --arg owner "$DEMO_OWNER" \
+        --argjson generation "$(cat "$RUN/lease.generation")" '
+          .status == "closed" and .owner == $owner and .generation == $generation
+        ' <<< "$final_lease" >/dev/null || \
+        die "final lease is not this run's closed generation"
+      state_bucket="$(sed -n \
+        "s/^LEASE_BUCKET=\"\${LEASE_BUCKET:-\\([^\"]*\\)}\"$/\\1/p" scripts/lease.sh)"
+      [ -n "$state_bucket" ] || die "could not resolve the lease state bucket"
+      inventory="$(scripts/aws-cli.sh s3api list-object-versions \
+        --bucket "$state_bucket" --prefix "envs/preview/$ENV_ID" \
+        --output json --no-paginate)" || \
+        die "could not inventory retained state versions"
+      version_count="$(jq '(.Versions // []) | length' <<< "$inventory")"
+      marker_count="$(jq '(.DeleteMarkers // []) | length' <<< "$inventory")"
+      [ "$version_count" -eq 0 ] && [ "$marker_count" -eq 0 ] || \
+        die "state or lock versions remain after Stage 2"
+      FINAL_STATUS=closed
+      VERSIONS_REMAINING=0
+      touch "$RUN/final-inventory.complete"
+      PRE_OPEN_STATUS="$(sed -n 's/^status=\([^ ]*\).*/\1/p' "$RUN/lease-before.log")"
+      OPENED_GENERATION="$(cat "$RUN/lease.generation")"
+      APPLY_RESOURCE_COUNT=61
+      CLOSE_RESULT="$(tail -n 1 "$RUN/close.log")"
+      ;;
+    verify)
+      for file in canon-timestamp canon-checksum canon-sha contracts; do
+        [ -s "$RUN/$file.log" ] || die "$file.log missing or empty"
+      done
+      ;;
+    *) die "unsupported recording kind: $RECORDING_KIND" ;;
+  esac
   phase_ok
 }
-
 inspect_artifact() {
   local size duration frame_info frames frame_rate minimum_frames floor
   local local_user local_host
@@ -286,20 +420,10 @@ inspect_artifact() {
   [ "$frames" -ge "$minimum_frames" ] || \
     die "demo.gif has $frames frames, below the floor $minimum_frames for $floor s at $frame_rate fps"
 
-  grep -qE '^Plan: [0-9]+ to add' "$RUN/demo.txt" || \
-    die "demo.txt missing 'Plan: ' line"
-  grep -qE '^Apply complete! Resources: [0-9]+ added' "$RUN/demo.txt" || \
-    die "demo.txt missing 'Apply complete'"
-  grep -qE '^Destroy complete! Resources: [0-9]+ destroyed' "$RUN/demo.txt" || \
-    die "demo.txt missing 'Destroy complete'"
-  grep -qE '^PASS: conftest-gate suite' "$RUN/demo.txt" || \
-    die "demo.txt missing 'PASS: conftest-gate suite'"
-  grep -q '^aws_' "$RUN/demo.txt" || \
-    die "demo.txt missing state list output (no line starting with aws_)"
-  grep -qi 'localstack' "$RUN/demo.txt" || \
-    die "demo.txt missing localstack status output"
-  grep -qE '\b(ecs|elbv2|s3)\b.*(running|available)' "$RUN/demo.txt" || \
-    die "demo.txt lacks a LocalStack service row"
+  while IFS= read -r pattern; do
+    grep -qE "$pattern" "$RUN/demo.txt" || \
+      die "demo.txt missing required $RECORDING_KIND output: $pattern"
+  done < <(demo_required_output_patterns "$RECORDING_KIND")
 
   local_user=$(id -un)
   local_host=$(hostname -s 2>/dev/null || hostname)
@@ -329,36 +453,83 @@ inspect_artifact() {
 build_manifest() {
   local vhs_version ttyd_version ffmpeg_version terraform_version localstack_version
   local recorded_from recorder recorded_on plan_line apply_line destroy_line sha
+  local canonicalizer_sha
   phase_begin build_manifest
-  vhs_version=$(sed -n '1p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
-  ttyd_version=$(sed -n '2p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
-  ffmpeg_version=$(sed -n '3p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//; s/ .*//')
-  terraform_version=$(sed -n '4p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
-  localstack_version=$(sed -n '5p' "$RUN/versions.txt")
-  recorded_from="LocalStack $localstack_version, Terraform $terraform_version"
-  recorder="vhs $vhs_version, ttyd $ttyd_version, ffmpeg $ffmpeg_version"
-  recorded_on=$(date -u +%F)
-  plan_line=$(grep -m1 '^Plan:' "$RUN/plan.log")
-  apply_line=$(grep -m1 '^Apply complete' "$RUN/apply.log")
-  destroy_line=$(grep -m1 '^Destroy complete' "$RUN/destroy.log")
   sha=$(shasum -a 256 "$RUN/demo.gif" | awk '{print $1}')
 
-  {
-    printf 'recorded_from=%s\n' "$recorded_from"
-    printf 'recorded_on=%s\n' "$recorded_on"
-    printf 'generator_commit=%s (the tree at this commit holds every path in DEMO_GENERATOR_PATHS)\n' "$GENERATOR_COMMIT"
-    printf 'recorder=%s\n' "$recorder"
-    # shellcheck disable=SC2016
-    printf 'command=`OPERATOR_CIDR=%s make demo` from the repository root\n' "$OPERATOR_CIDR"
-    printf 'environment=ENV_ID=demo, TARGET=localstack, workspace default, CLI config empty, operator CIDR %s (TEST-NET-3, /24 to /32)\n' "$OPERATOR_CIDR"
-    # shellcheck disable=SC2016
-    printf 'plan_apply_destroy=`%s`; `%s`; `%s`\n' "$plan_line" "$apply_line" "$destroy_line"
-    printf 'artifact=%s bytes, %s s, %s frames\n' "$GIF_SIZE" "$GIF_DURATION" "$GIF_FRAMES"
-    printf 'artifact_sha256=%s\n' "$sha"
-  } > "$RUN/provenance.env"
+  case "$RECORDING_KIND" in
+    lifecycle)
+      vhs_version=$(sed -n '1p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
+      ttyd_version=$(sed -n '2p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
+      ffmpeg_version=$(sed -n '3p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//; s/ .*//')
+      terraform_version=$(sed -n '4p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
+      localstack_version=$(sed -n '5p' "$RUN/versions.txt")
+      recorded_from="LocalStack $localstack_version, Terraform $terraform_version"
+      recorder="vhs $vhs_version, ttyd $ttyd_version, ffmpeg $ffmpeg_version"
+      recorded_on=$(date -u +%F)
+      plan_line=$(grep -m1 '^Plan:' "$RUN/plan.log")
+      apply_line=$(grep -m1 '^Apply complete' "$RUN/apply.log")
+      destroy_line=$(grep -m1 '^Destroy complete' "$RUN/destroy.log")
+      {
+        printf 'recorded_from=%s\n' "$recorded_from"
+        printf 'recorded_on=%s\n' "$recorded_on"
+        printf 'generator_commit=%s (the tree at this commit holds the active recording generator closure)\n' "$GENERATOR_COMMIT"
+        printf 'recorder=%s\n' "$recorder"
+        # shellcheck disable=SC2016
+        printf 'command=`OPERATOR_CIDR=%s make demo` from the repository root\n' "$OPERATOR_CIDR"
+        printf 'environment=ENV_ID=demo, TARGET=localstack, workspace default, CLI config empty, operator CIDR %s (TEST-NET-3, /24 to /32)\n' "$OPERATOR_CIDR"
+        # shellcheck disable=SC2016
+        printf 'plan_apply_destroy=`%s`; `%s`; `%s`\n' "$plan_line" "$apply_line" "$destroy_line"
+        printf 'artifact=%s bytes, %s s, %s frames\n' "$GIF_SIZE" "$GIF_DURATION" "$GIF_FRAMES"
+        printf 'artifact_sha256=%s\n' "$sha"
+      } > "$RUN/provenance.env"
+      ;;
+    lease)
+      terraform_version=$(sed -n '4p' "$RUN/versions.txt" | sed -E 's/^[^0-9]*//')
+      localstack_version=$(sed -n '5p' "$RUN/versions.txt")
+      recorded_from="LocalStack $localstack_version, Terraform $terraform_version"
+      {
+        printf 'recorded_from=%s\n' "$recorded_from"
+        printf 'generator_commit=%s (the tree at this commit holds the active recording generator closure)\n' "$GENERATOR_COMMIT"
+        printf 'environment=ENV_ID=%s, TARGET=localstack, workspace default, CLI config empty, operator CIDR %s (TEST-NET-3, /24 to /32)\n' "$ENV_ID" "$OPERATOR_CIDR"
+        printf 'pre_open_status=%s\n' "$PRE_OPEN_STATUS"
+        printf 'opened_generation=%s\n' "$OPENED_GENERATION"
+        printf 'apply_resource_count=%s\n' "$APPLY_RESOURCE_COUNT"
+        printf 'close_result=%s\n' "$CLOSE_RESULT"
+        printf 'final_status=%s\n' "$FINAL_STATUS"
+        printf 'versions_remaining=%s\n' "$VERSIONS_REMAINING"
+        printf 'artifact_sha256=%s\n' "$sha"
+        printf 'artifact_size=%s bytes\n' "$GIF_SIZE"
+        printf 'artifact_duration=%s s\n' "$GIF_DURATION"
+        printf 'artifact_frames=%s\n' "$GIF_FRAMES"
+      } > "$RUN/provenance.env"
+      ;;
+    verify)
+      canonicalizer_sha=$(shasum -a 256 scripts/sbom-canon.sh | awk '{print $1}')
+      grep -Fxq 'identical=0' "$RUN/canon-timestamp.log" || \
+        die "timestamp canonicalization result is not identical"
+      grep -Fxq 'identical=1' "$RUN/canon-checksum.log" || \
+        die "checksum canonicalization result is not different"
+      grep -Fxq 'PASS: SBOM canonicalization contracts (14 assertions)' \
+        "$RUN/contracts.log" || die "SBOM contract result is missing"
+      {
+        printf 'recorded_from=offline SPDX fixture verification\n'
+        printf 'generator_commit=%s (the tree at this commit holds the active recording generator closure)\n' "$GENERATOR_COMMIT"
+        printf 'canonicalizer_sha256=%s\n' "$canonicalizer_sha"
+        printf 'fixtures_used=base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json\n'
+        printf 'timestamp_result=identical\n'
+        printf 'checksum_result=different\n'
+        printf 'contracts_result=14 assertions\n'
+        printf 'artifact_sha256=%s\n' "$sha"
+        printf 'artifact_size=%s bytes\n' "$GIF_SIZE"
+        printf 'artifact_duration=%s s\n' "$GIF_DURATION"
+        printf 'artifact_frames=%s\n' "$GIF_FRAMES"
+      } > "$RUN/provenance.env"
+      ;;
+    *) die "unsupported recording kind: $RECORDING_KIND" ;;
+  esac
   phase_ok
 }
-
 manifest_value() {
   local key=$1
   sed -n "s/^${key}=//p" "$RUN/provenance.env"
@@ -390,41 +561,141 @@ recheck_generator() {
 
 render_provenance() {
   phase_begin render_provenance
-  cp "$DEMO_DOC" "$RUN/DEMO_PROVENANCE.md" || \
+  cp "$DEMO_TEMPLATE" "$RUN/DEMO_PROVENANCE.md" || \
     die "could not copy provenance template"
-  rewrite_provenance_row recorded_from recorded_from
-  rewrite_provenance_row recorded_on recorded_on
-  rewrite_provenance_row generator_commit 'generator commit'
-  rewrite_provenance_row recorder recorder
-  rewrite_provenance_row command command
-  rewrite_provenance_row environment environment
-  rewrite_provenance_row plan_apply_destroy 'plan / apply / destroy'
-  rewrite_provenance_row artifact artifact
-  rewrite_provenance_row artifact_sha256 'artifact sha256'
+  case "$RECORDING_KIND" in
+    lifecycle)
+      rewrite_provenance_row recorded_from recorded_from
+      rewrite_provenance_row recorded_on recorded_on
+      rewrite_provenance_row generator_commit 'generator commit'
+      rewrite_provenance_row recorder recorder
+      rewrite_provenance_row command command
+      rewrite_provenance_row environment environment
+      rewrite_provenance_row plan_apply_destroy 'plan / apply / destroy'
+      rewrite_provenance_row artifact artifact
+      rewrite_provenance_row artifact_sha256 'artifact sha256'
+      ;;
+    lease)
+      rewrite_provenance_row recorded_from recorded_from
+      rewrite_provenance_row generator_commit 'generator commit'
+      rewrite_provenance_row environment environment
+      rewrite_provenance_row pre_open_status 'pre-open lease status'
+      rewrite_provenance_row opened_generation 'opened generation'
+      rewrite_provenance_row apply_resource_count 'apply resource count'
+      rewrite_provenance_row close_result 'close result'
+      rewrite_provenance_row final_status 'final lease status'
+      rewrite_provenance_row versions_remaining 'state and lock versions remaining'
+      rewrite_provenance_row artifact_sha256 'gif sha256'
+      rewrite_provenance_row artifact_size size
+      rewrite_provenance_row artifact_duration duration
+      rewrite_provenance_row artifact_frames frames
+      ;;
+    verify)
+      rewrite_provenance_row recorded_from recorded_from
+      rewrite_provenance_row generator_commit 'generator commit'
+      rewrite_provenance_row canonicalizer_sha256 'canonicalizer sha256'
+      rewrite_provenance_row fixtures_used 'fixtures used'
+      rewrite_provenance_row timestamp_result 'timestamp-variant result'
+      rewrite_provenance_row checksum_result 'checksum-variant result'
+      rewrite_provenance_row contracts_result 'contracts result'
+      rewrite_provenance_row artifact_sha256 'gif sha256'
+      rewrite_provenance_row artifact_size size
+      rewrite_provenance_row artifact_duration duration
+      rewrite_provenance_row artifact_frames frames
+      ;;
+    *) die "unsupported recording kind: $RECORDING_KIND" ;;
+  esac
   phase_ok
 }
-
 teardown() {
-  local rc left
+  local rc left lease lease_rc lease_owner lease_generation lease_status
+  local owned_generation lease_error
   if [ "${TEARDOWN_RC+x}" = x ]; then
     return "$TEARDOWN_RC"
   fi
   phase_begin teardown
   rc=0
-  if ! make destroy > "$RUN/cleanup.log" 2>&1; then
-    echo "demo: cleanup destroy failed (see $RUN/cleanup.log)" >&2
-    rc=1
-  fi
-  if left=$(state_list 2>> "$RUN/cleanup.log"); then
-    if [ -n "$left" ]; then
-      printf '%s\n' "$left" >> "$RUN/cleanup.log"
-      echo "demo: cleanup left state behind (see $RUN/cleanup.log)" >&2
+  case "$RECORDING_KIND" in
+    lifecycle)
+      if ! make destroy > "$RUN/cleanup.log" 2>&1; then
+        echo "demo: cleanup destroy failed (see $RUN/cleanup.log)" >&2
+        rc=1
+      fi
+      if left=$(state_list 2>> "$RUN/cleanup.log"); then
+        if [ -n "$left" ]; then
+          printf '%s\n' "$left" >> "$RUN/cleanup.log"
+          echo "demo: cleanup left state behind (see $RUN/cleanup.log)" >&2
+          rc=1
+        fi
+      else
+        echo "demo: cleanup state check failed (see $RUN/cleanup.log)" >&2
+        rc=1
+      fi
+      ;;
+    lease)
+      if [ "${FINAL_STATUS:-}" = closed ]; then
+        : > "$RUN/cleanup.log"
+      else
+        lease_error="$RUN/cleanup-lease.err"
+        set +e
+        lease="$(scripts/lease.sh get "$ENV_ID" 2> "$lease_error")"
+        lease_rc=$?
+        set -e
+        if [ "$lease_rc" -eq 1 ] && \
+           grep -Fxq "lease.sh: no lease for $ENV_ID" "$lease_error"; then
+          : > "$RUN/cleanup.log"
+        elif [ "$lease_rc" -ne 0 ]; then
+          echo "demo: could not read lease during recovery" >&2
+          rc=1
+        else
+          lease_owner="$(jq -r 'if (.owner | type) == "string" then .owner else "" end' <<< "$lease")"
+          lease_generation="$(jq -r '.generation // empty' <<< "$lease")"
+          lease_status="$(jq -r '.status // empty' <<< "$lease")"
+          if [ -s "$RUN/lease.generation" ]; then
+            owned_generation="$(cat "$RUN/lease.generation")"
+          elif [ "$lease_owner" = "$DEMO_OWNER" ] && [ "$lease_status" = open ] && \
+               [[ "$lease_generation" =~ ^[1-9][0-9]*$ ]]; then
+            owned_generation=$lease_generation
+          else
+            owned_generation=
+          fi
+          if [ "$lease_owner" != "$DEMO_OWNER" ] || \
+             [ -z "$owned_generation" ] || \
+             [ "$lease_generation" != "$owned_generation" ]; then
+            echo "demo: lease belongs to another run" >&2
+            rc=1
+          elif [ "$lease_status" = closed ]; then
+            : > "$RUN/cleanup.log"
+          elif ! scripts/lease-sweep-until-closed.sh "$ENV_ID" \
+              --owner "$DEMO_OWNER" --generation "$owned_generation" \
+              > "$RUN/cleanup.log" 2>&1; then
+            cat "$RUN/cleanup.log" >&2
+            echo "demo: lease recovery failed (see $RUN/cleanup.log)" >&2
+            rc=1
+          else
+            lease="$(scripts/lease.sh get "$ENV_ID")" || rc=1
+            if [ "$rc" -eq 0 ] && \
+               ! jq -e --arg owner "$DEMO_OWNER" \
+                 --argjson generation "$owned_generation" '
+                   .status == "closed"
+                   and .owner == $owner
+                   and .generation == $generation
+                 ' <<< "$lease" >/dev/null; then
+              echo "demo: lease recovery did not reach closed" >&2
+              rc=1
+            fi
+          fi
+        fi
+      fi
+      ;;
+    verify)
+      : > "$RUN/cleanup.log"
+      ;;
+    *)
+      echo "demo: unsupported recording kind during teardown" >&2
       rc=1
-    fi
-  else
-    echo "demo: cleanup state check failed (see $RUN/cleanup.log)" >&2
-    rc=1
-  fi
+      ;;
+  esac
   TEARDOWN_RC=$rc
   if [ "$rc" -eq 0 ]; then
     phase_ok
@@ -433,7 +704,6 @@ teardown() {
   fi
   return "$rc"
 }
-
 publish() {
   phase_begin publish
   mv "$RUN/demo.gif" "$DEMO_GIF"

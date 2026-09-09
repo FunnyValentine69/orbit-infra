@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 610" role="img">
+  <title>How an orbit-infra change flows</title>
+  <desc>Eight stages from pull request gates through preview cleanup, with supply-chain verification running before the preview lease opens.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    .background { fill: #253348; }
+    .heading { fill: #f7fafc; font: 700 24px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .subheading { fill: #d7e0ea; font: 14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .panel rect { fill: #52657b; stroke: #90a4ba; stroke-width: 2; }
+    .caption { fill: #ffffff; font: 600 14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .supply .caption { font-size: 11.5px; }
+    .step-number { fill: #d7e0ea; font: 700 12px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .connector { fill: none; stroke: #90a4ba; stroke-width: 2; }
+    .parallel { stroke-dasharray: 6 5; }
+    @keyframes panel-lit {
+      0%, 13.9% { fill: #0f766e; stroke: #99f6e4; }
+      14.3%, 100% { fill: #52657b; stroke: #90a4ba; }
+    }
+    .panel rect { animation: panel-lit 21s linear infinite both; }
+    .panel-1 rect { animation-delay: -21s; }
+    .panel-2 rect { animation-delay: -18s; }
+    .panel-3 rect { animation-delay: -15s; }
+    .panel-4 rect { animation-delay: -12s; }
+    .panel-5 rect { animation-delay: -9s; }
+    .panel-6 rect { animation-delay: -6s; }
+    .panel-7 rect { animation-delay: -3s; }
+    .panel-8 rect { animation-delay: -12s; }
+    @media (prefers-reduced-motion: reduce) {
+      .panel rect { animation: none; fill: #0f766e; stroke: #99f6e4; }
+    }
+  </style>
+  <rect class="background" width="880" height="610" rx="18"/>
+  <text class="heading" x="40" y="42">How a change flows</text>
+  <text class="subheading" x="40" y="66">The highlighted stage advances every three seconds.</text>
+  <g id="step-1" class="panel panel-1" transform="translate(40 86)">
+    <rect width="500" height="52" rx="12"/>
+    <text class="step-number" x="16" y="31">1</text>
+    <text class="caption" x="46" y="32">Pull request opens</text>
+  </g>
+  <path class="connector" d="M290 138 V156"/>
+  <g id="step-2" class="panel panel-2" transform="translate(40 156)">
+    <rect width="500" height="52" rx="12"/>
+    <text class="step-number" x="16" y="31">2</text>
+    <text class="caption" x="46" y="32">Static gates: fmt, validate, lint, policy-size, conftest</text>
+  </g>
+  <path class="connector" d="M290 208 V226"/>
+  <g id="step-3" class="panel panel-3" transform="translate(40 226)">
+    <rect width="500" height="52" rx="12"/>
+    <text class="step-number" x="16" y="31">3</text>
+    <text class="caption" x="46" y="32">LocalStack plan posts a comment on the PR</text>
+  </g>
+  <path class="connector" d="M290 278 V296"/>
+  <g id="step-4" class="panel panel-4" transform="translate(40 296)">
+    <rect width="500" height="52" rx="12"/>
+    <text class="step-number" x="16" y="31">4</text>
+    <text class="caption" x="46" y="32">Preview lease opens: new generation, owner token</text>
+  </g>
+  <path class="connector" d="M290 348 V366"/>
+  <g id="step-5" class="panel panel-5" transform="translate(40 366)">
+    <rect width="500" height="52" rx="12"/>
+    <text class="step-number" x="16" y="31">5</text>
+    <text class="caption" x="46" y="32">Terraform applies; acceptance checks pass</text>
+  </g>
+  <path class="connector" d="M290 418 V436"/>
+  <g id="step-6" class="panel panel-6" transform="translate(40 436)">
+    <rect width="500" height="52" rx="12"/>
+    <text class="step-number" x="16" y="31">6</text>
+    <text class="caption" x="46" y="32">Close begins: Stage 1 destroy and verify</text>
+  </g>
+  <path class="connector" d="M290 488 V506"/>
+  <g id="step-7" class="panel panel-7" transform="translate(40 506)">
+    <rect width="500" height="52" rx="12"/>
+    <text class="step-number" x="16" y="31">7</text>
+    <text class="caption" x="46" y="32">Stage 2 sweep reclaims state and lock versions</text>
+  </g>
+  <path class="connector parallel" d="M540 322 H570"/>
+  <g id="step-8" class="panel panel-8 supply" transform="translate(570 296)">
+    <rect width="280" height="52" rx="12"/>
+    <text class="step-number" x="12" y="31">↳</text>
+    <text class="caption" x="32" y="32">Supply chain: signatures verified pre-lease</text>
+  </g>
+</svg>
