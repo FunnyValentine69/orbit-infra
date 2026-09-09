@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 610" role="img">
   <title>How an orbit-infra change flows</title>
-  <desc>Eight stages from pull request gates through preview cleanup, with supply-chain verification running alongside apply.</desc>
+  <desc>Eight stages from pull request gates through preview cleanup, with supply-chain verification running before the preview lease opens.</desc>
   <style>
     :root { color-scheme: light dark; }
     .background { fill: #253348; }
@@ -25,7 +25,7 @@
     .panel-5 rect { animation-delay: -9s; }
     .panel-6 rect { animation-delay: -6s; }
     .panel-7 rect { animation-delay: -3s; }
-    .panel-8 rect { animation-delay: -9s; }
+    .panel-8 rect { animation-delay: -12s; }
     @media (prefers-reduced-motion: reduce) {
       .panel rect { animation: none; fill: #0f766e; stroke: #99f6e4; }
     }
@@ -74,10 +74,10 @@
     <text class="step-number" x="16" y="31">7</text>
     <text class="caption" x="46" y="32">Stage 2 sweep reclaims state and lock versions</text>
   </g>
-  <path class="connector parallel" d="M540 392 H570"/>
-  <g id="step-8" class="panel panel-8 supply" transform="translate(570 366)">
+  <path class="connector parallel" d="M540 322 H570"/>
+  <g id="step-8" class="panel panel-8 supply" transform="translate(570 296)">
     <rect width="280" height="52" rx="12"/>
     <text class="step-number" x="12" y="31">↳</text>
-    <text class="caption" x="32" y="32">Supply chain: signed images verified at apply</text>
+    <text class="caption" x="32" y="32">Supply chain: signatures verified pre-lease</text>
   </g>
 </svg>

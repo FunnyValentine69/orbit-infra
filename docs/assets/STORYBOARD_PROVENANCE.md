@@ -2,6 +2,6 @@
 
 | field | value |
 |---|---|
-| generator commit | 14a1c24414b997776382bcf172b83bbef3cb2a3e |
-| artifact sha256 | 965fd3e53c1de6e15deae461a58dca4571ca9128af13d560f662d8cc73490851 |
+| generator commit | 550c3a5568ac0130673ca99c55fc44491c8537b1 |
+| artifact sha256 | 7528bc1c906a3467b05e0f6917f81abb355467e313b880f0042d38da754c3d3b |
 | command | make storyboard |

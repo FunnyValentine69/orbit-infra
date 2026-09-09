@@ -110,7 +110,7 @@ def render(snapshot: float | None = None) -> str:
         if index < 6:
             panels.append(f'  <path class="connector" d="M290 {y + 52} V{y + 70}"/>')
 
-    supply_y = 86 + (4 * 70)
+    supply_y = 86 + (SCHEDULE[7] * 70)
     supply_lit = " lit" if snapshot_slot == SCHEDULE[7] else ""
     panels.extend(
         [
@@ -127,7 +127,7 @@ def render(snapshot: float | None = None) -> str:
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 610" role="img"{snapshot_attribute}>',
         "  <title>How an orbit-infra change flows</title>",
-        "  <desc>Eight stages from pull request gates through preview cleanup, with supply-chain verification running alongside apply.</desc>",
+        "  <desc>Eight stages from pull request gates through preview cleanup, with supply-chain verification running before the preview lease opens.</desc>",
         "  <style>",
         *style_lines,
         "  </style>",
