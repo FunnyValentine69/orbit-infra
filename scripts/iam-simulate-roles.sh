@@ -522,12 +522,32 @@ notes_path = Path(sys.argv[3])
 report_path = Path(sys.argv[4])
 records = [json.loads(line) for line in records_path.read_text(encoding="utf-8").splitlines() if line]
 notes = notes_path.read_text(encoding="utf-8").splitlines()
+
+
+def redact_account(value, account_id):
+    if isinstance(value, str):
+        return value.replace(account_id, "000000000000")
+    if isinstance(value, list):
+        return [redact_account(item, account_id) for item in value]
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            redacted_key = redact_account(key, account_id)
+            if redacted_key in redacted:
+                raise SystemExit("FAIL: account redaction creates a duplicate report key")
+            redacted[redacted_key] = redact_account(item, account_id)
+        return redacted
+    return value
+
+
 case_exclusions = {}
 for exclusion in role_plan["exclusions"]:
     if "case_id" in exclusion:
         reason = exclusion["reason"]
         case_exclusions[reason] = case_exclusions.get(reason, 0) + 1
 payload = {
+    "account": role_plan["account_id"],
+    "account_redacted": True,
     "run_id": role_plan["run_id"],
     "projection": {
         "assume_role_policy": role_plan["assume_role_policy"],
@@ -552,6 +572,7 @@ payload = {
         "manual_cleanup_notes": len(notes),
     },
 }
+payload = redact_account(payload, role_plan["account_id"])
 report_path.parent.mkdir(parents=True, exist_ok=True)
 report_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY

@@ -1128,14 +1128,16 @@ PY
       echo 'An error occurred (EntityAlreadyExists) when calling the CreateRole operation' >&2
       exit 254
     fi
-    if [ "${FAKE_AWS_SCENARIO:-}" = create-midway ] && [ "$create_count" -eq 2 ]; then
+    if [ "${FAKE_AWS_SCENARIO:-}" = create-midway ] && \
+       [ "$create_count" -eq "${FAKE_ROLE_FAILURE_CREATE_INDEX:-2}" ]; then
       echo 'An error occurred (ServiceFailure) when calling the CreateRole operation' >&2
       exit 254
     fi
     tag_value="$(value_after --tags "$@" | sed 's/^Key=OrbitIamSimulationRun,Value=//')"
     jq -cn --arg tag "$tag_value" '{tag:$tag,policy:false}' >"$FAKE_ROLE_STATE_DIR/$role_name.json"
     jq -cn --arg role "$role_name" '{Role:{RoleName:$role}}'
-    if [ "${FAKE_AWS_SCENARIO:-}" = term-during-create ] && [ "$create_count" -eq 1 ]; then
+    if [ "${FAKE_AWS_SCENARIO:-}" = term-during-create ] && \
+       [ "$create_count" -eq "${FAKE_ROLE_FAILURE_CREATE_INDEX:-1}" ]; then
       kill -TERM "$IAM_SIM_LANE_PID"
     fi
     ;;
@@ -1978,10 +1980,13 @@ PY_MUTANT
 
 run_phase2_role_lane() {
   local scenario=$1
+  local test_account="${IAM_SIM_TEST_ACCOUNT_ID:-000000000000}"
   local test_plan="${IAM_SIM_TEST_ROLE_PLAN:-$phase2_plan}"
   local test_vectors="${IAM_SIM_TEST_ROLE_VECTORS:-$phase2_dir/role-vectors}"
   local test_report="${IAM_SIM_TEST_ROLE_REPORT:-$phase2_dir/role-report.json}"
   local test_custom_report="${IAM_SIM_TEST_ROLE_CUSTOM_REPORT:-$phase2_dir/role-custom-report.json}"
+  local test_role_lane="${IAM_SIM_TEST_ROLE_LANE:-$IAM_SIM_ROLE_LANE}"
+  local test_run_id="${IAM_SIM_TEST_RUN_ID:-fixture-run}"
   shift
   env -u AWS_PROFILE \
     PATH="$phase2_dir/bin:$PATH" \
@@ -1990,11 +1995,12 @@ run_phase2_role_lane() {
     FAKE_AWS_CALL_DIR="$phase2_calls" \
     FAKE_ROLE_STATE_DIR="$phase2_roles" \
     FAKE_AWS_SCENARIO="$scenario" \
-    FAKE_ACCOUNT_ID=000000000000 \
-    IAM_SIM_RUN_ID=fixture-run \
+    FAKE_ACCOUNT_ID="$test_account" \
+    FAKE_ROLE_FAILURE_CREATE_INDEX="${IAM_SIM_TEST_ROLE_FAILURE_CREATE_INDEX:-}" \
+    IAM_SIM_RUN_ID="$test_run_id" \
     TARGET=aws \
-    "$IAM_SIM_ROLE_LANE" --plan "$test_plan" --vectors "$test_vectors" \
-      --report "$test_report" --expect-account 000000000000 \
+    "$test_role_lane" --plan "$test_plan" --vectors "$test_vectors" \
+      --report "$test_report" --expect-account "$test_account" \
       --custom-report "$test_custom_report" "$@"
 }
 
@@ -2018,6 +2024,197 @@ expect_role_failure() {
   fi
 }
 
+
+validate_role_account_redaction() {
+  local report=$1
+  local calls=$2
+  local account=$3
+  python3 - "$report" "$calls" "$account" <<'PY_VALIDATE_ROLE_ACCOUNT_REDACTION'
+import json
+from pathlib import Path
+import re
+import sys
+
+report_path = Path(sys.argv[1])
+call_paths = sorted(Path(sys.argv[2]).glob("*.json"), key=lambda path: int(path.stem))
+account = sys.argv[3]
+placeholder = "000000000000"
+serialized = report_path.read_text(encoding="utf-8")
+without_hashes = re.sub(
+    r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])",
+    "",
+    serialized,
+)
+account_runs = set(re.findall(r"(?<![0-9])[0-9]{12}(?![0-9])", without_hashes))
+unexpected = sorted(account_runs - {placeholder})
+if unexpected:
+    raise SystemExit(f"FAIL: role report contains unredacted 12-digit account id: {unexpected[0]}")
+payload = json.loads(serialized)
+if payload.get("account") != placeholder or payload.get("account_redacted") is not True:
+    raise SystemExit("FAIL: role report lacks the placeholder account and account_redacted marker")
+if not payload.get("manual_cleanup"):
+    raise SystemExit("FAIL: role report account-redaction fixture lacks a manual-cleanup note")
+
+calls = [json.loads(path.read_text(encoding="utf-8")) for path in call_paths]
+creates = [call for call in calls if call[:2] == ["iam", "create-role"]]
+simulations = [call for call in calls if call[:2] == ["iam", "simulate-principal-policy"]]
+if not creates or not simulations:
+    raise SystemExit("FAIL: role account-redaction fixture lacks live-call records")
+for call in creates:
+    role_name = call[call.index("--role-name") + 1]
+    trust_policy = call[call.index("--assume-role-policy-document") + 1]
+    expected_trust = f"arn:aws:iam::{account}:root"
+    if account not in role_name or json.loads(trust_policy)["Statement"][0]["Principal"]["AWS"] != expected_trust:
+        raise SystemExit("FAIL: create-role call did not retain the real account id")
+for call in simulations:
+    source_arn = call[call.index("--policy-source-arn") + 1]
+    if not source_arn.startswith(f"arn:aws:iam::{account}:role/") or account not in source_arn:
+        raise SystemExit("FAIL: simulate-principal-policy call did not retain the real account id")
+PY_VALIDATE_ROLE_ACCOUNT_REDACTION
+}
+
+validate_role_creation_failure() {
+  local report=$1
+  local calls=$2
+  local expected_role_count=$3
+  local failure_index=$4
+  local created_count=$5
+  python3 - "$report" "$calls" "$expected_role_count" "$failure_index" "$created_count" <<'PY_VALIDATE_ROLE_CREATION_FAILURE'
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+call_paths = sorted(Path(sys.argv[2]).glob("*.json"), key=lambda path: int(path.stem))
+calls = [json.loads(path.read_text(encoding="utf-8")) for path in call_paths]
+expected_role_count = int(sys.argv[3])
+failure_index = int(sys.argv[4])
+created_count = int(sys.argv[5])
+roles = payload.get("projection", {}).get("roles", [])
+if len(roles) != expected_role_count:
+    raise SystemExit(
+        f"FAIL: role failure fixture requires {expected_role_count} projections, found {len(roles)}"
+    )
+if not 1 <= created_count <= failure_index <= expected_role_count:
+    raise SystemExit("FAIL: role failure fixture has invalid creation boundaries")
+if expected_role_count == 8:
+    failed_role = roles[failure_index - 1]
+    if failed_role.get("role_kind") != "deployer" or not failed_role.get("name", "").endswith("-deployer-p4"):
+        raise SystemExit("FAIL: eight-role failure must be injected at deployer p4")
+
+role_names = [role["name"] for role in roles]
+
+
+def operation_calls(operation):
+    return [call for call in calls if call[:2] == ["iam", operation]]
+
+
+def call_role_name(call):
+    return call[call.index("--role-name") + 1]
+
+
+creates = [call_role_name(call) for call in operation_calls("create-role")]
+deletes = [call_role_name(call) for call in operation_calls("delete-role")]
+gets = [call_role_name(call) for call in operation_calls("get-role")]
+if creates != role_names[:failure_index]:
+    raise SystemExit("FAIL: role failure fixture created a role after the injected failure")
+if deletes != list(reversed(role_names[:created_count])):
+    raise SystemExit("FAIL: role failure cleanup did not delete every created role in reverse order")
+if gets != role_names[:failure_index]:
+    raise SystemExit("FAIL: role failure cleanup did not verify every attempted role absent")
+later_roles = set(role_names[failure_index:])
+for call in calls:
+    if "--role-name" in call and call_role_name(call) in later_roles:
+        raise SystemExit("FAIL: role failure fixture touched a role after the injected failure")
+PY_VALIDATE_ROLE_CREATION_FAILURE
+}
+
+run_role_creation_failure_case() {
+  local label=$1
+  local scenario=$2
+  local expected=$3
+  local expected_role_count=$4
+  local failure_index=$5
+  local created_count=$6
+  local test_plan=$7
+  local test_vectors=$8
+  local test_custom_report=$9
+  local test_role_lane=${10:-$IAM_SIM_ROLE_LANE}
+  local report="$phase2_dir/role-failure-$scenario-$expected_role_count-$failure_index.json"
+  local output rc fail_line
+  reset_phase2_fake
+  set +e
+  output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+    IAM_SIM_TEST_ROLE_PLAN="$test_plan" \
+    IAM_SIM_TEST_ROLE_VECTORS="$test_vectors" \
+    IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$test_custom_report" \
+    IAM_SIM_TEST_ROLE_REPORT="$report" \
+    IAM_SIM_TEST_ROLE_FAILURE_CREATE_INDEX="$failure_index" \
+    IAM_SIM_TEST_ROLE_LANE="$test_role_lane" \
+    run_phase2_role_lane "$scenario" 2>&1)"
+  rc=$?
+  set -e
+  fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+  if [ "$rc" -ne 0 ] && [ -n "$fail_line" ] && grep -Fq "$expected" <<<"$output" && \
+     validate_role_creation_failure \
+       "$report" "$phase2_calls" "$expected_role_count" "$failure_index" "$created_count" && \
+     ! find "$phase2_roles" -name '*.json' -type f | grep -q .; then
+    pass_case "$label -> $fail_line"
+  else
+    fail_case "$label" "rc=$rc output=$output"
+  fi
+}
+
+mutate_role_report_redaction() {
+  local source_path=$1
+  local destination=$2
+  python3 - "$source_path" "$destination" "$REPO_ROOT" <<'PY_MUTATE_ROLE_REPORT_REDACTION'
+from pathlib import Path
+import shlex
+import sys
+
+source_path = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+source = source_path.read_text(encoding="utf-8")
+root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+redaction_line = 'payload = redact_account(payload, role_plan["account_id"])\n'
+if source.count(root_line) != 1 or source.count(redaction_line) != 1:
+    raise SystemExit("FAIL: role report-redaction mutation anchor changed")
+source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
+source = source.replace(redaction_line, "")
+destination.write_text(source, encoding="utf-8")
+PY_MUTATE_ROLE_REPORT_REDACTION
+  chmod +x "$destination"
+}
+
+mutate_role_cleanup_high_indices() {
+  local source_path=$1
+  local destination=$2
+  python3 - "$source_path" "$destination" "$REPO_ROOT" <<'PY_MUTATE_ROLE_CLEANUP_HIGH_INDICES'
+from pathlib import Path
+import shlex
+import sys
+
+source_path = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+source = source_path.read_text(encoding="utf-8")
+root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+cleanup_loop = (
+    '  for ((index = role_count - 1; index >= 0; index--)); do\n'
+    '    role_name="$(jq -r ".roles[$index].name" "$role_plan")"\n'
+)
+mutated_loop = (
+    '  for ((index = role_count > 3 ? 2 : role_count - 1; index >= 0; index--)); do\n'
+    '    role_name="$(jq -r ".roles[$index].name" "$role_plan")"\n'
+)
+if source.count(root_line) != 1 or source.count(cleanup_loop) != 1:
+    raise SystemExit("FAIL: role high-index cleanup mutation anchor changed")
+source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
+source = source.replace(cleanup_loop, mutated_loop)
+destination.write_text(source, encoding="utf-8")
+PY_MUTATE_ROLE_CLEANUP_HIGH_INDICES
+  chmod +x "$destination"
+}
 validate_role_selection_report() {
   local report=$1
   python3 - "$report" <<'PY_VALIDATE_ROLE_SELECTION'
@@ -2619,13 +2816,62 @@ PY
 
 run_iam_simulate_role_lane_contracts() {
   local output rc mutated_inventory full_inventory full_scale role_lane_mutant
-  local mutant_inventory mutated_full_inventory
+  local account account_mutant account_report cleanup_mutant cleanup_report
+  local mutant_inventory mutated_full_inventory mutation_fail mutation_output mutation_rc
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
   if [ ! -x "$IAM_SIM_ROLE_LANE" ]; then
     fail_case "role-lane runner exists and is executable" "$IAM_SIM_ROLE_LANE is missing"
   else
+    account=123456
+    account+='789012'
+    account_mutant="$phase2_dir/iam-simulate-roles-account-redaction-mutant.sh"
+    account_report="$phase2_dir/role-account-redaction-mutant-report.json"
+    mutate_role_report_redaction "$IAM_SIM_ROLE_LANE" "$account_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ACCOUNT_ID="$account" \
+      IAM_SIM_TEST_RUN_ID="fixture-$account" \
+      IAM_SIM_TEST_ROLE_LANE="$account_mutant" \
+      IAM_SIM_TEST_ROLE_REPORT="$account_report" \
+      run_phase2_role_lane verify-present 2>&1)"
+    rc=$?
+    set -e
+    set +e
+    mutation_output="$(validate_role_account_redaction \
+      "$account_report" "$phase2_calls" "$account" 2>&1)"
+    mutation_rc=$?
+    set -e
+    mutation_fail="$(grep -m1 '^FAIL:' <<<"$mutation_output" || true)"
+    if [ "$rc" -ne 0 ] && grep -Fq 'manual cleanup: role still exists' <<<"$output" && \
+       [ "$mutation_rc" -ne 0 ] && \
+       grep -Fq "FAIL: role report contains unredacted 12-digit account id: $account" <<<"$mutation_output"; then
+      pass_case "role-lane report account redaction mutation -> $mutation_fail"
+    else
+      fail_case "role-lane report account redaction mutation did not fail as required" \
+        "runner_rc=$rc validation_rc=$mutation_rc runner=$output validation=$mutation_output"
+    fi
+
+    account_report="$phase2_dir/role-account-redaction-report.json"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ACCOUNT_ID="$account" \
+      IAM_SIM_TEST_RUN_ID="fixture-$account" \
+      IAM_SIM_TEST_ROLE_REPORT="$account_report" \
+      run_phase2_role_lane verify-present 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && grep -Fq 'manual cleanup: role still exists' <<<"$output" && \
+       validate_role_account_redaction "$account_report" "$phase2_calls" "$account"; then
+      pass_case "role-lane report account redaction mutation restored PASS"
+    else
+      fail_case "role-lane report account redaction mutation restoration" \
+        "rc=$rc output=$output"
+    fi
+
     reset_phase2_fake
     set +e
     output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
@@ -2894,10 +3140,60 @@ run_iam_simulate_role_lane_contracts() {
       fail_case "role-lane EntityAlreadyExists isolation" "collision caused a delete"
     fi
 
-    expect_role_failure "role-lane midway create cleanup" "create-role failed" create-midway
-    if find "$phase2_roles" -name '*.json' -type f | grep -q .; then
-      fail_case "role-lane midway create cleanup" "created role residue remains"
+    run_role_creation_failure_case \
+      "role-lane midway create cleanup (3 roles)" create-midway "create-role failed" \
+      3 2 1 "$phase2_plan" "$phase2_dir/role-vectors" \
+      "$phase2_dir/role-custom-report.json"
+    run_role_creation_failure_case \
+      "role-lane midway create cleanup (8 roles at deployer p4)" \
+      create-midway "create-role failed" 8 5 4 \
+      "$phase2_dir/role-projection-plan.json" \
+      "$phase2_dir/role-projection-vectors" \
+      "$phase2_dir/role-projection-custom-report.json"
+
+    cleanup_mutant="$phase2_dir/iam-simulate-roles-high-index-cleanup-mutant.sh"
+    mutate_role_cleanup_high_indices "$IAM_SIM_ROLE_LANE" "$cleanup_mutant"
+    run_role_creation_failure_case \
+      "role-lane high-index cleanup mutation retains 3-role PASS" \
+      create-midway "create-role failed" 3 2 1 \
+      "$phase2_plan" "$phase2_dir/role-vectors" \
+      "$phase2_dir/role-custom-report.json" "$cleanup_mutant"
+
+    cleanup_report="$phase2_dir/role-high-index-cleanup-mutant-report.json"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$cleanup_report" \
+      IAM_SIM_TEST_ROLE_FAILURE_CREATE_INDEX=5 \
+      IAM_SIM_TEST_ROLE_LANE="$cleanup_mutant" \
+      run_phase2_role_lane create-midway 2>&1)"
+    rc=$?
+    set -e
+    set +e
+    mutation_output="$(validate_role_creation_failure \
+      "$cleanup_report" "$phase2_calls" 8 5 4 2>&1)"
+    mutation_rc=$?
+    set -e
+    mutation_fail="$(grep -m1 '^FAIL:' <<<"$mutation_output" || true)"
+    if [ "$rc" -ne 0 ] && grep -Fq 'create-role failed' <<<"$output" && \
+       [ "$mutation_rc" -ne 0 ] && \
+       grep -Fq 'FAIL: role failure cleanup did not delete every created role in reverse order' \
+         <<<"$mutation_output" && \
+       find "$phase2_roles" -name '*.json' -type f | grep -q .; then
+      pass_case "role-lane high-index cleanup 8-role mutation -> $mutation_fail"
+    else
+      fail_case "role-lane high-index cleanup 8-role mutation did not fail as required" \
+        "runner_rc=$rc validation_rc=$mutation_rc runner=$output validation=$mutation_output"
     fi
+    run_role_creation_failure_case \
+      "role-lane high-index cleanup mutation restored 8-role PASS" \
+      create-midway "create-role failed" 8 5 4 \
+      "$phase2_dir/role-projection-plan.json" \
+      "$phase2_dir/role-projection-vectors" \
+      "$phase2_dir/role-projection-custom-report.json"
 
     expect_role_failure "role-lane delete-policy barrier" "manual cleanup: delete-role-policy failed" delete-policy-fails
     if python3 - "$phase2_calls" <<'PY'
@@ -2914,10 +3210,16 @@ PY
       fail_case "role-lane delete-policy barrier" "role delete followed the failed policy delete"
     fi
 
-    expect_role_failure "role-lane TERM cleanup" "terminated by TERM" term-during-create
-    if find "$phase2_roles" -name '*.json' -type f | grep -q .; then
-      fail_case "role-lane TERM cleanup" "TERM left role residue"
-    fi
+    run_role_creation_failure_case \
+      "role-lane TERM cleanup (3 roles)" term-during-create "terminated by TERM" \
+      3 1 1 "$phase2_plan" "$phase2_dir/role-vectors" \
+      "$phase2_dir/role-custom-report.json"
+    run_role_creation_failure_case \
+      "role-lane TERM cleanup (8 roles at deployer p4)" \
+      term-during-create "terminated by TERM" 8 5 5 \
+      "$phase2_dir/role-projection-plan.json" \
+      "$phase2_dir/role-projection-vectors" \
+      "$phase2_dir/role-projection-custom-report.json"
 
     reset_phase2_fake
     if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \

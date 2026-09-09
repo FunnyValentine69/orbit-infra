@@ -470,13 +470,23 @@ array in sorted address order. The plan-reader and publisher projections fit
 under 10,240 whitespace-stripped characters and use one combined pass; the six
 deployer documents do not fit together and therefore use six separately
 created, simulated, and deleted per-document roles. Report records identify the
-deciding projection with source addresses and SHA-256 hashes.
+deciding projection with source addresses and SHA-256 hashes. Before report
+serialization, one recursive boundary replaces the live account ID throughout
+the final object with `000000000000`; reports carry that placeholder in
+`account` and set `account_redacted` to `true`, while fake-recorded API calls
+prove that role names, trust policies, and principal-policy source ARNs retain
+the live account ID.
 
 The group also proves the complete zero-call dry-run inventory, exact opt-in and
 account refusals, tag-based ownership before every mutation, collision
 isolation, cleanup after a midway create failure and TERM, the delete-policy
 barrier, reverse cleanup across all projection passes, and post-cleanup
-`NoSuchEntity` verification. Its deadline-bounded full-fixture dry run derives
+`NoSuchEntity` verification. Midway-create and TERM failures run against both
+the three-role fixture and the eight-role projection, with the expanded cases
+failing at deployer p4 and proving that every earlier role is deleted and
+verified absent without creating a later role. A high-index cleanup mutant
+still passes the three-role case but is killed by the eight-role case. Its
+deadline-bounded full-fixture dry run derives
 the projected-role count `R` and selected-case count `C` from the plan and vector
 fixtures at run time, then requires exactly `1 + 8R + 2C` calls. A dropped-call
 mutant kills the formula check; a process-substitution mutant kills termination.
