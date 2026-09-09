@@ -194,13 +194,13 @@ zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
 their `failures` array, atomic owner-plus-manifest lease open with one PUT,
 same-environment second-open refusal, empty-`--from` refusal,
 generation/status-bound Stage 1, exclusive Stage-1 and Stage-2 claims,
-claim-bound manifest writes, duplicate-close refusal, generic-transition
+expected-generation forwarding into Stage 2 claims, claim-bound manifest writes, duplicate-close refusal, generic-transition
 refusal of `closed`, atomic proof-plus-close, force-cleared claim audit,
 owner- and generation-bound close refusals, the three-attempt lease limit,
 audited force retry, independent Stage 2 attempts and escalation, the
 Stage-2 generic-transition guard, cap escalation with CAS-loss refusal, generation
 tombstone pruning and reopening, and end-to-end Stage-1 claim release with state
-retention. The suite currently reports 54 cases.
+retention. The suite currently reports 40 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
@@ -242,7 +242,8 @@ all three tapes and their required output; kind-specific provenance and generato
 closures; the bounded, owner- and generation-fenced lease recovery helper; the
 existing lifecycle transaction failure table; and fake end-to-end lease and
 supply-chain recordings. Lease cases include repeat recording from `closed`,
-abort and claim states, action-time ownership races, one- and two-pass sleeps,
+abort and claim states, terminal foreign-owner refusals, mid-loop manual and
+Stage 2 claim races, teardown generation replacement, one- and two-pass sleeps,
 exhaustion, and the no-backend-call boundary after final inventory. Drift mutants
 cover each kind's scripts, templates, contracts, and fixtures. The provenance
 commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a

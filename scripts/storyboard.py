@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import argparse
 import html
-import os
+import math
 from pathlib import Path
+import sys
 import tempfile
 
 
@@ -147,13 +148,13 @@ def write_output(path: Path, content: str) -> None:
 
 def check_asset() -> int:
     if not DEFAULT_OUTPUT.is_file():
-        print(f"storyboard: {DEFAULT_OUTPUT} is missing", file=os.sys.stderr)
+        print(f"storyboard: {DEFAULT_OUTPUT} is missing", file=sys.stderr)
         return 1
     with tempfile.TemporaryDirectory(prefix="storyboard-check-") as directory:
         candidate = Path(directory) / "storyboard.svg"
         write_output(candidate, render())
         if candidate.read_bytes() != DEFAULT_OUTPUT.read_bytes():
-            print("storyboard: regenerate the storyboard", file=os.sys.stderr)
+            print("storyboard: regenerate the storyboard", file=sys.stderr)
             return 1
     return 0
 
@@ -170,6 +171,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.check and (args.output is not None or args.snapshot is not None):
         parser.error("--check cannot be combined with --output or --snapshot")
+    if args.snapshot is not None and not math.isfinite(args.snapshot):
+        parser.error("--snapshot must be finite")
     if args.snapshot is not None and args.snapshot < 0:
         parser.error("--snapshot must be nonnegative")
     if args.snapshot is not None and args.output is None:

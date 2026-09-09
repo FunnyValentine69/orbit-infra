@@ -327,7 +327,7 @@ storyboard:
 	sha="$$(shasum -a 256 docs/assets/storyboard.svg | awk '{print $$1}')" && \
 	printf '# Storyboard provenance\n\n| field | value |\n|---|---|\n| generator commit | %s |\n| artifact sha256 | %s |\n| command | make storyboard |\n' "$$commit" "$$sha" > docs/assets/STORYBOARD_PROVENANCE.md
 
-# Records one demo against LocalStack. Local, on-demand only.
+# Records one named demo (demo and lease against LocalStack, supply offline). Local, on-demand only.
 # Usage: OPERATOR_CIDR=203.0.113.0/24 make demo [NAME=demo|lease|supply]
 demo: check-vhs
 	DEMO_NAME="$(if $(NAME),$(NAME),demo)" bash -p demo/env.sh

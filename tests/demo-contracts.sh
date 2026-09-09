@@ -620,10 +620,13 @@ else
     IFS='|' read -r recording_kind recording_doc recording_gif <<< "$recording_case"
     recorded_commit="$(field_value 'generator commit' "$REPO_ROOT/$recording_doc" | \
       sed -E 's/^`?([0-9a-f]{7}).*/\1/')"
+    recording_paths="$(demo_generator_paths "$recording_kind")"
+    # shellcheck disable=SC2086
     if ! validate_provenance "$recording_kind" "$REPO_ROOT/$recording_doc" \
          "$REPO_ROOT/$recording_gif" >/dev/null 2>&1 || \
-       ! generator_clean_check "$REPO_ROOT" "$recorded_commit" \
-         "$recording_kind" >/dev/null 2>&1; then
+       ! git -C "$REPO_ROOT" cat-file -e "$recorded_commit^{commit}" 2>/dev/null || \
+       ! git -C "$REPO_ROOT" diff --quiet "$recorded_commit" HEAD -- \
+         $recording_paths 2>/dev/null; then
       final_head_ok=0
     fi
   done
@@ -775,6 +778,7 @@ EOF
 cat > "$helper_root/close.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'close %s\n' "$*" >> "$HELPER_CALLS"
 owner=
 generation=
 from=
@@ -811,6 +815,20 @@ count=0
 IFS= read -r count < "$HELPER_SWEEPS" || :
 count=$((count + 1))
 printf '%s\n' "$count" > "$HELPER_SWEEPS"
+if [ "$count" -eq 1 ]; then
+  case "${HELPER_SWEEP_MODE:-normal}" in
+    manual-after-first)
+      jq '.status="closing" | .manual_intervention_required=true' \
+        "$HELPER_STATE" > "$HELPER_STATE.next"
+      mv "$HELPER_STATE.next" "$HELPER_STATE"
+      ;;
+    stage2-after-first)
+      jq '.status="closing" | .stage2_claim={token:"fresh-stage2",claimed_at:"2026-09-08T00:00:00Z"}' \
+        "$HELPER_STATE" > "$HELPER_STATE.next"
+      mv "$HELPER_STATE.next" "$HELPER_STATE"
+      ;;
+  esac
+fi
 if [ "$count" -ge "$HELPER_CLOSE_AFTER" ]; then
   jq '.status="closed" | .stage2_claim=null' "$HELPER_STATE" > "$HELPER_STATE.next"
   mv "$HELPER_STATE.next" "$HELPER_STATE"
@@ -853,6 +871,7 @@ run_helper() {
   local close_mode=${4:-normal}
   local race_read=${5:-0}
   local sweep_script=${6:-$helper_root/sweep.sh}
+  local sweep_mode=${7:-normal}
   printf '%s\n' "$lease" > "$helper_state"
   : > "$helper_calls"
   printf '%s\n' 0 > "$helper_root/reads"
@@ -865,6 +884,7 @@ run_helper() {
   HELPER_CLOSE_AFTER="$close_after" \
   HELPER_CLOSE_MODE="$close_mode" \
   HELPER_RACE_ON_READ="$race_read" \
+  HELPER_SWEEP_MODE="$sweep_mode" \
   LEASE_SH="$helper_root/lease.sh" \
   CLOSE_ENV_SH="$helper_root/close.sh" \
   SWEEP_SH="$sweep_script" \
@@ -929,6 +949,43 @@ if [ "$helper_refusal_ok" -eq 1 ]; then
   pass_case "lease helper refuses manual claimed failed and foreign leases"
 else
   fail_case "lease helper refuses manual claimed failed and foreign leases" "$HELPER_OUTPUT"
+fi
+
+foreign_terminal_ok=1
+for foreign_status in closed closing; do
+  run_helper "foreign-$foreign_status" \
+    "$(helper_lease "$foreign_status" another-run)" 1
+  if [ "$HELPER_RC" -ne 3 ] || \
+     ! grep -Fxq 'lease-sweep-until-closed.sh: lease belongs to another run' \
+       <<< "$HELPER_OUTPUT" || \
+     grep -Eq '^(close|begin-cleanup|sweep) ' "$helper_calls" || \
+     grep -Fq 'final_status=closed' <<< "$HELPER_OUTPUT"; then
+    foreign_terminal_ok=0
+  fi
+done
+if [ "$foreign_terminal_ok" -eq 1 ]; then
+  pass_case "lease helper refuses foreign closed and closing leases before close or sweep"
+else
+  fail_case "lease helper refuses foreign closed and closing leases before close or sweep" \
+    "$HELPER_OUTPUT"
+fi
+
+midloop_recovery_ok=1
+for sweep_mode in manual-after-first stage2-after-first; do
+  run_helper "$sweep_mode" "$(helper_lease closing)" 99 normal 0 \
+    "$helper_root/sweep.sh" "$sweep_mode"
+  if [ "$HELPER_RC" -ne 3 ] || \
+     [ "$(grep -c '^sweep ' "$helper_calls" || true)" -ne 1 ] || \
+     grep -q '^sleep ' "$helper_calls" || \
+     ! grep -Fq 'RUNBOOKS.md#manual-lease-recovery' <<< "$HELPER_OUTPUT"; then
+    midloop_recovery_ok=0
+  fi
+done
+if [ "$midloop_recovery_ok" -eq 1 ]; then
+  pass_case "lease helper stops after first sweep on manual escalation or fresh Stage 2 claim"
+else
+  fail_case "lease helper stops after first sweep on manual escalation or fresh Stage 2 claim" \
+    "$HELPER_OUTPUT"
 fi
 
 run_helper exhaustion "$(helper_lease closing)" 99
@@ -1833,6 +1890,11 @@ case "$DEMO_NAME" in
     [ "$mode" != abort-after-open ] || exit 1
     printf '%s\n' 'Plan: 61 to add, 0 to change, 0 to destroy.' > "$RUN/plan.log"
     printf '%s\n' 'Apply complete! Resources: 61 added, 0 changed, 0 destroyed.' > "$RUN/apply.log"
+    if [ "$mode" = teardown-generation-race ]; then
+      jq '.generation += 1' .fake-lease.json > .fake-lease.next
+      mv .fake-lease.next .fake-lease.json
+      exit 1
+    fi
     [ "$mode" != abort-after-apply ] || exit 1
     printf '%s\n' '{"status": "open"}' > "$RUN/lease-active.log"
     set +e
@@ -2031,6 +2093,24 @@ else
 fi
 supply_success_repo=$LIFECYCLE_REPO
 supply_success_run=$LIFECYCLE_RUN
+
+run_lifecycle lease-teardown-generation-race '' teardown-generation-race \
+  empty '' none lease
+teardown_generation_gets="$(grep -c '^lease get demo-lease$' \
+  "$LIFECYCLE_CALLS" || true)"
+if [ "$LIFECYCLE_RC" -ne 0 ] && \
+   [ "$teardown_generation_gets" -eq 2 ] && \
+   jq -e --arg owner "demo-recording-${LIFECYCLE_RUN##*/}" \
+     '.status == "open" and .owner == $owner and .generation == 2' \
+     "$LIFECYCLE_REPO/.fake-lease.json" >/dev/null && \
+   grep -Fq 'demo: lease belongs to another run' <<< "$LIFECYCLE_OUTPUT" && \
+   ! grep -Eq '^(begin-cleanup|sweep|destructive lease) ' "$LIFECYCLE_CALLS"; then
+  pass_case "lease recording teardown refuses same owner at a different generation"
+else
+  recording_contract_ok=0
+  fail_case "lease recording teardown refuses same owner at a different generation" \
+    "$LIFECYCLE_OUTPUT"
+fi
 
 lease_failures_ok=1
 for failure_case in \
