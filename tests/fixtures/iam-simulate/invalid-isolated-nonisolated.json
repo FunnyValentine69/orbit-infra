@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource",
+  "document": "aws_iam_role_policy.plan_reader_deny",
+  "sid": "DenyReadStateObjectsOutsideScope",
+  "simulation_mode": "principal",
+  "assertion_kind": "decision",
+  "policy_source_arn": "arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-plan-reader",
+  "isolated_statement": {
+    "Sid": "DenyReadStateObjectsOutsideScope",
+    "Effect": "Deny",
+    "Action": "s3:GetObject",
+    "NotResource": "arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate/envs/preview/*"
+  },
+  "action_names": ["s3:GetObject"],
+  "resource_arns": [
+    "arn:aws:s3:::orbit-infra-${SUFFIX}-outside/example.tfstate"
+  ],
+  "expect": {
+    "decision": "explicitDeny",
+    "matched_sid_required": ["DenyReadStateObjectsOutsideScope"],
+    "matched_sid_forbidden": []
+  }
+}

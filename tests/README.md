@@ -385,6 +385,39 @@ depend on permission bits and occur before any Terraform call, and injected
 init/plan/apply failures with their original recipe exit
 status and cleanup. It runs from `make test`.
 
+## IAM simulator phase-1 contracts
+
+Run the taxonomy, case-ID, and vector-schema contracts without AWS, Terraform,
+Docker, or LocalStack:
+
+```bash
+bash tests/iam-simulate-contracts.sh
+```
+
+The `TAXONOMY` group runs
+`scripts/iam-simulate-categories.py --check`, independently compares the 288
+matrix case IDs to `tests/fixtures/iam-simulate/categories.json`, requires the
+four categories to be disjoint with non-empty reasons, and executes added,
+removed, duplicate-category, and empty-reason mutations. Regenerate the file
+with `python3 scripts/iam-simulate-categories.py`; the stdlib-only generator
+parses each row's explicit document and Sid prefix and writes deterministic LF
+JSON with a trailing newline.
+
+The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 288
+taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
+`aws:`-prefixed condition key, a colon-bearing trust document, and wrong-document
+refusal. Later runner phases share this exact-prefix helper instead of splitting
+case IDs on colons.
+
+The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against four
+positive fixtures covering all three simulation modes and both assertion kinds,
+plus seven single-defect fixtures for the required failure branches. The files
+are synthetic schema fixtures, not authored execution vectors. Their names are
+`valid-*.json` and `invalid-*.json`; every invalid fixture is passed to the real
+validator and its `FAIL:` diagnostic is asserted. The schema is specified in
+`docs/iam-simulate-vector-schema.md`. This suite runs near the start of
+`make test` and makes no external-service calls.
+
 ## Phase 5 sweeper fixtures
 
 Run the Stage 2 regression suite without AWS or LocalStack:
