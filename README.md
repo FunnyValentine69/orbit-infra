@@ -24,7 +24,7 @@ An always-on ECS/ALB/ClickHouse/Redis stack would cost money whether or not it i
 
 ![Animated storyboard of the pull-request, apply, lease closure, and supply-chain flow](docs/assets/storyboard.svg)
 
-The storyboard follows a change from pull request through static gates, LocalStack planning, an owner-bound preview lease, apply, and both cleanup stages, with supply-chain verification alongside apply.
+The storyboard follows a change from pull request through static gates, LocalStack planning, an owner-bound preview lease, apply, and both cleanup stages, with supply-chain verification before the lease opens.
 
 ![Recorded LocalStack lifecycle: status, plan, policy gate, apply, state, and destroy](docs/assets/demo.gif)
 

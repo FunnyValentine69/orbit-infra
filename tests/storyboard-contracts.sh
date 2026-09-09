@@ -64,7 +64,7 @@ Preview lease opens: new generation, owner token
 Terraform applies; acceptance checks pass
 Close begins: Stage 1 destroy and verify
 Stage 2 sweep reclaims state and lock versions
-Supply chain: signed images verified at apply
+Supply chain: signatures verified pre-lease
 CAPTIONS
   python3 - "$svg" "$actual" <<'PY'
 from pathlib import Path
@@ -128,12 +128,18 @@ grep -Fq 'id="step-1" class="panel panel-1 lit"' "$tmp_dir/snapshot-0.svg" || \
   fail "snapshot 0 lights an unexpected panel set"
 grep -Fq 'id="step-5" class="panel panel-5 lit"' "$tmp_dir/snapshot-12.svg" || \
   fail "snapshot 12 does not light the apply panel"
-grep -Fq 'id="step-8" class="panel panel-8 supply lit"' \
-  "$tmp_dir/snapshot-12.svg" || \
-  fail "snapshot 12 does not light the attached supply-chain panel"
 [ "$(grep -Ec 'id="step-[0-9]+" class="[^"]* lit"' \
-  "$tmp_dir/snapshot-12.svg")" -eq 2 ] || \
+  "$tmp_dir/snapshot-12.svg")" -eq 1 ] || \
   fail "snapshot 12 lights an unexpected panel set"
+python3 "$GENERATOR" --snapshot 9 --output "$tmp_dir/snapshot-9.svg"
+grep -Fq 'id="step-4" class="panel panel-4 lit"' "$tmp_dir/snapshot-9.svg" || \
+  fail "snapshot 9 does not light the lease panel"
+grep -Fq 'id="step-8" class="panel panel-8 supply lit"' \
+  "$tmp_dir/snapshot-9.svg" || \
+  fail "snapshot 9 does not light the attached supply-chain panel"
+[ "$(grep -Ec 'id="step-[0-9]+" class="[^"]* lit"' \
+  "$tmp_dir/snapshot-9.svg")" -eq 2 ] || \
+  fail "snapshot 9 lights an unexpected panel set"
 
 mutation_ok=1
 sed 's/Pull request opens/Pull request closes/' "$tmp_dir/first.svg" >   "$tmp_dir/caption.svg"

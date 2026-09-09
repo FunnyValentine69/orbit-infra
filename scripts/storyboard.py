@@ -19,9 +19,9 @@ CAPTIONS = (
     "Terraform applies; acceptance checks pass",
     "Close begins: Stage 1 destroy and verify",
     "Stage 2 sweep reclaims state and lock versions",
-    "Supply chain: signed images verified at apply",
+    "Supply chain: signatures verified pre-lease",
 )
-SCHEDULE = (0, 1, 2, 3, 4, 5, 6, 4)
+SCHEDULE = (0, 1, 2, 3, 4, 5, 6, 3)
 SLOT_SECONDS = 3
 CYCLE_SECONDS = 7 * SLOT_SECONDS
 MAX_CAPTION_CHARS = 60
