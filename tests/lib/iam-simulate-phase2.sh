@@ -319,6 +319,26 @@ for index, category in enumerate(duplicate_cases):
     }
     (duplicate_dir / f"duplicate-{index}.json").write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
 
+duplicate_resource = "arn:aws:secretsmanager:us-east-1:000000000000:secret:duplicate"
+duplicate_response = {
+    "EvaluationResults": [{
+        "EvalActionName": "secretsmanager:CreateSecret",
+        "EvalResourceName": duplicate_resource,
+        "EvalDecision": "allowed",
+        "ResourceSpecificResults": [{
+            "EvalResourceName": duplicate_resource,
+            "EvalResourceDecision": "allowed",
+            "MatchedStatements": [],
+            "MissingContextValues": [],
+        }],
+    }],
+}
+(root / "response-duplicate.json").write_text(
+    json.dumps(duplicate_response) + "\n",
+    encoding="utf-8",
+)
+(root / "response-empty.json").write_text("{}\n", encoding="utf-8")
+
 isolated_dir = root / "isolated-vectors"
 isolated_dir.mkdir()
 isolated = json.loads((taxonomy_path.parent / "valid-custom-isolated.json").read_text(encoding="utf-8"))
@@ -412,12 +432,12 @@ from pathlib import Path
 import sys
 
 record_path = Path(sys.argv[1])
-expected_path = Path(sys.argv[2])
 args = sys.argv[3:]
 record_path.write_text(json.dumps(args) + "\n", encoding="utf-8")
-if args[:2] != ["iam", "simulate-custom-policy"]:
+if args[:2] != ["iam", "simulate-custom-policy"] or not sys.argv[2]:
     raise SystemExit(0)
 
+expected_path = Path(sys.argv[2])
 expected = json.loads(expected_path.read_text(encoding="utf-8"))
 
 def option_values(option):
@@ -683,7 +703,7 @@ expected = {
 }
 output_path.write_text(json.dumps(expected, sort_keys=True) + "\n", encoding="utf-8")
 PY
-  env \
+  env -u AWS_PROFILE \
     PATH="$phase2_dir/bin:$PATH" \
     AWS_CLI_BIN=aws \
     AWS_CLI_SH="$IAM_SIM_AWS_WRAPPER" \
@@ -719,8 +739,103 @@ expect_runner_failure() {
   fi
 }
 
+run_real_vector_runner() {
+  local vectors=$1
+  local report=$2
+  local plan="${IAM_SIM_CONTRACT_PLAN:-$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json}"
+  env -u AWS_PROFILE -u AWS_ENDPOINT_URL \
+    AWS_CLI_BIN="$phase2_fake_aws" \
+    AWS_CLI_SH="$IAM_SIM_AWS_WRAPPER" \
+    FAKE_AWS_CALL_DIR="$phase2_calls" \
+    FAKE_ROLE_STATE_DIR="$phase2_roles" \
+    FAKE_AWS_SCENARIO=success \
+    FAKE_AWS_RESPONSE="$phase2_dir/response-empty.json" \
+    FAKE_AWS_EXPECTED_INPUTS= \
+    IAM_SIM_RETRY_BASE_SECONDS=0 \
+    TARGET=aws \
+    "$IAM_SIM_RUNNER" --plan "$plan" --vectors "$vectors" --report "$report"
+}
+
+validate_real_report() {
+  local vectors=$1
+  local report=$2
+  python3 - "$vectors" "$report" <<'PY'
+from collections import Counter
+import json
+from pathlib import Path
+import sys
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: {message}")
+
+
+vector_dir = Path(sys.argv[1])
+report_path = Path(sys.argv[2])
+try:
+    expected = [
+        json.loads(path.read_text(encoding="utf-8"))["case_id"]
+        for path in sorted(vector_dir.rglob("*.json"))
+    ]
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError, KeyError) as exc:
+    fail(f"cannot read real-vector report inputs: {exc}")
+if len(expected) != 239:
+    fail(f"real vector set has {len(expected)} case ids, expected 239")
+records = payload.get("records") if isinstance(payload, dict) else None
+if not isinstance(records, list):
+    fail("report records must be an array")
+case_ids = [record.get("case_id") for record in records if isinstance(record, dict)]
+if len(case_ids) != len(records) or any(not isinstance(case_id, str) for case_id in case_ids):
+    fail("every report record must have a string case_id")
+counts = Counter(case_ids)
+repeated = sorted(case_id for case_id, count in counts.items() if count != 1)
+if repeated:
+    fail(f"report repeats selected case_id: {repeated[0]}")
+missing = sorted(set(expected) - set(case_ids))
+if missing:
+    fail(f"report omits selected case_id: {missing[0]}")
+unexpected = sorted(set(case_ids) - set(expected))
+if unexpected:
+    fail(f"report contains unselected case_id: {unexpected[0]}")
+if payload.get("summary", {}).get("total") != 239:
+    fail("report summary total must equal 239")
+
+by_id = {record["case_id"]: record for record in records}
+shared_groups = set()
+shared_cases = set()
+for case_id, record in by_id.items():
+    peers = record.get("shared_call_case_ids")
+    if not isinstance(peers, list) or any(not isinstance(peer, str) for peer in peers):
+        fail(f"shared_call_case_ids must be a string array: {case_id}")
+    if len(peers) != len(set(peers)) or case_id in peers:
+        fail(f"shared_call_case_ids is not a unique peer set: {case_id}")
+    if not peers:
+        continue
+    group = tuple(sorted([case_id, *peers]))
+    shared_groups.add(group)
+    shared_cases.update(group)
+    for peer in peers:
+        peer_record = by_id.get(peer)
+        if peer_record is None:
+            fail(f"shared-call peer is absent from report: {peer}")
+        reciprocal = tuple(sorted([peer, *peer_record.get("shared_call_case_ids", [])]))
+        if reciprocal != group:
+            fail(f"shared-call peers are not reciprocal: {case_id} and {peer}")
+if len(shared_groups) != 8 or len(shared_cases) != 16:
+    fail(
+        "shared-call census differs: "
+        f"{len(shared_groups)} batches and {len(shared_cases)} cases"
+    )
+print(
+    "PASS: real 239-vector report coverage "
+    "(239 records, 8 shared-call batches, 16 shared cases)"
+)
+PY
+}
+
 run_iam_simulate_runner_contracts() {
-  local output report isolated_policy
+  local census disagreement_vectors isolated_policy output real_rc report report_mutant
   echo "== iam simulate contracts: RUNNER =="
   group_failures=$failures
   phase2_setup
@@ -810,13 +925,80 @@ run_iam_simulate_runner_contracts() {
     expect_runner_failure "runner missing submitted ARN refusal" "submitted resource ARN is absent" \
       success "$phase2_dir/response-missing-arn.json" "$phase2_dir/runner-vectors"
 
-    expect_runner_failure "runner duplicate pair pre-call refusal" "duplicate action/resource pair in batch" \
-      success "$phase2_dir/response-baseline.json" "$phase2_dir/duplicate-vectors"
+    reset_phase2_fake
+    report="$phase2_dir/shared-call-report.json"
+    if output="$(run_phase2_runner success "$phase2_dir/response-duplicate.json" \
+      "$phase2_dir/duplicate-vectors" "$report" 2>&1)" && \
+       [ "$(phase2_call_count iam simulate-custom-policy)" -eq 1 ] && \
+       jq -e '
+         .records | length == 2
+         and .[0].decision_observed == "allowed"
+         and .[1].decision_observed == "allowed"
+         and .[0].matched_sids == []
+         and .[1].matched_sids == []
+         and .[0].shared_call_case_ids == [.[1].case_id]
+         and .[1].shared_call_case_ids == [.[0].case_id]
+         and all(.[]; .pass == true)
+       ' "$report" >/dev/null; then
+      pass_case "runner emits one observed record per compatible shared-call case"
+    else
+      fail_case "runner emits one observed record per compatible shared-call case" "$output"
+    fi
+
+    reset_phase2_fake
+    report="$phase2_dir/real-vector-report.json"
+    set +e
+    # shellcheck disable=SC2153 # VECTORS is provided by the sourcing suite.
+    output="$(run_real_vector_runner "$VECTORS" "$report" 2>&1)"
+    real_rc=$?
+    set -e
+    if [ "$real_rc" -ne 0 ] && \
+       grep -Fq 'AWS simulator response lacks EvaluationResults array' <<<"$output" && \
+       [ "$(phase2_call_count iam simulate-custom-policy)" -eq 231 ] && \
+       census="$(validate_real_report "$VECTORS" "$report" 2>&1)"; then
+      pass_case "real-vector batch safety and report completeness -> $census"
+    else
+      fail_case "real-vector batch safety and report completeness" \
+        "rc=$real_rc calls=$(phase2_call_count iam simulate-custom-policy) output=$output"
+    fi
+
+    report_mutant="$phase2_dir/real-vector-report-dropped-shared-case.json"
+    python3 - "$report" "$report_mutant" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for index, record in enumerate(source["records"]):
+    if record.get("shared_call_case_ids"):
+        del source["records"][index]
+        break
+else:
+    raise SystemExit("FAIL: report mutation found no shared-call case")
+source["summary"]["total"] = len(source["records"])
+Path(sys.argv[2]).write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
+PY
+    expect_failure "real report dropped shared case" "report omits selected case_id" \
+      validate_real_report "$VECTORS" "$report_mutant"
+
+    disagreement_vectors="$phase2_dir/real-disagreement-vectors"
+    cp -R "$VECTORS" "$disagreement_vectors"
+    python3 - "$disagreement_vectors/aws_iam_policy.deployer_iam__DenyRoleMutationMissingBoundary__ALL_none_protected-resource.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+vector = json.loads(path.read_text(encoding="utf-8"))
+vector["expect"]["decision"] = "implicitDeny"
+path.write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
+PY
+    IAM_SIM_TEST_PLAN="${IAM_SIM_CONTRACT_PLAN:-$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json}" \
+      expect_runner_failure "real colliding-case expectation disagreement" \
+        "expectation-disagreeing duplicate action/resource pair in batch" \
+        success "$phase2_dir/response-empty.json" "$disagreement_vectors"
     if [ "$(phase2_call_count iam simulate-custom-policy)" -ne 0 ]; then
-      fail_case "runner duplicate pair pre-call refusal" "fake AWS was called"
-    elif ! jq -e '. as $report | (($report.records | length) == 2 and all($report.records[]; .decision_observed == null and (.runner_failure | contains("duplicate action/resource pair"))) and $report.summary.runner_failures == 2)' \
-      "$phase2_dir/failure-runner-duplicate-pair-pre-call-refusal.json" >/dev/null; then
-      fail_case "runner duplicate pair pre-call refusal" "failure report is incomplete"
+      fail_case "real colliding-case expectation disagreement" "fake AWS was called"
     fi
 
     reset_phase2_fake
@@ -924,7 +1106,7 @@ PY_MUTANT
 run_phase2_role_lane() {
   local scenario=$1
   shift
-  env \
+  env -u AWS_PROFILE \
     PATH="$phase2_dir/bin:$PATH" \
     AWS_CLI_BIN=aws \
     AWS_CLI_SH="$IAM_SIM_AWS_WRAPPER" \

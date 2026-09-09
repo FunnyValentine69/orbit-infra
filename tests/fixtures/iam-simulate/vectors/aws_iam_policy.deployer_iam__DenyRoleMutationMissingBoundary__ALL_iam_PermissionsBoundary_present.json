@@ -17,7 +17,7 @@
     {
       "ContextKeyName": "iam:PermissionsBoundary",
       "ContextKeyValues": [
-        "arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"
+        "arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-deployer-iam"
       ],
       "ContextKeyType": "string"
     }

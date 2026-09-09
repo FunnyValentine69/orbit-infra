@@ -405,6 +405,7 @@ def group_vectors(prepared: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
                 "context": item["context"],
                 "assertion_kind": vector["assertion_kind"],
                 "required": sorted(vector["expect"]["matched_sid_required"]),
+                "forbidden": sorted(vector["expect"]["matched_sid_forbidden"]),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -412,19 +413,35 @@ def group_vectors(prepared: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
         groups.setdefault(key, []).append(item)
     batches = [groups[key] for key in sorted(groups)]
     for batch in batches:
-        pairs: dict[tuple[str, str], str] = {}
+        pairs: dict[tuple[str, str], tuple[str, tuple[Any, ...]]] = {}
         for item in batch:
             vector = item["vector"]
+            expectation = (
+                vector["assertion_kind"],
+                vector["expect"].get("decision"),
+                tuple(sorted(vector["expect"]["matched_sid_required"])),
+                tuple(sorted(vector["expect"]["matched_sid_forbidden"])),
+            )
             for action in vector["action_names"]:
                 for resource in vector["resource_arns"]:
                     pair = (action, resource)
-                    if pair in pairs:
+                    if pair in pairs and pairs[pair][1] != expectation:
                         raise SystemExitWithMessage(
-                            "duplicate action/resource pair in batch: "
-                            f"{action} {resource} ({pairs[pair]} and {vector['case_id']})"
+                            "expectation-disagreeing duplicate action/resource pair in batch: "
+                            f"{action} {resource} ({pairs[pair][0]} and {vector['case_id']})"
                         )
-                    pairs[pair] = vector["case_id"]
+                    pairs.setdefault(pair, (vector["case_id"], expectation))
     return batches
+
+
+def shared_call_case_ids(
+    batch: list[dict[str, Any]], case_id: str
+) -> list[str]:
+    return sorted(
+        item["vector"]["case_id"]
+        for item in batch
+        if item["vector"]["case_id"] != case_id
+    )
 
 
 def aws_call(argv: list[str]) -> dict[str, Any]:
@@ -541,7 +558,21 @@ def hashes(item: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
     }
 
 
-def write_report(path: Path, records: list[dict[str, Any]]) -> None:
+def write_report(
+    path: Path, records: list[dict[str, Any]], expected_case_ids: list[str]
+) -> None:
+    record_case_ids = [record["case_id"] for record in records]
+    repeated = sorted(
+        case_id for case_id in set(record_case_ids) if record_case_ids.count(case_id) > 1
+    )
+    if repeated:
+        fail(f"report repeats selected case_id: {repeated[0]}")
+    missing = sorted(set(expected_case_ids) - set(record_case_ids))
+    if missing:
+        fail(f"report omits selected case_id: {missing[0]}")
+    unexpected = sorted(set(record_case_ids) - set(expected_case_ids))
+    if unexpected:
+        fail(f"report contains unselected case_id: {unexpected[0]}")
     summary = {
         "total": len(records),
         "passed": sum(record["pass"] is True for record in records),
@@ -559,6 +590,7 @@ def main() -> int:
     args = parse_args()
     plan_documents, account_id, suffix = extract_plan(args.plan)
     vectors = load_vectors(args.vectors, args.only, account_id, suffix)
+    expected_case_ids = [vector["case_id"] for vector in vectors]
     prepared = [prepare_vector(vector, plan_documents) for vector in vectors]
     try:
         batches = group_vectors(prepared)
@@ -570,13 +602,14 @@ def main() -> int:
                 "case_id": vector["case_id"],
                 "decision_observed": None,
                 "matched_sids": [],
+                "shared_call_case_ids": [],
                 "expect": vector["expect"],
                 "pass": False,
                 "mode": vector["simulation_mode"],
                 "document_hashes_submitted": hashes(item),
                 "runner_failure": exc.message,
             })
-        write_report(args.report, records)
+        write_report(args.report, records, expected_case_ids)
         print(f"FAIL: {exc.message}", file=sys.stderr)
         return exc.code
     records: list[dict[str, Any]] = []
@@ -591,6 +624,9 @@ def main() -> int:
                     "case_id": vector["case_id"],
                     "decision_observed": None,
                     "matched_sids": [],
+                    "shared_call_case_ids": shared_call_case_ids(
+                        batch, vector["case_id"]
+                    ),
                     "expect": vector["expect"],
                     "pass": False,
                     "mode": vector["simulation_mode"],
@@ -607,6 +643,9 @@ def main() -> int:
                     "case_id": vector["case_id"],
                     "decision_observed": decision,
                     "matched_sids": matched,
+                    "shared_call_case_ids": shared_call_case_ids(
+                        batch, vector["case_id"]
+                    ),
                     "expect": vector["expect"],
                     "pass": not errors,
                     "mode": vector["simulation_mode"],
@@ -620,6 +659,9 @@ def main() -> int:
                     "case_id": vector["case_id"],
                     "decision_observed": None,
                     "matched_sids": [],
+                    "shared_call_case_ids": shared_call_case_ids(
+                        batch, vector["case_id"]
+                    ),
                     "expect": vector["expect"],
                     "pass": False,
                     "mode": vector["simulation_mode"],
@@ -628,7 +670,7 @@ def main() -> int:
                 }
                 failure_messages.append(str(exc))
             records.append(record)
-    write_report(args.report, records)
+    write_report(args.report, records, expected_case_ids)
     if failure_messages:
         print(f"FAIL: {failure_messages[0]}", file=sys.stderr)
         return 1

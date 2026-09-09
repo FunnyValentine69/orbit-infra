@@ -437,14 +437,17 @@ The `RUNNER` group creates a synthetic plan and vectors in its temporary
 workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
 through `scripts/aws-cli.sh`. It proves nested per-resource mapping instead of
 the aggregate top-level decision, byte-position-to-Sid attribution, ambiguous
-and unmapped response refusal, request-side duplicate detection before a call,
-the five-attempt throttle cap, timeout non-retry, and exact `TARGET=aws`
-refusal. It also proves byte-equal full-policy and boundary resolution from raw
-plan `.values.policy`, missing-address refusal, and absent/duplicate-Sid refusal
-before a fake AWS call; the isolated statement submitted by the runner comes
-from the named plan document. The plan fixture carries all ten addresses from
-`scripts/iam-matrix-documents.sh`; no authored execution vectors are added by
-this suite.
+and unmapped response refusal, compatible shared-call reporting, and pre-call
+refusal when a duplicate action/resource pair disagrees on its expectation. A
+real-vector contract requires exactly 239 report records and currently counts
+8 shared-call batches across 16 cases; mutations make a colliding pair disagree
+and drop one shared case from the report. The group also proves the five-attempt
+throttle cap, timeout non-retry, exact `TARGET=aws` refusal, byte-equal policy
+and boundary resolution from raw plan `.values.policy`, missing-address
+refusal, and absent/duplicate-Sid refusal before a fake AWS call. The isolated
+statement submitted by the runner comes from the named plan document. The plan
+fixture carries all ten addresses from `scripts/iam-matrix-documents.sh`; no
+authored execution vectors are added by this suite.
 
 The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
 store. It proves the complete zero-call dry-run inventory, exact opt-in and
