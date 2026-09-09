@@ -34,7 +34,7 @@ non-empty strings.
 | `permissions_boundary_policy_input_list` | non-empty array of strings | Optional only for `custom`; at most one Terraform resource address. The runner resolves its raw `.values.policy` from the plan. |
 | `synthetic_policy_input_list` | non-empty array of strings | Optional only for an `outside-boundary` custom vector; exactly one complete synthetic identity-policy string. |
 | `action_names` | non-empty array of strings | Required; concrete `service:Action` names with no wildcard. |
-| `resource_arns` | non-empty array of strings | Required; the exact resources submitted to the simulator, or `*`. |
+| `resource_arns` | array of strings | Required; the exact resources submitted to the simulator, `*`, or an empty array to omit `--resource-arns`. |
 | `context_entries` | array of objects | Optional; omit it or use `[]` when no context is submitted. |
 | `policy_exclusion_list` | non-empty array of objects | Optional only for `principal`; each object is exactly `{"PolicyType":"<type>"}`. |
 | `expect` | object | Required; the assertion described below. |
@@ -121,10 +121,21 @@ expect a nonexistent Sid field in the response.
 
 The top-level `EvalDecision` is aggregate for an action across every submitted
 resource, and top-level `EvalResourceName` may be a service template such as
-`arn:aws:s3:::${BucketName}/${KeyName}`. Per-resource assertions must read
-`ResourceSpecificResults`, whose `EvalResourceName` is the exact submitted ARN.
-After rendering, those exact ARNs are the keys represented by
+`arn:aws:s3:::${BucketName}/${KeyName}`. When a response carries an exact
+submitted ARN in `ResourceSpecificResults`, per-resource assertions use its
+decision and matched statements. For a sole `*`, or when `resource_arns` is
+empty and the request omits `--resource-arns`, the runner uses the action-level
+`EvalDecision` and `MatchedStatements` if no exact resource result exists. It
+still refuses absent or incomplete resource-specific results for concrete ARNs.
+After rendering, exact submitted ARNs are the keys represented by
 `expect.resource_decisions`.
+
+The submitted S3 delete names for bucket ownership controls and public
+access block represent delete paths that authorize through
+`s3:PutBucketOwnershipControls` and `s3:PutBucketPublicAccessBlock`. The
+simulator reports that those two names require different authorization
+information from the other actions, so the runner submits that pair separately
+and combines the returned action results before evaluation.
 
 ## Template rendering
 

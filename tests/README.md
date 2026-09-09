@@ -435,10 +435,13 @@ schema, empty notes, and the counted unresolved exemption.
 
 The `RUNNER` group creates a synthetic plan and vectors in its temporary
 workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
-through `scripts/aws-cli.sh`. It proves nested per-resource mapping instead of
-the aggregate top-level decision, 1-based multiline position-to-Sid attribution
-with an exclusive end position, ambiguous and unmapped response refusal,
-compatible shared-call reporting, and pre-call refusal when a duplicate
+through `scripts/aws-cli.sh`. It proves exact-ARN per-resource mapping
+when those results exist, action-level decision and attribution for explicit
+`*` or an omitted resource list, refusal of missing concrete resource results,
+and separate requests for the two S3 delete names that require different
+authorization information. It also covers 1-based multiline position-to-Sid
+attribution with an exclusive end position, ambiguous and unmapped response
+refusal, compatible shared-call reporting, and pre-call refusal when a duplicate
 action/resource pair disagrees on its expectation. The position regression uses
 the exact compact 1,163-character plan-reader deny document and observed
 `1:38`/`1:271` coordinates; a killed mutant restores the old inclusive-end

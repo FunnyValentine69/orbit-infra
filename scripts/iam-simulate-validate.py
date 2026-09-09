@@ -304,7 +304,9 @@ def validate_vector(vector_path: Path, categories_path: Path) -> None:
     for action in action_names:
         if ACTION_NAME.fullmatch(action) is None:
             fail(f"action_names contains an invalid IAM action: {action}")
-    resource_arns = require_string_list(vector["resource_arns"], "resource_arns")
+    resource_arns = require_string_list(
+        vector["resource_arns"], "resource_arns", nonempty=False
+    )
     invalid_resource = next(
         (resource for resource in resource_arns if resource != "*" and not resource.startswith("arn:")),
         None,

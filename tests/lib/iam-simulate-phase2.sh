@@ -306,6 +306,13 @@ baseline = {
 }
 (root / "response-baseline.json").write_text(json.dumps(baseline) + "\n", encoding="utf-8")
 
+multiple_concrete_action_level = deepcopy(baseline)
+multiple_concrete_action_level["EvaluationResults"][0].pop("ResourceSpecificResults")
+(root / "response-multiple-concrete-action-level.json").write_text(
+    json.dumps(multiple_concrete_action_level) + "\n",
+    encoding="utf-8",
+)
+
 real_position_resource = "arn:aws:s3:::orbit-infra-79s5rw-tfstate/other/x"
 
 
@@ -407,6 +414,92 @@ resolved_response["EvaluationResults"][0]["ResourceSpecificResults"][0]["Matched
 ]
 (root / "response-resolved.json").write_text(
     json.dumps(resolved_response) + "\n",
+    encoding="utf-8",
+)
+
+action_level_response = deepcopy(resolved_response)
+action_level_result = action_level_response["EvaluationResults"][0]
+resource_level_result = action_level_result.pop("ResourceSpecificResults")[0]
+action_level_result["MatchedStatements"] = resource_level_result["MatchedStatements"]
+(root / "response-action-level.json").write_text(
+    json.dumps(action_level_response) + "\n",
+    encoding="utf-8",
+)
+
+action_level_decision_mutant = deepcopy(action_level_response)
+action_level_decision_mutant["EvaluationResults"][0]["EvalDecision"] = "implicitDeny"
+(root / "response-action-level-decision-mutant.json").write_text(
+    json.dumps(action_level_decision_mutant) + "\n",
+    encoding="utf-8",
+)
+
+action_level_attribution_mutant = deepcopy(action_level_response)
+action_level_attribution_mutant["EvaluationResults"][0]["MatchedStatements"] = []
+(root / "response-action-level-attribution-mutant.json").write_text(
+    json.dumps(action_level_attribution_mutant) + "\n",
+    encoding="utf-8",
+)
+
+no_resource_dir = root / "no-resource-vectors"
+no_resource_dir.mkdir()
+no_resource_vector = deepcopy(ambiguous_vector)
+no_resource_vector["resource_arns"] = []
+(no_resource_dir / "no-resource.json").write_text(
+    json.dumps(no_resource_vector, indent=2) + "\n",
+    encoding="utf-8",
+)
+
+missing_concrete_arn = deepcopy(position_response(position(38), position(271)))
+missing_concrete_arn["EvaluationResults"][0]["ResourceSpecificResults"][0][
+    "EvalResourceName"
+] = "arn:aws:s3:::orbit-infra-79s5rw-tfstate/different/x"
+(root / "response-missing-concrete-arn.json").write_text(
+    json.dumps(missing_concrete_arn) + "\n",
+    encoding="utf-8",
+)
+
+authorization_source = (
+    taxonomy_path.parent
+    / "vectors"
+    / "aws_iam_policy.deployer_data__EnvDataBucketLifecycle__ALL_none_matching.json"
+)
+authorization_split_dir = root / "authorization-split-vectors"
+authorization_split_dir.mkdir()
+authorization_split_vector = json.loads(authorization_source.read_text(encoding="utf-8"))
+authorization_split_vector["expect"]["matched_sid_required"] = []
+(authorization_split_dir / "authorization-split.json").write_text(
+    json.dumps(authorization_split_vector, indent=2) + "\n",
+    encoding="utf-8",
+)
+authorization_aliases = {
+    "s3:DeleteBucketOwnershipControls",
+    "s3:DeleteBucketPublicAccessBlock",
+}
+rendered_authorization_resources = [
+    resource.replace("${SUFFIX}", "79s5rw")
+    for resource in authorization_split_vector["resource_arns"]
+]
+authorization_actions = sorted(authorization_split_vector["action_names"])
+authorization_direct = [
+    action for action in authorization_actions if action not in authorization_aliases
+]
+authorization_aliased = [
+    action for action in authorization_actions if action in authorization_aliases
+]
+(root / "expected-authorization-split-inputs.json").write_text(
+    json.dumps(
+        {
+            "actions": authorization_actions,
+            "resources": sorted(rendered_authorization_resources),
+            "accepted_action_groups": [
+                authorization_actions,
+                authorization_direct,
+                authorization_aliased,
+            ],
+            "required_action_groups": [authorization_direct, authorization_aliased],
+        },
+        sort_keys=True,
+    ) + "\n",
     encoding="utf-8",
 )
 
@@ -578,8 +671,10 @@ for option, key, label in (
     ("--resource-arns", "resources", "resource ARNs"),
 ):
     submitted = option_values(option)
-    if sorted(submitted) != expected[key]:
-        want = json.dumps(expected[key], separators=(",", ":"))
+    accepted = expected.get("accepted_action_groups") if key == "actions" else None
+    valid = sorted(submitted) in accepted if accepted is not None else sorted(submitted) == expected[key]
+    if not valid:
+        want = json.dumps(accepted if accepted is not None else expected[key], separators=(",", ":"))
         got = json.dumps(submitted, separators=(",", ":"))
         raise SystemExit(f"FAIL: fake simulate-custom-policy {label} mismatch: expected {want}, submitted {got}")
 PY
@@ -608,6 +703,64 @@ case "$service $operation" in
     [ ! -f "$simulate_file" ] || simulate_count="$(<"$simulate_file")"
     simulate_count=$((simulate_count + 1))
     printf '%s\n' "$simulate_count" >"$simulate_file"
+    if [ "${FAKE_AWS_SCENARIO:-success}" = authorization-split ]; then
+      python3 - "$@" <<'PY'
+import json
+import sys
+
+
+args = sys.argv[1:]
+
+
+def option_values(option):
+    index = args.index(option) + 1
+    values = []
+    while index < len(args) and not args[index].startswith("--"):
+        values.append(args[index])
+        index += 1
+    return values
+
+
+actions = option_values("--action-names")
+resources = option_values("--resource-arns")
+aliases = {
+    "s3:DeleteBucketOwnershipControls",
+    "s3:DeleteBucketPublicAccessBlock",
+}
+direct = sorted(action for action in actions if action not in aliases)
+aliased = sorted(action for action in actions if action in aliases)
+if direct and aliased:
+    print(
+        "An error occurred (InvalidInput) when calling the "
+        "SimulateCustomPolicy operation: Invalid Input Actions: "
+        f"[{','.join(direct)}] and [{','.join(aliased)}] "
+        "require different authorization information.",
+        file=sys.stderr,
+    )
+    raise SystemExit(254)
+response = {
+    "EvaluationResults": [
+        {
+            "EvalActionName": action,
+            "EvalDecision": "allowed",
+            "MatchedStatements": [],
+            "ResourceSpecificResults": [
+                {
+                    "EvalResourceName": resource,
+                    "EvalResourceDecision": "allowed",
+                    "MatchedStatements": [],
+                    "MissingContextValues": [],
+                }
+                for resource in resources
+            ],
+        }
+        for action in actions
+    ]
+}
+print(json.dumps(response, separators=(",", ":")))
+PY
+      exit 0
+    fi
     if [ "${FAKE_AWS_SCENARIO:-success}" = throttle-once ] && [ "$simulate_count" -eq 1 ]; then
       echo 'An error occurred (Throttling) when calling the SimulateCustomPolicy operation' >&2
       exit 254
@@ -958,7 +1111,7 @@ PY
 }
 
 run_iam_simulate_runner_contracts() {
-  local census disagreement_vectors isolated_policy output real_rc report report_mutant
+  local census disagreement_vectors expected_inputs isolated_policy output real_rc report report_mutant
   echo "== iam simulate contracts: RUNNER =="
   group_failures=$failures
   phase2_setup
@@ -1033,6 +1186,55 @@ run_iam_simulate_runner_contracts() {
       fail_case "runner boundary policy byte equality mutation setup" "no simulator call"
     fi
 
+    reset_phase2_fake
+    report="$phase2_dir/action-level-star-report.json"
+    if output="$(run_phase2_runner success "$phase2_dir/response-action-level.json" \
+      "$phase2_dir/ambiguous-vectors" "$report" 2>&1)" && \
+       jq -e '
+         .records | length == 1
+         and .[0].decision_observed == "allowed"
+         and .[0].matched_sids == ["EcrAuth"]
+         and .[0].pass == true
+       ' "$report" >/dev/null; then
+      pass_case "runner uses action-level decision and attribution for explicit star"
+    else
+      fail_case "runner uses action-level decision and attribution for explicit star" "$output"
+    fi
+    expect_runner_failure "runner action-level explicit-star decision" \
+      "decision mismatch for ecr:GetAuthorizationToken *: expected allowed, observed implicitDeny" \
+      success "$phase2_dir/response-action-level-decision-mutant.json" \
+      "$phase2_dir/ambiguous-vectors"
+
+    reset_phase2_fake
+    report="$phase2_dir/action-level-no-resource-report.json"
+    if output="$(run_phase2_runner success "$phase2_dir/response-action-level.json" \
+      "$phase2_dir/no-resource-vectors" "$report" 2>&1)" && \
+       jq -e '
+         .records | length == 1
+         and .[0].decision_observed == "allowed"
+         and .[0].matched_sids == ["EcrAuth"]
+         and .[0].pass == true
+       ' "$report" >/dev/null && \
+       jq -e 'index("--resource-arns") == null' "$phase2_calls/1.json" >/dev/null; then
+      pass_case "runner uses action-level decision and attribution with no submitted resource"
+    else
+      fail_case "runner uses action-level decision and attribution with no submitted resource" "$output"
+    fi
+    expect_runner_failure "runner action-level no-resource attribution" \
+      "required matched Sid is absent: EcrAuth" \
+      success "$phase2_dir/response-action-level-attribution-mutant.json" \
+      "$phase2_dir/no-resource-vectors"
+
+    expect_runner_failure "runner multiple-concrete action-level refusal" \
+      "action-level result lacks ResourceSpecificResults for s3:GetObject" \
+      success "$phase2_dir/response-multiple-concrete-action-level.json" \
+      "$phase2_dir/runner-vectors"
+    IAM_SIM_TEST_PLAN="$phase2_dir/plan-real-position.json" \
+      expect_runner_failure "runner missing exact concrete ARN refusal" \
+        "submitted resource ARN is absent from response: s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-tfstate/other/x" \
+        success "$phase2_dir/response-missing-concrete-arn.json" \
+        "$phase2_dir/real-position-vectors"
+
     IAM_SIM_TEST_PLAN="$phase2_dir/plan-missing-document.json" \
       expect_runner_failure "runner missing named document" \
         "named policy document is absent from plan: aws_iam_policy.task_boundary" \
@@ -1083,6 +1285,57 @@ run_iam_simulate_runner_contracts() {
       pass_case "runner emits one observed record per compatible shared-call case"
     else
       fail_case "runner emits one observed record per compatible shared-call case" "$output"
+    fi
+
+    reset_phase2_fake
+    report="$phase2_dir/authorization-split-report.json"
+    expected_inputs="$phase2_dir/expected-authorization-split-inputs.json"
+    if output="$(env -u AWS_PROFILE \
+      PATH="$phase2_dir/bin:$PATH" \
+      AWS_CLI_BIN=aws \
+      AWS_CLI_SH="$IAM_SIM_AWS_WRAPPER" \
+      FAKE_AWS_CALL_DIR="$phase2_calls" \
+      FAKE_ROLE_STATE_DIR="$phase2_roles" \
+      FAKE_AWS_SCENARIO=authorization-split \
+      FAKE_AWS_RESPONSE="$phase2_dir/response-empty.json" \
+      FAKE_AWS_EXPECTED_INPUTS="$expected_inputs" \
+      IAM_SIM_RETRY_BASE_SECONDS=0 \
+      TARGET=aws \
+      "$IAM_SIM_RUNNER" --plan "$phase2_plan" \
+        --vectors "$phase2_dir/authorization-split-vectors" \
+        --report "$report" 2>&1)" && \
+       python3 - "$phase2_calls" "$expected_inputs" <<'PY' &&
+import json
+from pathlib import Path
+import sys
+
+
+calls = []
+for path in sorted(Path(sys.argv[1]).glob("*.json")):
+    args = json.loads(path.read_text(encoding="utf-8"))
+    if args[:2] != ["iam", "simulate-custom-policy"]:
+        continue
+    index = args.index("--action-names") + 1
+    actions = []
+    while index < len(args) and not args[index].startswith("--"):
+        actions.append(args[index])
+        index += 1
+    calls.append(sorted(actions))
+expected = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if sorted(calls) != sorted(expected["required_action_groups"]):
+    raise SystemExit(
+        f"FAIL: authorization action groups differ: {json.dumps(calls)}"
+    )
+PY
+       jq -e '
+         .summary == {"failed":0,"passed":1,"runner_failures":0,"total":1}
+         and .records[0].decision_observed == "allowed"
+         and .records[0].matched_sids == []
+         and .records[0].pass == true
+       ' "$report" >/dev/null; then
+      pass_case "runner splits S3 operations that require different authorization information"
+    else
+      fail_case "runner splits S3 operations that require different authorization information" "$output"
     fi
 
     reset_phase2_fake

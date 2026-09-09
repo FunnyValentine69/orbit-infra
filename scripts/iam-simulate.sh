@@ -63,6 +63,13 @@ validator = Path(sys.argv[4])
 core_documents = sys.argv[5:separator]
 cli_args = sys.argv[separator + 1 :]
 
+S3_DIFFERENT_AUTHORIZATION_ACTIONS = frozenset(
+    {
+        "s3:DeleteBucketOwnershipControls",
+        "s3:DeleteBucketPublicAccessBlock",
+    }
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Execute custom IAM simulator vectors")
@@ -403,6 +410,7 @@ def group_vectors(prepared: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
                 "assertion_kind": vector["assertion_kind"],
                 "required": sorted(vector["expect"]["matched_sid_required"]),
                 "forbidden": sorted(vector["expect"]["matched_sid_forbidden"]),
+                "resource_arns_omitted": not vector["resource_arns"],
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -479,16 +487,47 @@ def aws_call(argv: list[str]) -> dict[str, Any]:
 
 def batch_call(batch: list[dict[str, Any]]) -> dict[str, Any]:
     first = batch[0]
-    actions = sorted({action for item in batch for action in item["vector"]["action_names"]})
+    actions = sorted(
+        {action for item in batch for action in item["vector"]["action_names"]}
+    )
     resources = sorted({resource for item in batch for resource in item["vector"]["resource_arns"]})
-    argv = ["iam", "simulate-custom-policy", "--policy-input-list", *first["policies"]]
-    if first["boundaries"]:
-        argv.extend(["--permissions-boundary-policy-input-list", *first["boundaries"]])
-    argv.extend(["--action-names", *actions, "--resource-arns", *resources])
-    if first["context"]:
-        argv.extend(["--context-entries", json.dumps(first["context"], separators=(",", ":"))])
-    argv.extend(["--no-paginate", "--output", "json"])
-    return aws_call(argv)
+    direct_actions = [
+        action for action in actions if action not in S3_DIFFERENT_AUTHORIZATION_ACTIONS
+    ]
+    different_authorization_actions = [
+        action for action in actions if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS
+    ]
+    combined_results: list[Any] = []
+    for action_group in (direct_actions, different_authorization_actions):
+        if not action_group:
+            continue
+        argv = [
+            "iam",
+            "simulate-custom-policy",
+            "--policy-input-list",
+            *first["policies"],
+        ]
+        if first["boundaries"]:
+            argv.extend(
+                ["--permissions-boundary-policy-input-list", *first["boundaries"]]
+            )
+        argv.extend(["--action-names", *action_group])
+        if resources:
+            argv.extend(["--resource-arns", *resources])
+        if first["context"]:
+            argv.extend([
+                "--context-entries",
+                json.dumps(first["context"], separators=(",", ":")),
+            ])
+        argv.extend(["--no-paginate", "--output", "json"])
+        response = aws_call(argv)
+        if "EvaluationResults" not in response:
+            return response
+        results = response["EvaluationResults"]
+        if not isinstance(results, list):
+            return response
+        combined_results.extend(results)
+    return {"EvaluationResults": combined_results}
 
 
 def evaluate(item: dict[str, Any], response: dict[str, Any]) -> tuple[Any, list[str], list[str]]:
@@ -499,22 +538,52 @@ def evaluate(item: dict[str, Any], response: dict[str, Any]) -> tuple[Any, list[
     observed: dict[tuple[str, str], str] = {}
     matched_sids: set[str] = set()
     for action in vector["action_names"]:
-        action_results = [result for result in results if isinstance(result, dict) and result.get("EvalActionName") == action]
+        action_results = [
+            result
+            for result in results
+            if isinstance(result, dict) and result.get("EvalActionName") == action
+        ]
         if len(action_results) != 1:
             raise RunnerFailure(f"expected one action-level EvaluationResult for {action}, found {len(action_results)}")
-        resource_results = action_results[0].get("ResourceSpecificResults")
-        if not isinstance(resource_results, list):
-            raise RunnerFailure(f"action-level result lacks ResourceSpecificResults for {action}")
+        action_result = action_results[0]
+        resource_results = (
+            action_result["ResourceSpecificResults"]
+            if "ResourceSpecificResults" in action_result
+            else None
+        )
+        if "ResourceSpecificResults" in action_result and not isinstance(
+            resource_results, list
+        ):
+            raise RunnerFailure(
+                f"ResourceSpecificResults is not an array for {action}"
+            )
+        resolved: list[tuple[str, dict[str, Any], str]] = []
         for resource in vector["resource_arns"]:
-            matches = [result for result in resource_results if isinstance(result, dict) and result.get("EvalResourceName") == resource]
-            if len(matches) == 0:
-                raise RunnerFailure(f"submitted resource ARN is absent from response: {action} {resource}")
-            if len(matches) != 1:
+            matches = []
+            if isinstance(resource_results, list):
+                matches = [
+                    result
+                    for result in resource_results
+                    if isinstance(result, dict)
+                    and result.get("EvalResourceName") == resource
+                ]
+            if len(matches) > 1:
                 raise RunnerFailure(f"response repeats submitted resource ARN: {action} {resource}")
-            result = matches[0]
-            decision = result.get("EvalResourceDecision")
+            if matches:
+                resolved.append((resource, matches[0], "EvalResourceDecision"))
+            elif len(vector["resource_arns"]) == 1 and resource == "*":
+                resolved.append((resource, action_result, "EvalDecision"))
+            elif not isinstance(resource_results, list):
+                raise RunnerFailure(f"action-level result lacks ResourceSpecificResults for {action}")
+            else:
+                raise RunnerFailure(f"submitted resource ARN is absent from response: {action} {resource}")
+        if not vector["resource_arns"]:
+            resolved.append(("*", action_result, "EvalDecision"))
+        for resource, result, decision_field in resolved:
+            decision = result.get(decision_field)
             if decision not in {"allowed", "implicitDeny", "explicitDeny"}:
-                raise RunnerFailure(f"resource result has unknown decision for {action} {resource}")
+                scope = "action-level" if decision_field == "EvalDecision" else "resource"
+                raise RunnerFailure(f"{scope} result has unknown decision for {action} {resource}")
             observed[(action, resource)] = decision
             raw_matches = result.get("MatchedStatements", [])
             if not isinstance(raw_matches, list):
