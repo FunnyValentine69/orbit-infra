@@ -1,9 +1,9 @@
 # IAM simulator vector schema
 
 This document specifies schema version 1 for the IAM simulator vectors authored
-in a later phase. A vector file contains one JSON object. Phase 1 ships only the
-synthetic contract fixtures under `tests/fixtures/iam-simulate/`; it does not
-ship the 288 execution vectors or an AWS runner.
+in a later phase. A vector file contains one JSON object. Phase 1 shipped the
+synthetic contract fixtures under `tests/fixtures/iam-simulate/`; Phase 2 adds
+the offline-contracted runners, but does not ship the 288 execution vectors.
 
 The validator is:
 
@@ -55,7 +55,7 @@ and `expect`. `context_entries` is optional in every mode.
 For `custom-isolated`, `isolated_statement` must contain the vector `sid`, an
 `Effect` of `Allow` or `Deny`, exactly one of `Action` or `NotAction`, and
 exactly one of `Resource` or `NotResource`. `Condition` is optional and must be
-an object. The later runner must wrap this object as
+an object. `scripts/iam-simulate.sh` wraps this object as
 `{"Version":"2012-10-17","Statement":[...]}` and serialize the complete
 policy as one JSON string in
 `PolicyInputList`. This mode is reserved for masked negative cases and may not
@@ -105,7 +105,7 @@ determine the aggregate decision.
 
 The simulator's `MatchedStatements` entries do not contain a Sid. They contain
 `SourcePolicyId`, `SourcePolicyType`, `StartPosition`, and `EndPosition` with
-line and column values. The later runner must map those source positions back
+line and column values. The custom-lane runner maps those source positions back
 to Sids in the exact rendered policy text; it must not expect a nonexistent Sid
 field in the response.
 

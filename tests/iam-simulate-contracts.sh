@@ -9,6 +9,7 @@ CASE_ID_LIB="$REPO_ROOT/tests/lib/iam-simulate.sh"
 VALIDATOR="$REPO_ROOT/scripts/iam-simulate-validate.py"
 VECTOR_FIXTURES="$REPO_ROOT/tests/fixtures/iam-simulate"
 SCHEMA_DOC="$REPO_ROOT/docs/iam-simulate-vector-schema.md"
+PHASE2_CONTRACTS="$REPO_ROOT/tests/lib/iam-simulate-phase2.sh"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-simulate.XXXXXX")"
 results="$tmp_dir/results.txt"
 failures=0
@@ -387,6 +388,15 @@ if [ "$failures" -eq "$group_failures" ]; then
   echo "PASS: IAM simulate SCHEMA group"
 else
   echo "FAIL: IAM simulate SCHEMA group" >&2
+fi
+
+if [ -f "$PHASE2_CONTRACTS" ]; then
+  # shellcheck disable=SC1090
+  source "$PHASE2_CONTRACTS"
+  run_iam_simulate_runner_contracts
+  run_iam_simulate_role_lane_contracts
+else
+  fail_case "IAM simulate phase-2 contract library exists" "$PHASE2_CONTRACTS is missing"
 fi
 
 if [ "$failures" -eq 0 ]; then

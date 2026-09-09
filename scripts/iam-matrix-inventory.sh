@@ -21,18 +21,8 @@ fi
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-core_documents=(
-  aws_iam_role_policy.plan_reader_deny
-  aws_iam_role_policy.plan_reader_state
-  aws_iam_policy.task_boundary
-  aws_iam_policy.deployer_state
-  aws_iam_policy.deployer_ec2
-  aws_iam_policy.deployer_elb_ecs
-  aws_iam_policy.deployer_data
-  aws_iam_policy.deployer_iam
-  aws_iam_policy.deployer_guard
-  aws_iam_role_policy.publisher
-)
+# shellcheck source=scripts/iam-matrix-documents.sh
+source "$(cd "$(dirname "$0")" && pwd)/iam-matrix-documents.sh"
 trust_roles=(plan_reader deployer publisher)
 
 managed_count="$(jq '[.planned_values.root_module.resources[]? | select(.type == "aws_iam_policy")] | length' "$plan_json")"

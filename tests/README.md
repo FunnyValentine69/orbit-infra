@@ -385,10 +385,10 @@ depend on permission bits and occur before any Terraform call, and injected
 init/plan/apply failures with their original recipe exit
 status and cleanup. It runs from `make test`.
 
-## IAM simulator phase-1 contracts
+## IAM simulator contracts
 
-Run the taxonomy, case-ID, and vector-schema contracts without AWS, Terraform,
-Docker, or LocalStack:
+Run all five taxonomy, case-ID, vector-schema, custom-runner, and role-lane
+contract groups without AWS, Terraform, Docker, or LocalStack:
 
 ```bash
 bash tests/iam-simulate-contracts.sh
@@ -406,7 +406,7 @@ JSON with a trailing newline.
 The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 288
 taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
 `aws:`-prefixed condition key, a colon-bearing trust document, and wrong-document
-refusal. Later runner phases share this exact-prefix helper instead of splitting
+refusal. Both runners enforce the same exact-prefix rule instead of splitting
 case IDs on colons.
 
 The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against four
@@ -417,6 +417,26 @@ are synthetic schema fixtures, not authored execution vectors. Their names are
 validator and its `FAIL:` diagnostic is asserted. The schema is specified in
 `docs/iam-simulate-vector-schema.md`. This suite runs near the start of
 `make test` and makes no external-service calls.
+
+The `RUNNER` group creates a synthetic plan and vectors in its temporary
+workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
+through `scripts/aws-cli.sh`. It proves nested per-resource mapping instead of
+the aggregate top-level decision, byte-position-to-Sid attribution, ambiguous
+and unmapped response refusal, request-side duplicate detection before a call,
+the five-attempt throttle cap, timeout non-retry, exact `TARGET=aws` refusal,
+and the one-statement `custom-isolated` wrapper. The plan fixture carries all
+ten addresses from `scripts/iam-matrix-documents.sh`; no Phase 3 execution
+vectors are added by this suite.
+
+The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
+store. It proves the complete zero-call dry-run inventory, exact opt-in and
+account refusals, tag-based ownership before mutation, collision isolation,
+cleanup after a midway create failure and TERM, the delete-policy barrier, and
+post-cleanup `NoSuchEntity` verification. Every guard has a matching input,
+response, or lifecycle mutation whose `FAIL:` line is printed by the suite.
+The successful fixture also compares the SCP-excluded principal result and
+projected policy hash to a synthetic custom-lane report, while retaining the
+Organizations-applied result separately.
 
 ## Phase 5 sweeper fixtures
 

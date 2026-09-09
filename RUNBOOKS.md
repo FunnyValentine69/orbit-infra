@@ -290,6 +290,60 @@ fresh runner cannot recover the prior emulator or local state. LocalStack CI
 uses licensed credits, so this lane is dispatch-only and must never be added to
 a schedule.
 
+## IAM simulator lanes
+
+Phase 3 supplies the authored vector directory. The custom lane reads the ten
+raw policy strings from a post-bootstrap Terraform plan, renders vector
+templates, and writes a per-case JSON report. It refuses every target except
+real AWS and routes all simulator calls through the repository wrapper:
+
+```
+TARGET=aws scripts/iam-simulate.sh \
+  --plan <terraform-plan.json> \
+  --vectors <vector-directory> \
+  --report <custom-report.json>
+```
+
+Preview the role lane without its opt-in. `--dry-run` uses the real call builder,
+prints the caller check, three tagged role creates, three inline-policy puts,
+both simulations for every supported case, reverse cleanup, and absence checks;
+it makes zero AWS calls:
+
+```
+TARGET=aws scripts/iam-simulate-roles.sh \
+  --plan <terraform-plan.json> \
+  --vectors <role-vector-directory> \
+  --report <role-report.json> \
+  --expect-account <12-digit-account> \
+  --dry-run
+```
+
+A real role-lane run additionally requires the literal environment value
+`IAM_SIM_LANE_CONFIRM=create-real-iam-resources` and the passing custom report.
+That string authorizes creation of exactly three run-tagged IAM roles and their
+three inline projections; it does not authorize deleting an unowned or
+pre-existing role. The lane verifies the caller account, re-reads the run tag
+before every policy or role mutation, treats `EntityAlreadyExists` as manual
+cleanup without deleting it, removes owned roles in reverse order, and requires
+`NoSuchEntity` afterward. It runs each supported case with the exact
+`{"PolicyType":"scp"}` exclusion and again with Organizations applied:
+
+```
+IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws \
+  scripts/iam-simulate-roles.sh \
+  --plan <terraform-plan.json> \
+  --vectors <role-vector-directory> \
+  --custom-report <custom-report.json> \
+  --report <role-report.json> \
+  --expect-account <12-digit-account>
+```
+
+The role report records every projected document and API hash. A single run can
+project one source document per role; use `--only <case-id>` for another source
+document. The AWS-managed `ReadOnlyAccess` attachment has no inline equivalent
+and is always recorded as a role-lane exclusion. These scripts and their cleanup
+paths are OFFLINE-VERIFIED only; no real role-lane execution is recorded here.
+
 ## Front-page evidence
 
 Generate the storyboard only from the clean commit that contains its generator:
