@@ -1,0 +1,2 @@
+# forbidden literals for artifact-hygiene contracts
+Project Nightingale
