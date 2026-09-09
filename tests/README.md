@@ -440,22 +440,27 @@ when those results exist, action-level decision and attribution for explicit
 `*` or an omitted resource list, refusal of missing concrete resource results,
 and separate requests for the two S3 delete names that require different
 authorization information. It also covers 1-based multiline position-to-Sid
-attribution with an exclusive end position, ambiguous and unmapped response
-refusal, compatible shared-call reporting, and pre-call refusal when a duplicate
-action/resource pair disagrees on its expectation. The position regression uses
-the exact compact 1,163-character plan-reader deny document and observed
-`1:38`/`1:271` coordinates; a killed mutant restores the old inclusive-end
-comparison. A real-vector contract requires exactly 239 report records and
-currently counts 8 shared-call batches across 16 cases; mutations make a
-colliding pair disagree and drop one shared case from the report. The group also
-proves the five-attempt throttle cap, timeout non-retry, exact `TARGET=aws`
-refusal, byte-equal policy and boundary resolution from raw plan
-`.values.policy`, missing-address refusal, and absent/duplicate-Sid refusal
-before a fake AWS call. The isolated statement submitted by the runner comes
-from the named plan document, and its attribution spans are computed against
-that one-statement wrapper. The plan fixture carries all ten addresses from
-`scripts/iam-matrix-documents.sh`; no authored execution vectors are added by
-this suite.
+attribution with an exclusive end position and unique overlap against exact
+statement spans. The computed two-statement fixture and the exact 5,682-character,
+18-statement `deployer_data` plan policy both include the preceding comma in a
+returned range; the real `1:1779`/`1:2055` range maps to
+`ClickhouseSecretCreateWithTag`. A sibling range overlaps two statements and
+must remain ambiguous, while a zero-overlap range remains unmapped; both
+refusals assert document-length, span-count, range, and first/last-span
+diagnostics. Scanner contracts and killed mutants cover multiline input, braces
+and brackets inside a string, escaped quotes, and restoration of strict endpoint
+containment. The group also covers compatible shared-call reporting, pre-call
+refusal when a duplicate action/resource pair disagrees on its expectation, the
+five-attempt throttle cap, timeout non-retry, exact `TARGET=aws` refusal,
+byte-equal policy and boundary resolution from raw plan `.values.policy`,
+missing-address refusal, and absent/duplicate-Sid refusal before a fake AWS call.
+A real-vector contract requires exactly 239 report records and currently counts
+8 shared-call batches across 16 cases; mutations make a colliding pair disagree
+and drop one shared case from the report. The isolated statement submitted by
+the runner comes from the named plan document, and its attribution spans are
+computed against that one-statement wrapper. The plan fixture carries all ten
+addresses from `scripts/iam-matrix-documents.sh`; no authored execution vectors
+are added by this suite.
 
 The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
 store. It proves the complete zero-call dry-run inventory, exact opt-in and

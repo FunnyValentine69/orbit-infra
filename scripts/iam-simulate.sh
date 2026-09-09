@@ -312,23 +312,36 @@ def map_match(match: Any, documents: list[SubmittedDocument]) -> str:
         raise RunnerFailure(
             f"unrecognised SourcePolicyId {source}; submitted labels: {', '.join(submitted_labels)}"
         )
-    mapped: list[str] = []
-    touched: list[str] = []
+    overlaps: list[str] = []
+    diagnostics: list[tuple[SubmittedDocument, int, int]] = []
     for document in by_source[source]:
         start = position_offset(document.text, match.get("StartPosition"))
         end = position_offset(document.text, match.get("EndPosition"))
+        diagnostics.append((document, start, end))
         for span_start, span_end, sid in document.spans:
-            contains_start = span_start <= start < span_end
-            contains_end = span_start < end <= span_end
-            if start < span_end and span_start < end:
-                touched.append(sid)
-            if contains_start and contains_end:
-                mapped.append(sid)
-    if len(touched) > 1 or len(mapped) > 1:
-        raise RunnerFailure(f"ambiguous matched statement position from {source}")
-    if not mapped:
-        raise RunnerFailure(f"unmapped matched statement position from {source}")
-    return mapped[0]
+            if start < end and start < span_end and span_start < end:
+                overlaps.append(sid)
+    document, start, end = diagnostics[0]
+    first_start, first_end, first_sid = document.spans[0]
+    last_start, last_end, last_sid = document.spans[-1]
+    detail = (
+        f"document_length={len(document.text)} "
+        f"statement_span_count={len(document.spans)} "
+        f"returned_range=[{start},{end}) "
+        f"first_span=[{first_start},{first_end}):{first_sid} "
+        f"last_span=[{last_start},{last_end}):{last_sid}"
+    )
+    if len(overlaps) > 1:
+        raise RunnerFailure(
+            f"ambiguous matched statement position from {source}: "
+            f"overlap_count={len(overlaps)} {detail}"
+        )
+    if not overlaps:
+        raise RunnerFailure(
+            f"unmapped matched statement position from {source}: "
+            f"unmapped_offset={start} {detail}"
+        )
+    return overlaps[0]
 
 
 def normalize_context(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

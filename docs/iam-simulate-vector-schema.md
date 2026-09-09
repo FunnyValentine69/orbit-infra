@@ -114,10 +114,16 @@ The simulator's `MatchedStatements` entries do not contain a Sid. They contain
 `SourcePolicyId`, `SourcePolicyType`, `StartPosition`, and `EndPosition` with
 line and column values. The custom-lane runner maps those source positions back
 to Sids in the exact rendered policy text; line and column are 1-based and the
-end position is exclusive. Statement spans are located in the submitted text,
-not in re-serialized JSON. For `custom-isolated`, attribution uses the submitted
-one-statement wrapper rather than the full plan document. The runner must not
-expect a nonexistent Sid field in the response.
+end position is exclusive. A returned range may include the comma before a
+statement. Attribution therefore requires overlap with exactly one statement's
+half-open span, excluding the delimiters between statements. No overlap is
+unmapped, while overlap with two or more statements is ambiguous; both fail
+closed with the document length, span count, returned range, and first and last
+span in the diagnostic. Statement spans are located with JSON decoding in the
+submitted text, not in re-serialized JSON, so nested braces or brackets inside
+strings and escaped quotes do not change the offsets. For `custom-isolated`,
+attribution uses the submitted one-statement wrapper rather than the full plan
+document. The runner must not expect a nonexistent Sid field in the response.
 
 The top-level `EvalDecision` is aggregate for an action across every submitted
 resource, and top-level `EvalResourceName` may be a service template such as
