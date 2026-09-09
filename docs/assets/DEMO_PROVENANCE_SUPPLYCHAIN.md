@@ -5,15 +5,15 @@
 | Field | Value |
 | --- | --- |
 | recorded_from | offline SPDX fixture verification |
-| generator commit | c5d1d91 (the tree at this commit holds the active recording generator closure) |
+| generator commit | 6ce2802 (the tree at this commit holds the active recording generator closure) |
 | canonicalizer sha256 | b185cd2a615c31627f5fd24a2e0c504fc7864e1ae5e4b155547ab4bd7e019001 |
 | fixtures used | base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json |
 | timestamp-variant result | identical |
 | checksum-variant result | different |
 | contracts result | 14 assertions |
-| gif sha256 | 739861f3e011d0f3fe54558d7eb8c1220374dedc7fd9b02eabd23017ae4710c8 |
-| size | 92927 bytes |
-| duration | 15.120000 s |
-| frames | 378 |
+| gif sha256 | ddaead7b7d0513954e6ccfc367d305121b6225c7b095d05b8921e4533f6c9346 |
+| size | 94206 bytes |
+| duration | 15.440000 s |
+| frames | 386 |
 
 This recording is offline: it exercises the committed SPDX fixtures, canonicalizer, and standalone 14-assertion contract without contacting LocalStack, Docker, Terraform, or AWS.
