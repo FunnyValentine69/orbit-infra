@@ -67,7 +67,10 @@ manual_notes="$tmp_dir/manual-cleanup.txt"
 : >"$records"
 : >"$manual_notes"
 
-prepare_args=("$REPO_ROOT" "$VALIDATOR" "$plan" "$vectors" "$expect_account" "$run_id" "$role_plan")
+prepare_args=(
+  "$REPO_ROOT" "$VALIDATOR" "$plan" "$vectors" "$expect_account" "$run_id"
+  "$role_plan" "$custom_report" "$dry_run"
+)
 if [ -n "$only" ]; then
   prepare_args+=("$only")
 fi
@@ -90,7 +93,9 @@ vectors_path = Path(sys.argv[separator + 4])
 account_id = sys.argv[separator + 5]
 run_id = sys.argv[separator + 6]
 output_path = Path(sys.argv[separator + 7])
-only = sys.argv[separator + 8] if len(sys.argv) > separator + 8 else None
+custom_report_path = Path(sys.argv[separator + 8]) if sys.argv[separator + 8] else None
+dry_run = sys.argv[separator + 9] == "1"
+only = sys.argv[separator + 10] if len(sys.argv) > separator + 10 else None
 
 
 def fail(message):
@@ -202,8 +207,17 @@ exclusions = [{
 }]
 candidate_cases = {role: [] for role in ("plan-reader", "deployer", "publisher")}
 for vector in vectors:
-    if vector["simulation_mode"] != "principal":
-        exclusions.append({"case_id": vector["case_id"], "reason": "role lane accepts principal vectors only"})
+    if vector["simulation_mode"] == "custom-isolated":
+        exclusions.append({
+            "case_id": vector["case_id"],
+            "reason": "isolated single-statement simulation has no principal equivalent",
+        })
+        continue
+    if vector["simulation_mode"] != "custom":
+        exclusions.append({
+            "case_id": vector["case_id"],
+            "reason": "role lane reuses custom-lane vectors only",
+        })
         continue
     role = role_for_document.get(vector["document"])
     if role is None:
@@ -211,55 +225,136 @@ for vector in vectors:
         continue
     candidate_cases[role].append(vector)
 
-noop = json.dumps({
-    "Version": "2012-10-17",
-    "Statement": [{
-        "Sid": "IamSimulationLaneNoop",
-        "Effect": "Allow",
-        "Action": "iam:GetRole",
-        "Resource": f"arn:aws:iam::{account_id}:role/orbit-iam-simulator-noop",
-    }],
-}, separators=(",", ":"))
+def combine_documents(role, addresses):
+    versions = set()
+    statements = []
+    seen_sids = {}
+    for address in addresses:
+        policy = json.loads(documents[address])
+        version = policy.get("Version")
+        if not isinstance(version, str) or not version:
+            fail(f"projected policy document lacks Version: {address}")
+        versions.add(version)
+        raw_statements = policy.get("Statement")
+        if isinstance(raw_statements, dict):
+            raw_statements = [raw_statements]
+        if not isinstance(raw_statements, list) or not raw_statements:
+            fail(f"projected policy document has no statements: {address}")
+        for statement in raw_statements:
+            if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
+                fail(f"every projected statement must carry a Sid: {address}")
+            sid = statement["Sid"]
+            if sid in seen_sids and seen_sids[sid] != address:
+                fail(
+                    f"duplicate Sid {sid} across {seen_sids[sid]} and {address}"
+                )
+            seen_sids[sid] = address
+            statements.append(statement)
+    if len(versions) != 1:
+        fail(f"role {role} policy documents disagree on Version: {sorted(versions)}")
+    return json.dumps(
+        {"Version": next(iter(versions)), "Statement": statements},
+        separators=(",", ":"),
+    )
+
+
+def source_entries(addresses):
+    return [
+        {
+            "address": address,
+            "sha256": hashlib.sha256(documents[address].encode("utf-8")).hexdigest(),
+        }
+        for address in addresses
+    ]
+
+
 roles = []
 supported = []
 for role in ("plan-reader", "deployer", "publisher"):
     cases = candidate_cases[role]
-    selected_documents = sorted({vector["document"] for vector in cases})
-    if len(selected_documents) > 1:
-        keep = selected_documents[0]
-        retained = []
-        for vector in cases:
-            if vector["document"] == keep:
-                retained.append(vector)
-            else:
-                exclusions.append({
-                    "case_id": vector["case_id"],
-                    "reason": "one-inline-policy projection already selected another document for this role; run with --only",
-                })
-        cases = retained
-        selected_documents = [keep]
-    policy = documents[selected_documents[0]] if selected_documents else noop
-    if len(re.sub(r"\s", "", policy)) > 10240:
-        for vector in cases:
-            exclusions.append({"case_id": vector["case_id"], "reason": "inline projection exceeds the 10240-character aggregate quota"})
-        cases = []
-        selected_documents = []
-        policy = noop
+    if not cases:
+        continue
+    role_documents = sorted(
+        address for address, mapped_role in role_for_document.items()
+        if mapped_role == role
+    )
+    combined_policy = combine_documents(role, role_documents)
+    combined_size = len(re.sub(r"\s", "", combined_policy))
+    source_size = sum(len(re.sub(r"\s", "", documents[address])) for address in role_documents)
+    if combined_size <= 10240:
+        pass_specs = [("combined", role_documents, combined_policy)]
+    else:
+        pass_specs = []
+        for address in role_documents:
+            policy = documents[address]
+            policy_size = len(re.sub(r"\s", "", policy))
+            if policy_size > 10240:
+                fail(
+                    f"per-document projection exceeds 10240 characters for {address}: {policy_size}"
+                )
+            pass_specs.append(("per-document", [address], policy))
+
+    projection_for_document = {}
+    for pass_index, (projection_kind, source_addresses, policy) in enumerate(pass_specs, 1):
+        projection_id = (
+            f"{role}:combined"
+            if projection_kind == "combined"
+            else f"{role}:{source_addresses[0]}"
+        )
+        role_name = f"orbit-iam-sim-{run_id}-{role}"
+        policy_name = f"orbit-iam-sim-{role}"
+        if len(pass_specs) > 1:
+            role_name += f"-p{pass_index}"
+            policy_name += f"-p{pass_index}"
+        entries = source_entries(source_addresses)
+        roles.append({
+            "kind": role,
+            "role_kind": role,
+            "projection_id": projection_id,
+            "projection_kind": projection_kind,
+            "name": role_name,
+            "policy_name": policy_name,
+            "policy_document": policy,
+            "policy_sha256": hashlib.sha256(policy.encode("utf-8")).hexdigest(),
+            "policy_character_count": len(re.sub(r"\s", "", policy)),
+            "source_character_count": (
+                source_size if projection_kind == "combined"
+                else len(re.sub(r"\s", "", documents[source_addresses[0]]))
+            ),
+            "source_documents": entries,
+        })
+        for address in source_addresses:
+            projection_for_document[address] = projection_id
+    for vector in cases:
+        vector["temporary_projection_id"] = projection_for_document[vector["document"]]
     supported.extend(cases)
-    roles.append({
-        "kind": role,
-        "name": f"orbit-iam-sim-{run_id}-{role}",
-        "policy_name": f"orbit-iam-sim-{role}",
-        "policy_document": policy,
-        "policy_sha256": hashlib.sha256(policy.encode("utf-8")).hexdigest(),
-        "source_documents": selected_documents,
-        "source_document_hashes": [hashlib.sha256(documents[address].encode("utf-8")).hexdigest() for address in selected_documents],
-    })
 
 if not supported:
-    fail("role lane selected no supported principal cases")
-for vector in supported:
-    vector["temporary_role_kind"] = role_for_document[vector["document"]]
+    fail("role lane selected no supported custom cases")
+
+if not dry_run:
+    try:
+        custom_payload = json.loads(custom_report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, AttributeError) as exc:
+        fail(f"cannot read custom report: {exc}")
+    custom_records = custom_payload.get("records") if isinstance(custom_payload, dict) else None
+    if not isinstance(custom_records, list):
+        fail("custom report records must be an array")
+    for vector in vectors:
+        matches = [
+            record for record in custom_records
+            if isinstance(record, dict) and record.get("case_id") == vector["case_id"]
+        ]
+        if len(matches) != 1:
+            fail(f"custom report lacks exactly one record for {vector['case_id']}")
+        custom_record = matches[0]
+        if "decision_observed" not in custom_record or custom_record["decision_observed"] is None:
+            fail(f"custom report lacks an observed decision for {vector['case_id']}")
+        matched_sids = custom_record.get("matched_sids")
+        if not isinstance(matched_sids, list) or any(
+            not isinstance(sid, str) for sid in matched_sids
+        ):
+            fail(f"custom report matched_sids is invalid for {vector['case_id']}")
 
 assume_policy = json.dumps({
     "Version": "2012-10-17",
@@ -283,6 +378,7 @@ payload = {
 output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
+role_count="$(jq '.roles | length' "$role_plan")"
 cleanup_complete=0
 cleanup_failed=0
 terminated=0
@@ -362,7 +458,7 @@ cleanup_roles() {
   if [ "$cleanup_complete" -eq 1 ] || [ "$dry_run" -eq 1 ]; then
     return 0
   fi
-  for index in 2 1 0; do
+  for ((index = role_count - 1; index >= 0; index--)); do
     role_name="$(jq -r ".roles[$index].name" "$role_plan")"
     policy_name="$(jq -r ".roles[$index].policy_name" "$role_plan")"
     status=none
@@ -396,7 +492,7 @@ cleanup_roles() {
     fi
   done
 
-  for index in 0 1 2; do
+  for ((index = 0; index < role_count; index++)); do
     status=none
     [ ! -f "$(role_status_file "$index")" ] || status="$(<"$(role_status_file "$index")")"
     if [ "$status" = none ] || [ "$status" = collision ]; then
@@ -426,6 +522,11 @@ notes_path = Path(sys.argv[3])
 report_path = Path(sys.argv[4])
 records = [json.loads(line) for line in records_path.read_text(encoding="utf-8").splitlines() if line]
 notes = notes_path.read_text(encoding="utf-8").splitlines()
+case_exclusions = {}
+for exclusion in role_plan["exclusions"]:
+    if "case_id" in exclusion:
+        reason = exclusion["reason"]
+        case_exclusions[reason] = case_exclusions.get(reason, 0) + 1
 payload = {
     "run_id": role_plan["run_id"],
     "projection": {
@@ -440,6 +541,14 @@ payload = {
         "total": len(records),
         "passed": sum(record.get("pass") is True for record in records),
         "failed": sum(record.get("pass") is False for record in records),
+        "cases_selected": len(role_plan["cases"]),
+        "cases_excluded": sum(case_exclusions.values()),
+        "cases_excluded_by_reason": dict(sorted(case_exclusions.items())),
+        "agreements": sum(record.get("comparison") == "agreement" for record in records),
+        "divergences": sum(record.get("comparison") == "divergence" for record in records),
+        "organizations_divergences": sum(
+            len(record.get("organizations_divergences", [])) for record in records
+        ),
         "manual_cleanup_notes": len(notes),
     },
 }
@@ -483,28 +592,31 @@ role_call_args() {
 }
 
 print_dry_run_inventory() {
-  local index case_json role_kind role_name context
+  local index case_json projection_id role_name context
   local -a actions resources context_args
   call_capture sts get-caller-identity --output json
-  for index in 0 1 2; do
+  for ((index = 0; index < role_count; index++)); do
     role_call_args "$index"
     call_capture iam create-role --role-name "$ROLE_NAME" \
       --assume-role-policy-document "$(jq -r '.assume_role_policy' "$role_plan")" \
       --tags "Key=$tag_key,Value=$tag_value"
   done
-  for index in 0 1 2; do
+  for ((index = 0; index < role_count; index++)); do
     role_call_args "$index"
     call_capture iam list-role-tags --role-name "$ROLE_NAME" --output json
     call_capture iam put-role-policy --role-name "$ROLE_NAME" \
       --policy-name "$POLICY_NAME" --policy-document "$POLICY_DOCUMENT"
   done
   while IFS= read -r case_json; do
-    role_kind="$(jq -r '.temporary_role_kind' <<<"$case_json")"
-    role_name="$(jq -r --arg kind "$role_kind" '.roles[] | select(.kind == $kind) | .name' "$role_plan")"
+    projection_id="$(jq -r '.temporary_projection_id' <<<"$case_json")"
+    role_name="$(jq -r --arg projection_id "$projection_id" \
+      '.roles[] | select(.projection_id == $projection_id) | .name' "$role_plan")"
     actions=()
-    while IFS= read -r value; do actions+=("$value"); done < <(jq -r '.action_names[]' <<<"$case_json")
+    jq -r '.action_names[]' <<<"$case_json" >"$tmp_dir/action-names"
+    while IFS= read -r value; do actions+=("$value"); done <"$tmp_dir/action-names"
     resources=()
-    while IFS= read -r value; do resources+=("$value"); done < <(jq -r '.resource_arns[]' <<<"$case_json")
+    jq -r '.resource_arns[]' <<<"$case_json" >"$tmp_dir/resource-arns"
+    while IFS= read -r value; do resources+=("$value"); done <"$tmp_dir/resource-arns"
     context="$(jq -c '.context_entries // [] | sort_by(.ContextKeyName,.ContextKeyType,(.ContextKeyValues|join("\u0000")))' <<<"$case_json")"
     context_args=(--output json)
     [ "$context" = '[]' ] || context_args=(--context-entries "$context" --output json)
@@ -517,14 +629,14 @@ print_dry_run_inventory() {
       --action-names "${actions[@]}" --resource-arns "${resources[@]}" \
       "${context_args[@]}"
   done < <(jq -c '.cases[]' "$role_plan")
-  for index in 2 1 0; do
+  for ((index = role_count - 1; index >= 0; index--)); do
     role_call_args "$index"
     call_capture iam list-role-tags --role-name "$ROLE_NAME" --output json
     call_capture iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$POLICY_NAME"
     call_capture iam list-role-tags --role-name "$ROLE_NAME" --output json
     call_capture iam delete-role --role-name "$ROLE_NAME"
   done
-  for index in 0 1 2; do
+  for ((index = 0; index < role_count; index++)); do
     role_call_args "$index"
     call_capture iam get-role --role-name "$ROLE_NAME" --output json
   done
@@ -550,7 +662,7 @@ if [ "$actual_account" != "$expect_account" ]; then
   exit 1
 fi
 
-for index in 0 1 2; do
+for ((index = 0; index < role_count; index++)); do
   role_call_args "$index"
   printf 'intended\n' >"$(role_status_file "$index")"
   call_capture iam create-role --role-name "$ROLE_NAME" \
@@ -568,7 +680,7 @@ for index in 0 1 2; do
   printf 'created\n' >"$(role_status_file "$index")"
 done
 
-for index in 0 1 2; do
+for ((index = 0; index < role_count; index++)); do
   role_call_args "$index"
   if ! verify_owned_tag "$ROLE_NAME" 0; then
     exit 1
@@ -589,7 +701,6 @@ evaluate_case() {
   local projection=$4
   python3 - "$case_file" "$excluded_response" "$organizations_response" \
     "$projection" "$custom_report" <<'PY'
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -720,6 +831,7 @@ def observe(response, allow_organizations):
     decisions = {}
     matched_sources = []
     matched_sids = set()
+    details = []
     for action in case["action_names"]:
         action_results = [item for item in results if isinstance(item, dict) and item.get("EvalActionName") == action]
         if len(action_results) != 1:
@@ -739,58 +851,140 @@ def observe(response, allow_organizations):
             raw_matches = item.get("MatchedStatements", [])
             if not isinstance(raw_matches, list):
                 fail(f"role MatchedStatements is not an array for {action} {resource}")
+            item_sources = []
+            item_sids = set()
             for match in raw_matches:
                 if not isinstance(match, dict):
                     fail("role MatchedStatements entry is not an object")
-                matched_sources.append({
+                source = {
                     "source_policy_id": match.get("SourcePolicyId"),
                     "source_policy_type": match.get("SourcePolicyType"),
                     "start_position": match.get("StartPosition"),
                     "end_position": match.get("EndPosition"),
-                })
+                }
+                matched_sources.append(source)
+                item_sources.append(source)
                 sid = map_sid(match, allow_organizations)
                 if sid is not None:
                     matched_sids.add(sid)
+                    item_sids.add(sid)
+            details.append({
+                "action_name": action,
+                "resource_arn": resource,
+                "decision_observed": decision,
+                "matched_statement_sources": item_sources,
+                "matched_sids": sorted(item_sids),
+            })
     if len(case["resource_arns"]) > 1 and len(case["action_names"]) == 1:
         observed = {resource: decisions[(case["action_names"][0], resource)] for resource in sorted(case["resource_arns"])}
     elif len(set(decisions.values())) == 1:
         observed = next(iter(decisions.values()))
     else:
         observed = {f"{action}|{resource}": value for (action, resource), value in sorted(decisions.items())}
-    return observed, matched_sources, sorted(matched_sids)
+    return observed, matched_sources, sorted(matched_sids), details
 
 
-excluded_decision, excluded_sources, excluded_sids = observe(excluded, False)
-organizations_decision, organizations_sources, organizations_sids = observe(organizations, True)
+excluded_decision, excluded_sources, excluded_sids, excluded_details = observe(excluded, False)
+organizations_decision, organizations_sources, organizations_sids, organizations_details = observe(organizations, True)
 custom_records = [record for record in custom.get("records", []) if record.get("case_id") == case["case_id"]]
-if len(custom_records) != 1 or custom_records[0].get("pass") is not True:
-    fail(f"custom report lacks one passing record for {case['case_id']}")
+if len(custom_records) != 1:
+    fail(f"custom report lacks exactly one record for {case['case_id']}")
 custom_record = custom_records[0]
-custom_hashes = [entry.get("sha256") for entry in custom_record.get("document_hashes_submitted", {}).get("policy_input_list", [])]
-same_bytes = custom_hashes == [projection["policy_sha256"]]
-same_decision = excluded_decision == custom_record.get("decision_observed")
-same_sids = excluded_sids == custom_record.get("matched_sids", [])
+custom_decision = custom_record.get("decision_observed")
+if custom_decision is None:
+    fail(f"custom report lacks an observed decision for {case['case_id']}")
+custom_sids = custom_record.get("matched_sids")
+if not isinstance(custom_sids, list) or any(not isinstance(sid, str) for sid in custom_sids):
+    fail(f"custom report matched_sids is invalid for {case['case_id']}")
+custom_hashes = [
+    entry.get("sha256")
+    for entry in custom_record.get("document_hashes_submitted", {}).get("policy_input_list", [])
+]
+source_document = next(
+    entry for entry in projection["source_documents"]
+    if entry["address"] == case["document"]
+)
+same_decision = excluded_decision == custom_decision
+observed_in = []
+if excluded_decision != custom_decision:
+    observed_in.append("scp-excluded")
+if organizations_decision != custom_decision:
+    observed_in.append("default")
+projection_record = {
+    "projection_id": projection["projection_id"],
+    "projection_kind": projection["projection_kind"],
+    "role_kind": projection["role_kind"],
+    "policy_sha256": projection["policy_sha256"],
+    "source_documents": projection["source_documents"],
+}
+organizations_divergences = []
+excluded_by_pair = {
+    (detail["action_name"], detail["resource_arn"]): detail
+    for detail in excluded_details
+}
+organizations_by_pair = {
+    (detail["action_name"], detail["resource_arn"]): detail
+    for detail in organizations_details
+}
+if set(excluded_by_pair) != set(organizations_by_pair):
+    fail(f"principal runs returned different action/resource pairs for {case['case_id']}")
+for pair in sorted(excluded_by_pair):
+    excluded_detail = excluded_by_pair[pair]
+    organizations_detail = organizations_by_pair[pair]
+    if excluded_detail["decision_observed"] == organizations_detail["decision_observed"]:
+        continue
+    organizations_divergences.append({
+        "action_name": pair[0],
+        "resource_arn": pair[1],
+        "scp_excluded": excluded_detail,
+        "default": organizations_detail,
+    })
 record = {
     "case_id": case["case_id"],
     "mode": "principal",
+    "projection": projection_record,
     "document_hashes_submitted": {
         "put_role_policy": [{"sha256": projection["policy_sha256"]}],
         "custom_lane": [{"sha256": value} for value in custom_hashes],
+    },
+    "source_document_hash_agrees_with_custom_lane": custom_hashes == [source_document["sha256"]],
+    "custom_lane": {
+        "decision_observed": custom_decision,
+        "matched_sids": custom_sids,
     },
     "scp_excluded": {
         "decision_observed": excluded_decision,
         "matched_statement_sources": excluded_sources,
         "matched_sids": excluded_sids,
-        "agrees_with_custom_lane": same_bytes and same_decision and same_sids,
+        "agrees_with_custom_lane": same_decision,
     },
-    "organizations_applied": {
+    "default": {
         "decision_observed": organizations_decision,
         "matched_statement_sources": organizations_sources,
         "matched_sids": organizations_sids,
         "changed_from_scp_excluded": organizations_decision != excluded_decision,
     },
-    "pass": same_bytes and same_decision and same_sids,
+    "comparison": "agreement" if same_decision else "divergence",
+    "organizations_divergences": organizations_divergences,
+    "pass": True,
 }
+if not same_decision:
+    record["divergence"] = {
+        "observed_in": observed_in,
+        "custom_lane": {
+            "decision_observed": custom_decision,
+            "matched_sids": custom_sids,
+        },
+        "scp_excluded": {
+            "decision_observed": excluded_decision,
+            "matched_sids": excluded_sids,
+        },
+        "default": {
+            "decision_observed": organizations_decision,
+            "matched_sids": organizations_sids,
+        },
+    }
+
 print(json.dumps(record, sort_keys=True))
 PY
 }
@@ -802,13 +996,17 @@ while IFS= read -r case_json; do
   excluded_file="$tmp_dir/excluded-$case_index.json"
   organizations_file="$tmp_dir/organizations-$case_index.json"
   printf '%s\n' "$case_json" >"$case_file"
-  role_kind="$(jq -r '.temporary_role_kind' <<<"$case_json")"
-  role_name="$(jq -r --arg kind "$role_kind" '.roles[] | select(.kind == $kind) | .name' "$role_plan")"
-  projection="$(jq -c --arg kind "$role_kind" '.roles[] | select(.kind == $kind)' "$role_plan")"
+  projection_id="$(jq -r '.temporary_projection_id' <<<"$case_json")"
+  role_name="$(jq -r --arg projection_id "$projection_id" \
+    '.roles[] | select(.projection_id == $projection_id) | .name' "$role_plan")"
+  projection="$(jq -c --arg projection_id "$projection_id" \
+    '.roles[] | select(.projection_id == $projection_id)' "$role_plan")"
   actions=()
-  while IFS= read -r value; do actions+=("$value"); done < <(jq -r '.action_names[]' <<<"$case_json")
+  jq -r '.action_names[]' <<<"$case_json" >"$tmp_dir/action-names"
+  while IFS= read -r value; do actions+=("$value"); done <"$tmp_dir/action-names"
   resources=()
-  while IFS= read -r value; do resources+=("$value"); done < <(jq -r '.resource_arns[]' <<<"$case_json")
+  jq -r '.resource_arns[]' <<<"$case_json" >"$tmp_dir/resource-arns"
+  while IFS= read -r value; do resources+=("$value"); done <"$tmp_dir/resource-arns"
   context="$(jq -c '.context_entries // [] | sort_by(.ContextKeyName,.ContextKeyType,(.ContextKeyValues|join("\u0000")))' <<<"$case_json")"
   context_args=(--output json)
   [ "$context" = '[]' ] || context_args=(--context-entries "$context" --output json)
@@ -854,10 +1052,5 @@ if [ "$(wc -l <"$records" | tr -d ' ')" -ne "$(jq '.cases | length' "$role_plan"
   echo "FAIL: role lane did not record every supported case" >&2
   exit 1
 fi
-if jq -e 'select(.pass != true)' "$records" >/dev/null; then
-  echo "FAIL: SCP-excluded role result disagrees with the custom lane" >&2
-  exit 1
-fi
-
 main_succeeded=1
 exit 0

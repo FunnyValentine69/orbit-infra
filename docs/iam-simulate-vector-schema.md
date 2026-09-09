@@ -63,6 +63,16 @@ a one-statement policy in `PolicyInputList`. An absent Sid or more than one
 matching statement is a hard failure. `isolated_statement` is invalid. This
 mode is reserved for masked negative cases and may not expect `allowed`.
 
+The role lane deliberately reuses these same `custom` vectors rather than
+maintaining a second set of `principal` vectors. It projects the mapped role
+documents and submits each selected vector's existing actions, resources, and
+context entries to `simulate-principal-policy`. A `custom-isolated` vector is
+recorded as excluded because an isolated single-statement simulation has no
+principal equivalent. A `custom` vector whose document is not an identity-role
+binding, including `aws_iam_policy.task_boundary`, is also recorded as excluded.
+The schema's `principal` mode remains available to other direct-principal
+fixtures; it is not the role lane's authored-vector input mode.
+
 `permissions_boundary_policy_input_list` contains plan document addresses, not
 policy JSON. All 16 boundary vectors name `aws_iam_policy.task_boundary`, whose
 raw plan policy is submitted as the permissions boundary. The six

@@ -305,9 +305,11 @@ TARGET=aws scripts/iam-simulate.sh \
 ```
 
 Preview the role lane without its opt-in. `--dry-run` uses the real call builder,
-prints the caller check, three tagged role creates, three inline-policy puts,
-both simulations for every supported case, reverse cleanup, and absence checks;
-it makes zero AWS calls:
+prints the caller check, every tagged projection-role create and inline-policy
+put, both simulations for every selected case, reverse cleanup, and absence
+checks; it makes zero AWS calls. With the complete authored vector directory and
+current plan this inventory has eight projection passes: one combined
+plan-reader pass, six per-document deployer passes, and one publisher pass:
 
 ```
 TARGET=aws scripts/iam-simulate-roles.sh \
@@ -319,14 +321,31 @@ TARGET=aws scripts/iam-simulate-roles.sh \
 ```
 
 A real role-lane run additionally requires the literal environment value
-`IAM_SIM_LANE_CONFIRM=create-real-iam-resources` and the passing custom report.
-That string authorizes creation of exactly three run-tagged IAM roles and their
-three inline projections; it does not authorize deleting an unowned or
+`IAM_SIM_LANE_CONFIRM=create-real-iam-resources` and the custom-lane report for
+the same vectors. That string authorizes only the run-tagged roles required by
+the computed projections; it does not authorize deleting an unowned or
 pre-existing role. The lane verifies the caller account, re-reads the run tag
 before every policy or role mutation, treats `EntityAlreadyExists` as manual
 cleanup without deleting it, removes owned roles in reverse order, and requires
-`NoSuchEntity` afterward. It runs each supported case with the exact
-`{"PolicyType":"scp"}` exclusion and again with Organizations applied:
+`NoSuchEntity` afterward.
+
+The role lane consumes the same `custom` vectors as the custom lane.
+`custom-isolated` cases are excluded because an isolated single-statement
+simulation has no principal equivalent, and documents without an identity-role
+binding remain excluded. For each selected role, mapped documents are sorted by
+address and their `Statement` arrays are concatenated. A combined policy at or
+below 10,240 whitespace-stripped characters uses one role. If it is larger,
+each source document uses its own complete create, put, simulate, and delete
+pass; no document's cases are dropped. A duplicate Sid across documents in a
+combined role fails closed with both source addresses.
+
+Every selected case runs first with the exact `{"PolicyType":"scp"}` exclusion
+and then without an exclusion. The SCP-excluded result is compared to the custom
+report's observed decision. A mismatch is a non-failing divergence record with
+the deciding projection, both decisions, both matched-Sid lists, and the run or
+runs where it appears. The default request is the effective-policy result; each
+action/resource decision changed by Organizations is separately attributed and
+counted. Any loaded vector case missing from the custom report is fatal:
 
 ```
 IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws \
@@ -338,11 +357,12 @@ IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws \
   --expect-account <12-digit-account>
 ```
 
-The role report records every projected document and API hash. A single run can
-project one source document per role; use `--only <case-id>` for another source
-document. The AWS-managed `ReadOnlyAccess` attachment has no inline equivalent
-and is always recorded as a role-lane exclusion. These scripts and their cleanup
-paths are OFFLINE-VERIFIED only; no real role-lane execution is recorded here.
+The role report records each projection's source addresses, source-policy
+SHA-256 hashes, selected and excluded case counts by reason, agreements,
+principal/custom divergences, and Organizations divergences. The AWS-managed
+`ReadOnlyAccess` attachment has no inline equivalent and is always recorded as a
+role-lane exclusion. These scripts and their cleanup paths are OFFLINE-VERIFIED
+only; no real role-lane execution is recorded here.
 
 ## Front-page evidence
 

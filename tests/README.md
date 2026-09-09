@@ -463,14 +463,33 @@ addresses from `scripts/iam-matrix-documents.sh`; no authored execution vectors
 are added by this suite.
 
 The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
-store. It proves the complete zero-call dry-run inventory, exact opt-in and
-account refusals, tag-based ownership before mutation, collision isolation,
-cleanup after a midway create failure and TERM, the delete-policy barrier, and
-post-cleanup `NoSuchEntity` verification. Every guard has a matching input,
-response, or lifecycle mutation whose `FAIL:` line is printed by the suite.
-The successful fixture also compares the SCP-excluded principal result and
-projected policy hash to a synthetic custom-lane report, while retaining the
-Organizations-applied result separately.
+store. It proves that `custom` vectors are selected unchanged while
+`custom-isolated` vectors carry the recorded no-principal-equivalent exclusion.
+For each selected role it concatenates every mapped document's `Statement`
+array in sorted address order. The plan-reader and publisher projections fit
+under 10,240 whitespace-stripped characters and use one combined pass; the six
+deployer documents do not fit together and therefore use six separately
+created, simulated, and deleted per-document roles. Report records identify the
+deciding projection with source addresses and SHA-256 hashes.
+
+The group also proves the complete zero-call dry-run inventory, exact opt-in and
+account refusals, tag-based ownership before every mutation, collision
+isolation, cleanup after a midway create failure and TERM, the delete-policy
+barrier, reverse cleanup across all projection passes, and post-cleanup
+`NoSuchEntity` verification. Its deadline-bounded full-fixture dry run derives
+the projected-role count `R` and selected-case count `C` from the plan and vector
+fixtures at run time, then requires exactly `1 + 8R + 2C` calls. A dropped-call
+mutant kills the formula check; a process-substitution mutant kills termination.
+The real and dry-run case loops both use bounded temporary-file reads so action
+and resource array loading cannot retain two descriptors per case. Duplicate
+Sids across combined role documents and any loaded vector case ID missing from
+the custom report fail before a role is created.
+Every selected case is simulated first with the exact SCP exclusion and then
+with the default effective-policy request. The SCP-excluded decision is compared
+to the custom lane's observed decision: disagreement is reportable divergence
+evidence, not a failed run. Default-versus-SCP differences are separately
+reported per action and resource with Organizations attribution. Every new
+contract has a killed mutation whose `FAIL:` line is printed by the suite.
 
 ## Phase 5 sweeper fixtures
 

@@ -17,7 +17,8 @@ phase2_setup() {
   phase2_roles="$phase2_dir/roles"
   mkdir -p "$phase2_dir/bin" "$phase2_calls" "$phase2_roles"
 
-  python3 - "$TAXONOMY" "$phase2_dir" <<'PY'
+  python3 - "$TAXONOMY" "$phase2_dir" \
+    "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" <<'PY'
 from copy import deepcopy
 import hashlib
 import json
@@ -26,6 +27,7 @@ import sys
 
 taxonomy_path = Path(sys.argv[1])
 root = Path(sys.argv[2])
+role_projection_plan_source = Path(sys.argv[3])
 categories = json.loads(taxonomy_path.read_text(encoding="utf-8"))
 
 core_documents = [
@@ -155,8 +157,13 @@ def policy_for(address):
         return isolated_plan_policy
     sid = {
         "aws_iam_role_policy.plan_reader_state": "ReadStateObjects",
+        "aws_iam_policy.deployer_state": "FixtureDeployerState",
+        "aws_iam_policy.deployer_ec2": "FixtureDeployerEc2",
+        "aws_iam_policy.deployer_elb_ecs": "FixtureDeployerElbEcs",
+        "aws_iam_policy.deployer_iam": "FixtureDeployerIam",
+        "aws_iam_policy.deployer_guard": "FixtureDeployerGuard",
         "aws_iam_role_policy.publisher": "EcrAuth",
-    }.get(address, "FixtureNoop")
+    }[address]
     return json.dumps(
         {
             "Version": "2012-10-17",
@@ -788,9 +795,8 @@ for index, (document, sid, role) in enumerate(role_specs):
         "case_id": category["case_id"],
         "document": document,
         "sid": sid,
-        "simulation_mode": "principal",
+        "simulation_mode": "custom",
         "assertion_kind": "decision",
-        "policy_source_arn": f"arn:aws:iam::${{ACCOUNT_ID}}:role/orbit-infra-${{SUFFIX}}-{role}",
         "action_names": ["iam:GetRole"],
         "resource_arns": [f"arn:aws:iam::${{ACCOUNT_ID}}:role/orbit-infra-${{SUFFIX}}-fixture-{index}"],
         "context_entries": [],
@@ -803,6 +809,14 @@ for index, (document, sid, role) in enumerate(role_specs):
     role_vectors.append(vector)
     (role_dir / f"role-{index}.json").write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
 
+isolated_role_vector = json.loads(
+    (taxonomy_path.parent / "valid-custom-isolated.json").read_text(encoding="utf-8")
+)
+(role_dir / "role-isolated.json").write_text(
+    json.dumps(isolated_role_vector, indent=2) + "\n",
+    encoding="utf-8",
+)
+
 custom_records = []
 for vector in role_vectors:
     policy = policy_for(vector["document"])
@@ -812,14 +826,145 @@ for vector in role_vectors:
         "matched_sids": [],
         "expect": vector["expect"],
         "pass": True,
-        "mode": "principal",
+        "mode": "custom",
         "document_hashes_submitted": {
             "policy_input_list": [{"sha256": hashlib.sha256(policy.encode("utf-8")).hexdigest()}],
             "permissions_boundary_policy_input_list": [],
         },
     })
+custom_records.append({
+    "case_id": isolated_role_vector["case_id"],
+    "decision_observed": isolated_role_vector["expect"]["decision"],
+    "matched_sids": [],
+    "expect": isolated_role_vector["expect"],
+    "pass": True,
+    "mode": "custom-isolated",
+    "document_hashes_submitted": {
+        "policy_input_list": [],
+        "permissions_boundary_policy_input_list": [],
+    },
+})
 (root / "role-custom-report.json").write_text(
-    json.dumps({"records": custom_records, "summary": {"total": 3, "passed": 3, "failed": 0, "runner_failures": 0}}, indent=2) + "\n",
+    json.dumps({"records": custom_records, "summary": {"total": 4, "passed": 4, "failed": 0, "runner_failures": 0}}, indent=2) + "\n",
+    encoding="utf-8",
+)
+
+divergence_custom_records = deepcopy(custom_records)
+divergence_custom_records[0]["decision_observed"] = "implicitDeny"
+divergence_custom_records[0]["matched_sids"] = ["CustomMatchedSid"]
+divergence_custom_records[0]["pass"] = False
+(root / "role-divergence-custom-report.json").write_text(
+    json.dumps({
+        "records": divergence_custom_records,
+        "summary": {"total": 4, "passed": 3, "failed": 1, "runner_failures": 0},
+    }, indent=2) + "\n",
+    encoding="utf-8",
+)
+(root / "role-missing-custom-report.json").write_text(
+    json.dumps({
+        "records": custom_records[1:],
+        "summary": {"total": 3, "passed": 3, "failed": 0, "runner_failures": 0},
+    }, indent=2) + "\n",
+    encoding="utf-8",
+)
+
+role_projection_plan = json.loads(role_projection_plan_source.read_text(encoding="utf-8"))
+(root / "role-projection-plan.json").write_text(
+    json.dumps(role_projection_plan, indent=2) + "\n",
+    encoding="utf-8",
+)
+role_projection_resources = {
+    resource["address"]: resource["values"]["policy"]
+    for resource in role_projection_plan["planned_values"]["root_module"]["resources"]
+    if isinstance(resource.get("values"), dict)
+    and isinstance(resource["values"].get("policy"), str)
+}
+role_projection_documents = [
+    "aws_iam_role_policy.plan_reader_deny",
+    "aws_iam_role_policy.plan_reader_state",
+    "aws_iam_policy.deployer_data",
+    "aws_iam_policy.deployer_ec2",
+    "aws_iam_policy.deployer_elb_ecs",
+    "aws_iam_policy.deployer_guard",
+    "aws_iam_policy.deployer_iam",
+    "aws_iam_policy.deployer_state",
+    "aws_iam_role_policy.publisher",
+]
+projection_vector_dir = root / "role-projection-vectors"
+projection_vector_dir.mkdir()
+projection_records = []
+for index, document in enumerate(role_projection_documents):
+    category = next(
+        entry
+        for entry in categories
+        if entry["document"] == document and entry["category"] == "simulator-decision"
+    )
+    vector = {
+        "schema_version": 1,
+        "case_id": category["case_id"],
+        "document": document,
+        "sid": category["sid"],
+        "simulation_mode": "custom",
+        "assertion_kind": "decision",
+        "action_names": ["iam:GetRole"],
+        "resource_arns": [
+            f"arn:aws:iam::${{ACCOUNT_ID}}:role/orbit-infra-${{SUFFIX}}-projection-{index}"
+        ],
+        "context_entries": [],
+        "expect": {
+            "decision": "allowed",
+            "matched_sid_required": [],
+            "matched_sid_forbidden": [],
+        },
+    }
+    (projection_vector_dir / f"projection-{index}.json").write_text(
+        json.dumps(vector, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    projection_records.append({
+        "case_id": vector["case_id"],
+        "decision_observed": "allowed",
+        "matched_sids": [],
+        "expect": vector["expect"],
+        "pass": True,
+        "mode": "custom",
+        "document_hashes_submitted": {
+            "policy_input_list": [{
+                "sha256": hashlib.sha256(
+                    role_projection_resources[document].encode("utf-8")
+                ).hexdigest()
+            }],
+            "permissions_boundary_policy_input_list": [],
+        },
+    })
+(root / "role-projection-custom-report.json").write_text(
+    json.dumps({
+        "records": projection_records,
+        "summary": {
+            "total": len(projection_records),
+            "passed": len(projection_records),
+            "failed": 0,
+            "runner_failures": 0,
+        },
+    }, indent=2) + "\n",
+    encoding="utf-8",
+)
+
+duplicate_sid_plan = deepcopy(role_projection_plan)
+for address in (
+    "aws_iam_role_policy.plan_reader_deny",
+    "aws_iam_role_policy.plan_reader_state",
+):
+    resource = next(
+        item
+        for item in duplicate_sid_plan["planned_values"]["root_module"]["resources"]
+        if item["address"] == address
+    )
+    policy = json.loads(resource["values"]["policy"])
+    policy["Statement"][0]["Sid"] = "CrossDocumentDuplicate"
+    resource["values"]["policy"] = json.dumps(policy, separators=(",", ":"))
+(root / "role-duplicate-sid-plan.json").write_text(
+    json.dumps(duplicate_sid_plan, indent=2) + "\n",
     encoding="utf-8",
 )
 PY
@@ -1015,7 +1160,16 @@ PY
   "iam simulate-principal-policy")
     action="$(value_after --action-names "$@")"
     resource="$(value_after --resource-arns "$@")"
-    jq -cn --arg action "$action" --arg resource "$resource" '{EvaluationResults:[{EvalActionName:$action,EvalResourceName:$resource,EvalDecision:"allowed",ResourceSpecificResults:[{EvalResourceName:$resource,EvalResourceDecision:"allowed",MatchedStatements:[],MissingContextValues:[]}]}]}'
+    decision=allowed
+    matched='[]'
+    if [ "${FAKE_AWS_SCENARIO:-success}" = organizations-difference ] && \
+       ! value_after --policy-exclusion-list "$@" >/dev/null 2>&1; then
+      decision=explicitDeny
+      matched='[{"SourcePolicyId":"OrganizationsPolicy","SourcePolicyType":"Organizations Policy"}]'
+    fi
+    jq -cn --arg action "$action" --arg resource "$resource" \
+      --arg decision "$decision" --argjson matched "$matched" \
+      '{EvaluationResults:[{EvalActionName:$action,EvalResourceName:$resource,EvalDecision:$decision,ResourceSpecificResults:[{EvalResourceName:$resource,EvalResourceDecision:$decision,MatchedStatements:$matched,MissingContextValues:[]}]}]}'
     ;;
   "iam delete-role-policy")
     role_name="$(value_after --role-name "$@")"
@@ -1824,6 +1978,10 @@ PY_MUTANT
 
 run_phase2_role_lane() {
   local scenario=$1
+  local test_plan="${IAM_SIM_TEST_ROLE_PLAN:-$phase2_plan}"
+  local test_vectors="${IAM_SIM_TEST_ROLE_VECTORS:-$phase2_dir/role-vectors}"
+  local test_report="${IAM_SIM_TEST_ROLE_REPORT:-$phase2_dir/role-report.json}"
+  local test_custom_report="${IAM_SIM_TEST_ROLE_CUSTOM_REPORT:-$phase2_dir/role-custom-report.json}"
   shift
   env -u AWS_PROFILE \
     PATH="$phase2_dir/bin:$PATH" \
@@ -1835,9 +1993,9 @@ run_phase2_role_lane() {
     FAKE_ACCOUNT_ID=000000000000 \
     IAM_SIM_RUN_ID=fixture-run \
     TARGET=aws \
-    "$IAM_SIM_ROLE_LANE" --plan "$phase2_plan" --vectors "$phase2_dir/role-vectors" \
-      --report "$phase2_dir/role-report.json" --expect-account 000000000000 \
-      --custom-report "$phase2_dir/role-custom-report.json" "$@"
+    "$IAM_SIM_ROLE_LANE" --plan "$test_plan" --vectors "$test_vectors" \
+      --report "$test_report" --expect-account 000000000000 \
+      --custom-report "$test_custom_report" "$@"
 }
 
 expect_role_failure() {
@@ -1858,6 +2016,569 @@ expect_role_failure() {
   else
     fail_case "$label mutation did not fail as required" "rc=$rc output=$output"
   fi
+}
+
+validate_role_selection_report() {
+  local report=$1
+  python3 - "$report" <<'PY_VALIDATE_ROLE_SELECTION'
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+records = payload.get("records", [])
+exclusions = payload.get("exclusions", [])
+summary = payload.get("summary", {})
+reason = "isolated single-statement simulation has no principal equivalent"
+if len(records) != 3:
+    raise SystemExit(f"FAIL: role selection requires three custom-vector records, found {len(records)}")
+if any(record.get("mode") != "principal" for record in records):
+    raise SystemExit("FAIL: role selection did not execute every custom vector through principal simulation")
+isolated = [entry for entry in exclusions if entry.get("reason") == reason]
+if len(isolated) != 1 or not isolated[0].get("case_id"):
+    raise SystemExit("FAIL: role selection must record one custom-isolated exclusion with its reason")
+if summary.get("cases_selected") != 3:
+    raise SystemExit("FAIL: role selection summary must count three selected cases")
+if summary.get("cases_excluded_by_reason", {}).get(reason) != 1:
+    raise SystemExit("FAIL: role selection summary must count the custom-isolated exclusion reason")
+PY_VALIDATE_ROLE_SELECTION
+}
+
+mutate_role_selection_report() {
+  local source=$1
+  local destination=$2
+  python3 - "$source" "$destination" <<'PY_MUTATE_ROLE_SELECTION'
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+reason = "isolated single-statement simulation has no principal equivalent"
+entry = next(item for item in payload["exclusions"] if item.get("reason") == reason)
+entry["reason"] = "mutated generic exclusion"
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY_MUTATE_ROLE_SELECTION
+}
+
+validate_role_projection_report() {
+  local report=$1
+  local vectors=$2
+  local plan=$3
+  local calls=$4
+  python3 - "$report" "$vectors" "$plan" "$calls" <<'PY_VALIDATE_ROLE_PROJECTION'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+vectors = {
+    vector["case_id"]: vector
+    for path in Path(sys.argv[2]).glob("*.json")
+    for vector in [json.loads(path.read_text(encoding="utf-8"))]
+}
+plan = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+policies = {
+    resource["address"]: resource["values"]["policy"]
+    for resource in plan["planned_values"]["root_module"]["resources"]
+    if isinstance(resource.get("values"), dict)
+    and isinstance(resource["values"].get("policy"), str)
+}
+roles = payload.get("projection", {}).get("roles", [])
+if len(roles) != 8:
+    raise SystemExit(f"FAIL: role projection requires eight passes, found {len(roles)}")
+by_kind = {}
+for role in roles:
+    by_kind.setdefault(role.get("role_kind"), []).append(role)
+plan_reader_documents = [
+    "aws_iam_role_policy.plan_reader_deny",
+    "aws_iam_role_policy.plan_reader_state",
+]
+deployer_documents = [
+    "aws_iam_policy.deployer_data",
+    "aws_iam_policy.deployer_ec2",
+    "aws_iam_policy.deployer_elb_ecs",
+    "aws_iam_policy.deployer_guard",
+    "aws_iam_policy.deployer_iam",
+    "aws_iam_policy.deployer_state",
+]
+publisher_documents = ["aws_iam_role_policy.publisher"]
+for kind, documents in (
+    ("plan-reader", plan_reader_documents),
+    ("publisher", publisher_documents),
+):
+    projections = by_kind.get(kind, [])
+    if len(projections) != 1 or projections[0].get("projection_kind") != "combined":
+        raise SystemExit(f"FAIL: role projection requires one combined {kind} pass")
+    addresses = [entry.get("address") for entry in projections[0].get("source_documents", [])]
+    if addresses != documents:
+        raise SystemExit(f"FAIL: role projection {kind} source order is {addresses}")
+deployer = by_kind.get("deployer", [])
+if len(deployer) != 6:
+    raise SystemExit(
+        f"FAIL: role projection requires six deployer per-document passes, found {len(deployer)}"
+    )
+actual_deployer_documents = []
+for projection in deployer:
+    if projection.get("projection_kind") != "per-document":
+        raise SystemExit("FAIL: role projection deployer pass is not per-document")
+    sources = projection.get("source_documents", [])
+    if len(sources) != 1 or not sources[0].get("sha256"):
+        raise SystemExit("FAIL: role projection deployer pass lacks one addressed source hash")
+    actual_deployer_documents.append(sources[0].get("address"))
+if actual_deployer_documents != deployer_documents:
+    raise SystemExit(
+        f"FAIL: role projection deployer source order is {actual_deployer_documents}"
+    )
+for projection in roles:
+    source_entries = projection.get("source_documents", [])
+    source_addresses = [entry.get("address") for entry in source_entries]
+    expected_statements = []
+    for address in source_addresses:
+        policy = policies[address]
+        expected_hash = hashlib.sha256(policy.encode("utf-8")).hexdigest()
+        entry = next(item for item in source_entries if item.get("address") == address)
+        if entry.get("sha256") != expected_hash:
+            raise SystemExit(f"FAIL: role projection source hash differs for {address}")
+        statements = json.loads(policy)["Statement"]
+        expected_statements.extend(statements if isinstance(statements, list) else [statements])
+    projected_policy = projection.get("policy_document")
+    if json.loads(projected_policy).get("Statement") != expected_statements:
+        raise SystemExit(
+            f"FAIL: role projection did not concatenate statements in source order: {projection.get('projection_id')}"
+        )
+    expected_source_size = sum(
+        len(re.sub(r"\s", "", policies[address])) for address in source_addresses
+    )
+    if projection.get("source_character_count") != expected_source_size:
+        raise SystemExit(
+            f"FAIL: role projection source-character measurement differs: {projection.get('projection_id')}"
+        )
+    if projection.get("policy_character_count") != len(re.sub(r"\s", "", projected_policy)):
+        raise SystemExit(
+            f"FAIL: role projection policy-character measurement differs: {projection.get('projection_id')}"
+        )
+records = payload.get("records", [])
+if len(records) != len(vectors):
+    raise SystemExit(
+        f"FAIL: role projection requires {len(vectors)} case records, found {len(records)}"
+    )
+for record in records:
+    case_id = record.get("case_id")
+    projection = record.get("projection", {})
+    source_entries = projection.get("source_documents", [])
+    source_addresses = [entry.get("address") for entry in source_entries]
+    if vectors[case_id]["document"] not in source_addresses:
+        raise SystemExit(f"FAIL: role projection record does not identify its deciding pass: {case_id}")
+    if not projection.get("projection_id") or not projection.get("policy_sha256"):
+        raise SystemExit(f"FAIL: role projection record lacks projection identity and hash: {case_id}")
+if payload.get("summary", {}).get("cases_selected") != len(vectors):
+    raise SystemExit("FAIL: role projection summary selected count is wrong")
+
+call_paths = sorted(Path(sys.argv[4]).glob("*.json"), key=lambda path: int(path.stem))
+calls = [json.loads(path.read_text(encoding="utf-8")) for path in call_paths]
+role_names = [role["name"] for role in roles]
+
+def operation_calls(operation):
+    return [call for call in calls if call[:2] == ["iam", operation]]
+
+def call_role_name(call):
+    return call[call.index("--role-name") + 1]
+
+creates = [call_role_name(call) for call in operation_calls("create-role")]
+puts = [call_role_name(call) for call in operation_calls("put-role-policy")]
+delete_policies = [call_role_name(call) for call in operation_calls("delete-role-policy")]
+delete_roles = [call_role_name(call) for call in operation_calls("delete-role")]
+gets = [call_role_name(call) for call in operation_calls("get-role")]
+if creates != role_names or puts != role_names:
+    raise SystemExit("FAIL: role projection did not create and load every pass in order")
+if delete_policies != list(reversed(role_names)) or delete_roles != list(reversed(role_names)):
+    raise SystemExit("FAIL: role projection did not delete every pass in reverse order")
+if gets != role_names:
+    raise SystemExit("FAIL: role projection did not verify NoSuchEntity for every pass")
+for operation in ("put-role-policy", "delete-role-policy", "delete-role"):
+    for call in operation_calls(operation):
+        index = calls.index(call)
+        name = call_role_name(call)
+        previous = calls[index - 1]
+        if previous[:2] != ["iam", "list-role-tags"] or call_role_name(previous) != name:
+            raise SystemExit(
+                f"FAIL: role projection {operation} lacks an immediate ownership tag re-read for {name}"
+            )
+PY_VALIDATE_ROLE_PROJECTION
+}
+
+mutate_role_projection_report() {
+  local source=$1
+  local destination=$2
+  python3 - "$source" "$destination" <<'PY_MUTATE_ROLE_PROJECTION'
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+roles = payload["projection"]["roles"]
+index = next(
+    index
+    for index, role in enumerate(roles)
+    if role.get("role_kind") == "deployer"
+)
+roles.pop(index)
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY_MUTATE_ROLE_PROJECTION
+}
+
+validate_role_divergence_report() {
+  local report=$1
+  python3 - "$report" <<'PY_VALIDATE_ROLE_DIVERGENCE'
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+summary = payload.get("summary", {})
+if summary.get("agreements") != 2 or summary.get("divergences") != 1:
+    raise SystemExit("FAIL: role divergence summary must contain two agreements and one divergence")
+divergences = [record for record in payload.get("records", []) if record.get("comparison") == "divergence"]
+if len(divergences) != 1:
+    raise SystemExit("FAIL: role divergence report must preserve one divergence record")
+record = divergences[0]
+evidence = record.get("divergence", {})
+if record.get("pass") is not True:
+    raise SystemExit("FAIL: role divergence must not mark the case or run failed")
+if evidence.get("observed_in") != ["scp-excluded", "default"]:
+    raise SystemExit("FAIL: role divergence must identify both principal runs")
+if evidence.get("custom_lane") != {
+    "decision_observed": "implicitDeny",
+    "matched_sids": ["CustomMatchedSid"],
+}:
+    raise SystemExit("FAIL: role divergence lost the custom-lane decision or matched Sids")
+for run in ("scp_excluded", "default"):
+    if evidence.get(run) != {"decision_observed": "allowed", "matched_sids": []}:
+        raise SystemExit(f"FAIL: role divergence lost the {run} decision or matched Sids")
+projection = record.get("projection", {})
+if not projection.get("projection_id") or not projection.get("source_documents"):
+    raise SystemExit("FAIL: role divergence does not identify its deciding projection")
+PY_VALIDATE_ROLE_DIVERGENCE
+}
+
+mutate_role_divergence_report() {
+  local source=$1
+  local destination=$2
+  python3 - "$source" "$destination" <<'PY_MUTATE_ROLE_DIVERGENCE'
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+record = next(item for item in payload["records"] if item.get("comparison") == "divergence")
+record["comparison"] = "agreement"
+record.pop("divergence")
+payload["summary"]["agreements"] += 1
+payload["summary"]["divergences"] -= 1
+Path(sys.argv[2]).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY_MUTATE_ROLE_DIVERGENCE
+}
+
+validate_role_two_runs() {
+  local calls=$1
+  local report=$2
+  python3 - "$calls" "$report" <<'PY_VALIDATE_ROLE_TWO_RUNS'
+import json
+from pathlib import Path
+import sys
+
+call_paths = sorted(Path(sys.argv[1]).glob("*.json"), key=lambda path: int(path.stem))
+calls = [json.loads(path.read_text(encoding="utf-8")) for path in call_paths]
+simulations = [args for args in calls if args[:2] == ["iam", "simulate-principal-policy"]]
+payload = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+records = payload.get("records", [])
+if len(simulations) != 2 * len(records):
+    raise SystemExit("FAIL: two-run contract requires exactly two simulations per selected case")
+exclusion = '{"PolicyType":"scp"}'
+for index in range(0, len(simulations), 2):
+    excluded = simulations[index]
+    default = simulations[index + 1]
+    if excluded.count("--policy-exclusion-list") != 1:
+        raise SystemExit(
+            "FAIL: two-run contract requires one exact scp-excluded call and one default call per case"
+        )
+    option_index = excluded.index("--policy-exclusion-list")
+    if excluded[option_index + 1] != exclusion or "--policy-exclusion-list" in default:
+        raise SystemExit(
+            "FAIL: two-run contract requires one exact scp-excluded call and one default call per case"
+        )
+    if excluded[:option_index] + excluded[option_index + 2:] != default:
+        raise SystemExit("FAIL: two-run contract changed inputs other than the SCP exclusion")
+for record in records:
+    if record.get("comparison") != "agreement":
+        raise SystemExit("FAIL: two-run contract did not compare the scp-excluded run to custom")
+    if record.get("scp_excluded", {}).get("decision_observed") != "allowed" or \
+       record.get("default", {}).get("decision_observed") != "explicitDeny":
+        raise SystemExit("FAIL: two-run contract lost the separate effective-policy decision")
+    divergences = record.get("organizations_divergences", [])
+    if len(divergences) != 1:
+        raise SystemExit("FAIL: two-run contract must report each Organizations divergence")
+    divergence = divergences[0]
+    if not divergence.get("action_name") or not divergence.get("resource_arn"):
+        raise SystemExit("FAIL: Organizations divergence lacks action and resource attribution")
+    sources = divergence.get("default", {}).get("matched_statement_sources", [])
+    if not any(source.get("source_policy_type") == "Organizations Policy" for source in sources):
+        raise SystemExit("FAIL: Organizations divergence lacks default-run source attribution")
+if payload.get("summary", {}).get("organizations_divergences") != len(records):
+    raise SystemExit("FAIL: two-run summary Organizations divergence count is wrong")
+PY_VALIDATE_ROLE_TWO_RUNS
+}
+
+mutate_role_two_run_calls() {
+  local source=$1
+  local destination=$2
+  python3 - "$source" "$destination" <<'PY_MUTATE_ROLE_TWO_RUNS'
+import json
+from pathlib import Path
+import shutil
+import sys
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+shutil.copytree(source, destination)
+for path in sorted(destination.glob("*.json"), key=lambda item: int(item.stem)):
+    args = json.loads(path.read_text(encoding="utf-8"))
+    if args[:2] == ["iam", "simulate-principal-policy"] and "--policy-exclusion-list" in args:
+        index = args.index("--policy-exclusion-list")
+        del args[index:index + 2]
+        path.write_text(json.dumps(args) + "\n", encoding="utf-8")
+        break
+else:
+    raise SystemExit("FAIL: two-run mutation found no scp-excluded simulation")
+PY_MUTATE_ROLE_TWO_RUNS
+}
+
+
+run_full_scale_role_dry_run() {
+  local role_lane=$1
+  local output_path=$2
+  local plan="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
+  local vectors="$REPO_ROOT/tests/fixtures/iam-simulate/vectors"
+  local timeout_seconds=${IAM_SIM_FULL_SCALE_TIMEOUT_SECONDS:-20}
+  python3 - "$role_lane" "$plan" "$vectors" "$output_path" "$timeout_seconds" \
+    "$phase2_dir" "$IAM_SIM_AWS_WRAPPER" <<'PY_RUN_FULL_ROLE_DRY'
+from pathlib import Path
+import os
+import signal
+import subprocess
+import sys
+
+role_lane, plan, vectors, output_path, timeout_seconds, phase2_dir, wrapper = sys.argv[1:]
+environment = os.environ.copy()
+environment.pop("AWS_PROFILE", None)
+environment.update({
+    "PATH": f"{phase2_dir}/bin:{environment['PATH']}",
+    "AWS_CLI_BIN": "aws",
+    "AWS_CLI_SH": wrapper,
+    "FAKE_AWS_CALL_DIR": f"{phase2_dir}/calls",
+    "FAKE_ROLE_STATE_DIR": f"{phase2_dir}/roles",
+    "FAKE_AWS_SCENARIO": "success",
+    "FAKE_ACCOUNT_ID": "000000000000",
+    "IAM_SIM_RUN_ID": "full-fixture",
+    "TARGET": "aws",
+})
+command = [
+    role_lane,
+    "--plan", plan,
+    "--vectors", vectors,
+    "--report", f"{phase2_dir}/full-fixture-dry-report.json",
+    "--expect-account", "000000000000",
+    "--dry-run",
+]
+process = subprocess.Popen(
+    command,
+    env=environment,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    start_new_session=True,
+)
+try:
+    output, _ = process.communicate(timeout=int(timeout_seconds))
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        output, _ = process.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        output, _ = process.communicate()
+    Path(output_path).write_text(output, encoding="utf-8")
+    raise SystemExit(
+        f"FAIL: full-fixture role-lane dry-run exceeded {timeout_seconds} seconds"
+    )
+Path(output_path).write_text(output, encoding="utf-8")
+if process.returncode != 0:
+    raise SystemExit(
+        f"FAIL: full-fixture role-lane dry-run exited {process.returncode}"
+    )
+PY_RUN_FULL_ROLE_DRY
+}
+
+validate_full_scale_role_dry_run() {
+  local inventory=$1
+  local plan="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
+  local vectors="$REPO_ROOT/tests/fixtures/iam-simulate/vectors"
+  python3 - "$inventory" "$plan" "$vectors" <<'PY_VALIDATE_FULL_ROLE_DRY'
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import sys
+
+inventory_path = Path(sys.argv[1])
+plan_path = Path(sys.argv[2])
+vectors_path = Path(sys.argv[3])
+role_for_document = {
+    "aws_iam_role_policy.plan_reader_deny": "plan-reader",
+    "aws_iam_role_policy.plan_reader_state": "plan-reader",
+    "aws_iam_policy.deployer_state": "deployer",
+    "aws_iam_policy.deployer_ec2": "deployer",
+    "aws_iam_policy.deployer_elb_ecs": "deployer",
+    "aws_iam_policy.deployer_data": "deployer",
+    "aws_iam_policy.deployer_iam": "deployer",
+    "aws_iam_policy.deployer_guard": "deployer",
+    "aws_iam_role_policy.publisher": "publisher",
+}
+plan = json.loads(plan_path.read_text(encoding="utf-8"))
+resources = plan["planned_values"]["root_module"]["resources"]
+documents = {
+    resource["address"]: resource["values"]["policy"]
+    for resource in resources
+    if resource.get("address") in role_for_document
+}
+vectors = [
+    json.loads(path.read_text(encoding="utf-8"))
+    for path in sorted(vectors_path.rglob("*.json"))
+]
+selected = [
+    vector for vector in vectors
+    if vector.get("simulation_mode") == "custom"
+    and vector.get("document") in role_for_document
+]
+selected_roles = {
+    role_for_document[vector["document"]]
+    for vector in selected
+}
+role_count = 0
+for role in selected_roles:
+    addresses = sorted(
+        address for address, mapped_role in role_for_document.items()
+        if mapped_role == role
+    )
+    policies = [json.loads(documents[address]) for address in addresses]
+    versions = {policy["Version"] for policy in policies}
+    statements = []
+    for policy in policies:
+        policy_statements = policy["Statement"]
+        statements.extend(
+            policy_statements if isinstance(policy_statements, list)
+            else [policy_statements]
+        )
+    combined = json.dumps(
+        {"Version": next(iter(versions)), "Statement": statements},
+        separators=(",", ":"),
+    )
+    role_count += (
+        1 if len(re.sub(r"\s", "", combined)) <= 10240
+        else len(addresses)
+    )
+
+case_count = len(selected)
+expected_calls = 1 + 8 * role_count + 2 * case_count
+lines = [
+    line for line in inventory_path.read_text(encoding="utf-8").splitlines()
+    if line.startswith("DRY-RUN:")
+]
+if len(lines) != expected_calls:
+    raise SystemExit(
+        "FAIL: full-fixture dry-run call count is "
+        f"{len(lines)}, expected 1 + 8*{role_count} + 2*{case_count} = {expected_calls}"
+    )
+
+operations = Counter()
+for operation in (
+    "create-role", "list-role-tags", "put-role-policy",
+    "simulate-principal-policy", "delete-role-policy", "delete-role", "get-role",
+):
+    operations[operation] = sum(
+        re.search(rf" iam {operation}(?: |$)", line) is not None
+        for line in lines
+    )
+expected_operations = {
+    "create-role": role_count,
+    "list-role-tags": 3 * role_count,
+    "put-role-policy": role_count,
+    "simulate-principal-policy": 2 * case_count,
+    "delete-role-policy": role_count,
+    "delete-role": role_count,
+    "get-role": role_count,
+}
+if dict(operations) != expected_operations:
+    raise SystemExit(
+        f"FAIL: full-fixture dry-run operation counts differ: {dict(operations)}"
+    )
+if sum(" sts get-caller-identity " in line for line in lines) != 1:
+    raise SystemExit("FAIL: full-fixture dry-run requires one caller identity call")
+
+simulations = [line for line in lines if " iam simulate-principal-policy " in line]
+exclusion = r' --policy-exclusion-list \{\"PolicyType\":\"scp\"\}'
+for index in range(0, len(simulations), 2):
+    excluded, default = simulations[index:index + 2]
+    if not excluded.endswith(exclusion) or excluded[:-len(exclusion)] != default:
+        raise SystemExit(
+            "FAIL: full-fixture dry-run must emit scp-excluded then default for each case"
+        )
+print(f"R={role_count} C={case_count} calls={expected_calls}")
+PY_VALIDATE_FULL_ROLE_DRY
+}
+
+mutate_role_array_reads() {
+  local source_path=$1
+  local destination=$2
+  python3 - "$source_path" "$destination" "$REPO_ROOT" <<'PY_MUTATE_ROLE_ARRAY_READS'
+from pathlib import Path
+import shlex
+import sys
+
+source_path = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+source = source_path.read_text(encoding="utf-8")
+root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+if source.count(root_line) != 1:
+    raise SystemExit("FAIL: role array-read mutation root anchor changed")
+source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
+replacements = {
+    "    jq -r '.action_names[]' <<<\"$case_json\" >\"$tmp_dir/action-names\"\n"
+    "    while IFS= read -r value; do actions+=(\"$value\"); done <\"$tmp_dir/action-names\"":
+        "    while IFS= read -r value; do actions+=(\"$value\"); done "
+        "< <(jq -r '.action_names[]' <<<\"$case_json\")",
+    "    jq -r '.resource_arns[]' <<<\"$case_json\" >\"$tmp_dir/resource-arns\"\n"
+    "    while IFS= read -r value; do resources+=(\"$value\"); done <\"$tmp_dir/resource-arns\"":
+        "    while IFS= read -r value; do resources+=(\"$value\"); done "
+        "< <(jq -r '.resource_arns[]' <<<\"$case_json\")",
+    "  jq -r '.action_names[]' <<<\"$case_json\" >\"$tmp_dir/action-names\"\n"
+    "  while IFS= read -r value; do actions+=(\"$value\"); done <\"$tmp_dir/action-names\"":
+        "  while IFS= read -r value; do actions+=(\"$value\"); done "
+        "< <(jq -r '.action_names[]' <<<\"$case_json\")",
+    "  jq -r '.resource_arns[]' <<<\"$case_json\" >\"$tmp_dir/resource-arns\"\n"
+    "  while IFS= read -r value; do resources+=(\"$value\"); done <\"$tmp_dir/resource-arns\"":
+        "  while IFS= read -r value; do resources+=(\"$value\"); done "
+        "< <(jq -r '.resource_arns[]' <<<\"$case_json\")",
+}
+for bounded, leaking in replacements.items():
+    if source.count(bounded) != 1:
+        raise SystemExit(f"FAIL: role array-read mutation anchor changed: {bounded!r}")
+    source = source.replace(bounded, leaking)
+destination.write_text(source, encoding="utf-8")
+PY_MUTATE_ROLE_ARRAY_READS
+  chmod +x "$destination"
 }
 
 validate_dry_run_inventory() {
@@ -1897,13 +2618,183 @@ PY
 }
 
 run_iam_simulate_role_lane_contracts() {
-  local output rc mutated_inventory
+  local output rc mutated_inventory full_inventory full_scale role_lane_mutant
+  local mutant_inventory mutated_full_inventory
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
   if [ ! -x "$IAM_SIM_ROLE_LANE" ]; then
     fail_case "role-lane runner exists and is executable" "$IAM_SIM_ROLE_LANE is missing"
   else
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] && validate_role_selection_report "$phase2_dir/role-report.json"; then
+      pass_case "role-lane selects custom vectors and records custom-isolated exclusion"
+      mutate_role_selection_report "$phase2_dir/role-report.json" \
+        "$phase2_dir/role-selection-mutant.json"
+      expect_failure "role-lane selection reason" \
+        "must record one custom-isolated exclusion with its reason" \
+        validate_role_selection_report "$phase2_dir/role-selection-mutant.json"
+      if validate_role_selection_report "$phase2_dir/role-report.json"; then
+        pass_case "role-lane selection reason mutation restored PASS"
+      else
+        fail_case "role-lane selection reason mutation restoration"
+      fi
+    else
+      fail_case "role-lane selects custom vectors and records custom-isolated exclusion" \
+        "rc=$rc output=$output"
+    fi
+
+    reset_phase2_fake
+    projection_report="$phase2_dir/role-projection-report.json"
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$projection_report" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] && \
+       validate_role_projection_report \
+         "$projection_report" "$phase2_dir/role-projection-vectors" \
+         "$phase2_dir/role-projection-plan.json" "$phase2_calls" && \
+       [ "$(phase2_call_count iam create-role)" -eq 8 ] && \
+       [ "$(phase2_call_count iam put-role-policy)" -eq 8 ] && \
+       [ "$(phase2_call_count iam delete-role-policy)" -eq 8 ] && \
+       [ "$(phase2_call_count iam delete-role)" -eq 8 ] && \
+       [ "$(phase2_call_count iam get-role)" -eq 8 ]; then
+      pass_case "role-lane projects fitting roles combined and deployer in six complete passes"
+      mutate_role_projection_report "$projection_report" \
+        "$phase2_dir/role-projection-mutant.json"
+      expect_failure "role-lane projection pass count" \
+        "role projection requires eight passes" \
+        validate_role_projection_report \
+          "$phase2_dir/role-projection-mutant.json" \
+          "$phase2_dir/role-projection-vectors" \
+          "$phase2_dir/role-projection-plan.json" "$phase2_calls"
+      if validate_role_projection_report \
+        "$projection_report" "$phase2_dir/role-projection-vectors" \
+        "$phase2_dir/role-projection-plan.json" "$phase2_calls"; then
+        pass_case "role-lane projection pass count mutation restored PASS"
+      else
+        fail_case "role-lane projection pass count mutation restoration"
+      fi
+    else
+      fail_case "role-lane projects fitting roles combined and deployer in six complete passes" \
+        "rc=$rc output=$output"
+    fi
+
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-duplicate-sid-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+      run_phase2_role_lane success --dry-run 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq \
+         'FAIL: duplicate Sid CrossDocumentDuplicate across aws_iam_role_policy.plan_reader_deny and aws_iam_role_policy.plan_reader_state' \
+         <<<"$output" && \
+       [ "$(find "$phase2_calls" -name '*.json' -type f | wc -l | tr -d ' ')" -eq 0 ]; then
+      pass_case "role-lane duplicate Sid mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
+    else
+      fail_case "role-lane duplicate Sid mutation did not fail as required" \
+        "rc=$rc output=$output"
+    fi
+
+    reset_phase2_fake
+    if output="$(IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+      run_phase2_role_lane success --dry-run 2>&1)" && \
+       [ "$(grep -Ec 'iam create-role( |$)' <<<"$output" || true)" -eq 8 ]; then
+      pass_case "role-lane duplicate Sid mutation restored projection passes"
+    else
+      fail_case "role-lane duplicate Sid mutation restored projection passes" "$output"
+    fi
+
+    reset_phase2_fake
+    divergence_report="$phase2_dir/role-divergence-report.json"
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-divergence-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$divergence_report" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] && validate_role_divergence_report "$divergence_report"; then
+      pass_case "role-lane records custom-lane divergence without failing"
+      mutate_role_divergence_report "$divergence_report" \
+        "$phase2_dir/role-divergence-mutant.json"
+      expect_failure "role-lane divergence evidence" \
+        "role divergence summary must contain two agreements and one divergence" \
+        validate_role_divergence_report "$phase2_dir/role-divergence-mutant.json"
+      if validate_role_divergence_report "$divergence_report"; then
+        pass_case "role-lane divergence evidence mutation restored PASS"
+      else
+        fail_case "role-lane divergence evidence mutation restoration"
+      fi
+    else
+      fail_case "role-lane records custom-lane divergence without failing" \
+        "rc=$rc output=$output"
+    fi
+
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-missing-custom-report.json" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq 'FAIL: custom report lacks exactly one record for ' <<<"$output" && \
+       [ "$(phase2_call_count iam create-role)" -eq 0 ]; then
+      pass_case "role-lane missing custom case mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
+    else
+      fail_case "role-lane missing custom case mutation did not fail before create as required" \
+        "rc=$rc create_calls=$(phase2_call_count iam create-role) output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      run_phase2_role_lane success 2>&1)"; then
+      pass_case "role-lane missing custom case mutation restored complete report passes"
+    else
+      fail_case "role-lane missing custom case mutation restored complete report passes" "$output"
+    fi
+
+    reset_phase2_fake
+    organizations_report="$phase2_dir/role-organizations-report.json"
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_REPORT="$organizations_report" \
+      run_phase2_role_lane organizations-difference 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] && \
+       validate_role_two_runs "$phase2_calls" "$organizations_report"; then
+      pass_case "role-lane issues both runs and compares the scp-excluded result"
+      mutate_role_two_run_calls "$phase2_calls" "$phase2_dir/two-run-calls-mutant"
+      expect_failure "role-lane two-run call shape" \
+        "two-run contract requires one exact scp-excluded call and one default call per case" \
+        validate_role_two_runs \
+          "$phase2_dir/two-run-calls-mutant" "$organizations_report"
+      if validate_role_two_runs "$phase2_calls" "$organizations_report"; then
+        pass_case "role-lane two-run call shape mutation restored PASS"
+      else
+        fail_case "role-lane two-run call shape mutation restoration"
+      fi
+    else
+      fail_case "role-lane issues both runs and compares the scp-excluded result" \
+        "rc=$rc output=$output"
+    fi
+
     reset_phase2_fake
     if output="$(run_phase2_role_lane success --dry-run 2>&1)" && \
        validate_dry_run_inventory "$output" && \
@@ -1915,6 +2806,51 @@ run_iam_simulate_role_lane_contracts() {
     mutated_inventory="$(grep -v 'iam delete-role-policy' <<<"$output" || true)"
     expect_failure "role-lane dry-run inventory" "requires three iam delete-role-policy calls" \
       validate_dry_run_inventory "$mutated_inventory"
+
+    full_inventory="$phase2_dir/full-fixture-dry-run.txt"
+    reset_phase2_fake
+    set +e
+    output="$(run_full_scale_role_dry_run \
+      "$IAM_SIM_ROLE_LANE" "$full_inventory" 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] && \
+       full_scale="$(validate_full_scale_role_dry_run "$full_inventory" 2>&1)" && \
+       [ "$(find "$phase2_calls" -name '*.json' -type f | wc -l | tr -d ' ')" -eq 0 ]; then
+      pass_case "role-lane full-fixture dry-run terminates with formula count ($full_scale)"
+
+      mutated_full_inventory="$phase2_dir/full-fixture-call-count-mutant.txt"
+      sed '1d' "$full_inventory" >"$mutated_full_inventory"
+      expect_failure "role-lane full-fixture formula count" \
+        "full-fixture dry-run call count is" \
+        validate_full_scale_role_dry_run "$mutated_full_inventory"
+      if full_scale="$(validate_full_scale_role_dry_run "$full_inventory" 2>&1)"; then
+        pass_case "role-lane full-fixture formula count mutation restored PASS ($full_scale)"
+      else
+        fail_case "role-lane full-fixture formula count mutation restoration" "$full_scale"
+      fi
+
+      role_lane_mutant="$phase2_dir/iam-simulate-roles-array-read-mutant.sh"
+      mutate_role_array_reads "$IAM_SIM_ROLE_LANE" "$role_lane_mutant"
+      mutant_inventory="$phase2_dir/full-fixture-mutant-dry-run.txt"
+      expect_failure "role-lane full-fixture array-read" \
+        "full-fixture role-lane dry-run exceeded" \
+        run_full_scale_role_dry_run "$role_lane_mutant" "$mutant_inventory"
+
+      reset_phase2_fake
+      if run_full_scale_role_dry_run \
+           "$IAM_SIM_ROLE_LANE" "$full_inventory" >/dev/null 2>&1 && \
+         full_scale="$(validate_full_scale_role_dry_run "$full_inventory" 2>&1)" && \
+         [ "$(find "$phase2_calls" -name '*.json' -type f | wc -l | tr -d ' ')" -eq 0 ]; then
+        pass_case "role-lane full-fixture array-read mutation restored PASS ($full_scale)"
+      else
+        fail_case "role-lane full-fixture array-read mutation restoration" \
+          "${full_scale:-validation did not run}"
+      fi
+    else
+      fail_case "role-lane full-fixture dry-run terminates with formula count" \
+        "rc=$rc emitted_calls=$(grep -c '^DRY-RUN:' "$full_inventory" 2>/dev/null || true) output=$output"
+    fi
 
     reset_phase2_fake
     set +e
