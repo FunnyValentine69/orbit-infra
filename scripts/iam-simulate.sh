@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 AWS_CLI_SH="${AWS_CLI_SH:-$REPO_ROOT/scripts/aws-cli.sh}"
 VALIDATOR="$REPO_ROOT/scripts/iam-simulate-validate.py"
+IAM_SIM_CORE="${IAM_SIM_CORE:-$REPO_ROOT/scripts/iam_simulate_core.py}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-simulate-runner.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -16,13 +17,12 @@ fi
 # shellcheck source=scripts/iam-matrix-documents.sh
 source "$REPO_ROOT/scripts/iam-matrix-documents.sh"
 
-python3 - "$REPO_ROOT" "$tmp_dir" "$AWS_CLI_SH" "$VALIDATOR" \
+python3 - "$REPO_ROOT" "$tmp_dir" "$AWS_CLI_SH" "$VALIDATOR" "$IAM_SIM_CORE" \
   "${core_documents[@]}" -- "$@" <<'PY'
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -44,24 +44,31 @@ class SystemExitWithMessage(Exception):
         self.code = code
 
 
-class RunnerFailure(Exception):
-    pass
-
-
-@dataclass(frozen=True)
-class SubmittedDocument:
-    source: str
-    text: str
-    spans: tuple[tuple[int, int, str], ...]
-
-
 separator = sys.argv.index("--")
 repo_root = Path(sys.argv[1])
 scratch = Path(sys.argv[2])
 aws_cli = Path(sys.argv[3])
 validator = Path(sys.argv[4])
-core_documents = sys.argv[5:separator]
+core_path = Path(sys.argv[5])
+core_documents = sys.argv[6:separator]
 cli_args = sys.argv[separator + 1 :]
+
+
+sys.dont_write_bytecode = True
+
+
+def load_core(path: Path) -> Any:
+    spec = importlib.util.spec_from_file_location("iam_simulate_core", path)
+    if spec is None or spec.loader is None:
+        raise SystemExitWithMessage(f"cannot load IAM simulator core: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+core = load_core(core_path)
+RunnerFailure = core.RunnerFailure
 
 S3_DIFFERENT_AUTHORIZATION_ACTIONS = frozenset(
     {
@@ -194,156 +201,6 @@ def render(value: Any, account_id: str, suffix: str) -> Any:
     return value
 
 
-def statement_spans(policy: str) -> tuple[tuple[int, int, str], ...]:
-    decoder = json.JSONDecoder()
-
-    def whitespace(index: int) -> int:
-        while index < len(policy) and policy[index].isspace():
-            index += 1
-        return index
-
-    index = whitespace(0)
-    if index >= len(policy) or policy[index] != "{":
-        raise RunnerFailure("submitted policy is not a JSON object")
-    index += 1
-    raw_spans: list[tuple[int, int, str]] = []
-    found = False
-    while True:
-        index = whitespace(index)
-        if index < len(policy) and policy[index] == "}":
-            break
-        try:
-            key, key_end = decoder.raw_decode(policy, index)
-        except json.JSONDecodeError as exc:
-            raise RunnerFailure(f"cannot locate policy Statement spans: {exc}") from exc
-        if not isinstance(key, str):
-            raise RunnerFailure("submitted policy has a non-string object key")
-        index = whitespace(key_end)
-        if index >= len(policy) or policy[index] != ":":
-            raise RunnerFailure("submitted policy object key lacks a colon")
-        index = whitespace(index + 1)
-        if key != "Statement":
-            try:
-                _, index = decoder.raw_decode(policy, index)
-            except json.JSONDecodeError as exc:
-                raise RunnerFailure(f"cannot scan submitted policy: {exc}") from exc
-        else:
-            found = True
-            if index < len(policy) and policy[index] == "[":
-                index += 1
-                while True:
-                    index = whitespace(index)
-                    if index < len(policy) and policy[index] == "]":
-                        index += 1
-                        break
-                    start = index
-                    try:
-                        statement, end = decoder.raw_decode(policy, start)
-                    except json.JSONDecodeError as exc:
-                        raise RunnerFailure(f"cannot scan submitted statement: {exc}") from exc
-                    if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
-                        raise RunnerFailure("every submitted statement must carry a non-empty Sid")
-                    raw_spans.append((start, end, statement["Sid"]))
-                    index = whitespace(end)
-                    if index < len(policy) and policy[index] == ",":
-                        index += 1
-                        continue
-                    if index < len(policy) and policy[index] == "]":
-                        index += 1
-                        break
-                    raise RunnerFailure("submitted Statement array has invalid separators")
-            else:
-                start = index
-                try:
-                    statement, end = decoder.raw_decode(policy, start)
-                except json.JSONDecodeError as exc:
-                    raise RunnerFailure(f"cannot scan submitted statement: {exc}") from exc
-                if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
-                    raise RunnerFailure("every submitted statement must carry a non-empty Sid")
-                raw_spans.append((start, end, statement["Sid"]))
-                index = end
-        index = whitespace(index)
-        if index < len(policy) and policy[index] == ",":
-            index += 1
-            continue
-        if index < len(policy) and policy[index] == "}":
-            break
-        raise RunnerFailure("submitted policy object has invalid separators")
-    if not found or not raw_spans:
-        raise RunnerFailure("submitted policy has no statements to attribute")
-    return tuple(raw_spans)
-
-
-def submitted_documents(policy_inputs: list[str], boundaries: list[str]) -> list[SubmittedDocument]:
-    submitted = []
-    for index, text in enumerate(policy_inputs, 1):
-        submitted.append(SubmittedDocument(f"PolicyInputList.{index}", text, statement_spans(text)))
-    for index, text in enumerate(boundaries, 1):
-        submitted.append(SubmittedDocument(f"PermissionsBoundaryPolicyInputList.{index}", text, statement_spans(text)))
-    return submitted
-
-
-def position_offset(policy: str, position: Any) -> int:
-    if not isinstance(position, dict):
-        raise RunnerFailure("matched statement position is not an object")
-    line = position.get("Line")
-    column = position.get("Column")
-    if type(line) is not int or type(column) is not int or line < 1 or column < 1:
-        raise RunnerFailure("matched statement position has invalid line or column")
-    lines = policy.splitlines(keepends=True)
-    if line > len(lines):
-        raise RunnerFailure("matched statement position line is outside the submitted document")
-    offset = sum(len(item) for item in lines[: line - 1]) + column - 1
-    line_body = lines[line - 1].rstrip("\r\n")
-    if column - 1 > len(line_body):
-        raise RunnerFailure("matched statement position column is outside the submitted document")
-    return offset
-
-
-def map_match(match: Any, documents: list[SubmittedDocument]) -> str:
-    if not isinstance(match, dict):
-        raise RunnerFailure("MatchedStatements entry is not an object")
-    source = match.get("SourcePolicyId")
-    by_source: dict[str, list[SubmittedDocument]] = {}
-    for document in documents:
-        by_source.setdefault(document.source, []).append(document)
-    submitted_labels = sorted(by_source)
-    if source not in by_source:
-        raise RunnerFailure(
-            f"unrecognised SourcePolicyId {source}; submitted labels: {', '.join(submitted_labels)}"
-        )
-    overlaps: list[str] = []
-    diagnostics: list[tuple[SubmittedDocument, int, int]] = []
-    for document in by_source[source]:
-        start = position_offset(document.text, match.get("StartPosition"))
-        end = position_offset(document.text, match.get("EndPosition"))
-        diagnostics.append((document, start, end))
-        for span_start, span_end, sid in document.spans:
-            if start < end and start < span_end and span_start < end:
-                overlaps.append(sid)
-    document, start, end = diagnostics[0]
-    first_start, first_end, first_sid = document.spans[0]
-    last_start, last_end, last_sid = document.spans[-1]
-    detail = (
-        f"document_length={len(document.text)} "
-        f"statement_span_count={len(document.spans)} "
-        f"returned_range=[{start},{end}) "
-        f"first_span=[{first_start},{first_end}):{first_sid} "
-        f"last_span=[{last_start},{last_end}):{last_sid}"
-    )
-    if len(overlaps) > 1:
-        raise RunnerFailure(
-            f"ambiguous matched statement position from {source}: "
-            f"overlap_count={len(overlaps)} {detail}"
-        )
-    if not overlaps:
-        raise RunnerFailure(
-            f"unmapped matched statement position from {source}: "
-            f"unmapped_offset={start} {detail}"
-        )
-    return overlaps[0]
-
-
 def normalize_context(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = []
     for entry in entries:
@@ -407,7 +264,7 @@ def prepare_vector(vector: dict[str, Any], plan_documents: dict[str, str]) -> di
         "policies": policies,
         "boundaries": boundaries,
         "context": context,
-        "documents": submitted_documents(policies, boundaries),
+        "documents": core.submitted_documents(policies, boundaries),
     }
 
 
@@ -543,66 +400,57 @@ def batch_call(batch: list[dict[str, Any]]) -> dict[str, Any]:
     return {"EvaluationResults": combined_results}
 
 
-def evaluate(item: dict[str, Any], response: dict[str, Any]) -> tuple[Any, list[str], list[str]]:
+def map_batch(
+    batch: list[dict[str, Any]], response: dict[str, Any]
+) -> list[dict[str, Any]]:
+    payload = {
+        "response": response,
+        "requests": [
+            {
+                "action_names": item["vector"]["action_names"],
+                "resource_arns": item["vector"]["resource_arns"],
+                "policy_input_list": item["policies"],
+                "permissions_boundary_policy_input_list": item["boundaries"],
+            }
+            for item in batch
+        ],
+    }
+    completed = subprocess.run(
+        [sys.executable, str(core_path), "map-batch"],
+        input=json.dumps(payload, separators=(",", ":")),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        if detail.startswith("FAIL: "):
+            detail = detail[6:]
+        raise RunnerFailure(detail or "shared IAM simulator core failed")
+    try:
+        mapped = json.loads(completed.stdout)
+        results = mapped["results"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise RunnerFailure(f"shared IAM simulator core returned invalid JSON: {exc}") from exc
+    if not isinstance(results, list) or len(results) != len(batch):
+        raise RunnerFailure("shared IAM simulator core returned the wrong result count")
+    return results
+
+
+def evaluate(
+    item: dict[str, Any], mapping: dict[str, Any]
+) -> tuple[Any, list[str], list[str]]:
+    if isinstance(mapping.get("error"), str):
+        raise RunnerFailure(mapping["error"])
     vector = item["vector"]
-    results = response.get("EvaluationResults")
-    if not isinstance(results, list):
-        raise RunnerFailure("AWS simulator response lacks EvaluationResults array")
-    observed: dict[tuple[str, str], str] = {}
-    matched_sids: set[str] = set()
-    for action in vector["action_names"]:
-        action_results = [
-            result
-            for result in results
-            if isinstance(result, dict) and result.get("EvalActionName") == action
-        ]
-        if len(action_results) != 1:
-            raise RunnerFailure(f"expected one action-level EvaluationResult for {action}, found {len(action_results)}")
-        action_result = action_results[0]
-        resource_results = (
-            action_result["ResourceSpecificResults"]
-            if "ResourceSpecificResults" in action_result
-            else None
-        )
-        if "ResourceSpecificResults" in action_result and not isinstance(
-            resource_results, list
-        ):
-            raise RunnerFailure(
-                f"ResourceSpecificResults is not an array for {action}"
-            )
-        resolved: list[tuple[str, dict[str, Any], str]] = []
-        for resource in vector["resource_arns"]:
-            matches = []
-            if isinstance(resource_results, list):
-                matches = [
-                    result
-                    for result in resource_results
-                    if isinstance(result, dict)
-                    and result.get("EvalResourceName") == resource
-                ]
-            if len(matches) > 1:
-                raise RunnerFailure(f"response repeats submitted resource ARN: {action} {resource}")
-            if matches:
-                resolved.append((resource, matches[0], "EvalResourceDecision"))
-            elif len(vector["resource_arns"]) == 1 and resource == "*":
-                resolved.append((resource, action_result, "EvalDecision"))
-            elif not isinstance(resource_results, list):
-                raise RunnerFailure(f"action-level result lacks ResourceSpecificResults for {action}")
-            else:
-                raise RunnerFailure(f"submitted resource ARN is absent from response: {action} {resource}")
-        if not vector["resource_arns"]:
-            resolved.append(("*", action_result, "EvalDecision"))
-        for resource, result, decision_field in resolved:
-            decision = result.get(decision_field)
-            if decision not in {"allowed", "implicitDeny", "explicitDeny"}:
-                scope = "action-level" if decision_field == "EvalDecision" else "resource"
-                raise RunnerFailure(f"{scope} result has unknown decision for {action} {resource}")
-            observed[(action, resource)] = decision
-            raw_matches = result.get("MatchedStatements", [])
-            if not isinstance(raw_matches, list):
-                raise RunnerFailure(f"MatchedStatements is not an array for {action} {resource}")
-            for raw_match in raw_matches:
-                matched_sids.add(map_match(raw_match, item["documents"]))
+    details = mapping.get("details")
+    matched = mapping.get("matched_sids")
+    if not isinstance(details, list) or not isinstance(matched, list):
+        raise RunnerFailure("shared IAM simulator core returned an invalid mapping")
+    observed = {
+        (detail["action_name"], detail["resource_arn"]): detail["decision_observed"]
+        for detail in details
+    }
 
     errors: list[str] = []
     expect = vector["expect"]
@@ -613,28 +461,16 @@ def evaluate(item: dict[str, Any], response: dict[str, Any]) -> tuple[Any, list[
             if decision != expected:
                 errors.append(f"decision mismatch for {action} {resource}: expected {expected}, observed {decision}")
     for sid in expect["matched_sid_required"]:
-        if sid not in matched_sids:
+        if sid not in matched:
             errors.append(f"required matched Sid is absent: {sid}")
     for sid in expect["matched_sid_forbidden"]:
-        if sid in matched_sids:
+        if sid in matched:
             errors.append(f"forbidden matched Sid is present: {sid}")
-
-    if len(vector["resource_arns"]) > 1 and len(vector["action_names"]) == 1:
-        decision_observed: Any = {resource: observed[(vector["action_names"][0], resource)] for resource in sorted(vector["resource_arns"])}
-    elif len(set(observed.values())) == 1:
-        decision_observed = next(iter(observed.values()))
-    else:
-        decision_observed = {f"{action}|{resource}": decision for (action, resource), decision in sorted(observed.items())}
-    return decision_observed, sorted(matched_sids), errors
+    return mapping["decision_observed"], matched, errors
 
 
 def hashes(item: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
-    def entries(documents: list[str]) -> list[dict[str, str]]:
-        return [{"sha256": hashlib.sha256(document.encode("utf-8")).hexdigest()} for document in documents]
-    return {
-        "policy_input_list": entries(item["policies"]),
-        "permissions_boundary_policy_input_list": entries(item["boundaries"]),
-    }
+    return core.document_hashes(item["policies"], item["boundaries"])
 
 
 def write_report(
@@ -696,6 +532,7 @@ def main() -> int:
     for batch in batches:
         try:
             response = batch_call(batch)
+            mappings = map_batch(batch, response)
         except RunnerFailure as exc:
             for item in batch:
                 vector = item["vector"]
@@ -714,10 +551,10 @@ def main() -> int:
                 })
             failure_messages.append(str(exc))
             continue
-        for item in batch:
+        for item, mapping in zip(batch, mappings):
             vector = item["vector"]
             try:
-                decision, matched, errors = evaluate(item, response)
+                decision, matched, errors = evaluate(item, mapping)
                 record = {
                     "case_id": vector["case_id"],
                     "decision_observed": decision,

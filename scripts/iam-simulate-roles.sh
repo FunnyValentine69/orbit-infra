@@ -6,6 +6,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 AWS_CLI_SH="${AWS_CLI_SH:-$REPO_ROOT/scripts/aws-cli.sh}"
 VALIDATOR="$REPO_ROOT/scripts/iam-simulate-validate.py"
+IAM_SIM_CORE="${IAM_SIM_CORE:-$REPO_ROOT/scripts/iam_simulate_core.py}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-simulate-roles.XXXXXX")"
 manifest_dir="$tmp_dir/manifest"
 mkdir -p "$manifest_dir"
@@ -68,7 +69,7 @@ manual_notes="$tmp_dir/manual-cleanup.txt"
 : >"$manual_notes"
 
 prepare_args=(
-  "$REPO_ROOT" "$VALIDATOR" "$plan" "$vectors" "$expect_account" "$run_id"
+  "$REPO_ROOT" "$VALIDATOR" "$IAM_SIM_CORE" "$plan" "$vectors" "$expect_account" "$run_id"
   "$role_plan" "$custom_report" "$dry_run"
 )
 if [ -n "$only" ]; then
@@ -77,7 +78,7 @@ fi
 python3 - "${core_documents[@]}" -- "${prepare_args[@]}" <<'PY'
 from __future__ import annotations
 
-import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -88,14 +89,31 @@ separator = sys.argv.index("--")
 core_documents = sys.argv[1:separator]
 repo_root = Path(sys.argv[separator + 1])
 validator = Path(sys.argv[separator + 2])
-plan_path = Path(sys.argv[separator + 3])
-vectors_path = Path(sys.argv[separator + 4])
-account_id = sys.argv[separator + 5]
-run_id = sys.argv[separator + 6]
-output_path = Path(sys.argv[separator + 7])
-custom_report_path = Path(sys.argv[separator + 8]) if sys.argv[separator + 8] else None
-dry_run = sys.argv[separator + 9] == "1"
-only = sys.argv[separator + 10] if len(sys.argv) > separator + 10 else None
+core_path = Path(sys.argv[separator + 3])
+plan_path = Path(sys.argv[separator + 4])
+vectors_path = Path(sys.argv[separator + 5])
+account_id = sys.argv[separator + 6]
+run_id = sys.argv[separator + 7]
+output_path = Path(sys.argv[separator + 8])
+custom_report_path = Path(sys.argv[separator + 9]) if sys.argv[separator + 9] else None
+dry_run = sys.argv[separator + 10] == "1"
+only = sys.argv[separator + 11] if len(sys.argv) > separator + 11 else None
+
+
+sys.dont_write_bytecode = True
+
+
+def load_core(path):
+    spec = importlib.util.spec_from_file_location("iam_simulate_core", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"FAIL: cannot load IAM simulator core: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+core = load_core(core_path)
 
 
 def fail(message):
@@ -262,7 +280,7 @@ def source_entries(addresses):
     return [
         {
             "address": address,
-            "sha256": hashlib.sha256(documents[address].encode("utf-8")).hexdigest(),
+            "sha256": core.document_sha256(documents[address]),
         }
         for address in addresses
     ]
@@ -315,7 +333,7 @@ for role in ("plan-reader", "deployer", "publisher"):
             "name": role_name,
             "policy_name": policy_name,
             "policy_document": policy,
-            "policy_sha256": hashlib.sha256(policy.encode("utf-8")).hexdigest(),
+            "policy_sha256": core.document_sha256(policy),
             "policy_character_count": len(re.sub(r"\s", "", policy)),
             "source_character_count": (
                 source_size if projection_kind == "combined"
@@ -370,7 +388,7 @@ payload = {
     "suffix": suffix,
     "run_id": run_id,
     "assume_role_policy": assume_policy,
-    "assume_role_policy_sha256": hashlib.sha256(assume_policy.encode("utf-8")).hexdigest(),
+    "assume_role_policy_sha256": core.document_sha256(assume_policy),
     "roles": roles,
     "cases": supported,
     "exclusions": exclusions,
@@ -720,7 +738,37 @@ evaluate_case() {
   local excluded_response=$2
   local organizations_response=$3
   local projection=$4
-  python3 - "$case_file" "$excluded_response" "$organizations_response" \
+  local mapping_prefix="${case_file%.json}"
+  local excluded_mapping="$mapping_prefix-excluded-mapping.json"
+  local organizations_mapping="$mapping_prefix-organizations-mapping.json"
+  if ! jq -n --slurpfile response "$excluded_response" \
+    --slurpfile case "$case_file" --argjson projection "$projection" '
+      {
+        response: $response[0],
+        action_names: $case[0].action_names,
+        resource_arns: $case[0].resource_arns,
+        policy_input_list: [$projection.policy_document],
+        permissions_boundary_policy_input_list: [],
+        bind_to_single_document: true
+      }
+    ' | python3 "$IAM_SIM_CORE" map-response >"$excluded_mapping"; then
+    return 1
+  fi
+  if ! jq -n --slurpfile response "$organizations_response" \
+    --slurpfile case "$case_file" --argjson projection "$projection" '
+      {
+        response: $response[0],
+        action_names: $case[0].action_names,
+        resource_arns: $case[0].resource_arns,
+        policy_input_list: [$projection.policy_document],
+        permissions_boundary_policy_input_list: [],
+        bind_to_single_document: true,
+        ignore_organizations: true
+      }
+    ' | python3 "$IAM_SIM_CORE" map-response >"$organizations_mapping"; then
+    return 1
+  fi
+  python3 - "$case_file" "$excluded_mapping" "$organizations_mapping" \
     "$projection" "$custom_report" <<'PY'
 import json
 from pathlib import Path
@@ -737,176 +785,14 @@ def fail(message):
     raise SystemExit(f"FAIL: {message}")
 
 
-def statement_spans(policy):
-    decoder = json.JSONDecoder()
-
-    def whitespace(index):
-        while index < len(policy) and policy[index].isspace():
-            index += 1
-        return index
-
-    index = whitespace(0)
-    if index >= len(policy) or policy[index] != "{":
-        fail("role projection is not a JSON object")
-    index += 1
-    spans = []
-    while True:
-        index = whitespace(index)
-        if index < len(policy) and policy[index] == "}":
-            break
-        key, end = decoder.raw_decode(policy, index)
-        index = whitespace(end)
-        if index >= len(policy) or policy[index] != ":":
-            fail("role projection object key lacks a colon")
-        index = whitespace(index + 1)
-        if key != "Statement":
-            _, index = decoder.raw_decode(policy, index)
-        elif policy[index] == "[":
-            index += 1
-            while True:
-                index = whitespace(index)
-                if policy[index] == "]":
-                    index += 1
-                    break
-                statement_start = index
-                statement, statement_end = decoder.raw_decode(policy, index)
-                if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
-                    fail("every projected statement must carry a Sid")
-                spans.append((
-                    len(policy[:statement_start].encode("utf-8")),
-                    len(policy[:statement_end].encode("utf-8")),
-                    statement["Sid"],
-                ))
-                index = whitespace(statement_end)
-                if policy[index] == ",":
-                    index += 1
-                    continue
-                if policy[index] == "]":
-                    index += 1
-                    break
-                fail("role projection Statement array has invalid separators")
-        else:
-            statement_start = index
-            statement, statement_end = decoder.raw_decode(policy, index)
-            if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
-                fail("every projected statement must carry a Sid")
-            spans.append((
-                len(policy[:statement_start].encode("utf-8")),
-                len(policy[:statement_end].encode("utf-8")),
-                statement["Sid"],
-            ))
-            index = statement_end
-        index = whitespace(index)
-        if policy[index] == ",":
-            index += 1
-            continue
-        if policy[index] == "}":
-            break
-        fail("role projection object has invalid separators")
-    if not spans:
-        fail("role projection has no statements")
-    return spans
-
-
-projection_policy = projection["policy_document"]
-projection_spans = statement_spans(projection_policy)
-
-
-def position_offset(position):
-    if not isinstance(position, dict):
-        fail("role matched statement position is not an object")
-    line = position.get("Line")
-    column = position.get("Column")
-    if type(line) is not int or type(column) is not int or line < 1 or column < 1:
-        fail("role matched statement position is invalid")
-    lines = projection_policy.encode("utf-8").splitlines(keepends=True)
-    if line > len(lines):
-        fail("role matched statement line is outside the projection")
-    body = lines[line - 1].rstrip(b"\r\n")
-    if column - 1 > len(body):
-        fail("role matched statement column is outside the projection")
-    return sum(len(item) for item in lines[: line - 1]) + column - 1
-
-
-def map_sid(match, allow_organizations):
-    source_type = match.get("SourcePolicyType")
-    if allow_organizations and isinstance(source_type, str) and "organization" in source_type.lower():
-        return None
-    start = position_offset(match.get("StartPosition"))
-    end = position_offset(match.get("EndPosition"))
-    matches = [
-        sid for span_start, span_end, sid in projection_spans
-        if span_start <= start < span_end and span_start <= end < span_end
-    ]
-    if len(matches) == 0:
-        fail(f"unmapped role matched statement position from {match.get('SourcePolicyId')}")
-    if len(matches) != 1:
-        fail(f"ambiguous role matched statement position from {match.get('SourcePolicyId')}")
-    return matches[0]
-
-
-def observe(response, allow_organizations):
-    results = response.get("EvaluationResults")
-    if not isinstance(results, list):
-        fail("role simulation response lacks EvaluationResults")
-    decisions = {}
-    matched_sources = []
-    matched_sids = set()
-    details = []
-    for action in case["action_names"]:
-        action_results = [item for item in results if isinstance(item, dict) and item.get("EvalActionName") == action]
-        if len(action_results) != 1:
-            fail(f"role response does not have one result for {action}")
-        resources = action_results[0].get("ResourceSpecificResults")
-        if not isinstance(resources, list):
-            fail(f"role response lacks ResourceSpecificResults for {action}")
-        for resource in case["resource_arns"]:
-            resource_results = [item for item in resources if isinstance(item, dict) and item.get("EvalResourceName") == resource]
-            if len(resource_results) != 1:
-                fail(f"role response does not have one exact resource result for {action} {resource}")
-            item = resource_results[0]
-            decision = item.get("EvalResourceDecision")
-            if decision not in {"allowed", "implicitDeny", "explicitDeny"}:
-                fail(f"role response has an unknown decision for {action} {resource}")
-            decisions[(action, resource)] = decision
-            raw_matches = item.get("MatchedStatements", [])
-            if not isinstance(raw_matches, list):
-                fail(f"role MatchedStatements is not an array for {action} {resource}")
-            item_sources = []
-            item_sids = set()
-            for match in raw_matches:
-                if not isinstance(match, dict):
-                    fail("role MatchedStatements entry is not an object")
-                source = {
-                    "source_policy_id": match.get("SourcePolicyId"),
-                    "source_policy_type": match.get("SourcePolicyType"),
-                    "start_position": match.get("StartPosition"),
-                    "end_position": match.get("EndPosition"),
-                }
-                matched_sources.append(source)
-                item_sources.append(source)
-                sid = map_sid(match, allow_organizations)
-                if sid is not None:
-                    matched_sids.add(sid)
-                    item_sids.add(sid)
-            details.append({
-                "action_name": action,
-                "resource_arn": resource,
-                "decision_observed": decision,
-                "matched_statement_sources": item_sources,
-                "matched_sids": sorted(item_sids),
-            })
-    if len(case["resource_arns"]) > 1 and len(case["action_names"]) == 1:
-        observed = {resource: decisions[(case["action_names"][0], resource)] for resource in sorted(case["resource_arns"])}
-    elif len(set(decisions.values())) == 1:
-        observed = next(iter(decisions.values()))
-    else:
-        observed = {f"{action}|{resource}": value for (action, resource), value in sorted(decisions.items())}
-    return observed, matched_sources, sorted(matched_sids), details
-
-
-excluded_decision, excluded_sources, excluded_sids, excluded_details = observe(excluded, False)
-organizations_decision, organizations_sources, organizations_sids, organizations_details = observe(organizations, True)
+excluded_decision = excluded["decision_observed"]
+excluded_sources = excluded["matched_statement_sources"]
+excluded_sids = excluded["matched_sids"]
+excluded_details = excluded["details"]
+organizations_decision = organizations["decision_observed"]
+organizations_sources = organizations["matched_statement_sources"]
+organizations_sids = organizations["matched_sids"]
+organizations_details = organizations["details"]
 custom_records = [record for record in custom.get("records", []) if record.get("case_id") == case["case_id"]]
 if len(custom_records) != 1:
     fail(f"custom report lacks exactly one record for {case['case_id']}")

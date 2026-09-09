@@ -7,6 +7,7 @@
 
 IAM_SIM_RUNNER="$REPO_ROOT/scripts/iam-simulate.sh"
 IAM_SIM_ROLE_LANE="$REPO_ROOT/scripts/iam-simulate-roles.sh"
+IAM_SIM_CORE="$REPO_ROOT/scripts/iam_simulate_core.py"
 IAM_SIM_AWS_WRAPPER="$REPO_ROOT/scripts/aws-cli.sh"
 
 phase2_setup() {
@@ -849,6 +850,75 @@ custom_records.append({
     encoding="utf-8",
 )
 
+
+def write_single_custom_report(name, vector_path, policy):
+    vector = json.loads(vector_path.read_text(encoding="utf-8"))
+    record = {
+        "case_id": vector["case_id"],
+        "decision_observed": vector["expect"]["decision"],
+        "matched_sids": vector["expect"]["matched_sid_required"],
+        "expect": vector["expect"],
+        "pass": True,
+        "mode": "custom",
+        "document_hashes_submitted": {
+            "policy_input_list": [{
+                "sha256": hashlib.sha256(policy.encode("utf-8")).hexdigest(),
+            }],
+            "permissions_boundary_policy_input_list": [],
+        },
+    }
+    (root / f"role-{name}-custom-report.json").write_text(
+        json.dumps({
+            "records": [record],
+            "summary": {
+                "total": 1,
+                "passed": 1,
+                "failed": 0,
+                "runner_failures": 0,
+            },
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+write_single_custom_report(
+    "deployer-position",
+    deployer_position_dir / "position.json",
+    real_deployer_policy,
+)
+for name, _, _, _ in scanner_vectors:
+    write_single_custom_report(
+        f"scanner-{name}",
+        root / f"scanner-{name}-vectors" / "position.json",
+        scanner_position_policy,
+    )
+
+role_action_level_dir = root / "role-action-level-vectors"
+role_action_level_dir.mkdir()
+role_action_level_vector = deepcopy(role_vectors[0])
+role_action_level_vector["resource_arns"] = ["*"]
+(role_action_level_dir / "action-level.json").write_text(
+    json.dumps(role_action_level_vector, indent=2) + "\n",
+    encoding="utf-8",
+)
+write_single_custom_report(
+    "action-level",
+    role_action_level_dir / "action-level.json",
+    policy_for(role_action_level_vector["document"]),
+)
+(root / "response-role-action-level.json").write_text(
+    json.dumps({
+        "EvaluationResults": [{
+            "EvalActionName": "iam:GetRole",
+            "EvalResourceName": "*",
+            "EvalDecision": "allowed",
+            "MatchedStatements": [],
+            "MissingContextValues": [],
+        }],
+    }) + "\n",
+    encoding="utf-8",
+)
+
 divergence_custom_records = deepcopy(custom_records)
 divergence_custom_records[0]["decision_observed"] = "implicitDeny"
 divergence_custom_records[0]["matched_sids"] = ["CustomMatchedSid"]
@@ -1160,6 +1230,10 @@ PY
     printf '{}\n'
     ;;
   "iam simulate-principal-policy")
+    if [ -n "${FAKE_PRINCIPAL_RESPONSE:-}" ]; then
+      cat "$FAKE_PRINCIPAL_RESPONSE"
+      exit 0
+    fi
     action="$(value_after --action-names "$@")"
     resource="$(value_after --resource-arns "$@")"
     decision=allowed
@@ -1458,6 +1532,50 @@ print(
     "(239 records, 8 shared-call batches, 16 shared cases)"
 )
 PY
+}
+
+mutate_shared_core_overlap() {
+  local destination=$1
+  python3 - "$IAM_SIM_CORE" "$destination" <<'PY_MUTATE_SHARED_CORE_OVERLAP'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+overlap_line = "            if start < end and start < span_end and span_start < end:"
+strict_line = (
+    "            if span_start <= start < span_end "
+    "and span_start <= end < span_end:"
+)
+if source.count(overlap_line) != 1:
+    raise SystemExit("FAIL: shared-core unique-overlap mutation anchor changed")
+Path(sys.argv[2]).write_text(source.replace(overlap_line, strict_line), encoding="utf-8")
+PY_MUTATE_SHARED_CORE_OVERLAP
+}
+
+mutate_shared_core_scanner() {
+  local destination=$1
+  local name=$2
+  python3 - "$IAM_SIM_CORE" "$destination" "$name" <<'PY_MUTATE_SHARED_CORE_SCANNER'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+scan_line = "                        statement, end = decoder.raw_decode(policy, start)"
+if source.count(scan_line) != 1:
+    raise SystemExit("FAIL: shared-core scanner mutation anchor changed")
+if sys.argv[3] == "string-delimiters":
+    mutation = (
+        '                        end = policy.index("}", start) + 1\n'
+        "                        statement = json.loads(policy[start:end])"
+    )
+else:
+    mutation = (
+        "                        mutated_policy = policy[:start] + "
+        "policy[start:].replace(chr(92) + chr(34), chr(34), 1)\n"
+        "                        statement, end = decoder.raw_decode(mutated_policy, start)"
+    )
+Path(sys.argv[2]).write_text(source.replace(scan_line, mutation), encoding="utf-8")
+PY_MUTATE_SHARED_CORE_SCANNER
 }
 
 run_iam_simulate_runner_contracts() {
@@ -1847,26 +1965,8 @@ PY
       success "$phase2_dir/response-isolated-position-mutant.json" \
         "$phase2_dir/isolated-vectors"
 
-    runner_mutant="$phase2_dir/iam-simulate-strict-containment.sh"
-    python3 - "$IAM_SIM_RUNNER" "$runner_mutant" "$REPO_ROOT" <<'PY_MUTANT'
-from pathlib import Path
-import shlex
-import sys
-
-source = Path(sys.argv[1]).read_text(encoding="utf-8")
-root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
-overlap_line = "            if start < end and start < span_end and span_start < end"
-strict_line = (
-    "            if span_start <= start < span_end "
-    "and span_start < end <= span_end"
-)
-if source.count(root_line) != 1 or source.count(overlap_line) != 1:
-    raise SystemExit("FAIL: runner unique-overlap mutation anchors changed")
-source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
-source = source.replace(overlap_line, strict_line)
-Path(sys.argv[2]).write_text(source, encoding="utf-8")
-PY_MUTANT
-    chmod +x "$runner_mutant"
+    core_mutant="$phase2_dir/iam-simulate-core-strict-containment.py"
+    mutate_shared_core_overlap "$core_mutant"
     for name in two-statement real-deployer; do
       reset_phase2_fake
       if [ "$name" = two-statement ]; then
@@ -1879,7 +1979,7 @@ PY_MUTANT
         mutant_vectors="$phase2_dir/deployer-position-vectors"
       fi
       set +e
-      output="$(IAM_SIM_RUNNER="$runner_mutant" IAM_SIM_TEST_PLAN="$mutant_plan" \
+      output="$(IAM_SIM_CORE="$core_mutant" IAM_SIM_TEST_PLAN="$mutant_plan" \
         run_phase2_runner success "$mutant_response" "$mutant_vectors" \
           "$phase2_dir/strict-$name-report.json" 2>&1)"
       mutant_rc=$?
@@ -1887,44 +1987,19 @@ PY_MUTANT
       if [ "$mutant_rc" -ne 0 ] && \
          grep -Fq 'FAIL: unmapped matched statement position from PolicyInputList.1' \
            <<<"$output"; then
-        pass_case "runner $name unique-overlap mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
+        pass_case "runner $name shared-core unique-overlap mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
       else
-        fail_case "runner $name unique-overlap mutation did not fail as required" \
+        fail_case "runner $name shared-core unique-overlap mutation did not fail as required" \
           "rc=$mutant_rc output=$output"
       fi
     done
 
     for name in string-delimiters escaped-quotes; do
-      runner_mutant="$phase2_dir/iam-simulate-$name-mutant.sh"
-      python3 - "$IAM_SIM_RUNNER" "$runner_mutant" "$REPO_ROOT" "$name" <<'PY_MUTANT'
-from pathlib import Path
-import shlex
-import sys
-
-source = Path(sys.argv[1]).read_text(encoding="utf-8")
-root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
-scan_line = "                        statement, end = decoder.raw_decode(policy, start)"
-if source.count(root_line) != 1 or source.count(scan_line) != 1:
-    raise SystemExit("FAIL: runner scanner mutation anchors changed")
-source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
-if sys.argv[4] == "string-delimiters":
-    mutation = (
-        '                        end = policy.index("}", start) + 1\n'
-        "                        statement = json.loads(policy[start:end])"
-    )
-else:
-    mutation = (
-        "                        mutated_policy = policy[:start] + "
-        "policy[start:].replace(chr(92) + chr(34), chr(34), 1)\n"
-        "                        statement, end = decoder.raw_decode(mutated_policy, start)"
-    )
-source = source.replace(scan_line, mutation)
-Path(sys.argv[2]).write_text(source, encoding="utf-8")
-PY_MUTANT
-      chmod +x "$runner_mutant"
+      core_mutant="$phase2_dir/iam-simulate-core-$name-mutant.py"
+      mutate_shared_core_scanner "$core_mutant" "$name"
       reset_phase2_fake
       set +e
-      output="$(IAM_SIM_RUNNER="$runner_mutant" \
+      output="$(IAM_SIM_CORE="$core_mutant" \
         IAM_SIM_TEST_PLAN="$phase2_dir/plan-scanner-position.json" \
         run_phase2_runner success "$phase2_dir/response-scanner-$name.json" \
           "$phase2_dir/scanner-$name-vectors" \
@@ -1933,12 +2008,23 @@ PY_MUTANT
       set -e
       if [ "$mutant_rc" -ne 0 ] && grep -Fq 'FAIL: cannot scan submitted statement:' \
         <<<"$output"; then
-        pass_case "runner $name scanner mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
+        pass_case "runner $name shared-core scanner mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
       else
-        fail_case "runner $name scanner mutation did not fail as required" \
+        fail_case "runner $name shared-core scanner mutation did not fail as required" \
           "rc=$mutant_rc output=$output"
       fi
     done
+
+    reset_phase2_fake
+    report="$phase2_dir/shared-core-restored-report.json"
+    if output="$(IAM_SIM_TEST_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      run_phase2_runner success "$phase2_dir/response-deployer-position.json" \
+        "$phase2_dir/deployer-position-vectors" "$report" 2>&1)" && \
+       jq -e '.records | length == 1 and .[0].pass == true' "$report" >/dev/null; then
+      pass_case "runner shared-core mutations restored PASS"
+    else
+      fail_case "runner shared-core mutation restoration" "$output"
+    fi
 
     runner_mutant="$phase2_dir/iam-simulate-wrong-resource.sh"
     python3 - "$IAM_SIM_RUNNER" "$runner_mutant" "$REPO_ROOT" <<'PY_MUTANT'
@@ -1995,6 +2081,7 @@ run_phase2_role_lane() {
     FAKE_AWS_CALL_DIR="$phase2_calls" \
     FAKE_ROLE_STATE_DIR="$phase2_roles" \
     FAKE_AWS_SCENARIO="$scenario" \
+    FAKE_PRINCIPAL_RESPONSE="${IAM_SIM_TEST_PRINCIPAL_RESPONSE:-}" \
     FAKE_ACCOUNT_ID="$test_account" \
     FAKE_ROLE_FAILURE_CREATE_INDEX="${IAM_SIM_TEST_ROLE_FAILURE_CREATE_INDEX:-}" \
     IAM_SIM_RUN_ID="$test_run_id" \
@@ -2814,16 +2901,116 @@ if any(policy >= role for policy, role in zip(delete_policies, delete_roles)):
 PY
 }
 
+run_role_shared_mapping_case() {
+  local name=$1
+  local label=$2
+  local plan=$3
+  local vectors=$4
+  local custom_report=$5
+  local response=$6
+  local expected_sid=$7
+  local report="$phase2_dir/role-shared-$name-report.json"
+  local output rc
+  reset_phase2_fake
+  set +e
+  output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+    IAM_SIM_TEST_ROLE_PLAN="$plan" \
+    IAM_SIM_TEST_ROLE_VECTORS="$vectors" \
+    IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$custom_report" \
+    IAM_SIM_TEST_ROLE_REPORT="$report" \
+    IAM_SIM_TEST_PRINCIPAL_RESPONSE="$response" \
+    run_phase2_role_lane success 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] && jq -e --arg sid "$expected_sid" '
+    .records | length == 1
+    and .[0].pass == true
+    and .[0].source_document_hash_agrees_with_custom_lane == true
+    and .[0].scp_excluded.decision_observed == "allowed"
+    and .[0].default.decision_observed == "allowed"
+    and (if $sid == "" then
+      .[0].scp_excluded.matched_sids == [] and .[0].default.matched_sids == []
+    else
+      .[0].scp_excluded.matched_sids == [$sid] and .[0].default.matched_sids == [$sid]
+    end)
+  ' "$report" >/dev/null; then
+    pass_case "$label"
+  else
+    fail_case "$label" "rc=$rc output=$output"
+  fi
+}
+
 run_iam_simulate_role_lane_contracts() {
   local output rc mutated_inventory full_inventory full_scale role_lane_mutant
   local account account_mutant account_report cleanup_mutant cleanup_report
   local mutant_inventory mutated_full_inventory mutation_fail mutation_output mutation_rc
+  local core_mutant expected_sid
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
   if [ ! -x "$IAM_SIM_ROLE_LANE" ]; then
     fail_case "role-lane runner exists and is executable" "$IAM_SIM_ROLE_LANE is missing"
   else
+    run_role_shared_mapping_case \
+      "deployer-position" \
+      "role-lane maps real deployer_data delimiter-inclusive exclusive-end range" \
+      "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      "$phase2_dir/deployer-position-vectors" \
+      "$phase2_dir/role-deployer-position-custom-report.json" \
+      "$phase2_dir/response-deployer-position.json" \
+      "ClickhouseSecretCreateWithTag"
+    for name in string-delimiters escaped-quotes; do
+      expected_sid=DenyReadStateObjectsOutsideScope
+      [ "$name" != escaped-quotes ] || expected_sid=DenyListBucketOutsideScope
+      run_role_shared_mapping_case \
+        "scanner-$name" \
+        "role-lane scans exact statement spans with $name" \
+        "$phase2_dir/plan-scanner-position.json" \
+        "$phase2_dir/scanner-$name-vectors" \
+        "$phase2_dir/role-scanner-$name-custom-report.json" \
+        "$phase2_dir/response-scanner-$name.json" \
+        "$expected_sid"
+    done
+    run_role_shared_mapping_case \
+      "action-level" \
+      "role-lane uses action-level decision when ResourceSpecificResults is absent" \
+      "$phase2_plan" \
+      "$phase2_dir/role-action-level-vectors" \
+      "$phase2_dir/role-action-level-custom-report.json" \
+      "$phase2_dir/response-role-action-level.json" \
+      ""
+
+    core_mutant="$phase2_dir/iam-simulate-core-role-strict-containment.py"
+    mutate_shared_core_overlap "$core_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_CORE="$core_mutant" \
+      IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/deployer-position-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-deployer-position-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$phase2_dir/role-shared-core-mutant-report.json" \
+      IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-deployer-position.json" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq 'FAIL: unmapped matched statement position from PolicyInputList.1' \
+         <<<"$output"; then
+      pass_case "role-lane shared-core unique-overlap mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
+    else
+      fail_case "role-lane shared-core unique-overlap mutation did not fail as required" \
+        "rc=$rc output=$output"
+    fi
+    run_role_shared_mapping_case \
+      "shared-core-restored" \
+      "role-lane shared-core mutation restored PASS" \
+      "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      "$phase2_dir/deployer-position-vectors" \
+      "$phase2_dir/role-deployer-position-custom-report.json" \
+      "$phase2_dir/response-deployer-position.json" \
+      "ClickhouseSecretCreateWithTag"
+
     account=123456
     account+='789012'
     account_mutant="$phase2_dir/iam-simulate-roles-account-redaction-mutant.sh"

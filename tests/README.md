@@ -449,7 +449,10 @@ must remain ambiguous, while a zero-overlap range remains unmapped; both
 refusals assert document-length, span-count, range, and first/last-span
 diagnostics. Scanner contracts and killed mutants cover multiline input, braces
 and brackets inside a string, escaped quotes, and restoration of strict endpoint
-containment. The group also covers compatible shared-call reporting, pre-call
+containment. Those mutants alter `scripts/iam_simulate_core.py`, proving the
+runner delegates scanning and unique-overlap attribution to the shared module;
+the restored module must pass again. The group also covers compatible shared-call
+reporting and pre-call
 refusal when a duplicate action/resource pair disagrees on its expectation, the
 five-attempt throttle cap, timeout non-retry, exact `TARGET=aws` refusal,
 byte-equal policy and boundary resolution from raw plan `.values.policy`,
@@ -476,6 +479,13 @@ the final object with `000000000000`; reports carry that placeholder in
 `account` and set `account_redacted` to `true`, while fake-recorded API calls
 prove that role names, trust policies, and principal-policy source ARNs retain
 the live account ID.
+
+The role-lane mapping cases use the same module for the exact 5,682-character
+delimiter-inclusive/exclusive-end range, braces and brackets inside strings,
+escaped quotes, and an action-level response with no
+`ResourceSpecificResults`. The same strict-containment module mutation must
+fail both the `RUNNER` and `ROLE-LANE` groups, followed by an explicit restored
+pass in each group.
 
 The group also proves the complete zero-call dry-run inventory, exact opt-in and
 account refusals, tag-based ownership before every mutation, collision
