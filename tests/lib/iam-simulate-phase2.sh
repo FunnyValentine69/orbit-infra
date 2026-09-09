@@ -50,6 +50,43 @@ mapping_policy = (
     '"Resource":"arn:aws:s3:::orbit-infra-79s5rw-bad/*"}]}'
 )
 
+real_position_policy = (
+    '{"Version":"2012-10-17","Statement":['
+    '{"Action":["s3:GetObjectVersion","s3:GetObject"],"Effect":"Deny",'
+    '"NotResource":["arn:aws:s3:::orbit-infra-79s5rw-tfstate/envs/preview/*",'
+    '"arn:aws:s3:::orbit-infra-79s5rw-tfstate/bootstrap/*"],'
+    '"Sid":"DenyReadStateObjectsOutsideScope"},'
+    '{"Action":"s3:ListBucket","Effect":"Deny",'
+    '"NotResource":"arn:aws:s3:::orbit-infra-79s5rw-tfstate",'
+    '"Sid":"DenyListBucketOutsideScope"},'
+    '{"Action":["s3:ListBucketVersions","s3:ListBucket"],'
+    '"Condition":{"StringNotLike":{"s3:prefix":['
+    '"envs/preview/*","bootstrap/*","envs/preview","bootstrap"]}},'
+    '"Effect":"Deny","Resource":"arn:aws:s3:::orbit-infra-79s5rw-tfstate",'
+    '"Sid":"DenyListBucketOutsideScopePrefix"},'
+    '{"Action":["s3:ListBucketVersions","s3:ListBucket"],'
+    '"Condition":{"Null":{"s3:prefix":"true"}},"Effect":"Deny",'
+    '"Resource":"arn:aws:s3:::orbit-infra-79s5rw-tfstate",'
+    '"Sid":"DenyListBucketMissingPrefix"},'
+    '{"Action":["ssm:GetParametersByPath","ssm:GetParameters",'
+    '"ssm:GetParameterHistory","ssm:GetParameter",'
+    '"secretsmanager:GetSecretValue","lambda:GetLayerVersion",'
+    '"lambda:GetFunctionConfiguration","lambda:GetFunction","kms:Decrypt"],'
+    '"Effect":"Deny","Resource":"*","Sid":"DenySecretsAndParams"}]}'
+)
+if len(real_position_policy) != 1163 or hashlib.sha256(
+    real_position_policy.encode("utf-8")
+).hexdigest() != "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b":
+    raise SystemExit("FAIL: real position policy fixture bytes changed")
+
+multiline_position_policy = """{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Sid":"FixtureAllow","Effect":"Allow","Action":"s3:GetObject","Resource":"*"},
+    {"Action":"s3:GetObject","Effect":"Deny","Resource":"*","Sid":"DenyReadStateObjectsOutsideScope"}
+  ]
+}"""
+
 ambiguous_policy = '{"Version":"2012-10-17","Statement":[{"Sid":"EcrAuth","Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},{"Sid":"Other__","Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"}]}'
 isolated_plan_policy = json.dumps(
     {
@@ -116,6 +153,22 @@ for short in ("plan_reader", "deployer", "publisher"):
 plan = {"planned_values": {"root_module": {"resources": resources}}}
 (root / "plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
 
+for name, policy in (
+    ("real-position", real_position_policy),
+    ("multiline-position", multiline_position_policy),
+):
+    position_plan = deepcopy(plan)
+    resource = next(
+        item
+        for item in position_plan["planned_values"]["root_module"]["resources"]
+        if item["address"] == "aws_iam_role_policy.plan_reader_deny"
+    )
+    resource["values"]["policy"] = policy
+    (root / f"plan-{name}.json").write_text(
+        json.dumps(position_plan, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
 missing_document_plan = deepcopy(plan)
 missing_document_plan["planned_values"]["root_module"]["resources"] = [
     resource
@@ -178,6 +231,30 @@ runner_dir = root / "runner-vectors"
 runner_dir.mkdir()
 (runner_dir / "mapping.json").write_text(json.dumps(runner_vector, indent=2) + "\n", encoding="utf-8")
 
+real_position_vector = {
+    "schema_version": 1,
+    "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource",
+    "document": "aws_iam_role_policy.plan_reader_deny",
+    "sid": "DenyReadStateObjectsOutsideScope",
+    "simulation_mode": "custom",
+    "assertion_kind": "decision",
+    "action_names": ["s3:GetObject"],
+    "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate/other/x"],
+    "context_entries": [],
+    "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_required": ["DenyReadStateObjectsOutsideScope"],
+        "matched_sid_forbidden": [],
+    },
+}
+for name in ("real-position", "multiline-position"):
+    position_dir = root / f"{name}-vectors"
+    position_dir.mkdir()
+    (position_dir / "position.json").write_text(
+        json.dumps(real_position_vector, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
 statement_starts = []
 decoder = json.JSONDecoder()
 statement_array = mapping_policy.index('[', mapping_policy.index('"Statement"')) + 1
@@ -228,6 +305,43 @@ baseline = {
     "IsTruncated": False,
 }
 (root / "response-baseline.json").write_text(json.dumps(baseline) + "\n", encoding="utf-8")
+
+real_position_resource = "arn:aws:s3:::orbit-infra-79s5rw-tfstate/other/x"
+
+
+def position_response(start, end):
+    return {
+        "EvaluationResults": [{
+            "EvalActionName": "s3:GetObject",
+            "EvalResourceName": real_position_resource,
+            "EvalDecision": "explicitDeny",
+            "ResourceSpecificResults": [{
+                "EvalResourceName": real_position_resource,
+                "EvalResourceDecision": "explicitDeny",
+                "MatchedStatements": [{
+                    "SourcePolicyId": "PolicyInputList.1",
+                    "SourcePolicyType": "IAM Policy",
+                    "StartPosition": start,
+                    "EndPosition": end,
+                }],
+                "MissingContextValues": [],
+            }],
+        }],
+    }
+
+
+(root / "response-real-position.json").write_text(
+    json.dumps(position_response(position(38), position(271))) + "\n",
+    encoding="utf-8",
+)
+(root / "response-multiline-position.json").write_text(
+    json.dumps(
+        position_response(
+            {"Line": 5, "Column": 5}, {"Line": 5, "Column": 102}
+        )
+    ) + "\n",
+    encoding="utf-8",
+)
 
 decision_mutation = json.loads(json.dumps(baseline))
 decision_mutation["EvaluationResults"][0]["ResourceSpecificResults"][0]["EvalResourceDecision"] = "explicitDeny"
@@ -281,7 +395,7 @@ ambiguous_response = {
         "ResourceSpecificResults": [{
             "EvalResourceName": "*",
             "EvalResourceDecision": "allowed",
-            "MatchedStatements": [match(ambiguous_first, "PolicyInputList.1", ambiguous_second)],
+            "MatchedStatements": [match(ambiguous_first, "PolicyInputList.1", ambiguous_second + 1)],
             "MissingContextValues": [],
         }],
     }],
@@ -342,6 +456,7 @@ duplicate_response = {
 isolated_dir = root / "isolated-vectors"
 isolated_dir.mkdir()
 isolated = json.loads((taxonomy_path.parent / "valid-custom-isolated.json").read_text(encoding="utf-8"))
+isolated["expect"]["matched_sid_forbidden"] = ["LogsCreateWithTag"]
 (isolated_dir / "isolated.json").write_text(json.dumps(isolated, indent=2) + "\n", encoding="utf-8")
 isolated_resource = "arn:aws:logs:us-east-1:000000000000:log-group:/orbit/79s5rw/example"
 isolated_response = {
@@ -362,6 +477,14 @@ isolated_mutant = json.loads(json.dumps(isolated_response))
 for result in isolated_mutant["EvaluationResults"]:
     result["ResourceSpecificResults"][0]["EvalResourceDecision"] = "allowed"
 (root / "response-isolated-mutant.json").write_text(json.dumps(isolated_mutant) + "\n", encoding="utf-8")
+isolated_position_mutant = deepcopy(isolated_response)
+isolated_position_mutant["EvaluationResults"][0]["ResourceSpecificResults"][0][
+    "MatchedStatements"
+] = [match(38, end_column=271)]
+(root / "response-isolated-position-mutant.json").write_text(
+    json.dumps(isolated_position_mutant) + "\n",
+    encoding="utf-8",
+)
 
 role_dir = root / "role-vectors"
 role_dir.mkdir()
@@ -863,6 +986,23 @@ run_iam_simulate_runner_contracts() {
     expect_runner_failure "runner position-to-Sid attribution" "required matched Sid is absent" \
       success "$phase2_dir/response-position-mutant.json" "$phase2_dir/runner-vectors"
 
+    for name in real-position multiline-position; do
+      reset_phase2_fake
+      report="$phase2_dir/$name-report.json"
+      if output="$(IAM_SIM_TEST_PLAN="$phase2_dir/plan-$name.json" \
+        run_phase2_runner success "$phase2_dir/response-$name.json" \
+          "$phase2_dir/$name-vectors" "$report" 2>&1)" && \
+         jq -e '
+           .records | length == 1
+           and .[0].matched_sids == ["DenyReadStateObjectsOutsideScope"]
+           and .[0].pass == true
+         ' "$report" >/dev/null; then
+        pass_case "runner maps $name exact statement span"
+      else
+        fail_case "runner maps $name exact statement span" "$output"
+      fi
+    done
+
     reset_phase2_fake
     report="$phase2_dir/resolved-report.json"
     if output="$(run_phase2_runner success "$phase2_dir/response-resolved.json" \
@@ -1064,6 +1204,47 @@ PY
     fi
     expect_runner_failure "runner isolated one-statement decision" "decision mismatch" \
       success "$phase2_dir/response-isolated-mutant.json" "$phase2_dir/isolated-vectors"
+    expect_runner_failure "runner isolated wrapper position attribution" \
+      "forbidden matched Sid is present: LogsCreateWithTag" \
+      success "$phase2_dir/response-isolated-position-mutant.json" \
+        "$phase2_dir/isolated-vectors"
+
+    runner_mutant="$phase2_dir/iam-simulate-inclusive-end.sh"
+    python3 - "$IAM_SIM_RUNNER" "$runner_mutant" "$REPO_ROOT" <<'PY_MUTANT'
+from pathlib import Path
+import shlex
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+end_line = "            contains_end = span_start < end <= span_end"
+if source.count(root_line) != 1 or source.count(end_line) != 1:
+    raise SystemExit("FAIL: runner exclusive-end mutation anchors changed")
+source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
+source = source.replace(
+    end_line,
+    "            contains_end = span_start <= end < span_end",
+)
+Path(sys.argv[2]).write_text(source, encoding="utf-8")
+PY_MUTANT
+    chmod +x "$runner_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_RUNNER="$runner_mutant" \
+      IAM_SIM_TEST_PLAN="$phase2_dir/plan-real-position.json" \
+      run_phase2_runner success "$phase2_dir/response-real-position.json" \
+        "$phase2_dir/real-position-vectors" \
+        "$phase2_dir/inclusive-end-report.json" 2>&1)"
+    mutant_rc=$?
+    set -e
+    if [ "$mutant_rc" -ne 0 ] && \
+       grep -Fq 'FAIL: unmapped matched statement position from PolicyInputList.1' \
+         <<<"$output"; then
+      pass_case "runner exclusive end-position mapping mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
+    else
+      fail_case "runner exclusive end-position mapping mutation did not fail as required" \
+        "rc=$mutant_rc output=$output"
+    fi
 
     runner_mutant="$phase2_dir/iam-simulate-wrong-resource.sh"
     python3 - "$IAM_SIM_RUNNER" "$runner_mutant" "$REPO_ROOT" <<'PY_MUTANT'

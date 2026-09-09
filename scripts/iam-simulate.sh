@@ -264,10 +264,7 @@ def statement_spans(policy: str) -> tuple[tuple[int, int, str], ...]:
         raise RunnerFailure("submitted policy object has invalid separators")
     if not found or not raw_spans:
         raise RunnerFailure("submitted policy has no statements to attribute")
-    return tuple(
-        (len(policy[:start].encode("utf-8")), len(policy[:end].encode("utf-8")), sid)
-        for start, end, sid in raw_spans
-    )
+    return tuple(raw_spans)
 
 
 def submitted_documents(policy_inputs: list[str], boundaries: list[str]) -> list[SubmittedDocument]:
@@ -286,11 +283,11 @@ def position_offset(policy: str, position: Any) -> int:
     column = position.get("Column")
     if type(line) is not int or type(column) is not int or line < 1 or column < 1:
         raise RunnerFailure("matched statement position has invalid line or column")
-    lines = policy.encode("utf-8").splitlines(keepends=True)
+    lines = policy.splitlines(keepends=True)
     if line > len(lines):
         raise RunnerFailure("matched statement position line is outside the submitted document")
     offset = sum(len(item) for item in lines[: line - 1]) + column - 1
-    line_body = lines[line - 1].rstrip(b"\r\n")
+    line_body = lines[line - 1].rstrip("\r\n")
     if column - 1 > len(line_body):
         raise RunnerFailure("matched statement position column is outside the submitted document")
     return offset
@@ -315,8 +312,8 @@ def map_match(match: Any, documents: list[SubmittedDocument]) -> str:
         end = position_offset(document.text, match.get("EndPosition"))
         for span_start, span_end, sid in document.spans:
             contains_start = span_start <= start < span_end
-            contains_end = span_start <= end < span_end
-            if contains_start or contains_end:
+            contains_end = span_start < end <= span_end
+            if start < span_end and span_start < end:
                 touched.append(sid)
             if contains_start and contains_end:
                 mapped.append(sid)
