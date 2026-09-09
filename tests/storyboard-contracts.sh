@@ -22,7 +22,7 @@ check_asset() {
   elif [ ! -f "$asset" ] || [ ! -f "$provenance" ]; then
     fail "storyboard asset and provenance must either both exist or both be absent"
   else
-    python3 "$GENERATOR" --check
+    python3 "$GENERATOR" --check "$asset" || return 1
     recorded_sha="$(sed -n 's/^| artifact sha256 | \([0-9a-f]\{64\}\) |$/\1/p' "$provenance")"
     [ -n "$recorded_sha" ] || fail "storyboard provenance lacks one artifact sha256 row"
     actual_sha="$(shasum -a 256 "$asset" | awk '{print $1}')"
@@ -166,6 +166,23 @@ grep -Fxq \
   'FAIL: storyboard asset and provenance must either both exist or both be absent' \
   <<< "$pairing_output" || \
   fail "storyboard pairing failure branch was not exercised"
+
+tampered_root="$tmp_dir/tampered-root"
+init_asset_scratch "$tampered_root"
+printf '%s\n' '<!-- tampered -->' >> "$tampered_root/docs/assets/storyboard.svg"
+tampered_sha="$(shasum -a 256 "$tampered_root/docs/assets/storyboard.svg" | awk '{print $1}')"
+tampered_commit="$(git -C "$tampered_root" rev-parse HEAD)"
+sed -E \
+  -e "/^\| artifact sha256 \|/s/[0-9a-f]{64}/$tampered_sha/" \
+  -e "/^\| generator commit \|/s/[0-9a-f]{7,40}/$tampered_commit/" \
+  "$tampered_root/docs/assets/STORYBOARD_PROVENANCE.md" > "$tmp_dir/tampered-provenance.md"
+mv "$tmp_dir/tampered-provenance.md" \
+  "$tampered_root/docs/assets/STORYBOARD_PROVENANCE.md"
+if tampered_output="$(check_asset "$tampered_root" 2>&1)"; then
+  fail "storyboard tampered asset with matching provenance passed"
+fi
+grep -Fxq 'storyboard: regenerate the storyboard' <<< "$tampered_output" || \
+  fail "storyboard tampered asset did not exercise generator-byte validation"
 
 absent_root="$tmp_dir/absent-root"
 init_asset_scratch "$absent_root"

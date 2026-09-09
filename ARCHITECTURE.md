@@ -280,8 +280,10 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `demo/env.sh` and `demo/record.sh` transaction records lifecycle, lease, or
   supply-chain evidence from a closed per-kind configuration in `demo/lib.sh`.
   Each kind has its own tape, immutable provenance template, required output
-  patterns, and transitive generator closure; artifact inspection, teardown,
-  provenance rendering, and publication remain one transaction.
+  patterns, and transitive generator closure. Validation, teardown, provenance
+  rendering, and publication run as one guarded sequence; publication uses two
+  independent renames, so interruption can leave a mixed pair that the
+  provenance contract exposes and a rerun repairs.
 - **Front-page contracts:** `tests/storyboard-contracts.sh` checks deterministic,
   accessible, hygienic SVG generation before an asset exists and later binds the
   committed asset to its generator commit. `tests/demo-contracts.sh` verifies the

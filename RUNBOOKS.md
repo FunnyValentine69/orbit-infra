@@ -305,9 +305,11 @@ That command writes `docs/assets/storyboard.svg` and
 For the recordings, start LocalStack, apply the LocalStack bootstrap once, and
 build the placeholder image. Record lifecycle, lease, and supply-chain evidence
 in order with `make demo`, `make demo NAME=lease`, and `make demo NAME=supply`,
-or run the same sequence with `make demo-all`. Each recorder invocation validates
-and publishes its GIF and provenance document as one transaction; do not edit
-those generated files. The lease recording owns only its unique owner token and
+or run the same sequence with `make demo-all`. Each recorder invocation runs
+validation, teardown, provenance rendering, and publication as one guarded sequence;
+publication uses two independent renames, so interruption can leave a mixed pair
+that the provenance contract exposes and a rerun repairs. Do not edit those
+generated files. The lease recording owns only its unique owner token and
 generation, and points here when a claim or manual-recovery state prevents safe
 cleanup.
 

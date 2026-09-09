@@ -239,12 +239,13 @@ bash tests/demo-contracts.sh
 
 Its six groups cover the exact per-name environment and unknown-name refusal;
 all three tapes and their required output; kind-specific provenance and generator
-closures; the bounded, owner- and generation-fenced lease recovery helper; the
-existing lifecycle transaction failure table; and fake end-to-end lease and
-supply-chain recordings. Lease cases include repeat recording from `closed`,
-abort and claim states, terminal foreign-owner refusals, mid-loop manual and
-Stage 2 claim races, teardown generation replacement, one- and two-pass sleeps,
-exhaustion, and the no-backend-call boundary after final inventory. Drift mutants
+closures, including ignored Terraform and Rego input refusal; the bounded,
+owner- and generation-fenced lease recovery helper; the existing lifecycle
+transaction failure table; and fake end-to-end lease and supply-chain recordings.
+Lease cases include repeat recording from `closed`, abort and claim states,
+terminal foreign-owner refusals, mid-loop manual and Stage 2 claim races, teardown
+generation replacement, one- and two-pass sleeps, exhaustion, and an injected
+post-inventory display failure proving the no-backend-call boundary. Drift mutants
 cover each kind's scripts, templates, contracts, and fixtures. The provenance
 commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a
 shallow checkout fails with `generator commit unreachable; fetch full history`. The suite
@@ -258,8 +259,9 @@ bash tests/storyboard-contracts.sh
 
 The generator group checks exact captions, byte determinism, accessibility,
 hygiene, reduced motion, and static snapshot scheduling. It also uses
-Git-initialized scratch roots to require the explicit one-missing failure and
-both-absent skip branches. Until both committed storyboard outputs exist, the
+Git-initialized scratch roots to require the explicit one-missing failure, reject
+a tampered SVG even when its local provenance hash matches, and preserve the
+both-absent skip branch. Until both committed storyboard outputs exist, the
 asset group alone reports
 `SKIP: storyboard asset not committed yet`; once present, it validates byte
 identity, provenance hash, commit reachability, and the generator closure.

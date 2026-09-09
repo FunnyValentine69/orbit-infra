@@ -1448,6 +1448,50 @@ else
     "$real_git_output"
 fi
 
+real_git_rego_root="$tmp_dir/lifecycle-real-git-rego"
+real_git_rego_repo="$real_git_rego_root/repo"
+real_git_rego_calls="$real_git_rego_repo/.fake-calls.log"
+mkdir -p "$real_git_rego_root"
+git clone -q "$real_git_source" "$real_git_rego_repo"
+mkdir -p "$real_git_rego_repo/policy"
+printf '%s\n' 'policy/ignored-recording.rego' >> \
+  "$real_git_rego_repo/.git/info/exclude"
+printf '%s\n' 'package ignored_recording' > \
+  "$real_git_rego_repo/policy/ignored-recording.rego"
+: > "$real_git_rego_calls"
+for control in .fake-fail .fake-vhs-mode .fake-tf-state .fake-duration \
+  .fake-frames .fake-frame-rate .fake-ls-version .fake-health-calls; do
+  cp "$real_git_repo/$control" "$real_git_rego_repo/$control"
+done
+real_git_rego_before="$(shasum -a 256 \
+  "$real_git_rego_repo/docs/assets/demo.gif" \
+  "$real_git_rego_repo/docs/assets/DEMO_PROVENANCE.md")"
+set +e
+real_git_rego_output="$(
+  cd "$real_git_rego_repo"
+  PATH="$real_git_bin:$PATH" \
+  HOME="$real_git_rego_root/home" \
+  TMPDIR="$real_git_rego_root" \
+  TERM=xterm \
+  OPERATOR_CIDR=203.0.113.128/25 \
+    bash -p demo/env.sh 2>&1
+)"
+real_git_rego_rc=$?
+set -e
+real_git_rego_after="$(shasum -a 256 \
+  "$real_git_rego_repo/docs/assets/demo.gif" \
+  "$real_git_rego_repo/docs/assets/DEMO_PROVENANCE.md")"
+if [ "$real_git_rego_rc" -ne 0 ] && \
+   [ "$real_git_rego_before" = "$real_git_rego_after" ] && \
+   grep -Fq 'ignored Rego input present: policy/ignored-recording.rego' \
+     <<< "$real_git_rego_output" && \
+   ! grep -Eq '^(make|terraform) ' "$real_git_rego_calls"; then
+  pass_case "lifecycle real git rejects ignored Rego before make or terraform"
+else
+  fail_case "lifecycle real git rejects ignored Rego before make or terraform" \
+    "$real_git_rego_output"
+fi
+
 lifecycle_failures_ok=1
 for lifecycle_case in \
   'preflight-leftover||normal|leftover||none|environment demo already has state' \
@@ -1709,7 +1753,7 @@ case "${1:-}" in
       echo "lease.sh: no lease for ${2:-}" >&2
       exit 1
     fi
-    if [ -f "$RUN/final-inventory.complete" ]; then
+    if [ -f .fake-final-inventory-observed ]; then
       echo "after-final lease get" >> .fake-calls.log
     fi
     cat .fake-lease.json
@@ -1829,11 +1873,15 @@ EOF
 cat > "$recording_template/scripts/aws-cli.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ -f "$RUN/final-inventory.complete" ]; then
+if [ -f .fake-final-inventory-observed ]; then
   echo "after-final backend $*" >> .fake-calls.log
 fi
 echo "backend $*" >> .fake-calls.log
 echo '{"IsTruncated":false,"Versions":[],"DeleteMarkers":[]}'
+if [ "$(cat .record-mode)" = post-inventory-display-failure ]; then
+  mv "$RUN/close.log" "$RUN/close.log.removed"
+fi
+touch .fake-final-inventory-observed
 EOF
 chmod +x "$recording_template/scripts/"*.sh
 
@@ -2071,6 +2119,21 @@ else
 fi
 lease_success_repo=$LIFECYCLE_REPO
 lease_success_run=$LIFECYCLE_RUN
+
+run_lifecycle lease-post-inventory-display-failure '' \
+  post-inventory-display-failure empty '' none lease
+if [ "$LIFECYCLE_RC" -ne 0 ] && \
+   [ -f "$LIFECYCLE_RUN/final-inventory.complete" ] && \
+   [ -f "$LIFECYCLE_RUN/close.log.removed" ] && \
+   grep -Fxq 'assert_steps:fail' "$LIFECYCLE_RUN/lifecycle.log" && \
+   ! grep -q '^after-final ' "$LIFECYCLE_CALLS" && \
+   ! grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
+  pass_case "lease post-inventory display failure has zero later lease or backend calls"
+else
+  recording_contract_ok=0
+  fail_case "lease post-inventory display failure has zero later lease or backend calls" \
+    "$LIFECYCLE_OUTPUT"
+fi
 
 run_lifecycle lease-second-run '' second-run:4 empty '' none lease
 if [ "$LIFECYCLE_RC" -eq 0 ] && \

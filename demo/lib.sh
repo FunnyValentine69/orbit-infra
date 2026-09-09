@@ -124,6 +124,10 @@ generator_clean_check() {
                 failed=1
               fi
               ;;
+            *.rego)
+              echo "ignored Rego input present: $path" >&2
+              failed=1
+              ;;
           esac
         done < "$ignored_file"
       else

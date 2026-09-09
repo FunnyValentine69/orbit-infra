@@ -356,13 +356,13 @@ assert_steps() {
       marker_count="$(jq '(.DeleteMarkers // []) | length' <<< "$inventory")"
       [ "$version_count" -eq 0 ] && [ "$marker_count" -eq 0 ] || \
         die "state or lock versions remain after Stage 2"
+      FINAL_STATUS=closed
+      VERSIONS_REMAINING=0
+      touch "$RUN/final-inventory.complete"
       PRE_OPEN_STATUS="$(sed -n 's/^status=\([^ ]*\).*/\1/p' "$RUN/lease-before.log")"
       OPENED_GENERATION="$(cat "$RUN/lease.generation")"
       APPLY_RESOURCE_COUNT=61
       CLOSE_RESULT="$(tail -n 1 "$RUN/close.log")"
-      FINAL_STATUS=closed
-      VERSIONS_REMAINING=0
-      touch "$RUN/final-inventory.complete"
       ;;
     verify)
       for file in canon-timestamp canon-checksum canon-sha contracts; do

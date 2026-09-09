@@ -146,14 +146,14 @@ def write_output(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
 
 
-def check_asset() -> int:
-    if not DEFAULT_OUTPUT.is_file():
-        print(f"storyboard: {DEFAULT_OUTPUT} is missing", file=sys.stderr)
+def check_asset(path: Path = DEFAULT_OUTPUT) -> int:
+    if not path.is_file():
+        print(f"storyboard: {path} is missing", file=sys.stderr)
         return 1
     with tempfile.TemporaryDirectory(prefix="storyboard-check-") as directory:
         candidate = Path(directory) / "storyboard.svg"
         write_output(candidate, render())
-        if candidate.read_bytes() != DEFAULT_OUTPUT.read_bytes():
+        if candidate.read_bytes() != path.read_bytes():
             print("storyboard: regenerate the storyboard", file=sys.stderr)
             return 1
     return 0
@@ -162,14 +162,21 @@ def check_asset() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--check", action="store_true", help="compare the committed asset"
+        "--check",
+        nargs="?",
+        type=Path,
+        const=DEFAULT_OUTPUT,
+        metavar="PATH",
+        help="compare PATH with a fresh render (default: committed asset)",
     )
     parser.add_argument("--output", type=Path, help="write to this path")
     parser.add_argument(
         "--snapshot", type=float, help="render a static state at N seconds"
     )
     args = parser.parse_args()
-    if args.check and (args.output is not None or args.snapshot is not None):
+    if args.check is not None and (
+        args.output is not None or args.snapshot is not None
+    ):
         parser.error("--check cannot be combined with --output or --snapshot")
     if args.snapshot is not None and not math.isfinite(args.snapshot):
         parser.error("--snapshot must be finite")
@@ -182,8 +189,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.check:
-        return check_asset()
+    if args.check is not None:
+        return check_asset(args.check)
     write_output(args.output or DEFAULT_OUTPUT, render(args.snapshot))
     return 0
 
