@@ -620,7 +620,14 @@ else
     IFS='|' read -r recording_kind recording_doc recording_gif <<< "$recording_case"
     recorded_commit="$(field_value 'generator commit' "$REPO_ROOT/$recording_doc" | \
       sed -E 's/^`?([0-9a-f]{7}).*/\1/')"
-    recording_paths="$(demo_generator_paths "$recording_kind")"
+    if ! recording_paths="$(demo_generator_paths "$recording_kind")"; then
+      final_head_ok=0
+      continue
+    fi
+    if [ -z "$recording_paths" ]; then
+      final_head_ok=0
+      continue
+    fi
     # shellcheck disable=SC2086
     if ! validate_provenance "$recording_kind" "$REPO_ROOT/$recording_doc" \
          "$REPO_ROOT/$recording_gif" >/dev/null 2>&1 || \
@@ -1581,7 +1588,7 @@ if [ "$LIFECYCLE_RC" -eq 0 ] && [ "$LIFECYCLE_BEFORE" != "$LIFECYCLE_AFTER" ] &&
      "$LIFECYCLE_RUN/provenance.env" >/dev/null 2>&1 && \
    [ "$(field_value 'generator commit' \
        "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE.md")" = \
-     'abc1234 (the tree at this commit holds every path in DEMO_GENERATOR_PATHS)' ]; then
+     'abc1234 (the tree at this commit holds the active recording generator closure)' ]; then
   pass_case "lifecycle success publishes every run-derived provenance row after teardown"
 else
   lifecycle_failures_ok=0

@@ -257,8 +257,10 @@ bash tests/storyboard-contracts.sh
 ```
 
 The generator group checks exact captions, byte determinism, accessibility,
-hygiene, reduced motion, and static snapshot scheduling. Until both committed
-storyboard outputs exist, the asset group alone reports
+hygiene, reduced motion, and static snapshot scheduling. It also uses
+Git-initialized scratch roots to require the explicit one-missing failure and
+both-absent skip branches. Until both committed storyboard outputs exist, the
+asset group alone reports
 `SKIP: storyboard asset not committed yet`; once present, it validates byte
 identity, provenance hash, commit reachability, and the generator closure.
 

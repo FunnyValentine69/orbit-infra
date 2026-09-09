@@ -806,6 +806,9 @@ if ! grep -Eq \
 fi
 
 : > "$tmp_dir/stage2-probe.log"
+sweeper_tail="$(tail -n 1 "$SWEEPER")"
+[ "$sweeper_tail" = 'main "$@"' ] || \
+  fail 'sweep.sh library seam requires final line main "$@"'
 sed '$d' "$SWEEPER" > "$tmp_dir/sweep-library.sh"
 set +e
 (
@@ -815,6 +818,14 @@ set +e
   export LEASE_SH FAKE_STAGE2_PROBE_LOG TARGET
   # shellcheck source=/dev/null
   source "$tmp_dir/sweep-library.sh"
+  SCRIPT_DIR="$REPO_ROOT/scripts"
+  CLOSE_ENV_SH="$SCRIPT_DIR/close-env.sh"
+  AWS_CLI_SH="$SCRIPT_DIR/aws-cli.sh"
+  export CLOSE_ENV_SH AWS_CLI_SH
+  [[ "$SCRIPT_DIR" == */scripts ]] || \
+    fail "sweep.sh library seam SCRIPT_DIR does not end in /scripts: $SCRIPT_DIR"
+  [ -f "$SCRIPT_DIR/close-env.sh" ] || \
+    fail "sweep.sh library seam close-env.sh is missing: $SCRIPT_DIR/close-env.sh"
   stage2 aws-happy '{"generation":2}' 1 >/dev/null 2>&1
 )
 stage2_probe_rc=$?

@@ -473,7 +473,7 @@ build_manifest() {
       {
         printf 'recorded_from=%s\n' "$recorded_from"
         printf 'recorded_on=%s\n' "$recorded_on"
-        printf 'generator_commit=%s (the tree at this commit holds every path in DEMO_GENERATOR_PATHS)\n' "$GENERATOR_COMMIT"
+        printf 'generator_commit=%s (the tree at this commit holds the active recording generator closure)\n' "$GENERATOR_COMMIT"
         printf 'recorder=%s\n' "$recorder"
         # shellcheck disable=SC2016
         printf 'command=`OPERATOR_CIDR=%s make demo` from the repository root\n' "$OPERATOR_CIDR"

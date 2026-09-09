@@ -3,14 +3,53 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GENERATOR="$REPO_ROOT/scripts/storyboard.py"
-ASSET="$REPO_ROOT/docs/assets/storyboard.svg"
-PROVENANCE="$REPO_ROOT/docs/assets/STORYBOARD_PROVENANCE.md"
+STORYBOARD_REPO_ROOT="${STORYBOARD_REPO_ROOT:-$REPO_ROOT}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
   exit 1
+}
+
+check_asset() {
+  local asset_root=$1
+  local asset="$asset_root/docs/assets/storyboard.svg"
+  local provenance="$asset_root/docs/assets/STORYBOARD_PROVENANCE.md"
+  local recorded_sha actual_sha recorded_commit
+  if [ ! -e "$asset" ] && [ ! -e "$provenance" ]; then
+    echo "SKIP: storyboard asset not committed yet"
+  elif [ ! -f "$asset" ] || [ ! -f "$provenance" ]; then
+    fail "storyboard asset and provenance must either both exist or both be absent"
+  else
+    python3 "$GENERATOR" --check
+    recorded_sha="$(sed -n 's/^| artifact sha256 | \([0-9a-f]\{64\}\) |$/\1/p' "$provenance")"
+    [ -n "$recorded_sha" ] || fail "storyboard provenance lacks one artifact sha256 row"
+    actual_sha="$(shasum -a 256 "$asset" | awk '{print $1}')"
+    [ "$recorded_sha" = "$actual_sha" ] || fail "storyboard provenance sha256 differs"
+    recorded_commit="$(sed -n 's/^| generator commit | \([0-9a-f]\{7,40\}\) |$/\1/p' "$provenance")"
+    [ -n "$recorded_commit" ] || fail "storyboard provenance lacks one generator commit row"
+    grep -Fxq '| command | make storyboard |' "$provenance" || \
+      fail "storyboard provenance lacks the reproduction command"
+    git -C "$asset_root" cat-file -e "$recorded_commit^{commit}" 2>/dev/null || \
+      fail "storyboard generator commit is unreachable"
+    git -C "$asset_root" diff --quiet "$recorded_commit" HEAD -- \
+      scripts/storyboard.py Makefile || fail "regenerate the storyboard"
+    echo "PASS: storyboard asset contracts"
+  fi
+}
+
+init_asset_scratch() {
+  local destination=$1
+  mkdir -p "$destination/docs/assets"
+  cp "$REPO_ROOT/docs/assets/storyboard.svg" "$destination/docs/assets/storyboard.svg"
+  cp "$REPO_ROOT/docs/assets/STORYBOARD_PROVENANCE.md" \
+    "$destination/docs/assets/STORYBOARD_PROVENANCE.md"
+  git -C "$destination" init -q
+  git -C "$destination" add docs/assets/storyboard.svg \
+    docs/assets/STORYBOARD_PROVENANCE.md
+  git -C "$destination" -c user.name=t -c user.email=t@localhost \
+    commit -q -m fixtures
 }
 
 inspect_svg() {
@@ -113,26 +152,34 @@ sed -i.bak "s#</desc># $account_number</desc>#" "$tmp_dir/account.svg"
 rm -f "$tmp_dir/account.svg.bak"
 if (inspect_svg "$tmp_dir/account.svg") >/dev/null 2>&1; then mutation_ok=0; fi
 [ "$mutation_ok" -eq 1 ] || fail "storyboard scratch mutation table survived"
+
+pairing_root="$tmp_dir/pairing-root"
+init_asset_scratch "$pairing_root"
+mv "$pairing_root/docs/assets/STORYBOARD_PROVENANCE.md" \
+  "$tmp_dir/pairing-provenance.removed"
+if pairing_output="$(
+  check_asset "$pairing_root" 2>&1
+)"; then
+  fail "storyboard asset/provenance pairing mutation passed"
+fi
+grep -Fxq \
+  'FAIL: storyboard asset and provenance must either both exist or both be absent' \
+  <<< "$pairing_output" || \
+  fail "storyboard pairing failure branch was not exercised"
+
+absent_root="$tmp_dir/absent-root"
+init_asset_scratch "$absent_root"
+mv "$absent_root/docs/assets/storyboard.svg" "$tmp_dir/absent-storyboard.removed"
+mv "$absent_root/docs/assets/STORYBOARD_PROVENANCE.md" \
+  "$tmp_dir/absent-provenance.removed"
+if ! absent_output="$(
+  check_asset "$absent_root" 2>&1
+)"; then
+  fail "storyboard both-absent branch failed: $absent_output"
+fi
+grep -Fxq 'SKIP: storyboard asset not committed yet' <<< "$absent_output" || \
+  fail "storyboard both-absent branch did not emit its explicit skip: $absent_output"
 echo "PASS: storyboard generator contracts"
 
 echo "== storyboard contracts: asset =="
-if [ ! -e "$ASSET" ] && [ ! -e "$PROVENANCE" ]; then
-  echo "SKIP: storyboard asset not committed yet"
-elif [ ! -f "$ASSET" ] || [ ! -f "$PROVENANCE" ]; then
-  fail "storyboard asset and provenance must either both exist or both be absent"
-else
-  python3 "$GENERATOR" --check
-  recorded_sha="$(sed -n 's/^| artifact sha256 | \([0-9a-f]\{64\}\) |$/\1/p' "$PROVENANCE")"
-  [ -n "$recorded_sha" ] || fail "storyboard provenance lacks one artifact sha256 row"
-  actual_sha="$(shasum -a 256 "$ASSET" | awk '{print $1}')"
-  [ "$recorded_sha" = "$actual_sha" ] || fail "storyboard provenance sha256 differs"
-  recorded_commit="$(sed -n 's/^| generator commit | \([0-9a-f]\{7,40\}\) |$/\1/p' "$PROVENANCE")"
-  [ -n "$recorded_commit" ] || fail "storyboard provenance lacks one generator commit row"
-  grep -Fxq '| command | make storyboard |' "$PROVENANCE" || \
-    fail "storyboard provenance lacks the reproduction command"
-  git -C "$REPO_ROOT" cat-file -e "$recorded_commit^{commit}" 2>/dev/null || \
-    fail "storyboard generator commit is unreachable"
-  git -C "$REPO_ROOT" diff --quiet "$recorded_commit" HEAD -- \
-    scripts/storyboard.py Makefile || fail "regenerate the storyboard"
-  echo "PASS: storyboard asset contracts"
-fi
+check_asset "$STORYBOARD_REPO_ROOT"
