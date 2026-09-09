@@ -476,9 +476,10 @@ created, simulated, and deleted per-document roles. Report records identify the
 deciding projection with source addresses and SHA-256 hashes. Before report
 serialization, one recursive boundary replaces the live account ID throughout
 the final object with `000000000000`; reports carry that placeholder in
-`account` and set `account_redacted` to `true`, while fake-recorded API calls
-prove that role names, trust policies, and principal-policy source ARNs retain
-the live account ID.
+`account`, replace the per-invocation ownership nonce with `<redacted>`, and set
+both redaction markers to `true`. Fake-recorded API calls prove that role names,
+trust policies, and principal-policy source ARNs retain the live account ID
+while the report contains neither the live account nor the replayable nonce.
 
 The role-lane mapping cases use the same module for the exact 5,682-character
 delimiter-inclusive/exclusive-end range, braces and brackets inside strings,
@@ -488,15 +489,19 @@ fail both the `RUNNER` and `ROLE-LANE` groups, followed by an explicit restored
 pass in each group.
 
 The group also proves the complete zero-call dry-run inventory, exact opt-in and
-account refusals, tag-based ownership before every mutation, collision
-isolation, cleanup after a midway create failure and TERM, the delete-policy
-barrier, reverse cleanup across all projection passes, and post-cleanup
-`NoSuchEntity` verification. Midway-create and TERM failures run against both
-the three-role fixture and the eight-role projection, with the expanded cases
-failing at deployer p4 and proving that every earlier role is deleted and
-verified absent without creating a later role. A high-index cleanup mutant
-still passes the three-role case but is killed by the eight-role case. Its
-deadline-bounded full-fixture dry run derives
+account refusals, custom-report mode and source-hash agreement before the first
+create, both run-id and 32-hex nonce ownership tags before the first policy put,
+collision isolation, cleanup after a midway create failure and TERM, the
+delete-policy barrier, reverse cleanup across all projection passes, and
+post-cleanup `NoSuchEntity` verification. Midway-create and TERM failures run
+against both the three-role fixture and the eight-role projection. Additional
+eight-role cases inject at deployer p4 between a policy put and its marker and
+immediately after policy deletion; cleanup tolerates an unattached policy,
+defers TERM until cleanup, absence verification, and report writing finish, and
+then returns 143. A nonce-tamper case proves zero policy puts and deletes, and a
+nonce-ignoring source mutant is killed. A high-index cleanup mutant still passes
+the three-role case but is killed by the eight-role case. The deadline-bounded
+full-fixture dry run derives
 the projected-role count `R` and selected-case count `C` from the plan and vector
 fixtures at run time, then requires exactly `1 + 8R + 2C` calls. A dropped-call
 mutant kills the formula check; a process-substitution mutant kills termination.

@@ -1020,6 +1020,47 @@ for index, document in enumerate(role_projection_documents):
     encoding="utf-8",
 )
 
+wrong_hash_payload = {
+    "records": deepcopy(projection_records),
+    "summary": {
+        "total": len(projection_records),
+        "passed": len(projection_records),
+        "failed": 0,
+        "runner_failures": 0,
+    },
+}
+wrong_hash_case_id = next(
+    vector["case_id"]
+    for vector in (
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in projection_vector_dir.glob("*.json")
+    )
+    if vector["document"] == "aws_iam_policy.deployer_guard"
+)
+wrong_hash_record = next(
+    record
+    for record in wrong_hash_payload["records"]
+    if record["case_id"] == wrong_hash_case_id
+)
+wrong_hash_record["document_hashes_submitted"]["policy_input_list"][0]["sha256"] = "0" * 64
+(root / "role-projection-wrong-hash-custom-report.json").write_text(
+    json.dumps(wrong_hash_payload, indent=2) + "\n",
+    encoding="utf-8",
+)
+wrong_mode_payload = {
+    "records": deepcopy(projection_records),
+    "summary": wrong_hash_payload["summary"],
+}
+wrong_mode_record = next(
+    record for record in wrong_mode_payload["records"]
+    if record["case_id"] == wrong_hash_case_id
+)
+wrong_mode_record["mode"] = "principal"
+(root / "role-projection-wrong-mode-custom-report.json").write_text(
+    json.dumps(wrong_mode_payload, indent=2) + "\n",
+    encoding="utf-8",
+)
+
 duplicate_sid_plan = deepcopy(role_projection_plan)
 for address in (
     "aws_iam_role_policy.plan_reader_deny",
@@ -1203,8 +1244,43 @@ PY
       echo 'An error occurred (ServiceFailure) when calling the CreateRole operation' >&2
       exit 254
     fi
-    tag_value="$(value_after --tags "$@" | sed 's/^Key=OrbitIamSimulationRun,Value=//')"
-    jq -cn --arg tag "$tag_value" '{tag:$tag,policy:false}' >"$FAKE_ROLE_STATE_DIR/$role_name.json"
+    tags_json="$(python3 - "$@" <<'PY'
+import json
+import sys
+
+args = sys.argv[1:]
+index = args.index("--tags") + 1
+tags = []
+while index < len(args) and not args[index].startswith("--"):
+    key_part, separator, value_part = args[index].partition(",Value=")
+    if not separator or not key_part.startswith("Key="):
+        raise SystemExit(f"FAIL: fake create-role received an invalid tag: {args[index]}")
+    tags.append({"Key": key_part.removeprefix("Key="), "Value": value_part})
+    index += 1
+print(json.dumps(tags, separators=(",", ":")))
+PY
+)"
+    jq -cn --argjson tags "$tags_json" '{tags:$tags,policy:false}' >"$FAKE_ROLE_STATE_DIR/$role_name.json"
+    if [ "${FAKE_AWS_SCENARIO:-}" = nonce-tamper ] && \
+       [ -n "${FAKE_ROLE_INJECTION_SUFFIX:-}" ] && \
+       [[ "$role_name" == *"$FAKE_ROLE_INJECTION_SUFFIX" ]]; then
+      jq '
+        if any(.tags[]; .Key == "OrbitIamSimulationNonce") then
+          .tags |= map(
+            if .Key == "OrbitIamSimulationNonce" then
+              .Value = (if .Value == "00000000000000000000000000000000" then
+                "11111111111111111111111111111111"
+              else
+                "00000000000000000000000000000000"
+              end)
+            else . end
+          )
+        else
+          .tags += [{Key:"OrbitIamSimulationNonce",Value:"00000000000000000000000000000000"}]
+        end
+      ' "$FAKE_ROLE_STATE_DIR/$role_name.json" >"$FAKE_ROLE_STATE_DIR/$role_name.json.next"
+      mv "$FAKE_ROLE_STATE_DIR/$role_name.json.next" "$FAKE_ROLE_STATE_DIR/$role_name.json"
+    fi
     jq -cn --arg role "$role_name" '{Role:{RoleName:$role}}'
     if [ "${FAKE_AWS_SCENARIO:-}" = term-during-create ] && \
        [ "$create_count" -eq "${FAKE_ROLE_FAILURE_CREATE_INDEX:-1}" ]; then
@@ -1217,17 +1293,30 @@ PY
       echo 'An error occurred (NoSuchEntity) when calling the ListRoleTags operation' >&2
       exit 254
     }
-    tag_value="$(jq -r '.tag' "$FAKE_ROLE_STATE_DIR/$role_name.json")"
+    tags_json="$(jq -c '.tags' "$FAKE_ROLE_STATE_DIR/$role_name.json")"
     if [ "${FAKE_AWS_SCENARIO:-}" = tag-mismatch ]; then
-      tag_value=wrong-run
+      tags_json="$(jq -c '
+        map(if .Key == "OrbitIamSimulationRun" then .Value = "wrong-run" else . end)
+      ' <<<"$tags_json")"
     fi
-    jq -cn --arg tag "$tag_value" '{Tags:[{Key:"OrbitIamSimulationRun",Value:$tag}]}'
+    jq -cn --argjson tags "$tags_json" '{Tags:$tags}'
     ;;
   "iam put-role-policy")
     role_name="$(value_after --role-name "$@")"
+    if [ "${FAKE_AWS_SCENARIO:-}" = put-policy-fails ] && \
+       [ -n "${FAKE_ROLE_INJECTION_SUFFIX:-}" ] && \
+       [[ "$role_name" == *"$FAKE_ROLE_INJECTION_SUFFIX" ]]; then
+      echo 'An error occurred (ServiceFailure) when calling the PutRolePolicy operation' >&2
+      exit 254
+    fi
     jq '.policy = true' "$FAKE_ROLE_STATE_DIR/$role_name.json" >"$FAKE_ROLE_STATE_DIR/$role_name.json.next"
     mv "$FAKE_ROLE_STATE_DIR/$role_name.json.next" "$FAKE_ROLE_STATE_DIR/$role_name.json"
     printf '{}\n'
+    if [ "${FAKE_AWS_SCENARIO:-}" = term-during-put ] && \
+       [ -n "${FAKE_ROLE_INJECTION_SUFFIX:-}" ] && \
+       [[ "$role_name" == *"$FAKE_ROLE_INJECTION_SUFFIX" ]]; then
+      kill -TERM "$IAM_SIM_LANE_PID"
+    fi
     ;;
   "iam simulate-principal-policy")
     if [ -n "${FAKE_PRINCIPAL_RESPONSE:-}" ]; then
@@ -1258,9 +1347,18 @@ PY
       echo 'An error occurred (ServiceFailure) when calling the DeleteRolePolicy operation' >&2
       exit 254
     fi
+    if ! jq -e '.policy == true' "$FAKE_ROLE_STATE_DIR/$role_name.json" >/dev/null; then
+      echo 'An error occurred (NoSuchEntity) when calling the DeleteRolePolicy operation' >&2
+      exit 254
+    fi
     jq '.policy = false' "$FAKE_ROLE_STATE_DIR/$role_name.json" >"$FAKE_ROLE_STATE_DIR/$role_name.json.next"
     mv "$FAKE_ROLE_STATE_DIR/$role_name.json.next" "$FAKE_ROLE_STATE_DIR/$role_name.json"
     printf '{}\n'
+    if [ "${FAKE_AWS_SCENARIO:-}" = term-after-delete-policy ] && \
+       [ -n "${FAKE_ROLE_INJECTION_SUFFIX:-}" ] && \
+       [[ "$role_name" == *"$FAKE_ROLE_INJECTION_SUFFIX" ]]; then
+      kill -TERM "$IAM_SIM_LANE_PID"
+    fi
     ;;
   "iam delete-role")
     role_name="$(value_after --role-name "$@")"
@@ -2084,6 +2182,7 @@ run_phase2_role_lane() {
     FAKE_PRINCIPAL_RESPONSE="${IAM_SIM_TEST_PRINCIPAL_RESPONSE:-}" \
     FAKE_ACCOUNT_ID="$test_account" \
     FAKE_ROLE_FAILURE_CREATE_INDEX="${IAM_SIM_TEST_ROLE_FAILURE_CREATE_INDEX:-}" \
+    FAKE_ROLE_INJECTION_SUFFIX="${IAM_SIM_TEST_ROLE_INJECTION_SUFFIX:-}" \
     IAM_SIM_RUN_ID="$test_run_id" \
     TARGET=aws \
     "$test_role_lane" --plan "$test_plan" --vectors "$test_vectors" \
@@ -2139,6 +2238,8 @@ if unexpected:
 payload = json.loads(serialized)
 if payload.get("account") != placeholder or payload.get("account_redacted") is not True:
     raise SystemExit("FAIL: role report lacks the placeholder account and account_redacted marker")
+if payload.get("ownership_nonce") != "<redacted>" or payload.get("ownership_nonce_redacted") is not True:
+    raise SystemExit("FAIL: role report lacks the redacted ownership nonce marker")
 if not payload.get("manual_cleanup"):
     raise SystemExit("FAIL: role report account-redaction fixture lacks a manual-cleanup note")
 
@@ -2153,6 +2254,16 @@ for call in creates:
     expected_trust = f"arn:aws:iam::{account}:root"
     if account not in role_name or json.loads(trust_policy)["Statement"][0]["Principal"]["AWS"] != expected_trust:
         raise SystemExit("FAIL: create-role call did not retain the real account id")
+    tag_index = call.index("--tags") + 1
+    nonce_tag = next(
+        (tag for tag in call[tag_index:] if tag.startswith("Key=OrbitIamSimulationNonce,Value=")),
+        None,
+    )
+    if nonce_tag is None:
+        raise SystemExit("FAIL: create-role call lacks the ownership nonce")
+    nonce = nonce_tag.partition(",Value=")[2]
+    if nonce in serialized:
+        raise SystemExit("FAIL: role report contains an ownership nonce")
 for call in simulations:
     source_arn = call[call.index("--policy-source-arn") + 1]
     if not source_arn.startswith(f"arn:aws:iam::{account}:role/") or account not in source_arn:
@@ -2252,6 +2363,237 @@ run_role_creation_failure_case() {
   fi
 }
 
+
+role_wrong_hash_expected_line() {
+  local plan=$1
+  local vectors=$2
+  local custom_report=$3
+  python3 - "$plan" "$vectors" "$custom_report" <<'PY_ROLE_WRONG_HASH_EXPECTED'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+vectors = [
+    json.loads(path.read_text(encoding="utf-8"))
+    for path in Path(sys.argv[2]).glob("*.json")
+]
+report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+policies = {
+    resource["address"]: resource["values"]["policy"]
+    for resource in plan["planned_values"]["root_module"]["resources"]
+    if isinstance(resource.get("values"), dict)
+    and isinstance(resource["values"].get("policy"), str)
+}
+for vector in vectors:
+    record = next(item for item in report["records"] if item["case_id"] == vector["case_id"])
+    observed = record["document_hashes_submitted"]["policy_input_list"][0]["sha256"]
+    expected = hashlib.sha256(policies[vector["document"]].encode("utf-8")).hexdigest()
+    if observed != expected:
+        print(
+            f"FAIL: custom report policy hash mismatch for {vector['case_id']}: "
+            f"report={observed} plan={expected}"
+        )
+        break
+else:
+    raise SystemExit("FAIL: wrong-hash fixture contains no mismatch")
+PY_ROLE_WRONG_HASH_EXPECTED
+}
+
+validate_role_cleanup_race() {
+  local report=$1
+  local calls=$2
+  local role_state=$3
+  local scenario=$4
+  python3 - "$report" "$calls" "$role_state" "$scenario" <<'PY_VALIDATE_ROLE_CLEANUP_RACE'
+import json
+from pathlib import Path
+import sys
+
+report_path = Path(sys.argv[1])
+call_paths = sorted(Path(sys.argv[2]).glob("*.json"), key=lambda path: int(path.stem))
+role_state = Path(sys.argv[3])
+scenario = sys.argv[4]
+if not report_path.is_file():
+    raise SystemExit("FAIL: cleanup race did not write its report")
+payload = json.loads(report_path.read_text(encoding="utf-8"))
+roles = payload.get("projection", {}).get("roles", [])
+if len(roles) != 8:
+    raise SystemExit(f"FAIL: cleanup race requires eight roles, found {len(roles)}")
+role_names = [role["name"] for role in roles]
+target = next(
+    (role["name"] for role in roles if role.get("name", "").endswith("-deployer-p4")),
+    None,
+)
+if target is None:
+    raise SystemExit("FAIL: cleanup race lacks the deployer-p4 injection role")
+calls = [json.loads(path.read_text(encoding="utf-8")) for path in call_paths]
+
+
+def operation_names(operation):
+    return [
+        call[call.index("--role-name") + 1]
+        for call in calls
+        if call[:2] == ["iam", operation]
+    ]
+
+
+puts = operation_names("put-role-policy")
+delete_policies = operation_names("delete-role-policy")
+delete_roles = operation_names("delete-role")
+gets = operation_names("get-role")
+if scenario in {"term-during-put", "put-policy-fails"}:
+    expected_puts = role_names[:5]
+    expected_delete_policies = list(reversed(role_names[:5]))
+    expected_records = 0
+    if puts != expected_puts or puts[-1] != target:
+        raise SystemExit("FAIL: cleanup race was not injected while loading deployer-p4")
+elif scenario == "term-after-delete-policy":
+    expected_puts = role_names
+    expected_delete_policies = list(reversed(role_names))
+    expected_records = 9
+    if target not in delete_policies:
+        raise SystemExit("FAIL: cleanup race was not injected after deployer-p4 policy deletion")
+else:
+    raise SystemExit(f"FAIL: unknown cleanup-race scenario: {scenario}")
+if delete_policies != expected_delete_policies:
+    raise SystemExit("FAIL: cleanup race did not attempt every marked policy in reverse order")
+if delete_roles != list(reversed(role_names)):
+    raise SystemExit("FAIL: cleanup race did not delete every role in reverse order")
+if gets != role_names:
+    raise SystemExit("FAIL: cleanup race did not verify NoSuchEntity for every role")
+if any(role_state.glob("*.json")):
+    raise SystemExit("FAIL: cleanup race left role state behind")
+if len(payload.get("records", [])) != expected_records:
+    raise SystemExit("FAIL: cleanup race report has the wrong completed-record count")
+PY_VALIDATE_ROLE_CLEANUP_RACE
+}
+
+run_role_cleanup_race_case() {
+  local label=$1
+  local scenario=$2
+  local expected_rc=$3
+  local expected_failure=$4
+  local report="$phase2_dir/role-$scenario-report.json"
+  local output rc fail_line
+  reset_phase2_fake
+  set +e
+  output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+    IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+    IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+    IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+    IAM_SIM_TEST_ROLE_REPORT="$report" \
+    IAM_SIM_TEST_ROLE_INJECTION_SUFFIX=-deployer-p4 \
+    run_phase2_role_lane "$scenario" 2>&1)"
+  rc=$?
+  set -e
+  fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+  if [ "$rc" -eq "$expected_rc" ] && [ -n "$fail_line" ] && \
+     grep -Fq "$expected_failure" <<<"$output" && \
+     validate_role_cleanup_race "$report" "$phase2_calls" "$phase2_roles" "$scenario"; then
+    pass_case "$label mutation -> $fail_line"
+  else
+    fail_case "$label mutation did not fail safely" "rc=$rc output=$output"
+  fi
+}
+
+run_role_projection_restored_case() {
+  local label=$1
+  local report="$phase2_dir/role-${label// /-}-report.json"
+  local output
+  reset_phase2_fake
+  if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+    IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+    IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+    IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+    IAM_SIM_TEST_ROLE_REPORT="$report" \
+    run_phase2_role_lane success 2>&1)" && \
+     [ "$(phase2_call_count iam create-role)" -eq 8 ] && \
+     [ "$(phase2_call_count iam delete-role)" -eq 8 ] && \
+     [ "$(phase2_call_count iam get-role)" -eq 8 ] && \
+     ! find "$phase2_roles" -name '*.json' -type f | grep -q .; then
+    pass_case "$label restored PASS"
+  else
+    fail_case "$label restoration" "$output"
+  fi
+}
+
+validate_role_nonce_tamper() {
+  local report=$1
+  local calls=$2
+  local role_state=$3
+  python3 - "$report" "$calls" "$role_state" <<'PY_VALIDATE_ROLE_NONCE_TAMPER'
+import json
+from pathlib import Path
+import re
+import sys
+
+report_path = Path(sys.argv[1])
+call_paths = sorted(Path(sys.argv[2]).glob("*.json"), key=lambda path: int(path.stem))
+role_state = Path(sys.argv[3])
+calls = [json.loads(path.read_text(encoding="utf-8")) for path in call_paths]
+puts = sum(call[:2] == ["iam", "put-role-policy"] for call in calls)
+delete_policies = sum(call[:2] == ["iam", "delete-role-policy"] for call in calls)
+delete_roles = sum(call[:2] == ["iam", "delete-role"] for call in calls)
+if puts or delete_policies or delete_roles:
+    raise SystemExit(
+        "FAIL: nonce tamper reached policy or role mutations: "
+        f"put={puts} delete-policy={delete_policies} delete-role={delete_roles}"
+    )
+creates = [call for call in calls if call[:2] == ["iam", "create-role"]]
+if len(creates) != 8:
+    raise SystemExit(f"FAIL: nonce tamper requires eight create calls, found {len(creates)}")
+nonces = set()
+for call in creates:
+    index = call.index("--tags") + 1
+    raw_tags = []
+    while index < len(call) and not call[index].startswith("--"):
+        raw_tags.append(call[index])
+        index += 1
+    tags = {}
+    for raw_tag in raw_tags:
+        key_part, separator, value = raw_tag.partition(",Value=")
+        if not separator or not key_part.startswith("Key="):
+            raise SystemExit("FAIL: nonce tamper create call has an invalid tag")
+        tags[key_part.removeprefix("Key=")] = value
+    if set(tags) != {"OrbitIamSimulationRun", "OrbitIamSimulationNonce"}:
+        raise SystemExit("FAIL: nonce tamper create call lacks both ownership tags")
+    nonce = tags["OrbitIamSimulationNonce"]
+    if re.fullmatch(r"[0-9a-f]{32}", nonce) is None:
+        raise SystemExit("FAIL: ownership nonce is not 32 lowercase hex characters")
+    nonces.add(nonce)
+if len(nonces) != 1:
+    raise SystemExit("FAIL: one invocation did not use one ownership nonce")
+state_paths = list(role_state.glob("*.json"))
+if len(state_paths) != 8:
+    raise SystemExit("FAIL: nonce tamper refusal did not preserve all eight roles for manual cleanup")
+target_path = next(
+    (path for path in state_paths if path.stem.endswith("-deployer-p4")),
+    None,
+)
+if target_path is None:
+    raise SystemExit("FAIL: nonce tamper state lacks deployer-p4")
+target_tags = {
+    tag["Key"]: tag["Value"]
+    for tag in json.loads(target_path.read_text(encoding="utf-8"))["tags"]
+}
+if target_tags.get("OrbitIamSimulationRun") != "fixture-run":
+    raise SystemExit("FAIL: nonce tamper changed the run-id tag")
+if target_tags.get("OrbitIamSimulationNonce") in nonces:
+    raise SystemExit("FAIL: nonce tamper did not change deployer-p4's nonce")
+if not report_path.is_file():
+    raise SystemExit("FAIL: nonce tamper did not write its report")
+serialized = report_path.read_text(encoding="utf-8")
+for nonce in nonces | {target_tags.get("OrbitIamSimulationNonce")}:
+    if nonce and nonce in serialized:
+        raise SystemExit("FAIL: role report contains an ownership nonce")
+payload = json.loads(serialized)
+if not any("ownership tag mismatch" in note for note in payload.get("manual_cleanup", [])):
+    raise SystemExit("FAIL: nonce tamper report does not name the ownership mismatch")
+PY_VALIDATE_ROLE_NONCE_TAMPER
+}
+
 mutate_role_report_redaction() {
   local source_path=$1
   local destination=$2
@@ -2264,13 +2606,41 @@ source_path = Path(sys.argv[1])
 destination = Path(sys.argv[2])
 source = source_path.read_text(encoding="utf-8")
 root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
-redaction_line = 'payload = redact_account(payload, role_plan["account_id"])\n'
-if source.count(root_line) != 1 or source.count(redaction_line) != 1:
+redaction_block = (
+    'payload = redact_sensitive(payload, [\n'
+    '    (role_plan["account_id"], "000000000000"),\n'
+    '    (nonce, "<redacted>"),\n'
+    '])\n'
+)
+if source.count(root_line) != 1 or source.count(redaction_block) != 1:
     raise SystemExit("FAIL: role report-redaction mutation anchor changed")
 source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
-source = source.replace(redaction_line, "")
+source = source.replace(redaction_block, "")
 destination.write_text(source, encoding="utf-8")
 PY_MUTATE_ROLE_REPORT_REDACTION
+  chmod +x "$destination"
+}
+
+mutate_role_nonce_check() {
+  local source_path=$1
+  local destination=$2
+  python3 - "$source_path" "$destination" "$REPO_ROOT" <<'PY_MUTATE_ROLE_NONCE_CHECK'
+from pathlib import Path
+import shlex
+import sys
+
+source_path = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+source = source_path.read_text(encoding="utf-8")
+root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+complete_check = '[{Key:$run_key,Value:$run_value},{Key:$nonce_key,Value:$nonce_value}]'
+run_only_check = '[{Key:$run_key,Value:$run_value}]'
+if source.count(root_line) != 1 or source.count(complete_check) != 1:
+    raise SystemExit("FAIL: role nonce-check mutation anchor changed")
+source = source.replace(root_line, f"REPO_ROOT={shlex.quote(sys.argv[3])}")
+source = source.replace(complete_check, run_only_check)
+destination.write_text(source, encoding="utf-8")
+PY_MUTATE_ROLE_NONCE_CHECK
   chmod +x "$destination"
 }
 
@@ -2481,7 +2851,16 @@ if delete_policies != list(reversed(role_names)) or delete_roles != list(reverse
     raise SystemExit("FAIL: role projection did not delete every pass in reverse order")
 if gets != role_names:
     raise SystemExit("FAIL: role projection did not verify NoSuchEntity for every pass")
-for operation in ("put-role-policy", "delete-role-policy", "delete-role"):
+last_create_index = max(calls.index(call) for call in operation_calls("create-role"))
+first_put_index = min(calls.index(call) for call in operation_calls("put-role-policy"))
+preflight_tag_reads = [
+    call_role_name(call)
+    for call in calls[last_create_index + 1:first_put_index]
+    if call[:2] == ["iam", "list-role-tags"]
+]
+if preflight_tag_reads != role_names:
+    raise SystemExit("FAIL: role projection lacks a complete ownership preflight before policy loads")
+for operation in ("delete-role-policy", "delete-role"):
     for call in operation_calls(operation):
         index = calls.index(call)
         name = call_role_name(call)
@@ -2944,7 +3323,8 @@ run_iam_simulate_role_lane_contracts() {
   local output rc mutated_inventory full_inventory full_scale role_lane_mutant
   local account account_mutant account_report cleanup_mutant cleanup_report
   local mutant_inventory mutated_full_inventory mutation_fail mutation_output mutation_rc
-  local core_mutant expected_sid
+  local core_mutant expected_sid expected_hash_failure wrong_hash_report nonce_report fail_line
+  local wrong_mode_report wrong_mode_case_id expected_mode_failure
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
@@ -3122,6 +3502,50 @@ run_iam_simulate_role_lane_contracts() {
       fail_case "role-lane projects fitting roles combined and deployer in six complete passes" \
         "rc=$rc output=$output"
     fi
+
+    wrong_hash_report="$phase2_dir/role-projection-wrong-hash-custom-report.json"
+    expected_hash_failure="$(role_wrong_hash_expected_line \
+      "$phase2_dir/role-projection-plan.json" \
+      "$phase2_dir/role-projection-vectors" "$wrong_hash_report")"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$wrong_hash_report" \
+      IAM_SIM_TEST_ROLE_REPORT="$phase2_dir/role-projection-wrong-hash-report.json" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && grep -Fxq "$expected_hash_failure" <<<"$output" && \
+       [ "$(phase2_call_count iam create-role)" -eq 0 ]; then
+      pass_case "role-lane wrong-hash preflight mutation -> $expected_hash_failure"
+    else
+      fail_case "role-lane wrong-hash preflight mutation did not fail before create" \
+        "rc=$rc create_calls=$(phase2_call_count iam create-role) output=$output"
+    fi
+    wrong_mode_report="$phase2_dir/role-projection-wrong-mode-custom-report.json"
+    wrong_mode_case_id="$(jq -r '.records[] | select(.mode == "principal") | .case_id' \
+      "$wrong_mode_report")"
+    expected_mode_failure="FAIL: custom report mode mismatch for $wrong_mode_case_id: report='principal' vector='custom'"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$wrong_mode_report" \
+      IAM_SIM_TEST_ROLE_REPORT="$phase2_dir/role-projection-wrong-mode-report.json" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && grep -Fxq "$expected_mode_failure" <<<"$output" && \
+       [ "$(phase2_call_count iam create-role)" -eq 0 ]; then
+      pass_case "role-lane wrong-mode preflight mutation -> $expected_mode_failure"
+    else
+      fail_case "role-lane wrong-mode preflight mutation did not fail before create" \
+        "rc=$rc create_calls=$(phase2_call_count iam create-role) output=$output"
+    fi
+    run_role_projection_restored_case "role-lane wrong-hash preflight"
 
     reset_phase2_fake
     set +e
@@ -3321,6 +3745,78 @@ run_iam_simulate_role_lane_contracts() {
       fail_case "role-lane tag mismatch pre-mutation refusal" "a mutation ran after tag mismatch"
     fi
 
+    nonce_report="$phase2_dir/role-nonce-tamper-report.json"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$nonce_report" \
+      IAM_SIM_TEST_ROLE_INJECTION_SUFFIX=-deployer-p4 \
+      run_phase2_role_lane nonce-tamper 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq 'FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-deployer-p4' \
+         <<<"$output" && \
+       validate_role_nonce_tamper "$nonce_report" "$phase2_calls" "$phase2_roles"; then
+      pass_case "role-lane nonce tamper at deployer p4 mutation -> $fail_line"
+    else
+      fail_case "role-lane nonce tamper at deployer p4 mutation did not fail closed" \
+        "rc=$rc output=$output"
+    fi
+    role_lane_mutant="$phase2_dir/iam-simulate-roles-nonce-ignoring-mutant.sh"
+    mutate_role_nonce_check "$IAM_SIM_ROLE_LANE" "$role_lane_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$phase2_dir/role-nonce-mutant-report.json" \
+      IAM_SIM_TEST_ROLE_INJECTION_SUFFIX=-deployer-p4 \
+      IAM_SIM_TEST_ROLE_LANE="$role_lane_mutant" \
+      run_phase2_role_lane nonce-tamper 2>&1)"
+    rc=$?
+    set -e
+    set +e
+    mutation_output="$(validate_role_nonce_tamper \
+      "$phase2_dir/role-nonce-mutant-report.json" \
+      "$phase2_calls" "$phase2_roles" 2>&1)"
+    mutation_rc=$?
+    set -e
+    mutation_fail="$(grep -m1 '^FAIL:' <<<"$mutation_output" || true)"
+    if [ "$rc" -eq 0 ] && [ "$mutation_rc" -ne 0 ] && \
+       grep -Fq 'FAIL: nonce tamper reached policy or role mutations:' \
+         <<<"$mutation_output"; then
+      pass_case "role-lane nonce-ignoring mutant -> $mutation_fail"
+    else
+      fail_case "role-lane nonce-ignoring mutant was not killed" \
+        "runner_rc=$rc validation_rc=$mutation_rc runner=$output validation=$mutation_output"
+    fi
+
+    nonce_report="$phase2_dir/role-nonce-tamper-restored-report.json"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$nonce_report" \
+      IAM_SIM_TEST_ROLE_INJECTION_SUFFIX=-deployer-p4 \
+      run_phase2_role_lane nonce-tamper 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && validate_role_nonce_tamper \
+      "$nonce_report" "$phase2_calls" "$phase2_roles"; then
+      pass_case "role-lane nonce-ignoring mutant restored PASS"
+    else
+      fail_case "role-lane nonce-ignoring mutant restoration" "rc=$rc output=$output"
+    fi
+    run_role_projection_restored_case "role-lane nonce tamper"
+
     expect_role_failure "role-lane EntityAlreadyExists isolation" "manual cleanup: role already existed at create time" entity-exists
     if [ "$(phase2_call_count iam delete-role-policy)" -ne 0 ] || \
        [ "$(phase2_call_count iam delete-role)" -ne 0 ]; then
@@ -3407,6 +3903,22 @@ PY
       "$phase2_dir/role-projection-plan.json" \
       "$phase2_dir/role-projection-vectors" \
       "$phase2_dir/role-projection-custom-report.json"
+
+    run_role_cleanup_race_case \
+      "role-lane TERM between put and marker (8 roles at deployer p4)" \
+      term-during-put 143 "FAIL: terminated by TERM"
+    run_role_projection_restored_case "role-lane TERM between put and marker"
+
+    run_role_cleanup_race_case \
+      "role-lane unattached-policy NoSuchEntity cleanup (8 roles at deployer p4)" \
+      put-policy-fails 1 \
+      "FAIL: put-role-policy failed for orbit-iam-sim-fixture-run-deployer-p4"
+    run_role_projection_restored_case "role-lane unattached-policy NoSuchEntity cleanup"
+
+    run_role_cleanup_race_case \
+      "role-lane deferred TERM after delete-role-policy (8 roles at deployer p4)" \
+      term-after-delete-policy 143 "FAIL: terminated by TERM"
+    run_role_projection_restored_case "role-lane deferred TERM after delete-role-policy"
 
     reset_phase2_fake
     if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \

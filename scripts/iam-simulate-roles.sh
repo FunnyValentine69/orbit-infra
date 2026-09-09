@@ -62,6 +62,17 @@ if ! [[ "$run_id" =~ ^[A-Za-z0-9+=,.@_-]{1,32}$ ]]; then
 fi
 tag_key=OrbitIamSimulationRun
 tag_value="$run_id"
+nonce_tag_key=OrbitIamSimulationNonce
+nonce_value=""
+if ! nonce_value="$(LC_ALL=C od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')" || \
+   ! [[ "$nonce_value" =~ ^[0-9a-f]{32}$ ]]; then
+  echo "FAIL: could not generate a 32-character ownership nonce" >&2
+  exit 1
+fi
+expected_tags_json="$(jq -cn \
+  --arg run_key "$tag_key" --arg run_value "$tag_value" \
+  --arg nonce_key "$nonce_tag_key" --arg nonce_value "$nonce_value" \
+  '[{Key:$run_key,Value:$run_value},{Key:$nonce_key,Value:$nonce_value}]')"
 role_plan="$tmp_dir/role-plan.json"
 records="$tmp_dir/records.jsonl"
 manual_notes="$tmp_dir/manual-cleanup.txt"
@@ -373,6 +384,35 @@ if not dry_run:
             not isinstance(sid, str) for sid in matched_sids
         ):
             fail(f"custom report matched_sids is invalid for {vector['case_id']}")
+        expected_mode = vector["simulation_mode"]
+        observed_mode = custom_record.get("mode")
+        if observed_mode != expected_mode:
+            fail(
+                f"custom report mode mismatch for {vector['case_id']}: "
+                f"report={observed_mode!r} vector={expected_mode!r}"
+            )
+        if expected_mode == "custom":
+            submitted_hashes = custom_record.get("document_hashes_submitted")
+            hash_entries = (
+                submitted_hashes.get("policy_input_list", [])
+                if isinstance(submitted_hashes, dict)
+                else []
+            )
+            custom_hashes = [
+                entry.get("sha256") if isinstance(entry, dict) else None
+                for entry in hash_entries
+            ] if isinstance(hash_entries, list) else []
+            plan_hash = core.document_sha256(documents[vector["document"]])
+            if custom_hashes != [plan_hash]:
+                observed_hash = (
+                    custom_hashes[0]
+                    if len(custom_hashes) == 1
+                    else json.dumps(custom_hashes, separators=(",", ":"))
+                )
+                fail(
+                    f"custom report policy hash mismatch for {vector['case_id']}: "
+                    f"report={observed_hash} plan={plan_hash}"
+                )
 
 assume_policy = json.dumps({
     "Version": "2012-10-17",
@@ -399,7 +439,10 @@ PY
 role_count="$(jq '.roles | length' "$role_plan")"
 cleanup_complete=0
 cleanup_failed=0
-terminated=0
+cleanup_in_progress=0
+ownership_mismatch=0
+signal_status=0
+signal_name=""
 main_succeeded=0
 IAM_SIM_LANE_PID=$$
 export IAM_SIM_LANE_PID
@@ -454,7 +497,8 @@ role_policy_file() {
 
 verify_owned_tag() {
   local role_name=$1
-  local allow_missing=${2:-0}
+  local expected_tags=$2
+  local allow_missing=${3:-0}
   call_capture iam list-role-tags --role-name "$role_name" --output json
   if [ "$CALL_RC" -ne 0 ]; then
     if [ "$allow_missing" -eq 1 ] && grep -Fq '(NoSuchEntity)' <<<"$CALL_ERROR"; then
@@ -463,8 +507,16 @@ verify_owned_tag() {
     append_manual_note "manual cleanup: could not re-read ownership tags for $role_name"
     return 1
   fi
-  if ! jq -e --arg key "$tag_key" --arg value "$tag_value" \
-    'any(.Tags[]?; .Key == $key and .Value == $value)' <<<"$CALL_OUTPUT" >/dev/null; then
+  if ! jq -e --argjson expected "$expected_tags" '
+    (.Tags // []) as $actual
+    | ($expected | type == "array" and length > 0)
+      and all(
+        $expected[];
+        . as $expected_tag
+        | any($actual[]?; .Key == $expected_tag.Key and .Value == $expected_tag.Value)
+      )
+  ' <<<"$CALL_OUTPUT" >/dev/null; then
+    ownership_mismatch=1
     append_manual_note "ownership tag mismatch for $role_name"
     return 1
   fi
@@ -476,6 +528,9 @@ cleanup_roles() {
   if [ "$cleanup_complete" -eq 1 ] || [ "$dry_run" -eq 1 ]; then
     return 0
   fi
+  if [ "$ownership_mismatch" -eq 1 ]; then
+    return 1
+  fi
   for ((index = role_count - 1; index >= 0; index--)); do
     role_name="$(jq -r ".roles[$index].name" "$role_plan")"
     policy_name="$(jq -r ".roles[$index].policy_name" "$role_plan")"
@@ -485,7 +540,7 @@ cleanup_roles() {
       continue
     fi
     set +e
-    verify_owned_tag "$role_name" 1
+    verify_owned_tag "$role_name" "$expected_tags_json" 1
     tag_rc=$?
     set -e
     if [ "$tag_rc" -eq 2 ]; then
@@ -496,12 +551,12 @@ cleanup_roles() {
     fi
     if [ -f "$(role_policy_file "$index")" ]; then
       call_capture iam delete-role-policy --role-name "$role_name" --policy-name "$policy_name"
-      if [ "$CALL_RC" -ne 0 ]; then
+      if [ "$CALL_RC" -ne 0 ] && ! grep -Fq '(NoSuchEntity)' <<<"$CALL_ERROR"; then
         append_manual_note "manual cleanup: delete-role-policy failed for $role_name"
         continue
       fi
     fi
-    if ! verify_owned_tag "$role_name" 0; then
+    if ! verify_owned_tag "$role_name" "$expected_tags_json" 0; then
       continue
     fi
     call_capture iam delete-role --role-name "$role_name"
@@ -529,7 +584,7 @@ cleanup_roles() {
 }
 
 write_report() {
-  python3 - "$role_plan" "$records" "$manual_notes" "$report" <<'PY'
+  python3 - "$role_plan" "$records" "$manual_notes" "$report" "$nonce_value" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -540,20 +595,23 @@ notes_path = Path(sys.argv[3])
 report_path = Path(sys.argv[4])
 records = [json.loads(line) for line in records_path.read_text(encoding="utf-8").splitlines() if line]
 notes = notes_path.read_text(encoding="utf-8").splitlines()
+nonce = sys.argv[5]
 
 
-def redact_account(value, account_id):
+def redact_sensitive(value, replacements):
     if isinstance(value, str):
-        return value.replace(account_id, "000000000000")
+        for original, replacement in replacements:
+            value = value.replace(original, replacement)
+        return value
     if isinstance(value, list):
-        return [redact_account(item, account_id) for item in value]
+        return [redact_sensitive(item, replacements) for item in value]
     if isinstance(value, dict):
         redacted = {}
         for key, item in value.items():
-            redacted_key = redact_account(key, account_id)
+            redacted_key = redact_sensitive(key, replacements)
             if redacted_key in redacted:
-                raise SystemExit("FAIL: account redaction creates a duplicate report key")
-            redacted[redacted_key] = redact_account(item, account_id)
+                raise SystemExit("FAIL: sensitive-value redaction creates a duplicate report key")
+            redacted[redacted_key] = redact_sensitive(item, replacements)
         return redacted
     return value
 
@@ -567,6 +625,8 @@ payload = {
     "account": role_plan["account_id"],
     "account_redacted": True,
     "run_id": role_plan["run_id"],
+    "ownership_nonce": nonce,
+    "ownership_nonce_redacted": True,
     "projection": {
         "assume_role_policy": role_plan["assume_role_policy"],
         "assume_role_policy_sha256": role_plan["assume_role_policy_sha256"],
@@ -590,7 +650,10 @@ payload = {
         "manual_cleanup_notes": len(notes),
     },
 }
-payload = redact_account(payload, role_plan["account_id"])
+payload = redact_sensitive(payload, [
+    (role_plan["account_id"], "000000000000"),
+    (nonce, "<redacted>"),
+])
 report_path.parent.mkdir(parents=True, exist_ok=True)
 report_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
@@ -598,30 +661,49 @@ PY
 
 on_exit() {
   local rc=$?
-  trap - EXIT TERM INT
+  trap - EXIT
+  cleanup_in_progress=1
   if [ "$dry_run" -eq 0 ]; then
     cleanup_roles || rc=1
     write_report || rc=1
   fi
+  trap - TERM INT
+  cleanup_in_progress=0
   rm -rf "$tmp_dir"
-  if [ "$terminated" -eq 1 ]; then
-    echo "FAIL: terminated by TERM" >&2
-    rc=143
+  if [ "$signal_status" -ne 0 ]; then
+    echo "FAIL: terminated by $signal_name" >&2
+    rc=$signal_status
   elif [ "$rc" -eq 0 ] && [ "$main_succeeded" -eq 1 ]; then
     echo "PASS: IAM simulator role lane"
   fi
   exit "$rc"
 }
 
+record_signal() {
+  local status=$1
+  local name=$2
+  if [ "$signal_status" -eq 0 ]; then
+    signal_status=$status
+    signal_name=$name
+  fi
+  if [ "$cleanup_in_progress" -eq 0 ]; then
+    exit "$status"
+  fi
+}
+
 on_term() {
-  terminated=1
-  exit 143
+  record_signal 143 TERM
+}
+
+on_int() {
+  record_signal 130 INT
 }
 
 # The EXIT trap is armed before the first create-role call. Intent files are
 # written before each create so cleanup also covers the signal-in-create gap.
 trap on_exit EXIT
-trap on_term TERM INT
+trap on_term TERM
+trap on_int INT
 
 role_call_args() {
   local index=$1
@@ -638,11 +720,15 @@ print_dry_run_inventory() {
     role_call_args "$index"
     call_capture iam create-role --role-name "$ROLE_NAME" \
       --assume-role-policy-document "$(jq -r '.assume_role_policy' "$role_plan")" \
-      --tags "Key=$tag_key,Value=$tag_value"
+      --tags "Key=$tag_key,Value=$tag_value" \
+        "Key=$nonce_tag_key,Value=$nonce_value"
   done
   for ((index = 0; index < role_count; index++)); do
     role_call_args "$index"
     call_capture iam list-role-tags --role-name "$ROLE_NAME" --output json
+  done
+  for ((index = 0; index < role_count; index++)); do
+    role_call_args "$index"
     call_capture iam put-role-policy --role-name "$ROLE_NAME" \
       --policy-name "$POLICY_NAME" --policy-document "$POLICY_DOCUMENT"
   done
@@ -706,7 +792,8 @@ for ((index = 0; index < role_count; index++)); do
   printf 'intended\n' >"$(role_status_file "$index")"
   call_capture iam create-role --role-name "$ROLE_NAME" \
     --assume-role-policy-document "$(jq -r '.assume_role_policy' "$role_plan")" \
-    --tags "Key=$tag_key,Value=$tag_value"
+    --tags "Key=$tag_key,Value=$tag_value" \
+      "Key=$nonce_tag_key,Value=$nonce_value"
   if [ "$CALL_RC" -ne 0 ]; then
     if grep -Fq '(EntityAlreadyExists)' <<<"$CALL_ERROR"; then
       printf 'collision\n' >"$(role_status_file "$index")"
@@ -721,9 +808,14 @@ done
 
 for ((index = 0; index < role_count; index++)); do
   role_call_args "$index"
-  if ! verify_owned_tag "$ROLE_NAME" 0; then
+  if ! verify_owned_tag "$ROLE_NAME" "$expected_tags_json" 0; then
     exit 1
   fi
+done
+
+for ((index = 0; index < role_count; index++)); do
+  role_call_args "$index"
+  printf 'intended\n' >"$(role_policy_file "$index")"
   call_capture iam put-role-policy --role-name "$ROLE_NAME" \
     --policy-name "$POLICY_NAME" --policy-document "$POLICY_DOCUMENT"
   if [ "$CALL_RC" -ne 0 ]; then
@@ -854,7 +946,9 @@ record = {
         "put_role_policy": [{"sha256": projection["policy_sha256"]}],
         "custom_lane": [{"sha256": value} for value in custom_hashes],
     },
-    "source_document_hash_agrees_with_custom_lane": custom_hashes == [source_document["sha256"]],
+    "source_document_hash_agrees_with_custom_lane": (
+        custom_hashes == [source_document["sha256"]]
+    ),
     "custom_lane": {
         "decision_observed": custom_decision,
         "matched_sids": custom_sids,
@@ -873,7 +967,7 @@ record = {
     },
     "comparison": "agreement" if same_decision else "divergence",
     "organizations_divergences": organizations_divergences,
-    "pass": True,
+    "pass": custom_hashes == [source_document["sha256"]],
 }
 if not same_decision:
     record["divergence"] = {

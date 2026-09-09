@@ -322,12 +322,18 @@ TARGET=aws scripts/iam-simulate-roles.sh \
 
 A real role-lane run additionally requires the literal environment value
 `IAM_SIM_LANE_CONFIRM=create-real-iam-resources` and the custom-lane report for
-the same vectors. That string authorizes only the run-tagged roles required by
-the computed projections; it does not authorize deleting an unowned or
-pre-existing role. The lane verifies the caller account, re-reads the run tag
-before every policy or role mutation, treats `EntityAlreadyExists` as manual
-cleanup without deleting it, removes owned roles in reverse order, and requires
-`NoSuchEntity` afterward.
+the same vectors. Before the caller check or first role create, each custom
+record's mode and submitted source-policy SHA-256 must match the current vector
+and plan document. That string authorizes only the roles carrying both the run
+tag and a per-invocation `OrbitIamSimulationNonce`: 32 lowercase hexadecimal
+characters read from `/dev/urandom`. The lane verifies both tags on every
+created role before the first policy put and re-reads both immediately before
+each cleanup mutation. It treats `EntityAlreadyExists` as manual cleanup without
+deleting it, removes owned roles in reverse order, and requires `NoSuchEntity`
+afterward. The inline-policy cleanup marker is persisted before the put; an
+unattached policy's `NoSuchEntity` is therefore safe to continue past. TERM and
+INT received during cleanup are recorded until cleanup, absence verification,
+and report writing finish, then returned as their signal-derived status.
 
 The role lane consumes the same `custom` vectors as the custom lane.
 `custom-isolated` cases are excluded because an isolated single-statement
@@ -361,8 +367,10 @@ The role report records each projection's source addresses, source-policy
 SHA-256 hashes, selected and excluded case counts by reason, agreements,
 principal/custom divergences, and Organizations divergences. The AWS-managed
 `ReadOnlyAccess` attachment has no inline equivalent and is always recorded as a
-role-lane exclusion. These scripts and their cleanup paths are OFFLINE-VERIFIED
-only; no real role-lane execution is recorded here.
+role-lane exclusion. The live account is replaced with `000000000000`, and the
+ownership nonce is replaced with `<redacted>` so a report cannot replay either
+ownership value. These scripts and their cleanup paths are OFFLINE-VERIFIED only;
+no real role-lane execution is recorded here.
 
 ## Front-page evidence
 
