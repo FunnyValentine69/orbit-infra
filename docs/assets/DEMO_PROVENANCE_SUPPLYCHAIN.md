@@ -5,14 +5,14 @@
 | Field | Value |
 | --- | --- |
 | recorded_from | offline SPDX fixture verification |
-| generator commit | 953ad4a (the tree at this commit holds the active recording generator closure) |
+| generator commit | c5d1d91 (the tree at this commit holds the active recording generator closure) |
 | canonicalizer sha256 | b185cd2a615c31627f5fd24a2e0c504fc7864e1ae5e4b155547ab4bd7e019001 |
 | fixtures used | base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json |
 | timestamp-variant result | identical |
 | checksum-variant result | different |
 | contracts result | 14 assertions |
-| gif sha256 | f0c35ab0e468854674ec51f5cc82cf756e2eb59ce81fed0f881c9a49ce502f2f |
-| size | 92945 bytes |
+| gif sha256 | 739861f3e011d0f3fe54558d7eb8c1220374dedc7fd9b02eabd23017ae4710c8 |
+| size | 92927 bytes |
 | duration | 15.120000 s |
 | frames | 378 |
 
