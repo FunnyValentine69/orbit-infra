@@ -7,6 +7,7 @@ import argparse
 import html
 import math
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 
@@ -141,6 +142,30 @@ def render(snapshot: float | None = None) -> str:
     return "\n".join(lines)
 
 
+def ensure_clean_generator(
+    paths: tuple[str, ...] = ("scripts/storyboard.py", "Makefile"),
+) -> None:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--", *paths],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return
+    if result.returncode != 0:
+        return
+    if not result.stdout.strip():
+        return
+    dirty_paths = ", ".join(line[3:] for line in result.stdout.splitlines())
+    print(
+        f"storyboard: commit the generator before regenerating (dirty: {dirty_paths})",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
 def write_output(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8", newline="\n")
@@ -191,6 +216,8 @@ def main() -> int:
     args = parse_args()
     if args.check is not None:
         return check_asset(args.check)
+    if args.snapshot is None:
+        ensure_clean_generator()
     write_output(args.output or DEFAULT_OUTPUT, render(args.snapshot))
     return 0
 

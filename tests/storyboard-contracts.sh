@@ -99,7 +99,10 @@ PY
   local local_user local_host
   local_user="$(id -un)"
   local_host="$(hostname -s 2>/dev/null || hostname)"
-  ! grep -qiF "$local_user" "$svg" || fail "storyboard contains the local username"
+  case "$local_user" in
+    root|runner|nobody|user|"") ;;
+    *) ! grep -qiF "$local_user" "$svg" || fail "storyboard contains the local username" ;;
+  esac
   ! grep -qiF "$local_host" "$svg" || fail "storyboard contains the local hostname"
 }
 
@@ -203,6 +206,31 @@ fi
 grep -Fxq 'SKIP: storyboard asset not committed yet' <<< "$absent_output" || \
   fail "storyboard both-absent branch did not emit its explicit skip: $absent_output"
 echo "PASS: storyboard generator contracts"
+
+echo "== storyboard contracts: generator provenance guard =="
+guard_root="$tmp_dir/guard-root"
+mkdir -p "$guard_root/scripts"
+cp "$GENERATOR" "$guard_root/scripts/storyboard.py"
+touch "$guard_root/Makefile"
+git -C "$guard_root" init -q
+git -C "$guard_root" add scripts/storyboard.py Makefile
+git -C "$guard_root" -c user.name=t -c user.email=t@localhost \
+  commit -q -m init
+printf '\n# dirty\n' >> "$guard_root/scripts/storyboard.py"
+guard_rc=0
+guard_output="$(
+  cd "$guard_root" && python3 scripts/storyboard.py --output "$tmp_dir/guard.svg" 2>&1
+)" || guard_rc=$?
+[ "$guard_rc" -ne 0 ] || fail "storyboard dirty-generator guard did not fail"
+grep -Fq 'storyboard: commit the generator before regenerating' <<< "$guard_output" || \
+  fail "storyboard dirty-generator guard message missing"
+[ ! -e "$tmp_dir/guard.svg" ] || fail "storyboard dirty-generator guard still wrote output"
+git -C "$guard_root" -c user.name=t -c user.email=t@localhost \
+  commit -aqm "commit dirty generator"
+(cd "$guard_root" && python3 scripts/storyboard.py --output "$tmp_dir/guard.svg") || \
+  fail "storyboard clean-generator run failed"
+[ -f "$tmp_dir/guard.svg" ] || fail "storyboard clean-generator run did not write output"
+echo "PASS: storyboard generator provenance guard"
 
 echo "== storyboard contracts: asset =="
 check_asset "$STORYBOARD_REPO_ROOT"
