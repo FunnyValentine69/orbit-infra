@@ -13,7 +13,7 @@
     "logs:PutLogEvents"
   ],
   "resource_arns": [
-    "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/orbit/preview"
+    "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/orbit/preview:*"
   ],
   "context_entries": [],
   "expect": {

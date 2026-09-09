@@ -13,7 +13,7 @@
     "logs:PutLogEvents"
   ],
   "resource_arns": [
-    "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/outside/${SUFFIX}/example"
+    "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/outside/${SUFFIX}/example:*"
   ],
   "context_entries": [],
   "expect": {
