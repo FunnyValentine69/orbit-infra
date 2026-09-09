@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:present",
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "DenyRoleMutationMissingBoundary",
+  "simulation_mode": "custom",
+  "assertion_kind": "attribution-only",
+  "action_names": [
+    "iam:AttachRolePolicy",
+    "iam:CreateRole",
+    "iam:PutRolePolicy"
+  ],
+  "resource_arns": [
+    "*"
+  ],
+  "context_entries": [
+    {
+      "ContextKeyName": "iam:PermissionsBoundary",
+      "ContextKeyValues": [
+        "arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"
+      ],
+      "ContextKeyType": "string"
+    }
+  ],
+  "expect": {
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "DenyRoleMutationMissingBoundary"
+    ]
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-deployer --action-names <each row Action value> --resource-arns matching row resources; --context-entries iam:PermissionsBoundary:present with every other condition key satisfying; expect not denied by this statement; require this Sid absent from MatchedStatements in the effective policy"
+}

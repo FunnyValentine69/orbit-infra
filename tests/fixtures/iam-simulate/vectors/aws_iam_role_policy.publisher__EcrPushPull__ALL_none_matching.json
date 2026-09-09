@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_role_policy.publisher:EcrPushPull:ALL:none:matching",
+  "document": "aws_iam_role_policy.publisher",
+  "sid": "EcrPushPull",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "ecr:BatchCheckLayerAvailability",
+    "ecr:BatchGetImage",
+    "ecr:CompleteLayerUpload",
+    "ecr:DescribeImages",
+    "ecr:DescribeRepositories",
+    "ecr:GetDownloadUrlForLayer",
+    "ecr:InitiateLayerUpload",
+    "ecr:ListImages",
+    "ecr:PutImage",
+    "ecr:UploadLayerPart"
+  ],
+  "resource_arns": [
+    "arn:aws:ecr:us-east-1:${ACCOUNT_ID}:repository/orbit-infra-${SUFFIX}/mirror/clickhouse"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "allowed",
+    "matched_sid_required": [
+      "EcrPushPull"
+    ],
+    "matched_sid_forbidden": []
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-publisher --action-names <each row Action value> --resource-arns matching row resources; no --context-entries; expect allowed"
+}

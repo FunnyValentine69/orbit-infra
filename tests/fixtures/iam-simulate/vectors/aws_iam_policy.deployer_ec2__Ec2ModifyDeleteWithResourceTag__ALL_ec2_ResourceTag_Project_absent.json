@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_ec2:Ec2ModifyDeleteWithResourceTag:ALL:ec2:ResourceTag/Project:absent",
+  "document": "aws_iam_policy.deployer_ec2",
+  "sid": "Ec2ModifyDeleteWithResourceTag",
+  "simulation_mode": "custom-isolated",
+  "assertion_kind": "decision",
+  "action_names": [
+    "ec2:AssociateRouteTable",
+    "ec2:AttachInternetGateway",
+    "ec2:AuthorizeSecurityGroupEgress",
+    "ec2:AuthorizeSecurityGroupIngress",
+    "ec2:CreateRoute",
+    "ec2:DeleteInternetGateway",
+    "ec2:DeleteRoute",
+    "ec2:DeleteRouteTable",
+    "ec2:DeleteSecurityGroup",
+    "ec2:DeleteSubnet",
+    "ec2:DeleteVpc",
+    "ec2:DeleteVpcEndpoints",
+    "ec2:DetachInternetGateway",
+    "ec2:DisassociateRouteTable",
+    "ec2:ModifySecurityGroupRules",
+    "ec2:ModifySubnetAttribute",
+    "ec2:ModifyVpcAttribute",
+    "ec2:ModifyVpcEndpoint",
+    "ec2:ReplaceRoute",
+    "ec2:ReplaceRouteTableAssociation",
+    "ec2:RevokeSecurityGroupEgress",
+    "ec2:RevokeSecurityGroupIngress"
+  ],
+  "resource_arns": [
+    "*"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "Ec2ModifyDeleteWithResourceTag"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list '<a policy document containing only the Ec2ModifyDeleteWithResourceTag statement>' --action-names <each row Action value> --resource-arns matching row resources --context-entries omitted (no entry for ec2:ResourceTag/Project); expect implicitDeny (isolated statement; principal simulation is masked by Ec2SecurityGroupRuleCreateWithTag in aws_iam_policy.deployer_ec2)"
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:absent",
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "DenyRoleMutationMissingBoundary",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "iam:AttachRolePolicy",
+    "iam:CreateRole",
+    "iam:PutRolePolicy"
+  ],
+  "resource_arns": [
+    "*"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "explicitDeny",
+    "matched_sid_required": [
+      "DenyRoleMutationMissingBoundary"
+    ],
+    "matched_sid_forbidden": []
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-deployer --action-names <each row Action value> --resource-arns matching row resources; --context-entries omitted (no entry for iam:PermissionsBoundary); expect explicitDeny"
+}

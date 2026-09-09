@@ -18,6 +18,7 @@ phase2_setup() {
   mkdir -p "$phase2_dir/bin" "$phase2_calls" "$phase2_roles"
 
   python3 - "$TAXONOMY" "$phase2_dir" <<'PY'
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -49,12 +50,41 @@ mapping_policy = (
     '"Resource":"arn:aws:s3:::orbit-infra-79s5rw-bad/*"}]}'
 )
 
+ambiguous_policy = '{"Version":"2012-10-17","Statement":[{"Sid":"EcrAuth","Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},{"Sid":"Other__","Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"}]}'
+isolated_plan_policy = json.dumps(
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "LogsDescribeStarOnly",
+                "Effect": "Allow",
+                "Action": "logs:DescribeLogGroups",
+                "Resource": "*",
+            },
+            {
+                "Sid": "LogsCreateWithTag",
+                "Effect": "Allow",
+                "Action": ["logs:CreateLogGroup", "logs:TagResource"],
+                "Resource": "arn:aws:logs:*:000000000000:log-group:/orbit/79s5rw/*",
+                "Condition": {
+                    "StringEquals": {"aws:RequestTag/Project": "orbit-infra"},
+                },
+            },
+        ],
+    },
+    separators=(",", ":"),
+)
+
+
 def policy_for(address):
     if address == "aws_iam_role_policy.plan_reader_deny":
         return mapping_policy
+    if address == "aws_iam_policy.task_boundary":
+        return ambiguous_policy
+    if address == "aws_iam_policy.deployer_data":
+        return isolated_plan_policy
     sid = {
         "aws_iam_role_policy.plan_reader_state": "ReadStateObjects",
-        "aws_iam_policy.deployer_data": "LogsDescribeStarOnly",
         "aws_iam_role_policy.publisher": "EcrAuth",
     }.get(address, "FixtureNoop")
     return json.dumps(
@@ -83,8 +113,40 @@ for short in ("plan_reader", "deployer", "publisher"):
         "type": "aws_iam_role",
         "values": {"name": f"orbit-infra-79s5rw-{short.replace('_', '-')}"},
     })
-(root / "plan.json").write_text(
-    json.dumps({"planned_values": {"root_module": {"resources": resources}}}, indent=2) + "\n",
+plan = {"planned_values": {"root_module": {"resources": resources}}}
+(root / "plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+
+missing_document_plan = deepcopy(plan)
+missing_document_plan["planned_values"]["root_module"]["resources"] = [
+    resource
+    for resource in missing_document_plan["planned_values"]["root_module"]["resources"]
+    if resource["address"] != "aws_iam_policy.task_boundary"
+]
+(root / "plan-missing-document.json").write_text(
+    json.dumps(missing_document_plan, indent=2) + "\n",
+    encoding="utf-8",
+)
+
+missing_sid_plan = deepcopy(plan)
+duplicate_sid_plan = deepcopy(plan)
+for candidate, duplicate in ((missing_sid_plan, False), (duplicate_sid_plan, True)):
+    resource = next(
+        item
+        for item in candidate["planned_values"]["root_module"]["resources"]
+        if item["address"] == "aws_iam_policy.deployer_data"
+    )
+    policy = json.loads(isolated_plan_policy)
+    if duplicate:
+        policy["Statement"].append(deepcopy(policy["Statement"][1]))
+    else:
+        policy["Statement"] = [policy["Statement"][0]]
+    resource["values"]["policy"] = json.dumps(policy, separators=(",", ":"))
+(root / "plan-missing-sid.json").write_text(
+    json.dumps(missing_sid_plan, indent=2) + "\n",
+    encoding="utf-8",
+)
+(root / "plan-duplicate-sid.json").write_text(
+    json.dumps(duplicate_sid_plan, indent=2) + "\n",
     encoding="utf-8",
 )
 
@@ -191,7 +253,6 @@ unknown_source_mutation["EvaluationResults"][0]["ResourceSpecificResults"][1]["M
 
 ambiguous_dir = root / "ambiguous-vectors"
 ambiguous_dir.mkdir()
-ambiguous_policy = '{"Version":"2012-10-17","Statement":[{"Sid":"EcrAuth","Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"},{"Sid":"Other__","Effect":"Allow","Action":"ecr:GetAuthorizationToken","Resource":"*"}]}'
 ambiguous_vector = {
     "schema_version": 1,
     "case_id": "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:in-boundary",
@@ -199,7 +260,7 @@ ambiguous_vector = {
     "sid": "EcrAuth",
     "simulation_mode": "custom",
     "assertion_kind": "decision",
-    "policy_input_list": [ambiguous_policy],
+    "permissions_boundary_policy_input_list": ["aws_iam_policy.task_boundary"],
     "action_names": ["ecr:GetAuthorizationToken"],
     "resource_arns": ["*"],
     "context_entries": [],
@@ -226,6 +287,14 @@ ambiguous_response = {
     }],
 }
 (root / "response-ambiguous.json").write_text(json.dumps(ambiguous_response) + "\n", encoding="utf-8")
+resolved_response = deepcopy(ambiguous_response)
+resolved_response["EvaluationResults"][0]["ResourceSpecificResults"][0]["MatchedStatements"] = [
+    match(ambiguous_first)
+]
+(root / "response-resolved.json").write_text(
+    json.dumps(resolved_response) + "\n",
+    encoding="utf-8",
+)
 
 duplicate_dir = root / "duplicate-vectors"
 duplicate_dir.mkdir()
@@ -521,6 +590,67 @@ print(count)
 PY
 }
 
+assert_submitted_document_equals_plan() {
+  local plan=$1
+  local calls=$2
+  local address=$3
+  local option=$4
+  python3 - "$plan" "$calls" "$address" "$option" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+call_paths = sorted(Path(sys.argv[2]).glob("*.json"))
+address = sys.argv[3]
+option = sys.argv[4]
+resources = plan["planned_values"]["root_module"]["resources"]
+matches = [resource for resource in resources if resource.get("address") == address]
+if len(matches) != 1:
+    raise SystemExit(f"FAIL: comparison plan has {len(matches)} resources for {address}")
+expected = matches[0]["values"]["policy"]
+simulate_calls = []
+for path in call_paths:
+    args = json.loads(path.read_text(encoding="utf-8"))
+    if args[:2] == ["iam", "simulate-custom-policy"]:
+        simulate_calls.append(args)
+if len(simulate_calls) != 1:
+    raise SystemExit(f"FAIL: comparison found {len(simulate_calls)} simulator calls")
+args = simulate_calls[0]
+if args.count(option) != 1:
+    raise SystemExit(f"FAIL: comparison requires exactly one {option}")
+index = args.index(option) + 1
+submitted = []
+while index < len(args) and not args[index].startswith("--"):
+    submitted.append(args[index])
+    index += 1
+if submitted != [expected]:
+    raise SystemExit(f"FAIL: submitted {option} document differs from plan text for {address}")
+PY
+}
+
+mutate_submitted_document() {
+  local calls=$1
+  local option=$2
+  python3 - "$calls" "$option" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+option = sys.argv[2]
+for path in sorted(Path(sys.argv[1]).glob("*.json")):
+    args = json.loads(path.read_text(encoding="utf-8"))
+    if args[:2] != ["iam", "simulate-custom-policy"]:
+        continue
+    index = args.index(option) + 1
+    args[index] += " "
+    path.write_text(json.dumps(args) + "\n", encoding="utf-8")
+    break
+else:
+    raise SystemExit("FAIL: no simulator call to mutate")
+PY
+}
+
 run_phase2_runner() {
   local scenario=$1
   local response=$2
@@ -564,7 +694,8 @@ PY
     FAKE_AWS_EXPECTED_INPUTS="$expected_inputs" \
     IAM_SIM_RETRY_BASE_SECONDS=0 \
     TARGET=aws \
-    "$IAM_SIM_RUNNER" --plan "$phase2_plan" --vectors "$vectors" --report "$report" "$@"
+    "$IAM_SIM_RUNNER" --plan "${IAM_SIM_TEST_PLAN:-$phase2_plan}" \
+      --vectors "$vectors" --report "$report" "$@"
 }
 
 expect_runner_failure() {
@@ -616,6 +747,59 @@ run_iam_simulate_runner_contracts() {
       success "$phase2_dir/response-decision-mutant.json" "$phase2_dir/runner-vectors"
     expect_runner_failure "runner position-to-Sid attribution" "required matched Sid is absent" \
       success "$phase2_dir/response-position-mutant.json" "$phase2_dir/runner-vectors"
+
+    reset_phase2_fake
+    report="$phase2_dir/resolved-report.json"
+    if output="$(run_phase2_runner success "$phase2_dir/response-resolved.json" \
+      "$phase2_dir/ambiguous-vectors" "$report" 2>&1)" && \
+       assert_submitted_document_equals_plan "$phase2_plan" "$phase2_calls" \
+         "aws_iam_policy.task_boundary" "--policy-input-list" && \
+       assert_submitted_document_equals_plan "$phase2_plan" "$phase2_calls" \
+         "aws_iam_policy.task_boundary" "--permissions-boundary-policy-input-list"; then
+      pass_case "runner resolves policy and boundary bytes from plan addresses"
+    else
+      fail_case "runner resolves policy and boundary bytes from plan addresses" "$output"
+    fi
+    if mutate_submitted_document "$phase2_calls" "--policy-input-list"; then
+      expect_failure "runner plan policy byte equality" \
+        "submitted --policy-input-list document differs from plan text" \
+        assert_submitted_document_equals_plan "$phase2_plan" "$phase2_calls" \
+          "aws_iam_policy.task_boundary" "--policy-input-list"
+    else
+      fail_case "runner plan policy byte equality mutation setup" "no simulator call"
+    fi
+    if mutate_submitted_document "$phase2_calls" \
+      "--permissions-boundary-policy-input-list"; then
+      expect_failure "runner boundary policy byte equality" \
+        "submitted --permissions-boundary-policy-input-list document differs from plan text" \
+        assert_submitted_document_equals_plan "$phase2_plan" "$phase2_calls" \
+          "aws_iam_policy.task_boundary" "--permissions-boundary-policy-input-list"
+    else
+      fail_case "runner boundary policy byte equality mutation setup" "no simulator call"
+    fi
+
+    IAM_SIM_TEST_PLAN="$phase2_dir/plan-missing-document.json" \
+      expect_runner_failure "runner missing named document" \
+        "named policy document is absent from plan: aws_iam_policy.task_boundary" \
+        success "$phase2_dir/response-resolved.json" "$phase2_dir/ambiguous-vectors"
+    if [ "$(phase2_call_count iam simulate-custom-policy)" -ne 0 ]; then
+      fail_case "runner missing named document" "fake AWS was called"
+    fi
+    IAM_SIM_TEST_PLAN="$phase2_dir/plan-missing-sid.json" \
+      expect_runner_failure "runner missing named Sid" \
+        "named Sid is absent from plan policy aws_iam_policy.deployer_data: LogsCreateWithTag" \
+        success "$phase2_dir/response-isolated.json" "$phase2_dir/isolated-vectors"
+    if [ "$(phase2_call_count iam simulate-custom-policy)" -ne 0 ]; then
+      fail_case "runner missing named Sid" "fake AWS was called"
+    fi
+    IAM_SIM_TEST_PLAN="$phase2_dir/plan-duplicate-sid.json" \
+      expect_runner_failure "runner duplicate named Sid" \
+        "named Sid matches more than one statement in plan policy aws_iam_policy.deployer_data: LogsCreateWithTag" \
+        success "$phase2_dir/response-isolated.json" "$phase2_dir/isolated-vectors"
+    if [ "$(phase2_call_count iam simulate-custom-policy)" -ne 0 ]; then
+      fail_case "runner duplicate named Sid" "fake AWS was called"
+    fi
+
     expect_runner_failure "runner ambiguous position refusal" "ambiguous matched statement position" \
       success "$phase2_dir/response-ambiguous.json" "$phase2_dir/ambiguous-vectors"
     expect_runner_failure "runner unmapped position refusal" "unmapped matched statement position from PolicyInputList.1" \

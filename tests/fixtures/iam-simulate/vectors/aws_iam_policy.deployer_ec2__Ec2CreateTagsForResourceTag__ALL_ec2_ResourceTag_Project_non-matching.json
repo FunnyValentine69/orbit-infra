@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForResourceTag:ALL:ec2:ResourceTag/Project:non-matching",
+  "document": "aws_iam_policy.deployer_ec2",
+  "sid": "Ec2CreateTagsForResourceTag",
+  "simulation_mode": "custom-isolated",
+  "assertion_kind": "decision",
+  "action_names": [
+    "ec2:CreateTags"
+  ],
+  "resource_arns": [
+    "*"
+  ],
+  "context_entries": [
+    {
+      "ContextKeyName": "ec2:ResourceTag/Project",
+      "ContextKeyValues": [
+        "other-project"
+      ],
+      "ContextKeyType": "string"
+    }
+  ],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "Ec2CreateTagsForResourceTag"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list '<a policy document containing only the Ec2CreateTagsForResourceTag statement>' --action-names <each row Action value> --resource-arns matching row resources --context-entries ec2:ResourceTag/Project:non-matching with every other condition key satisfying; expect implicitDeny (isolated statement; principal simulation is masked by Ec2CreateTagsForCreateActions in aws_iam_policy.deployer_ec2)"
+}

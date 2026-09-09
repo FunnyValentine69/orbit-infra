@@ -387,8 +387,8 @@ status and cleanup. It runs from `make test`.
 
 ## IAM simulator contracts
 
-Run all five taxonomy, case-ID, vector-schema, custom-runner, and role-lane
-contract groups without AWS, Terraform, Docker, or LocalStack:
+Run all six taxonomy, case-ID, vector-schema, completeness, custom-runner,
+and role-lane contract groups without AWS, Terraform, Docker, or LocalStack:
 
 ```bash
 bash tests/iam-simulate-contracts.sh
@@ -409,24 +409,42 @@ taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
 refusal. Both runners enforce the same exact-prefix rule instead of splitting
 case IDs on colons.
 
-The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against four
-positive fixtures covering all three simulation modes and both assertion kinds,
-plus seven single-defect fixtures for the required failure branches. The files
-are synthetic schema fixtures, not authored execution vectors. Their names are
-`valid-*.json` and `invalid-*.json`; every invalid fixture is passed to the real
-validator and its `FAIL:` diagnostic is asserted. The schema is specified in
-`docs/iam-simulate-vector-schema.md`. This suite runs near the start of
-`make test` and makes no external-service calls.
+The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against five
+positive fixtures covering all three simulation modes, both assertion kinds,
+and optional `notes`, plus ten single-defect fixtures for the required failure
+branches. The files are synthetic schema fixtures, not authored execution
+vectors. Their names are `valid-*.json` and `invalid-*.json`; every invalid
+fixture is passed to the real validator and its `FAIL:` diagnostic is asserted.
+Dedicated mutants prove that embedded `policy_input_list` and
+`isolated_statement` repository-policy snapshots are rejected. The schema is
+specified in `docs/iam-simulate-vector-schema.md`. This suite runs near the
+start of `make test` and makes no external-service calls.
+
+The `COMPLETENESS` group reads one real vector per file from the flat
+`tests/fixtures/iam-simulate/vectors/` directory. Filenames are
+`<document>__<sid>__<case-suffix>.json`, with every character outside
+`[A-Za-z0-9._-]` replaced by `_`; the document and Sid therefore remain the
+first two filename components. It requires unique taxonomy case IDs, exact
+filename derivation, a non-empty `notes` string, and successful real-validator
+execution for every vector. Simulator-eligible cases must have exactly one
+vector unless `tests/fixtures/iam-simulate/unresolved.json` records the case ID
+and a non-empty precise question. Vectors for either non-simulator category and
+unknown case IDs are rejected. Independent mutants prove missing coverage,
+both forbidden categories, unknown and duplicate IDs, filename drift, invalid
+schema, empty notes, and the counted unresolved exemption.
 
 The `RUNNER` group creates a synthetic plan and vectors in its temporary
 workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
 through `scripts/aws-cli.sh`. It proves nested per-resource mapping instead of
 the aggregate top-level decision, byte-position-to-Sid attribution, ambiguous
 and unmapped response refusal, request-side duplicate detection before a call,
-the five-attempt throttle cap, timeout non-retry, exact `TARGET=aws` refusal,
-and the one-statement `custom-isolated` wrapper. The plan fixture carries all
-ten addresses from `scripts/iam-matrix-documents.sh`; no Phase 3 execution
-vectors are added by this suite.
+the five-attempt throttle cap, timeout non-retry, and exact `TARGET=aws`
+refusal. It also proves byte-equal full-policy and boundary resolution from raw
+plan `.values.policy`, missing-address refusal, and absent/duplicate-Sid refusal
+before a fake AWS call; the isolated statement submitted by the runner comes
+from the named plan document. The plan fixture carries all ten addresses from
+`scripts/iam-matrix-documents.sh`; no authored execution vectors are added by
+this suite.
 
 The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
 store. It proves the complete zero-call dry-run inventory, exact opt-in and

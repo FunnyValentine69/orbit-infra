@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:none:protected-resource",
+  "document": "aws_iam_role_policy.plan_reader_deny",
+  "sid": "DenyListBucketOutsideScopePrefix",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "s3:ListBucket",
+    "s3:ListBucketVersions"
+  ],
+  "resource_arns": [
+    "arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate"
+  ],
+  "context_entries": [
+    {
+      "ContextKeyName": "s3:prefix",
+      "ContextKeyValues": [
+        "outside/example.tfstate"
+      ],
+      "ContextKeyType": "string"
+    }
+  ],
+  "expect": {
+    "decision": "explicitDeny",
+    "matched_sid_required": [
+      "DenyListBucketOutsideScopePrefix"
+    ],
+    "matched_sid_forbidden": []
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-plan-reader --action-names <each row Action value> --resource-arns resource selected by the deny and satisfying deny context; expect explicitDeny with MatchedStatements attribution or isolated custom simulation"
+}

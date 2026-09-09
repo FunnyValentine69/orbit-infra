@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.task_boundary:LogStreams:ALL:resource:nonmatching",
+  "document": "aws_iam_policy.task_boundary",
+  "sid": "LogStreams",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "permissions_boundary_policy_input_list": [
+    "aws_iam_policy.task_boundary"
+  ],
+  "action_names": [
+    "logs:CreateLogStream",
+    "logs:PutLogEvents"
+  ],
+  "resource_arns": [
+    "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/outside/${SUFFIX}/example"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "LogStreams"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list <identity Allow for each row action> --permissions-boundary-policy-input-list <full task_boundary document> --action-names <each row Action value> --resource-arns same-type resource outside every row Resource pattern; expect implicitDeny"
+}

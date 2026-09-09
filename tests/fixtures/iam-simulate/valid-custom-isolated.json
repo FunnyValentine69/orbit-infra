@@ -5,17 +5,6 @@
   "sid": "LogsCreateWithTag",
   "simulation_mode": "custom-isolated",
   "assertion_kind": "decision",
-  "isolated_statement": {
-    "Sid": "LogsCreateWithTag",
-    "Effect": "Allow",
-    "Action": ["logs:CreateLogGroup", "logs:TagResource"],
-    "Resource": "arn:aws:logs:*:${ACCOUNT_ID}:log-group:/orbit/${SUFFIX}/*",
-    "Condition": {
-      "StringEquals": {
-        "aws:RequestTag/Project": "orbit-infra"
-      }
-    }
-  },
   "action_names": ["logs:CreateLogGroup", "logs:TagResource"],
   "resource_arns": [
     "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/orbit/${SUFFIX}/example"

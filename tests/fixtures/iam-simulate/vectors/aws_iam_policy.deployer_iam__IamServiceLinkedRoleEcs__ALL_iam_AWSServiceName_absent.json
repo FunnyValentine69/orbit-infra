@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleEcs:ALL:iam:AWSServiceName:absent",
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "IamServiceLinkedRoleEcs",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "iam:CreateServiceLinkedRole"
+  ],
+  "resource_arns": [
+    "arn:aws:iam::${ACCOUNT_ID}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "IamServiceLinkedRoleEcs"
+    ]
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-deployer --action-names <each row Action value> --resource-arns matching row resources; --context-entries omitted (no entry for iam:AWSServiceName); expect implicitDeny"
+}

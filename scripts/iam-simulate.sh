@@ -98,6 +98,8 @@ def extract_plan(plan_path: Path) -> tuple[dict[str, str], str, str]:
     documents: dict[str, str] = {}
     for address in core_documents:
         matches = by_address.get(address, [])
+        if not matches:
+            continue
         if len(matches) != 1:
             fail(f"plan must contain exactly one {address}, found {len(matches)}")
         values = matches[0].get("values")
@@ -129,6 +131,38 @@ def extract_plan(plan_path: Path) -> tuple[dict[str, str], str, str]:
         fail(f"plan policy documents contain multiple account ids: {account_ids}")
     account_id = account_ids[0] if account_ids else "000000000000"
     return documents, account_id, suffix
+
+
+def resolve_plan_document(plan_documents: dict[str, str], address: str) -> str:
+    try:
+        return plan_documents[address]
+    except KeyError:
+        fail(f"named policy document is absent from plan: {address}")
+
+
+def isolated_policy(document_text: str, address: str, sid: str) -> str:
+    document = json.loads(document_text)
+    raw_statements = document["Statement"]
+    statements = raw_statements if isinstance(raw_statements, list) else [raw_statements]
+    matches = [
+        statement
+        for statement in statements
+        if isinstance(statement, dict) and statement.get("Sid") == sid
+    ]
+    if not matches:
+        fail(f"named Sid is absent from plan policy {address}: {sid}")
+    if len(matches) != 1:
+        fail(
+            f"named Sid matches more than one statement in plan policy {address}: {sid}"
+        )
+    return json.dumps(
+        {
+            "Version": document.get("Version", "2012-10-17"),
+            "Statement": matches,
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def render(value: Any, account_id: str, suffix: str) -> Any:
@@ -336,22 +370,20 @@ def load_vectors(vector_dir: Path, only: str | None, account_id: str, suffix: st
 
 def prepare_vector(vector: dict[str, Any], plan_documents: dict[str, str]) -> dict[str, Any]:
     mode = vector["simulation_mode"]
-    if mode == "principal":
-        try:
-            policies = [plan_documents[vector["document"]]]
-        except KeyError:
-            fail(f"principal vector document is not a core policy: {vector['document']}")
+    address = vector["document"]
+    document_text = resolve_plan_document(plan_documents, address)
+    if mode == "custom-isolated":
+        policies = [isolated_policy(document_text, address, vector["sid"])]
         boundaries: list[str] = []
-    elif mode == "custom":
-        policies = list(vector["policy_input_list"])
-        boundaries = list(vector.get("permissions_boundary_policy_input_list", []))
     else:
-        policies = [json.dumps(
-            {"Version": "2012-10-17", "Statement": [vector["isolated_statement"]]},
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )]
-        boundaries = []
+        policies = [document_text]
+        policies.extend(vector.get("synthetic_policy_input_list", []))
+        boundaries = [
+            resolve_plan_document(plan_documents, boundary_address)
+            for boundary_address in vector.get(
+                "permissions_boundary_policy_input_list", []
+            )
+        ]
     context = normalize_context(vector.get("context_entries", []))
     return {
         "vector": vector,

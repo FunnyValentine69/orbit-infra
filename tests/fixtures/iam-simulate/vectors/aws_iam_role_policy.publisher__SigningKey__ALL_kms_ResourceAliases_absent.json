@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_role_policy.publisher:SigningKey:ALL:kms:ResourceAliases:absent",
+  "document": "aws_iam_role_policy.publisher",
+  "sid": "SigningKey",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "kms:DescribeKey",
+    "kms:GetPublicKey",
+    "kms:Sign",
+    "kms:Verify"
+  ],
+  "resource_arns": [
+    "arn:aws:kms:us-east-1:${ACCOUNT_ID}:key/preview"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "SigningKey"
+    ]
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-publisher --action-names <each row Action value> --resource-arns matching row resources; no --context-entries for kms:ResourceAliases; expect implicitDeny"
+}

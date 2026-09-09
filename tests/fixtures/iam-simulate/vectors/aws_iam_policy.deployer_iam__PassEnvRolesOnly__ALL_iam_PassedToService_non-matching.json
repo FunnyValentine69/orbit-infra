@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:iam:PassedToService:non-matching",
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "PassEnvRolesOnly",
+  "simulation_mode": "custom-isolated",
+  "assertion_kind": "decision",
+  "action_names": [
+    "iam:PassRole"
+  ],
+  "resource_arns": [
+    "arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"
+  ],
+  "context_entries": [
+    {
+      "ContextKeyName": "iam:PassedToService",
+      "ContextKeyValues": [
+        "lambda.amazonaws.com"
+      ],
+      "ContextKeyType": "string"
+    }
+  ],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "PassEnvRolesOnly"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list '<a policy document containing only the PassEnvRolesOnly statement>' --action-names <each row Action value> --resource-arns matching row resources --context-entries iam:PassedToService:non-matching with every other condition key satisfying; expect implicitDeny (isolated statement; principal simulation is masked by DenyMutatingOwnControlRoles in aws_iam_policy.deployer_guard)"
+}

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching",
+  "document": "aws_iam_policy.deployer_data",
+  "sid": "LogsModifyDeleteWithResourceTag",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "logs:DeleteLogGroup",
+    "logs:ListTagsForResource",
+    "logs:PutRetentionPolicy",
+    "logs:UntagResource"
+  ],
+  "resource_arns": [
+    "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/outside/${SUFFIX}/example"
+  ],
+  "context_entries": [
+    {
+      "ContextKeyName": "aws:ResourceTag/Project",
+      "ContextKeyValues": [
+        "orbit-infra"
+      ],
+      "ContextKeyType": "string"
+    }
+  ],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "LogsModifyDeleteWithResourceTag"
+    ]
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-deployer --action-names <each row Action value> --resource-arns same-type resource outside every row Resource pattern; --context-entries <every condition key satisfying>; expect implicitDeny"
+}

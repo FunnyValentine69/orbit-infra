@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_elb_ecs:Route53HostedZoneRead:ALL:none:matching",
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "Route53HostedZoneRead",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "route53:GetHostedZone"
+  ],
+  "resource_arns": [
+    "arn:aws:route53:::hostedzone/preview"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "allowed",
+    "matched_sid_required": [
+      "Route53HostedZoneRead"
+    ],
+    "matched_sid_forbidden": []
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-deployer --action-names <each row Action value> --resource-arns matching row resources; no --context-entries; expect allowed"
+}

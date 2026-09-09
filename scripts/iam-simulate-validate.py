@@ -25,16 +25,20 @@ COMMON_FIELDS = {
     "resource_arns",
     "context_entries",
     "expect",
+    "notes",
 }
 MODE_FIELDS = {
     "principal": {"policy_source_arn", "policy_exclusion_list"},
-    "custom": {"policy_input_list", "permissions_boundary_policy_input_list"},
-    "custom-isolated": {"isolated_statement"},
+    "custom": {
+        "permissions_boundary_policy_input_list",
+        "synthetic_policy_input_list",
+    },
+    "custom-isolated": set(),
 }
 MODE_REQUIRED = {
     "principal": {"policy_source_arn"},
-    "custom": {"policy_input_list"},
-    "custom-isolated": {"isolated_statement"},
+    "custom": set(),
+    "custom-isolated": set(),
 }
 ASSERTION_KINDS = {"decision", "attribution-only"}
 DECISIONS = {"allowed", "implicitDeny", "explicitDeny"}
@@ -103,13 +107,6 @@ def require_string_list(value: Any, label: str, *, nonempty: bool = True) -> lis
     return value
 
 
-def validate_string_or_list(value: Any, label: str) -> None:
-    if isinstance(value, str):
-        require_string(value, label)
-        return
-    require_string_list(value, label)
-
-
 def load_categories(path: Path) -> dict[str, dict[str, Any]]:
     data, _ = read_json(path, "categories")
     if not isinstance(data, list):
@@ -150,41 +147,6 @@ def validate_policy_documents(
         statements = document["Statement"]
         if not isinstance(statements, (dict, list)) or not statements:
             fail(f"{label}[{index}].Statement must be a non-empty object or array")
-
-
-def validate_isolated_statement(value: Any, expected_sid: str) -> None:
-    statement = require_object(value, "isolated_statement")
-    allowed = {
-        "Sid",
-        "Effect",
-        "Action",
-        "NotAction",
-        "Resource",
-        "NotResource",
-        "Condition",
-    }
-    unknown = sorted(set(statement) - allowed)
-    if unknown:
-        fail(f"isolated_statement contains unknown field: {unknown[0]}")
-    if statement.get("Sid") != expected_sid:
-        fail(f"isolated_statement.Sid must equal vector sid {expected_sid}")
-    if not isinstance(statement.get("Effect"), str) or statement["Effect"] not in {
-        "Allow",
-        "Deny",
-    }:
-        fail("isolated_statement.Effect must be Allow or Deny")
-    if ("Action" in statement) == ("NotAction" in statement):
-        fail("isolated_statement must contain exactly one of Action or NotAction")
-    if ("Resource" in statement) == ("NotResource" in statement):
-        fail("isolated_statement must contain exactly one of Resource or NotResource")
-    action_field = "Action" if "Action" in statement else "NotAction"
-    resource_field = "Resource" if "Resource" in statement else "NotResource"
-    validate_string_or_list(statement[action_field], f"isolated_statement.{action_field}")
-    validate_string_or_list(
-        statement[resource_field], f"isolated_statement.{resource_field}"
-    )
-    if "Condition" in statement and not isinstance(statement["Condition"], dict):
-        fail("isolated_statement.Condition must be an object")
 
 
 def validate_context_entries(value: Any) -> None:
@@ -294,13 +256,19 @@ def validate_vector(vector_path: Path, categories_path: Path) -> None:
     vector = require_object(raw_vector, "vector top level")
     categories = load_categories(categories_path)
 
-    common_required = COMMON_FIELDS - {"context_entries"}
+    common_required = COMMON_FIELDS - {"context_entries", "notes"}
     missing_common = sorted(common_required - set(vector))
     if missing_common:
         fail(f"vector is missing required field: {missing_common[0]}")
     simulation_mode = vector.get("simulation_mode")
     if not isinstance(simulation_mode, str) or simulation_mode not in MODE_FIELDS:
         fail(f"unknown simulation_mode: {simulation_mode}")
+    for embedded_field in ("policy_input_list", "isolated_statement"):
+        if embedded_field in vector and simulation_mode in {"custom", "custom-isolated"}:
+            fail(
+                f"{embedded_field} is forbidden for {simulation_mode} vectors; "
+                "resolve repository policies from the plan"
+            )
     allowed_fields = COMMON_FIELDS | MODE_FIELDS[simulation_mode]
     unknown_fields = sorted(set(vector) - allowed_fields)
     if unknown_fields:
@@ -314,6 +282,8 @@ def validate_vector(vector_path: Path, categories_path: Path) -> None:
     case_id = require_string(vector["case_id"], "case_id")
     document = require_string(vector["document"], "document")
     sid = require_string(vector["sid"], "sid")
+    if "notes" in vector and not isinstance(vector["notes"], str):
+        fail("notes must be a string")
     category = categories.get(case_id)
     if category is None:
         fail(f"case_id is absent from categories.json: {case_id}")
@@ -351,15 +321,27 @@ def validate_vector(vector_path: Path, categories_path: Path) -> None:
         if "policy_exclusion_list" in vector:
             validate_exclusions(vector["policy_exclusion_list"])
     elif simulation_mode == "custom":
-        validate_policy_documents(vector["policy_input_list"], "policy_input_list")
         if "permissions_boundary_policy_input_list" in vector:
-            validate_policy_documents(
+            boundaries = require_string_list(
                 vector["permissions_boundary_policy_input_list"],
                 "permissions_boundary_policy_input_list",
+            )
+            if len(boundaries) > 1:
+                fail(
+                    "permissions_boundary_policy_input_list accepts at most 1 "
+                    "plan document address"
+                )
+        if "synthetic_policy_input_list" in vector:
+            if category.get("suffix") != "ALL:none:outside-boundary":
+                fail(
+                    "synthetic_policy_input_list is reserved for outside-boundary "
+                    "vectors"
+                )
+            validate_policy_documents(
+                vector["synthetic_policy_input_list"],
+                "synthetic_policy_input_list",
                 maximum=1,
             )
-    else:
-        validate_isolated_statement(vector["isolated_statement"], sid)
 
     validate_expect(vector["expect"], assertion_kind, simulation_mode, resource_arns)
 

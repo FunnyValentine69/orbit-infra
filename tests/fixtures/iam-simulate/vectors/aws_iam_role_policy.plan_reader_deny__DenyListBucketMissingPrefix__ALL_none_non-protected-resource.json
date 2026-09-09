@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:none:non-protected-resource",
+  "document": "aws_iam_role_policy.plan_reader_deny",
+  "sid": "DenyListBucketMissingPrefix",
+  "simulation_mode": "custom",
+  "assertion_kind": "attribution-only",
+  "action_names": [
+    "s3:ListBucket",
+    "s3:ListBucketVersions"
+  ],
+  "resource_arns": [
+    "arn:aws:s3:::outside-${SUFFIX}-resource"
+  ],
+  "context_entries": [],
+  "expect": {
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "DenyListBucketMissingPrefix"
+    ]
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-plan-reader --action-names <each row Action value> --resource-arns resource outside the deny selector; --context-entries <satisfying deny context>; expect not denied by this statement; require this Sid absent from MatchedStatements in the effective policy"
+}

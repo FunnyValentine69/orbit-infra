@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryUntagResource:ALL:aws:TagKeys:all-matching",
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "ServiceDiscoveryUntagResource",
+  "simulation_mode": "custom",
+  "assertion_kind": "decision",
+  "action_names": [
+    "servicediscovery:UntagResource"
+  ],
+  "resource_arns": [
+    "*"
+  ],
+  "context_entries": [
+    {
+      "ContextKeyName": "aws:TagKeys",
+      "ContextKeyValues": [
+        "Project",
+        "ManagedBy",
+        "env_id"
+      ],
+      "ContextKeyType": "stringList"
+    }
+  ],
+  "expect": {
+    "decision": "allowed",
+    "matched_sid_required": [
+      "ServiceDiscoveryUntagResource"
+    ],
+    "matched_sid_forbidden": []
+  },
+  "notes": "aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-deployer --action-names <each row Action value> --resource-arns matching row resources; --context-entries ContextKeyName=aws:TagKeys,ContextKeyValues=Project,ManagedBy,env_id,ContextKeyType=stringList; expect allowed"
+}

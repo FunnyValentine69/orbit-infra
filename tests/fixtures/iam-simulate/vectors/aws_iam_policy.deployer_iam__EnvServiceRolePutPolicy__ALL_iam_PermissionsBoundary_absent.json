@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:iam:PermissionsBoundary:absent",
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "EnvServiceRolePutPolicy",
+  "simulation_mode": "custom-isolated",
+  "assertion_kind": "decision",
+  "action_names": [
+    "iam:PutRolePolicy"
+  ],
+  "resource_arns": [
+    "arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "EnvServiceRolePutPolicy"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list '<a policy document containing only the EnvServiceRolePutPolicy statement>' --action-names <each row Action value> --resource-arns matching row resources --context-entries omitted (no entry for iam:PermissionsBoundary); expect implicitDeny (isolated statement; principal simulation is masked by DenyMutatingOwnControlRoles in aws_iam_policy.deployer_guard)"
+}

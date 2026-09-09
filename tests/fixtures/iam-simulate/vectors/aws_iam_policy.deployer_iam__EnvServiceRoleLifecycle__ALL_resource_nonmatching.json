@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleLifecycle:ALL:resource:nonmatching",
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "EnvServiceRoleLifecycle",
+  "simulation_mode": "custom-isolated",
+  "assertion_kind": "decision",
+  "action_names": [
+    "iam:DeleteRole",
+    "iam:DeleteRolePolicy",
+    "iam:DetachRolePolicy",
+    "iam:GetRole",
+    "iam:GetRolePolicy",
+    "iam:ListAttachedRolePolicies",
+    "iam:ListInstanceProfilesForRole",
+    "iam:ListRolePolicies",
+    "iam:TagRole",
+    "iam:UntagRole"
+  ],
+  "resource_arns": [
+    "arn:aws:iam::${ACCOUNT_ID}:role/outside-${SUFFIX}-example"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "EnvServiceRoleLifecycle"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list '<a policy document containing only the EnvServiceRoleLifecycle statement>' --action-names <each row Action value> --resource-arns same-type resource outside every row Resource pattern; no --context-entries; expect implicitDeny (isolated statement; principal simulation is masked by DenyMutatingOwnControlRoles in aws_iam_policy.deployer_guard)"
+}

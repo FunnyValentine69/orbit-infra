@@ -1,9 +1,9 @@
 # IAM simulator vector schema
 
-This document specifies schema version 1 for the IAM simulator vectors authored
-in a later phase. A vector file contains one JSON object. Phase 1 shipped the
-synthetic contract fixtures under `tests/fixtures/iam-simulate/`; Phase 2 adds
-the offline-contracted runners, but does not ship the 288 execution vectors.
+This document specifies schema version 1 for IAM simulator vectors. A vector
+file contains one JSON object. Synthetic contract fixtures live directly under
+`tests/fixtures/iam-simulate/`; authored execution vectors live under its
+`vectors/` directory.
 
 The validator is:
 
@@ -26,19 +26,19 @@ non-empty strings.
 |---|---|---|
 | `schema_version` | integer | Required in every mode; exactly `1`. |
 | `case_id` | string | Required; must occur in `categories.json`. Do not parse it by splitting on colons. |
-| `document` | string | Required; must exactly equal the taxonomy entry's `document`. |
+| `document` | string | Required; must exactly equal the taxonomy entry's `document` and names the Terraform resource address whose raw `.values.policy` is resolved from the plan. |
 | `sid` | string | Required; must exactly equal the taxonomy entry's `sid`. |
 | `simulation_mode` | string enum | Required; `custom`, `custom-isolated`, or `principal`. |
 | `assertion_kind` | string enum | Required; `decision` or `attribution-only`, matching the taxonomy category. |
 | `policy_source_arn` | string | Required only for `principal`; the IAM role, user, or group ARN passed as `PolicySourceArn`. |
-| `policy_input_list` | non-empty array of strings | Required only for `custom`. Each item is a string containing a complete JSON IAM policy with a non-empty `Statement`; an object is invalid. |
-| `permissions_boundary_policy_input_list` | non-empty array of strings | Optional only for `custom`; at most one complete JSON policy string. |
-| `isolated_statement` | object | Required only for `custom-isolated`; forbidden in the other modes. |
+| `permissions_boundary_policy_input_list` | non-empty array of strings | Optional only for `custom`; at most one Terraform resource address. The runner resolves its raw `.values.policy` from the plan. |
+| `synthetic_policy_input_list` | non-empty array of strings | Optional only for an `outside-boundary` custom vector; exactly one complete synthetic identity-policy string. |
 | `action_names` | non-empty array of strings | Required; concrete `service:Action` names with no wildcard. |
 | `resource_arns` | non-empty array of strings | Required; the exact resources submitted to the simulator, or `*`. |
 | `context_entries` | array of objects | Optional; omit it or use `[]` when no context is submitted. |
 | `policy_exclusion_list` | non-empty array of objects | Optional only for `principal`; each object is exactly `{"PolicyType":"<type>"}`. |
 | `expect` | object | Required; the assertion described below. |
+| `notes` | string | Optional. Real vectors under `tests/fixtures/iam-simulate/vectors/` require a non-empty matrix-prose fragment through the completeness contract. It is exact except for the mandatory account and suffix template substitutions described below. |
 
 ### Requirements by simulation mode
 
@@ -48,22 +48,29 @@ and `expect`. `context_entries` is optional in every mode.
 
 | Mode | Additional required fields | Optional mode fields | Forbidden mode fields |
 |---|---|---|---|
-| `custom` | `policy_input_list` | `permissions_boundary_policy_input_list` | `policy_source_arn`, `isolated_statement`, `policy_exclusion_list` |
-| `custom-isolated` | `isolated_statement` | none | `policy_source_arn`, `policy_input_list`, `permissions_boundary_policy_input_list`, `policy_exclusion_list` |
-| `principal` | `policy_source_arn` | `policy_exclusion_list` | `policy_input_list`, `permissions_boundary_policy_input_list`, `isolated_statement` |
+| `custom` | none | `permissions_boundary_policy_input_list`, `synthetic_policy_input_list` for `outside-boundary` only | `policy_source_arn`, `policy_input_list`, `isolated_statement`, `policy_exclusion_list` |
+| `custom-isolated` | none | none | `policy_source_arn`, `policy_input_list`, `permissions_boundary_policy_input_list`, `synthetic_policy_input_list`, `isolated_statement`, `policy_exclusion_list` |
+| `principal` | `policy_source_arn` | `policy_exclusion_list` | `policy_input_list`, `permissions_boundary_policy_input_list`, `synthetic_policy_input_list`, `isolated_statement` |
 
-For `custom-isolated`, `isolated_statement` must contain the vector `sid`, an
-`Effect` of `Allow` or `Deny`, exactly one of `Action` or `NotAction`, and
-exactly one of `Resource` or `NotResource`. `Condition` is optional and must be
-an object. `scripts/iam-simulate.sh` wraps this object as
-`{"Version":"2012-10-17","Statement":[...]}` and serialize the complete
-policy as one JSON string in
-`PolicyInputList`. This mode is reserved for masked negative cases and may not
-expect `allowed`.
+For `custom`, `scripts/iam-simulate.sh` submits the `document` address's full,
+byte-exact rendered policy from the plan. No authored vector currently needs
+more than one repository document. `policy_input_list` is invalid because an
+inline copy could drift from that plan.
 
-`policy_input_list` and `permissions_boundary_policy_input_list` deliberately
-contain JSON strings, not JSON objects. The measured IAM API request shape
-accepts each `PolicyInputList` element as a string containing JSON policy text.
+For `custom-isolated`, the runner parses the same plan-resolved `document`,
+selects the only statement whose `Sid` equals the vector `sid`, and wraps it as
+a one-statement policy in `PolicyInputList`. An absent Sid or more than one
+matching statement is a hard failure. `isolated_statement` is invalid. This
+mode is reserved for masked negative cases and may not expect `allowed`.
+
+`permissions_boundary_policy_input_list` contains plan document addresses, not
+policy JSON. All 16 boundary vectors name `aws_iam_policy.task_boundary`, whose
+raw plan policy is submitted as the permissions boundary. The six
+`ALL:none:outside-boundary` vectors additionally carry one small inline
+`synthetic_policy_input_list` identity Allow for `s3:ListAllMyBuckets`; this is
+the sole synthetic-policy exception because that identity policy is not a
+repository policy. The IAM request still receives JSON policy strings after
+the runner resolves the addresses.
 
 For `policy_exclusion_list`, `PolicyType` is lower case and is one of `inline`,
 `aws-managed`, `user-managed`, `permission-boundary`, `scp`, or `rcp`. The
@@ -123,12 +130,16 @@ is replaced with the deployed 12-digit account ID. `${SUFFIX}` is replaced with
 the deployed project-name suffix represented by `79s5rw` in the matrix; it is
 not the taxonomy entry's `suffix` field, which is the remainder of a case ID.
 
-Substitution is literal, recursive across string values and object keys, and
-must not use shell evaluation. The same substitution applies to JSON policy
-strings and `expect.resource_decisions` keys. An unknown `${...}` token is
-invalid. Any literal 12-digit number anywhere in a vector file is invalid,
+Substitution is literal, recursive across vector string values and object keys,
+and must not use shell evaluation. It applies to the permitted synthetic JSON
+policy string and `expect.resource_decisions` keys; plan policy text is already
+rendered. An unknown `${...}` token is invalid. Any literal 12-digit number
+anywhere in a vector file is invalid,
 including `000000000000`; use `${ACCOUNT_ID}`. The measured custom-policy
 simulator accepts `000000000000`, but committed vectors remain account-neutral.
+A real vector's `notes` field quotes its exact matrix case fragment after only
+these required normalizations: `000000000000` becomes `${ACCOUNT_ID}` and
+`79s5rw` becomes `${SUFFIX}`.
 
 ## Worked matrix examples
 

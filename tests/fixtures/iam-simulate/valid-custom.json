@@ -5,12 +5,7 @@
   "sid": "EcrAuth",
   "simulation_mode": "custom",
   "assertion_kind": "decision",
-  "policy_input_list": [
-    "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"FixtureIdentityAllow\",\"Effect\":\"Allow\",\"Action\":\"ecr:GetAuthorizationToken\",\"Resource\":\"*\"}]}"
-  ],
-  "permissions_boundary_policy_input_list": [
-    "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"EcrAuth\",\"Effect\":\"Allow\",\"Action\":\"ecr:GetAuthorizationToken\",\"Resource\":\"*\"}]}"
-  ],
+  "permissions_boundary_policy_input_list": ["aws_iam_policy.task_boundary"],
   "action_names": ["ecr:GetAuthorizationToken"],
   "resource_arns": ["*"],
   "context_entries": [],

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleCreateWithBoundary:ALL:resource:nonmatching",
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "EnvServiceRoleCreateWithBoundary",
+  "simulation_mode": "custom-isolated",
+  "assertion_kind": "decision",
+  "action_names": [
+    "iam:CreateRole"
+  ],
+  "resource_arns": [
+    "arn:aws:iam::${ACCOUNT_ID}:role/outside-${SUFFIX}-example"
+  ],
+  "context_entries": [
+    {
+      "ContextKeyName": "iam:PermissionsBoundary",
+      "ContextKeyValues": [
+        "arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"
+      ],
+      "ContextKeyType": "string"
+    }
+  ],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "EnvServiceRoleCreateWithBoundary"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list '<a policy document containing only the EnvServiceRoleCreateWithBoundary statement>' --action-names <each row Action value> --resource-arns same-type resource outside every row Resource pattern --context-entries <every condition key satisfying>; expect implicitDeny (isolated statement; principal simulation is masked by DenyMutatingOwnControlRoles in aws_iam_policy.deployer_guard)"
+}

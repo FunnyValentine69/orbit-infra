@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "case_id": "case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:resource:nonmatching",
+  "document": "aws_iam_role_policy.plan_reader_state",
+  "sid": "ReadStateObjects",
+  "simulation_mode": "custom-isolated",
+  "assertion_kind": "decision",
+  "action_names": [
+    "s3:GetObject"
+  ],
+  "resource_arns": [
+    "arn:aws:s3:::outside-${SUFFIX}-resource/example"
+  ],
+  "context_entries": [],
+  "expect": {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [
+      "ReadStateObjects"
+    ]
+  },
+  "notes": "aws iam simulate-custom-policy --policy-input-list '<a policy document containing only the ReadStateObjects statement>' --action-names <each row Action value> --resource-arns same-type resource outside every row Resource pattern --context-entries <none>; expect implicitDeny (isolated statement; principal simulation is masked by ReadOnlyAccess)"
+}
