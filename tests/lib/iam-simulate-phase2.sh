@@ -69,6 +69,7 @@ run_phase2_runner() {
   local vectors=$3
   local report=$4
   local expected_inputs="$phase2_dir/expected-custom-inputs.json"
+  local test_runner="${IAM_SIM_TEST_RUNNER:-$IAM_SIM_RUNNER}"
   shift 4
   python3 - "$vectors" "$expected_inputs" "$@" <<'PY'
 import json
@@ -113,7 +114,7 @@ PY
     FAKE_AWS_EXPECTED_INPUTS="$expected_inputs" \
     IAM_SIM_RETRY_BASE_SECONDS=0 \
     TARGET=aws \
-    "$IAM_SIM_RUNNER" --plan "${IAM_SIM_TEST_PLAN:-$phase2_plan}" \
+    "$test_runner" --plan "${IAM_SIM_TEST_PLAN:-$phase2_plan}" \
       --vectors "$vectors" --report "$report" "$@"
 }
 
@@ -137,6 +138,159 @@ expect_runner_failure() {
     fail_case "$label mutation did not fail as required" "rc=$rc output=$output"
   fi
 }
+
+assert_plan_refusal() {
+  local lane=$1 plan=$2 expected=$3 executable=$4 core=$5 label=$6
+  local output rc fail_line
+  reset_phase2_fake
+  set +e
+  case "$lane" in
+    runner)
+      output="$(
+        IAM_SIM_TEST_PLAN="$plan" IAM_SIM_TEST_RUNNER="$executable" \
+          IAM_SIM_CORE="$core" run_phase2_runner \
+            success "$phase2_dir/response-baseline.json" \
+            "$phase2_dir/runner-vectors" \
+            "$phase2_dir/plan-refusal-runner-report.json" 2>&1
+      )"
+      rc=$?
+      ;;
+    role-lane)
+      output="$(
+        IAM_SIM_TEST_ROLE_PLAN="$plan" IAM_SIM_TEST_ROLE_LANE="$executable" \
+          IAM_SIM_TEST_CORE="$core" run_phase2_role_lane success --dry-run 2>&1
+      )"
+      rc=$?
+      ;;
+    *)
+      output="FAIL: unknown plan-refusal lane: $lane"
+      rc=2
+      ;;
+  esac
+  set -e
+  fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+  if [ "$rc" -ne 0 ] && [[ "$fail_line" == "$expected"* ]]; then
+    return 0
+  fi
+  printf 'FAIL: %s did not enforce expected refusal: rc=%s observed=%s\n' \
+    "$label" "$rc" "${fail_line:-<none>}" >&2
+  return 1
+}
+
+
+run_plan_guard_case() {
+  local lane=$1 guard=$2 fixture=$3 expected=$4
+  local label executable mutant output
+  case "$lane" in
+    runner)
+      label="runner plan ${guard//-/ } guard"
+      executable=$IAM_SIM_RUNNER
+      ;;
+    role-lane)
+      label="role lane plan ${guard//-/ } guard"
+      executable=$IAM_SIM_ROLE_LANE
+      ;;
+    *)
+      fail_case "plan guard contract setup" "unknown lane: $lane"
+      return
+      ;;
+  esac
+  mutant="$phase2_dir/$lane-${guard}-guard-mutant"
+  if output="$(assert_plan_refusal \
+    "$lane" "$phase2_dir/$fixture" "$expected" \
+    "$executable" "$IAM_SIM_CORE" "$label" 2>&1)"; then
+    pass_case "$label refuses doctored fixture"
+  else
+    fail_case "$label doctored fixture" "$output"
+    return
+  fi
+  if ! output="$(mutate_plan_guard \
+    "$executable" "$mutant" "$lane" "$guard" 2>&1)"; then
+    fail_case "$label mutation setup" "$output"
+    return
+  fi
+  expect_failure "$label" "$label did not enforce expected refusal" \
+    assert_plan_refusal \
+      "$lane" "$phase2_dir/$fixture" "$expected" \
+      "$mutant" "$IAM_SIM_CORE" "$label"
+  if output="$(assert_plan_refusal \
+    "$lane" "$phase2_dir/$fixture" "$expected" \
+    "$executable" "$IAM_SIM_CORE" "$label" 2>&1)"; then
+    pass_case "$label mutation restored PASS"
+  else
+    fail_case "$label mutation restoration" "$output"
+  fi
+}
+
+
+run_runner_plan_guard_contracts() {
+  local guard fixture expected
+  while IFS='|' read -r guard fixture expected; do
+    run_plan_guard_case runner "$guard" "$fixture" "$expected"
+  done <<'PLAN_GUARDS'
+resources-array|plan-resources-object.json|FAIL: plan planned_values.root_module.resources must be an array
+exactly-one-document|plan-duplicate-document.json|FAIL: plan must contain exactly one aws_iam_role_policy.plan_reader_deny, found 2
+nonempty-policy|plan-null-policy.json|FAIL: plan policy document is null, unknown, or empty: aws_iam_role_policy.plan_reader_deny
+role-name|plan-null-role-name.json|FAIL: plan reader role name is null or unknown
+suffix|plan-invalid-role-name.json|FAIL: cannot derive SUFFIX from plan reader role name: invalid-plan-reader
+account-id-uniqueness|plan-multiple-account-ids.json|FAIL: plan policy documents contain multiple account ids:
+PLAN_GUARDS
+}
+
+
+run_sid_contracts() {
+  local lane=$1 expected="FAIL: submitted statement 0 must carry a non-empty Sid"
+  local label description executable mutant output
+  case "$lane" in
+    runner)
+      label="runner empty Sid shared core guard"
+      description=runner
+      executable=$IAM_SIM_RUNNER
+      ;;
+    role-lane)
+      label="role lane empty Sid shared core guard"
+      description="role lane"
+      executable=$IAM_SIM_ROLE_LANE
+      ;;
+    *)
+      fail_case "Sid contract setup" "unknown lane: $lane"
+      return
+      ;;
+  esac
+  mutant="$phase2_dir/$lane-empty-sid-core-mutant.py"
+  if output="$(assert_plan_refusal \
+    "$lane" "$phase2_dir/plan-empty-sid.json" "$expected" \
+    "$executable" "$IAM_SIM_CORE" "$label" 2>&1)"; then
+    pass_case "$description refuses empty Sid at statement index 0"
+  else
+    fail_case "$description refuses empty Sid at statement index 0" "$output"
+    return
+  fi
+  if ! output="$(mutate_core_sid_validation "$mutant" 2>&1)"; then
+    fail_case "$label mutation setup" "$output"
+    return
+  fi
+  expect_failure "$label" "$label did not enforce expected refusal" \
+    assert_plan_refusal \
+      "$lane" "$phase2_dir/plan-empty-sid.json" "$expected" \
+      "$executable" "$mutant" "$label"
+  if output="$(assert_plan_refusal \
+    "$lane" "$phase2_dir/plan-empty-sid.json" "$expected" \
+    "$executable" "$IAM_SIM_CORE" "$label" 2>&1)"; then
+    pass_case "$label mutation restored PASS"
+  else
+    fail_case "$label mutation restoration" "$output"
+  fi
+  if output="$(assert_plan_refusal \
+    "$lane" "$phase2_dir/plan-whitespace-sid.json" "$expected" \
+    "$executable" "$IAM_SIM_CORE" "$description whitespace Sid guard" 2>&1)"; then
+    pass_case "$description refuses whitespace-only Sid at statement index 0"
+  else
+    fail_case "$description refuses whitespace-only Sid at statement index 0" "$output"
+  fi
+}
+
+
 
 run_real_vector_runner() {
   local vectors=$1
@@ -169,6 +323,16 @@ mutate_shared_core_scanner() {
 
 mutate_core_counter() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-core-counter "$IAM_SIM_CORE" "$1"
+}
+
+
+mutate_core_sid_validation() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-core-sid-validation "$IAM_SIM_CORE" "$1"
+}
+
+
+mutate_plan_guard() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-plan-guard "$1" "$2" "$REPO_ROOT" "$3" "$4"
 }
 
 
@@ -242,6 +406,9 @@ run_iam_simulate_runner_contracts() {
   if [ ! -x "$IAM_SIM_RUNNER" ]; then
     fail_case "custom-lane runner exists and is executable" "$IAM_SIM_RUNNER is missing"
   else
+    run_sid_contracts runner
+    run_runner_plan_guard_contracts
+
     reset_phase2_fake
     report="$phase2_dir/runner-report.json"
     if output="$(run_phase2_runner success "$phase2_dir/response-baseline.json" "$phase2_dir/runner-vectors" "$report" 2>&1)" && \
@@ -764,6 +931,7 @@ run_phase2_role_lane() {
     FAKE_ROLE_FAILURE_CREATE_INDEX="${IAM_SIM_TEST_ROLE_FAILURE_CREATE_INDEX:-}" \
     FAKE_ROLE_INJECTION_SUFFIX="${IAM_SIM_TEST_ROLE_INJECTION_SUFFIX:-}" \
     IAM_SIM_RUN_ID="$test_run_id" \
+    IAM_SIM_CORE="${IAM_SIM_TEST_CORE:-$IAM_SIM_CORE}" \
     TARGET=aws \
     "$test_role_lane" --plan "$test_plan" --vectors "$test_vectors" \
       --report "$test_report" --expect-account "$test_account" \
@@ -1065,6 +1233,22 @@ run_role_shared_mapping_case() {
   fi
 }
 
+run_role_plan_guard_contracts() {
+  local guard fixture expected
+  while IFS='|' read -r guard fixture expected; do
+    run_plan_guard_case role-lane "$guard" "$fixture" "$expected"
+  done <<'PLAN_GUARDS'
+resources-array|plan-resources-object.json|FAIL: plan resources must be an array
+exactly-one-document|plan-duplicate-document.json|FAIL: plan must contain exactly one aws_iam_role_policy.plan_reader_deny, found 2
+nonempty-policy|plan-null-policy.json|FAIL: plan policy document is null, unknown, or empty: aws_iam_role_policy.plan_reader_deny
+role-name|plan-null-role-name.json|FAIL: plan reader role name is null or unknown
+suffix|plan-invalid-role-name.json|FAIL: cannot derive SUFFIX from plan reader role name: invalid-plan-reader
+account-id-uniqueness|plan-multiple-account-ids.json|FAIL: plan policy documents contain multiple account ids:
+PLAN_GUARDS
+}
+
+
+
 run_iam_simulate_role_lane_contracts() {
   local output rc mutated_inventory full_inventory full_scale role_lane_mutant
   local account account_mutant account_report cleanup_mutant cleanup_report
@@ -1079,6 +1263,9 @@ run_iam_simulate_role_lane_contracts() {
   if [ ! -x "$IAM_SIM_ROLE_LANE" ]; then
     fail_case "role-lane runner exists and is executable" "$IAM_SIM_ROLE_LANE is missing"
   else
+    run_sid_contracts role-lane
+    run_role_plan_guard_contracts
+
     counter_core="$phase2_dir/iam-simulate-core-counter.py"
     core_call_log="$phase2_dir/core-calls.txt"
     mutate_core_counter "$counter_core"

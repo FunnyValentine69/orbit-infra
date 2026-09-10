@@ -32,6 +32,18 @@ ACTION_AUTHORIZATION_CLASSES: tuple[frozenset[str], ...] = (
 )
 
 
+def _statement_sid(statement: Any, statement_index: int) -> str:
+    if (
+        not isinstance(statement, dict)
+        or not isinstance(statement.get("Sid"), str)
+        or not statement["Sid"].strip()
+    ):
+        raise RunnerFailure(
+            f"submitted statement {statement_index} must carry a non-empty Sid"
+        )
+    return statement["Sid"]
+
+
 def split_action_authorization_groups(action_names: list[str]) -> list[list[str]]:
     """Partition actions into groups accepted by one IAM simulator request."""
     groups = [[] for _ in range(len(ACTION_AUTHORIZATION_CLASSES) + 1)]
@@ -87,6 +99,7 @@ def statement_spans(policy: str) -> tuple[tuple[int, int, str], ...]:
             found = True
             if index < len(policy) and policy[index] == "[":
                 index += 1
+                statement_index = 0
                 while True:
                     index = whitespace(index)
                     if index < len(policy) and policy[index] == "]":
@@ -97,9 +110,9 @@ def statement_spans(policy: str) -> tuple[tuple[int, int, str], ...]:
                         statement, end = decoder.raw_decode(policy, start)
                     except json.JSONDecodeError as exc:
                         raise RunnerFailure(f"cannot scan submitted statement: {exc}") from exc
-                    if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
-                        raise RunnerFailure("every submitted statement must carry a non-empty Sid")
-                    raw_spans.append((start, end, statement["Sid"]))
+                    sid = _statement_sid(statement, statement_index)
+                    raw_spans.append((start, end, sid))
+                    statement_index += 1
                     index = whitespace(end)
                     if index < len(policy) and policy[index] == ",":
                         index += 1
@@ -114,9 +127,8 @@ def statement_spans(policy: str) -> tuple[tuple[int, int, str], ...]:
                     statement, end = decoder.raw_decode(policy, start)
                 except json.JSONDecodeError as exc:
                     raise RunnerFailure(f"cannot scan submitted statement: {exc}") from exc
-                if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
-                    raise RunnerFailure("every submitted statement must carry a non-empty Sid")
-                raw_spans.append((start, end, statement["Sid"]))
+                sid = _statement_sid(statement, 0)
+                raw_spans.append((start, end, sid))
                 index = end
         index = whitespace(index)
         if index < len(policy) and policy[index] == ",":

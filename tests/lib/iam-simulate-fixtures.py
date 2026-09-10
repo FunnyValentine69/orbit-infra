@@ -24,6 +24,14 @@ def _authorization_action_groups(actions):
 
 PLAN_FIXTURES = (
     ('plan.json', 'synthetic', ()),
+    ('plan-resources-object.json', 'plan.json', (('set', ('planned_values', 'root_module', 'resources'), {}),)),
+    ('plan-duplicate-document.json', 'plan.json', (('duplicate-resource', 'aws_iam_role_policy.plan_reader_deny'),)),
+    ('plan-null-policy.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_deny', None),)),
+    ('plan-null-role-name.json', 'plan.json', (('resource-value', 'aws_iam_role.plan_reader', 'name', None),)),
+    ('plan-invalid-role-name.json', 'plan.json', (('resource-value', 'aws_iam_role.plan_reader', 'name', 'invalid-plan-reader'),)),
+    ('plan-multiple-account-ids.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_state', ('$ctx', 'second_account_policy')),)),
+    ('plan-empty-sid.json', 'plan.json', (('statement-sid', 'aws_iam_role_policy.plan_reader_deny', 0, ''),)),
+    ('plan-whitespace-sid.json', 'plan.json', (('statement-sid', 'aws_iam_role_policy.plan_reader_deny', 0, '   '),)),
     ('plan-real-position.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_deny', ('$ctx', 'real_position_policy')),)),
     ('plan-multiline-position.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_deny', ('$ctx', 'multiline_position_policy')),)),
     ('plan-scanner-position.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_deny', ('$ctx', 'scanner_position_policy')),)),
@@ -165,7 +173,12 @@ def _context(taxonomy_path, projection_source):
     resources += [{'address': f'aws_iam_role.{short}', 'type': 'aws_iam_role', 'values': {'name': f"orbit-infra-79s5rw-{short.replace('_', '-')}"}} for short in ('plan_reader', 'deployer', 'publisher')]
     categories = json.loads(taxonomy_path.read_text(encoding='utf-8'))
     boundary_hash = hashlib.sha256(ambiguous.encode()).hexdigest()
-    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'role_authorization_decision': role_authorization_decision, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
+    second_account = '111111' + '111111'
+    second_account_policy = _policy('ReadStateObjects').replace(
+        '"Resource":"*"',
+        f'"Resource":"arn:aws:iam::{second_account}:role/example"',
+    )
+    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'second_account_policy': second_account_policy, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'role_authorization_decision': role_authorization_decision, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
     ctx.update({'mapping_match0': _delimiter_match(mapping, 0), 'mapping_match1': _delimiter_match(mapping, 1), 'unmapped_match': _match(1), 'unknown_source_match': _delimiter_match(mapping, 1, 'UnknownPolicyLabel'), 'real_position_match': _match(38, 271)})
     first = ambiguous.index('{', ambiguous.index('[')) + 1
     second = ambiguous.index('{', first) + 1
@@ -192,6 +205,12 @@ def _apply(payload, edits, ctx):
         elif operation == 'policy':
             resource = next((item for item in payload['planned_values']['root_module']['resources'] if item['address'] == arguments[0]))
             resource['values']['policy'] = _resolve(arguments[1], ctx, payload)
+        elif operation == 'resource-value':
+            resource = next((item for item in payload['planned_values']['root_module']['resources'] if item['address'] == arguments[0]))
+            resource['values'][arguments[1]] = _resolve(arguments[2], ctx, payload)
+        elif operation == 'duplicate-resource':
+            resource = next((item for item in payload['planned_values']['root_module']['resources'] if item['address'] == arguments[0]))
+            payload['planned_values']['root_module']['resources'].append(deepcopy(resource))
         elif operation == 'drop-resource': payload['planned_values']['root_module']['resources'] = [item for item in payload['planned_values']['root_module']['resources'] if item['address'] != arguments[0]]
         elif operation == 'statement-sid':
             resource = next((item for item in payload['planned_values']['root_module']['resources'] if item['address'] == arguments[0]))
@@ -495,6 +514,64 @@ def _command_mutate_core_authorization_groups():
     new = '    for index, action_class in enumerate((), 1):\n'
     if source.count(old) != 1: raise SystemExit('FAIL: shared-core authorization partition mutation anchor changed')
     Path(sys.argv[2]).write_text(source.replace(old, new, 1), encoding='utf-8')
+
+
+def _command_mutate_core_sid_validation():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    strict = '        or not statement["Sid"].strip()\n'
+    if source.count(strict) != 1: raise SystemExit('FAIL: shared-core Sid validation mutation anchor changed')
+    Path(sys.argv[2]).write_text(source.replace(strict, '', 1), encoding='utf-8')
+
+
+def _command_mutate_plan_guard():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    repo_root = sys.argv[3]
+    lane = sys.argv[4]
+    guard = sys.argv[5]
+    source = source_path.read_text(encoding='utf-8')
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    anchors = {
+        ('runner', 'resources-array'): '    if not isinstance(resources, list):\n        fail("plan planned_values.root_module.resources must be an array")',
+        ('runner', 'exactly-one-document'): '        if len(matches) != 1:\n            fail(f"plan must contain exactly one {address}, found {len(matches)}")',
+        ('runner', 'nonempty-policy'): '        if not isinstance(policy, str) or not policy:\n            fail(f"plan policy document is null, unknown, or empty: {address}")',
+        ('runner', 'role-name'): '    if not isinstance(role_name, str):\n        fail("plan reader role name is null or unknown")',
+        ('runner', 'suffix'): '    if suffix_match is None or not suffix_match.group(1):\n        fail(f"cannot derive SUFFIX from plan reader role name: {role_name}")',
+        ('runner', 'account-id-uniqueness'): '    if len(account_ids) > 1:\n        fail(f"plan policy documents contain multiple account ids: {account_ids}")',
+        ('role-lane', 'resources-array'): 'if not isinstance(resources, list):\n    fail("plan resources must be an array")',
+        ('role-lane', 'exactly-one-document'): '    if len(matches) != 1:\n        fail(f"plan must contain exactly one {address}, found {len(matches)}")',
+        ('role-lane', 'nonempty-policy'): '    if not isinstance(policy, str) or not policy:\n        fail(f"plan policy document is null, unknown, or empty: {address}")',
+        ('role-lane', 'role-name'): 'if not isinstance(reader_name, str):\n    fail("plan reader role name is null or unknown")',
+        ('role-lane', 'suffix'): 'if suffix_match is None:\n    fail(f"cannot derive SUFFIX from plan reader role name: {reader_name}")',
+        ('role-lane', 'account-id-uniqueness'): 'if len(plan_account_ids) > 1:\n    fail(f"plan policy documents contain multiple account ids: {plan_account_ids}")',
+    }
+    try:
+        anchor = anchors[(lane, guard)]
+    except KeyError as exc:
+        raise SystemExit(f'FAIL: unknown plan guard mutation: {lane}:{guard}') from exc
+    if source.count(root_line) != 1 or source.count(anchor) != 1:
+        raise SystemExit(f'FAIL: {lane} {guard} plan-guard mutation anchor changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(repo_root)}', 1)
+    mutant = re.sub(r'(?m)^(\s*)if [^\n]+:', r'\1if False:', anchor, count=1)
+    source = source.replace(anchor, mutant, 1)
+    destination.write_text(source, encoding='utf-8')
+    destination.chmod(0o755)
+
+
+def _command_mutate_evidence_role_check():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    mutation = sys.argv[3]
+    strict = '    return set(required) <= matched_set and not (set(forbidden) & matched_set)'
+    replacements = {
+        'forbidden': '    return set(required) <= matched_set',
+        'required': '    return not (set(forbidden) & matched_set)',
+    }
+    if mutation not in replacements:
+        raise SystemExit(f'FAIL: unknown Evidence role-check mutation: {mutation}')
+    if source.count(strict) != 1:
+        raise SystemExit('FAIL: Evidence role-check mutation anchor changed')
+    destination.write_text(source.replace(strict, replacements[mutation], 1), encoding='utf-8')
 
 
 def _command_validate_role_authorization_split():

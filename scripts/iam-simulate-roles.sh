@@ -167,7 +167,9 @@ if len(reader_matches) != 1:
     fail("plan must contain exactly one aws_iam_role.plan_reader")
 reader_values = reader_matches[0].get("values")
 reader_name = reader_values.get("name") if isinstance(reader_values, dict) else None
-suffix_match = re.fullmatch(r"orbit-infra-(.+)-plan-reader", reader_name or "")
+if not isinstance(reader_name, str):
+    fail("plan reader role name is null or unknown")
+suffix_match = re.fullmatch(r"orbit-infra-(.+)-plan-reader", reader_name)
 if suffix_match is None:
     fail(f"cannot derive SUFFIX from plan reader role name: {reader_name}")
 suffix = suffix_match.group(1)
@@ -277,6 +279,10 @@ def combine_documents(role, addresses):
     statements = []
     seen_sids = {}
     for address in addresses:
+        try:
+            core.statement_spans(documents[address])
+        except core.RunnerFailure as exc:
+            fail(str(exc))
         policy = json.loads(documents[address])
         version = policy.get("Version")
         if not isinstance(version, str) or not version:
@@ -288,8 +294,6 @@ def combine_documents(role, addresses):
         if not isinstance(raw_statements, list) or not raw_statements:
             fail(f"projected policy document has no statements: {address}")
         for statement in raw_statements:
-            if not isinstance(statement, dict) or not isinstance(statement.get("Sid"), str):
-                fail(f"every projected statement must carry a Sid: {address}")
             sid = statement["Sid"]
             if sid in seen_sids and seen_sids[sid] != address:
                 fail(

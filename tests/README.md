@@ -399,7 +399,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 105 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 121 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
@@ -427,9 +427,12 @@ role-policy record. It re-evaluates role
 decisions and required/forbidden Sids against the vector, and enforces the row
 minimum. It verifies the provenance date and exact report pointer, prints the
 computed custom, role, and Markdown SHA-256 digests, and will compare them once
-P5-52 makes the renderer record the complete digest set. Six registered mutants
+P5-52 makes the renderer record the complete digest set. Eight registered mutants
 cover failed promotion, missing and duplicate records, stale pointer, wrong date,
-and a row promoted above its least-supported case; every restored join must pass.
+and a row promoted above its least-supported case. The other two doctor role
+records while preserving their matching decisions, then prove that a forbidden
+Sid or a missing required Sid blocks promotion even when the corresponding
+`role_matches` check is temporarily neutered. Every restored join must pass.
 
 The `TAXONOMY` group runs
 `scripts/iam-simulate-categories.py --check`, independently compares the 288
@@ -493,7 +496,10 @@ must remain ambiguous, while a zero-overlap range remains unmapped; both
 refusals assert document-length, span-count, range, and first/last-span
 diagnostics. Scanner contracts and killed mutants cover multiline input, braces
 and brackets inside a string, escaped quotes, and restoration of strict endpoint
-containment. Those mutants alter `scripts/iam_simulate_core.py`, proving the
+containment. Shared statement scanning also rejects empty and whitespace-only
+Sids with the zero-based statement index; an `isinstance`-only mutant is killed
+and restored in both execution lanes. Those mutants alter
+`scripts/iam_simulate_core.py`, proving the
 runner delegates scanning and unique-overlap attribution to the shared module;
 the restored module must pass again. The group also covers compatible shared-call
 reporting and pre-call
@@ -501,6 +507,9 @@ refusal when a duplicate action/resource pair disagrees on its expectation, the
 five-attempt throttle cap, timeout non-retry, exact `TARGET=aws` refusal,
 byte-equal policy and boundary resolution from raw plan `.values.policy`,
 missing-address refusal, and absent/duplicate-Sid refusal before a fake AWS call.
+Six table-derived doctored plans independently cover non-array resources,
+duplicate addresses, null policies, null role names, invalid suffix names, and
+multiple account IDs; each custom-runner guard has a temporary source mutant.
 A real-vector contract requires exactly 239 report records and currently counts
 8 shared-call batches across 16 cases; mutations make a colliding pair disagree
 and drop one shared case from the report. The isolated statement submitted by
@@ -544,8 +553,12 @@ escaped quotes, and an action-level response with no
 stream and maps every response in one shared-core invocation per principal
 pass, rather than spawning parsers and a mapper per case. The same
 strict-containment module mutation must fail both the `RUNNER` and `ROLE-LANE`
-groups, followed by an explicit restored pass in each group. One mutation of
-the shared action-class partition likewise makes both lanes submit the rejected
+groups, followed by an explicit restored pass in each group. Role projection
+delegates statement Sid validation to that shared scanner instead of maintaining
+a separate type-only check. The six malformed plan shapes are also run against
+the role extractor, with a separate guard-neutering source mutant for each
+because the two extractors differ. One mutation of the shared action-class
+partition likewise makes both lanes submit the rejected
 mixed S3 request; the fake returns the matching AWS `InvalidInput` diagnostic,
 and both restored lanes must pass.
 

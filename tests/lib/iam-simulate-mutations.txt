@@ -31,6 +31,8 @@ evidence-duplicate-record	validate_evidence_join	FAIL: promoted case appears mor
 evidence-stale-pointer	validate_evidence_join	FAIL: Evidence pointer mismatch for
 evidence-wrong-date	validate_evidence_join	FAIL: Evidence date mismatch for
 evidence-row-above-minimum	validate_evidence_join	FAIL: Evidence row is above its computed minimum at line
+evidence-role-forbidden-sid-check	mutate_evidence_role_check:forbidden	FAIL: evidence role forbidden Sid check did not enforce expected refusal
+evidence-role-required-sid-check	mutate_evidence_role_check:required	FAIL: evidence role required Sid check did not enforce expected refusal
 runner-per-resource-mapper	run_phase2_runner	FAIL: decision mismatch for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-good/example: expected allowed, observed explicitDeny
 runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent: DenyReadStateObjectsOutsideScope
 runner-real-deployer-data-two-statement-overlap-refusal	run_phase2_runner	FAIL: ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5682 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
@@ -60,6 +62,13 @@ runner-string-delimiters-shared-core-scanner	mutate_shared_core_scanner	FAIL: ca
 runner-escaped-quotes-shared-core-scanner	mutate_shared_core_scanner	FAIL: cannot scan submitted statement: Expecting ',' delimiter: line 1 column 459 (char 458)
 runner-fake-resource-set-enforcement	run_phase2_runner	FAIL: AWS simulator call failed with exit 1: FAIL: fake simulate-custom-policy resource ARNs mismatch: expected ["arn:aws:s3:::orbit-infra-79s5rw-bad/example","arn:aws:s3:::orbit-infra-79s5rw-good/example"], submitted ["arn:aws:s3:::orbit-infra-wrong/example"]
 runner-shared-authorization-partition	mutate_core_authorization_groups	FAIL: AWS simulator call failed with exit 254: An error occurred (InvalidInput) when calling the SimulateCustomPolicy operation: Invalid Input Actions:
+runner-empty-sid-shared-core-guard	mutate_core_sid_validation	FAIL: runner empty Sid shared core guard did not enforce expected refusal
+runner-plan-resources-array-guard	mutate_plan_guard:runner:resources-array	FAIL: runner plan resources array guard did not enforce expected refusal
+runner-plan-exactly-one-document-guard	mutate_plan_guard:runner:exactly-one-document	FAIL: runner plan exactly one document guard did not enforce expected refusal
+runner-plan-nonempty-policy-guard	mutate_plan_guard:runner:nonempty-policy	FAIL: runner plan nonempty policy guard did not enforce expected refusal
+runner-plan-role-name-guard	mutate_plan_guard:runner:role-name	FAIL: runner plan role name guard did not enforce expected refusal
+runner-plan-suffix-guard	mutate_plan_guard:runner:suffix	FAIL: runner plan suffix guard did not enforce expected refusal
+runner-plan-account-id-uniqueness-guard	mutate_plan_guard:runner:account-id-uniqueness	FAIL: runner plan account id uniqueness guard did not enforce expected refusal
 role-lane-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5682 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
 role-lane-shared-authorization-partition	mutate_core_authorization_groups	FAIL: SCP-excluded principal simulation failed for case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching: An error occurred (InvalidInput) when calling the SimulatePrincipalPolicy operation: Invalid Input Actions:
 role-lane-report-account-redaction	mutate_role_report_redaction	FAIL: role report contains unredacted 12-digit account id: 123456789012
@@ -75,6 +84,13 @@ role-lane-two-run-call-shape	mutate_role_two_run_calls	FAIL: two-run contract re
 role-lane-dry-run-inventory	sed:drop-delete-role-policy-call	FAIL: dry-run inventory requires three iam delete-role-policy calls
 role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 378, expected 1 + 8*8 + 2*157 = 379
 role-lane-full-fixture-array-read	mutate_role_array_reads	FAIL: full-fixture role-lane dry-run exceeded 20 seconds
+role-lane-empty-sid-shared-core-guard	mutate_core_sid_validation	FAIL: role lane empty Sid shared core guard did not enforce expected refusal
+role-lane-plan-resources-array-guard	mutate_plan_guard:role-lane:resources-array	FAIL: role lane plan resources array guard did not enforce expected refusal
+role-lane-plan-exactly-one-document-guard	mutate_plan_guard:role-lane:exactly-one-document	FAIL: role lane plan exactly one document guard did not enforce expected refusal
+role-lane-plan-nonempty-policy-guard	mutate_plan_guard:role-lane:nonempty-policy	FAIL: role lane plan nonempty policy guard did not enforce expected refusal
+role-lane-plan-role-name-guard	mutate_plan_guard:role-lane:role-name	FAIL: role lane plan role name guard did not enforce expected refusal
+role-lane-plan-suffix-guard	mutate_plan_guard:role-lane:suffix	FAIL: role lane plan suffix guard did not enforce expected refusal
+role-lane-plan-account-id-uniqueness-guard	mutate_plan_guard:role-lane:account-id-uniqueness	FAIL: role lane plan account id uniqueness guard did not enforce expected refusal
 role-lane-opt-in-refusal	run_phase2_role_lane	FAIL: IAM_SIM_LANE_CONFIRM must equal create-real-iam-resources
 role-lane-account-mismatch-refusal	run_phase2_role_lane	FAIL: caller account mismatch: expected 000000000000, observed 111111111111
 role-lane-tag-mismatch-pre-mutation-refusal	run_phase2_role_lane	FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-plan-reader

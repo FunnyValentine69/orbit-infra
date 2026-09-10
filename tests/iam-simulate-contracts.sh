@@ -1107,7 +1107,8 @@ promoted = re.findall(
 if not promoted:
     raise SystemExit("FAIL: Evidence mutation setup found no promoted cases")
 custom_by_id = {record["case_id"]: record for record in custom["records"]}
-role_ids = {record["case_id"] for record in role["records"]}
+role_by_id = {record["case_id"]: record for record in role["records"]}
+role_ids = set(role_by_id)
 
 
 def write_mutant(name, matrix_text=None, custom_payload=None, role_payload=None):
@@ -1173,6 +1174,58 @@ write_mutant(
     matrix.replace(above_anchor, f"{above_case}={label}", 1),
     custom_payload=row_custom,
 )
+
+forbidden_case = (
+    "case:aws_iam_role_policy.plan_reader_deny:"
+    "DenyListBucketOutsideScope:ALL:none:non-protected-resource"
+)
+forbidden_sid = "DenyListBucketOutsideScope"
+forbidden_source = role_by_id.get(forbidden_case)
+if (
+    forbidden_source is None
+    or custom_by_id.get(forbidden_case, {}).get("pass") is not False
+    or forbidden_source.get("scp_excluded", {}).get("decision_observed") != "allowed"
+    or forbidden_sid in forbidden_source.get("scp_excluded", {}).get("matched_sids", [])
+):
+    raise SystemExit("FAIL: forbidden-Sid Evidence mutation anchor changed")
+forbidden_role = deepcopy(role)
+forbidden_record = next(
+    record for record in forbidden_role["records"] if record["case_id"] == forbidden_case
+)
+forbidden_record["scp_excluded"]["matched_sids"].append(forbidden_sid)
+write_mutant("role-forbidden-sid", role_payload=forbidden_role)
+
+required_case = (
+    "case:aws_iam_policy.deployer_data:"
+    "ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching"
+)
+required_sid = "ClickhouseSecretCreateWithTag"
+required_source = role_by_id.get(required_case)
+if (
+    custom_by_id.get(required_case, {}).get("pass") is not True
+    or required_source is None
+    or required_source.get("scp_excluded", {}).get("decision_observed") != "allowed"
+    or required_sid not in required_source.get("scp_excluded", {}).get("matched_sids", [])
+):
+    raise SystemExit("FAIL: required-Sid Evidence mutation anchor changed")
+required_custom = deepcopy(custom)
+next(
+    record for record in required_custom["records"] if record["case_id"] == required_case
+)["pass"] = False
+required_role = deepcopy(role)
+required_record = next(
+    record for record in required_role["records"] if record["case_id"] == required_case
+)
+required_record["scp_excluded"]["matched_sids"] = [
+    sid
+    for sid in required_record["scp_excluded"]["matched_sids"]
+    if sid != required_sid
+]
+write_mutant(
+    "role-required-sid",
+    custom_payload=required_custom,
+    role_payload=required_role,
+)
 PY_EVIDENCE_MUTANTS
 
   restore_evidence_join() {
@@ -1230,6 +1283,80 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/row/role.json" \
       "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
   restore_evidence_join "evidence row above minimum"
+
+  validate_evidence_role_refusal() {
+    local label=$1 case_id=$2
+    shift 2
+    local output rc fail_line
+    set +e
+    output="$(validate_evidence_join "$@" 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq "promoted case is not execution-matching: $case_id" <<<"$output"; then
+      return 0
+    fi
+    printf 'FAIL: %s did not enforce expected refusal: rc=%s observed=%s\n' \
+      "$label" "$rc" "${fail_line:-<none>}" >&2
+    return 1
+  }
+
+  run_evidence_role_check_mutation() {
+    local mutation=$1 fixture=$2 case_id=$3 label=$4
+    local original="$evidence_mutants/role-matches-original.sh"
+    local mutant="$evidence_mutants/role-matches-$mutation-mutant.sh"
+    local output
+    if output="$(validate_evidence_role_refusal \
+      "$label" "$case_id" \
+      "$evidence_mutants/$fixture/matrix.md" \
+      "$evidence_mutants/$fixture/custom.json" \
+      "$evidence_mutants/$fixture/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+      pass_case "$label refuses mismatching role record"
+    else
+      fail_case "$label refusal" "$output"
+      return
+    fi
+    if ! output="$(python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+      mutate-evidence-role-check "$original" "$mutant" "$mutation" 2>&1)"; then
+      fail_case "$label mutation setup" "$output"
+      return
+    fi
+    # shellcheck disable=SC1090
+    source "$mutant"
+    expect_failure "$label" "$label did not enforce expected refusal" \
+      validate_evidence_role_refusal \
+        "$label" "$case_id" \
+        "$evidence_mutants/$fixture/matrix.md" \
+        "$evidence_mutants/$fixture/custom.json" \
+        "$evidence_mutants/$fixture/role.json" \
+        "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+    # shellcheck disable=SC1090
+    source "$original"
+    if output="$(validate_evidence_role_refusal \
+      "$label" "$case_id" \
+      "$evidence_mutants/$fixture/matrix.md" \
+      "$evidence_mutants/$fixture/custom.json" \
+      "$evidence_mutants/$fixture/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+      pass_case "$label mutation restored PASS"
+    else
+      fail_case "$label mutation restoration" "$output"
+    fi
+  }
+
+  evidence_role_function="$evidence_mutants/role-matches-original.sh"
+  declare -f validate_evidence_join >"$evidence_role_function"
+  run_evidence_role_check_mutation \
+    forbidden role-forbidden-sid \
+    "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource" \
+    "evidence role forbidden Sid check"
+  run_evidence_role_check_mutation \
+    required role-required-sid \
+    "case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching" \
+    "evidence role required Sid check"
+
 fi
 
 if [ "$failures" -eq "$group_failures" ]; then
