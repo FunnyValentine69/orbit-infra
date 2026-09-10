@@ -475,15 +475,16 @@ with case_stream_path.open("wb") as stream:
                 "\0".join(entry["ContextKeyValues"]),
             ),
         )
-        fields = [
-            case["case_id"],
-            projection["name"],
-            str(len(case["action_names"])),
-            *case["action_names"],
+        action_groups = core.split_action_authorization_groups(case["action_names"])
+        fields = [case["case_id"], projection["name"], str(len(action_groups))]
+        for action_group in action_groups:
+            fields.append(str(len(action_group)))
+            fields.extend(action_group)
+        fields.extend([
             str(len(case["resource_arns"])),
             *case["resource_arns"],
             json.dumps(context, separators=(",", ":")),
-        ]
+        ])
         for field in fields:
             stream.write(field.encode("utf-8") + b"\0")
 PY
@@ -765,18 +766,23 @@ role_call_args() {
 }
 
 read_case_record() {
-  local count index value context
+  local group_count group_index action_count action_index count value context
   IFS= read -r -d '' CASE_ID <&3 || return 1
   IFS= read -r -d '' CASE_ROLE_NAME <&3
-  IFS= read -r -d '' count <&3
-  CASE_ACTIONS=()
-  for ((index = 0; index < count; index++)); do
-    IFS= read -r -d '' value <&3
-    CASE_ACTIONS+=("$value")
+  IFS= read -r -d '' group_count <&3
+  CASE_ACTION_GROUP_SIZES=()
+  CASE_GROUPED_ACTIONS=()
+  for ((group_index = 0; group_index < group_count; group_index++)); do
+    IFS= read -r -d '' action_count <&3
+    CASE_ACTION_GROUP_SIZES+=("$action_count")
+    for ((action_index = 0; action_index < action_count; action_index++)); do
+      IFS= read -r -d '' value <&3
+      CASE_GROUPED_ACTIONS+=("$value")
+    done
   done
   IFS= read -r -d '' count <&3
   CASE_RESOURCES=()
-  for ((index = 0; index < count; index++)); do
+  for ((action_index = 0; action_index < count; action_index++)); do
     IFS= read -r -d '' value <&3
     CASE_RESOURCES+=("$value")
   done
@@ -786,8 +792,51 @@ read_case_record() {
 }
 
 
+principal_simulation_pass() {
+  local response_prefix=$1
+  local case_index=$2
+  local include_exclusion=$3
+  local group_index group_size action_offset=0 group_file output_file
+  local -a action_group call_args response_files
+  response_files=()
+  for ((group_index = 0; group_index < ${#CASE_ACTION_GROUP_SIZES[@]}; group_index++)); do
+    group_size=${CASE_ACTION_GROUP_SIZES[$group_index]}
+    action_group=("${CASE_GROUPED_ACTIONS[@]:action_offset:group_size}")
+    action_offset=$((action_offset + group_size))
+    call_args=(
+      iam simulate-principal-policy
+      --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME"
+      --action-names "${action_group[@]}"
+      --resource-arns "${CASE_RESOURCES[@]}"
+      "${CASE_CONTEXT_ARGS[@]}"
+    )
+    if [ "$include_exclusion" -eq 1 ]; then
+      call_args+=(--policy-exclusion-list '{"PolicyType":"scp"}')
+    fi
+    call_capture "${call_args[@]}"
+    if [ "$CALL_RC" -ne 0 ]; then
+      return 1
+    fi
+    if [ "$dry_run" -eq 0 ]; then
+      group_file="$tmp_dir/$response_prefix-$case_index-group-$group_index.json"
+      printf '%s\n' "$CALL_OUTPUT" >"$group_file"
+      response_files+=("$group_file")
+    fi
+  done
+  if [ "$dry_run" -eq 0 ]; then
+    output_file="$tmp_dir/$response_prefix-$case_index.json"
+    if ! jq -s '{EvaluationResults: [.[].EvaluationResults[]]}' \
+      "${response_files[@]}" >"$output_file"; then
+      CALL_RC=1
+      CALL_ERROR="principal simulation responses could not be combined"
+      return 1
+    fi
+  fi
+}
+
+
 print_dry_run_inventory() {
-  local index
+  local index case_index=0
   call_capture sts get-caller-identity --output json
   for ((index = 0; index < role_count; index++)); do
     role_call_args "$index"
@@ -807,14 +856,9 @@ print_dry_run_inventory() {
   done
   exec 3<"$case_stream"
   while read_case_record; do
-    call_capture iam simulate-principal-policy \
-      --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
-      --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
-      "${CASE_CONTEXT_ARGS[@]}" --policy-exclusion-list '{"PolicyType":"scp"}'
-    call_capture iam simulate-principal-policy \
-      --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
-      --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
-      "${CASE_CONTEXT_ARGS[@]}"
+    principal_simulation_pass excluded "$case_index" 1
+    principal_simulation_pass organizations "$case_index" 0
+    case_index=$((case_index + 1))
   done
   exec 3<&-
   for ((index = role_count - 1; index >= 0; index--)); do
@@ -1058,29 +1102,16 @@ simulation_failed=0
 case_index=0
 exec 3<"$case_stream"
 while read_case_record; do
-  excluded_file="$tmp_dir/excluded-$case_index.json"
-  organizations_file="$tmp_dir/organizations-$case_index.json"
-  call_capture iam simulate-principal-policy \
-    --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
-    --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
-    "${CASE_CONTEXT_ARGS[@]}" --policy-exclusion-list '{"PolicyType":"scp"}'
-  if [ "$CALL_RC" -ne 0 ]; then
+  if ! principal_simulation_pass excluded "$case_index" 1; then
     echo "FAIL: SCP-excluded principal simulation failed for $CASE_ID: $CALL_ERROR" >&2
     simulation_failed=1
     break
   fi
-  printf '%s\n' "$CALL_OUTPUT" >"$excluded_file"
-
-  call_capture iam simulate-principal-policy \
-    --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
-    --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
-    "${CASE_CONTEXT_ARGS[@]}"
-  if [ "$CALL_RC" -ne 0 ]; then
+  if ! principal_simulation_pass organizations "$case_index" 0; then
     echo "FAIL: Organizations-applied principal simulation failed for $CASE_ID: $CALL_ERROR" >&2
     simulation_failed=1
     break
   fi
-  printf '%s\n' "$CALL_OUTPUT" >"$organizations_file"
   case_index=$((case_index + 1))
 done
 exec 3<&-

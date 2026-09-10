@@ -24,6 +24,9 @@ phase2_setup() {
 
   python3 "$IAM_SIM_FIXTURE_FACTORY" build "$TAXONOMY" "$phase2_dir" \
     "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
+  phase2_authorization_core_mutant="$phase2_dir/iam-simulate-core-authorization-groups-mutant.py"
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-core-authorization-groups \
+    "$IAM_SIM_CORE" "$phase2_authorization_core_mutant"
 
   # The fake is the only executable named aws in these contracts. Every call
   # still traverses scripts/aws-cli.sh; behavior is data-driven by the factory.
@@ -200,6 +203,27 @@ validate_core_map_many() {
         }
       )
     ' >/dev/null
+}
+
+
+run_authorization_split_runner() {
+  local core=$1
+  local report=$2
+  env -u AWS_PROFILE \
+    PATH="$phase2_dir/bin:$PATH" \
+    AWS_CLI_BIN=aws \
+    AWS_CLI_SH="$IAM_SIM_AWS_WRAPPER" \
+    FAKE_AWS_CALL_DIR="$phase2_calls" \
+    FAKE_ROLE_STATE_DIR="$phase2_roles" \
+    FAKE_AWS_SCENARIO=authorization-split \
+    FAKE_AWS_RESPONSE="$phase2_dir/response-empty.json" \
+    FAKE_AWS_EXPECTED_INPUTS="$phase2_dir/expected-authorization-split-inputs.json" \
+    IAM_SIM_CORE="$core" \
+    IAM_SIM_RETRY_BASE_SECONDS=0 \
+    TARGET=aws \
+    "$IAM_SIM_RUNNER" --plan "$phase2_plan" \
+      --vectors "$phase2_dir/authorization-split-vectors" \
+      --report "$report"
 }
 
 
@@ -424,20 +448,7 @@ run_iam_simulate_runner_contracts() {
     reset_phase2_fake
     report="$phase2_dir/authorization-split-report.json"
     expected_inputs="$phase2_dir/expected-authorization-split-inputs.json"
-    if output="$(env -u AWS_PROFILE \
-      PATH="$phase2_dir/bin:$PATH" \
-      AWS_CLI_BIN=aws \
-      AWS_CLI_SH="$IAM_SIM_AWS_WRAPPER" \
-      FAKE_AWS_CALL_DIR="$phase2_calls" \
-      FAKE_ROLE_STATE_DIR="$phase2_roles" \
-      FAKE_AWS_SCENARIO=authorization-split \
-      FAKE_AWS_RESPONSE="$phase2_dir/response-empty.json" \
-      FAKE_AWS_EXPECTED_INPUTS="$expected_inputs" \
-      IAM_SIM_RETRY_BASE_SECONDS=0 \
-      TARGET=aws \
-      "$IAM_SIM_RUNNER" --plan "$phase2_plan" \
-        --vectors "$phase2_dir/authorization-split-vectors" \
-        --report "$report" 2>&1)" && \
+    if output="$(run_authorization_split_runner "$IAM_SIM_CORE" "$report" 2>&1)" && \
        python3 - "$phase2_calls" "$expected_inputs" <<'PY' &&
 import json
 from pathlib import Path
@@ -569,6 +580,28 @@ PY
       pass_case "runner TARGET refusal mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
     else
       fail_case "runner TARGET refusal mutation did not fail as required" "$output"
+    fi
+
+    reset_phase2_fake
+    set +e
+    output="$(run_authorization_split_runner \
+      "$phase2_authorization_core_mutant" "$report" 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       [[ "$fail_line" == "FAIL: AWS simulator call failed with exit 254: An error occurred (InvalidInput) when calling the SimulateCustomPolicy operation: Invalid Input Actions: "*" require different authorization information." ]]; then
+      pass_case "runner shared authorization partition mutation -> $fail_line"
+    else
+      fail_case "runner shared authorization partition mutation did not fail as required" \
+        "rc=$rc output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(run_authorization_split_runner "$IAM_SIM_CORE" "$report" 2>&1)" && \
+       [ "$(phase2_call_count iam simulate-custom-policy)" -eq 2 ]; then
+      pass_case "runner shared authorization partition mutation restored PASS"
+    else
+      fail_case "runner shared authorization partition mutation restoration" "$output"
     fi
 
     reset_phase2_fake
@@ -912,6 +945,10 @@ validate_role_two_runs() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-two-runs "$@"
 }
 
+validate_role_authorization_split() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-authorization-split "$@"
+}
+
 mutate_role_two_run_calls() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-two-run-calls "$@"
 }
@@ -1025,7 +1062,7 @@ run_iam_simulate_role_lane_contracts() {
   local mutant_inventory mutated_full_inventory mutation_fail mutation_output mutation_rc
   local fd_vectors only_case isolated_case duplicate_vectors
   local core_mutant expected_sid expected_hash_failure wrong_hash_report nonce_report fail_line
-  local preflight_scope_mutant expected_scope_failure boundary_case
+  local preflight_scope_mutant expected_scope_failure boundary_case authorization_report
   local wrong_mode_report wrong_mode_case_id expected_mode_failure
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
@@ -1082,6 +1119,41 @@ run_iam_simulate_role_lane_contracts() {
       "$phase2_dir/role-action-level-custom-report.json" \
       "$phase2_dir/response-role-action-level.json" \
       ""
+
+    authorization_report="$phase2_dir/role-authorization-split-report.json"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_CORE="$phase2_authorization_core_mutant" \
+      IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/authorization-split-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-authorization-split-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$authorization_report" \
+      run_phase2_role_lane authorization-split 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       [[ "$fail_line" == "FAIL: SCP-excluded principal simulation failed for case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching: An error occurred (InvalidInput) when calling the SimulatePrincipalPolicy operation: Invalid Input Actions: "*" require different authorization information." ]]; then
+      pass_case "role-lane shared authorization partition mutation -> $fail_line"
+    else
+      fail_case "role-lane shared authorization partition mutation did not fail as required" \
+        "rc=$rc output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/authorization-split-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-authorization-split-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$authorization_report" \
+      run_phase2_role_lane authorization-split 2>&1)" && \
+       validate_role_authorization_split "$phase2_calls" "$authorization_report" \
+         "$phase2_dir/authorization-split-vectors/authorization-split.json" && \
+       ! find "$phase2_roles" -name '*.json' -type f | grep -q .; then
+      pass_case "role-lane shared authorization partition mutation restored PASS (two calls per run; combined decisions)"
+    else
+      fail_case "role-lane shared authorization partition mutation restoration" "$output"
+    fi
 
     core_mutant="$phase2_dir/iam-simulate-core-role-strict-containment.py"
     mutate_shared_core_overlap "$core_mutant"

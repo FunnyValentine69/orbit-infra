@@ -70,14 +70,6 @@ def load_core(path: Path) -> Any:
 core = load_core(core_path)
 RunnerFailure = core.RunnerFailure
 
-S3_DIFFERENT_AUTHORIZATION_ACTIONS = frozenset(
-    {
-        "s3:DeleteBucketOwnershipControls",
-        "s3:DeleteBucketPublicAccessBlock",
-    }
-)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Execute custom IAM simulator vectors")
     parser.add_argument("--plan", required=True, type=Path)
@@ -368,16 +360,8 @@ def batch_call(batch: list[dict[str, Any]]) -> dict[str, Any]:
         {action for item in batch for action in item["vector"]["action_names"]}
     )
     resources = sorted({resource for item in batch for resource in item["vector"]["resource_arns"]})
-    direct_actions = [
-        action for action in actions if action not in S3_DIFFERENT_AUTHORIZATION_ACTIONS
-    ]
-    different_authorization_actions = [
-        action for action in actions if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS
-    ]
     combined_results: list[Any] = []
-    for action_group in (direct_actions, different_authorization_actions):
-        if not action_group:
-            continue
+    for action_group in core.split_action_authorization_groups(actions):
         argv = [
             "iam",
             "simulate-custom-policy",

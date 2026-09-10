@@ -21,6 +21,35 @@ class SubmittedDocument(NamedTuple):
     spans: tuple[tuple[int, int, str], ...]
 
 
+# Actions outside these explicit classes share the default request group.
+ACTION_AUTHORIZATION_CLASSES: tuple[frozenset[str], ...] = (
+    frozenset(
+        {
+            "s3:DeleteBucketOwnershipControls",
+            "s3:DeleteBucketPublicAccessBlock",
+        }
+    ),
+)
+
+
+def split_action_authorization_groups(action_names: list[str]) -> list[list[str]]:
+    """Partition actions into groups accepted by one IAM simulator request."""
+    groups = [[] for _ in range(len(ACTION_AUTHORIZATION_CLASSES) + 1)]
+    classified: dict[str, int] = {}
+    for index, action_class in enumerate(ACTION_AUTHORIZATION_CLASSES, 1):
+        for action in action_names:
+            if action not in action_class:
+                continue
+            if action in classified and classified[action] != index:
+                raise RunnerFailure(
+                    f"action belongs to multiple authorization classes: {action}"
+                )
+            classified[action] = index
+    for action in action_names:
+        groups[classified.get(action, 0)].append(action)
+    return [group for group in groups if group]
+
+
 def statement_spans(policy: str) -> tuple[tuple[int, int, str], ...]:
     decoder = json.JSONDecoder()
 

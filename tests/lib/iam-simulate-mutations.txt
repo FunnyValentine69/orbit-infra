@@ -53,7 +53,9 @@ runner-real-deployer-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL:
 runner-string-delimiters-shared-core-scanner	mutate_shared_core_scanner	FAIL: cannot scan submitted statement: Unterminated string starting at: line 1 column 184 (char 183)
 runner-escaped-quotes-shared-core-scanner	mutate_shared_core_scanner	FAIL: cannot scan submitted statement: Expecting ',' delimiter: line 1 column 459 (char 458)
 runner-fake-resource-set-enforcement	run_phase2_runner	FAIL: AWS simulator call failed with exit 1: FAIL: fake simulate-custom-policy resource ARNs mismatch: expected ["arn:aws:s3:::orbit-infra-79s5rw-bad/example","arn:aws:s3:::orbit-infra-79s5rw-good/example"], submitted ["arn:aws:s3:::orbit-infra-wrong/example"]
+runner-shared-authorization-partition	mutate_core_authorization_groups	FAIL: AWS simulator call failed with exit 254: An error occurred (InvalidInput) when calling the SimulateCustomPolicy operation: Invalid Input Actions:
 role-lane-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5682 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
+role-lane-shared-authorization-partition	mutate_core_authorization_groups	FAIL: SCP-excluded principal simulation failed for case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching: An error occurred (InvalidInput) when calling the SimulatePrincipalPolicy operation: Invalid Input Actions:
 role-lane-report-account-redaction	mutate_role_report_redaction	FAIL: role report contains unredacted 12-digit account id: 123456789012
 role-lane-selection-reason	mutate_role_selection_report	FAIL: role selection must record one custom-isolated exclusion with its reason
 role-lane-excluded-custom-hash-preflight-scope	mutate_role_custom_preflight_scope	FAIL: role lane cannot represent synthetic identity documents for case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary: custom report submitted 2 policy_input_list documents
@@ -65,7 +67,7 @@ role-lane-divergence-evidence	mutate_role_divergence_report	FAIL: role divergenc
 role-lane-missing-custom-case	run_phase2_role_lane	FAIL: custom report lacks exactly one record for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching
 role-lane-two-run-call-shape	mutate_role_two_run_calls	FAIL: two-run contract requires one exact scp-excluded call and one default call per case
 role-lane-dry-run-inventory	sed:drop-delete-role-policy-call	FAIL: dry-run inventory requires three iam delete-role-policy calls
-role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 376, expected 1 + 8*8 + 2*156 = 377
+role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 378, expected 1 + 8*8 + 2*157 = 379
 role-lane-full-fixture-array-read	mutate_role_array_reads	FAIL: full-fixture role-lane dry-run exceeded 20 seconds
 role-lane-opt-in-refusal	run_phase2_role_lane	FAIL: IAM_SIM_LANE_CONFIRM must equal create-real-iam-resources
 role-lane-account-mismatch-refusal	run_phase2_role_lane	FAIL: caller account mismatch: expected 000000000000, observed 111111111111

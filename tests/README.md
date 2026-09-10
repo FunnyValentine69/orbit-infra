@@ -465,8 +465,9 @@ temporary workspace, puts a fake `aws` first on `PATH`, and still routes every i
 through `scripts/aws-cli.sh`. It proves exact-ARN per-resource mapping
 when those results exist, action-level decision and attribution for explicit
 `*` or an omitted resource list, refusal of missing concrete resource results,
-and separate requests for the two S3 delete names that require different
-authorization information. It also covers 1-based multiline position-to-Sid
+and shared-core-derived separate requests for the two S3 delete names that
+require different authorization information. It also covers 1-based multiline
+position-to-Sid
 attribution with an exclusive end position and unique overlap against exact
 statement spans. The computed two-statement fixture and the exact 5,682-character,
 18-statement `deployer_data` plan policy both include the preceding comma in a
@@ -527,7 +528,10 @@ escaped quotes, and an action-level response with no
 stream and maps every response in one shared-core invocation per principal
 pass, rather than spawning parsers and a mapper per case. The same
 strict-containment module mutation must fail both the `RUNNER` and `ROLE-LANE`
-groups, followed by an explicit restored pass in each group.
+groups, followed by an explicit restored pass in each group. One mutation of
+the shared action-class partition likewise makes both lanes submit the rejected
+mixed S3 request; the fake returns the matching AWS `InvalidInput` diagnostic,
+and both restored lanes must pass.
 
 The group also proves the complete zero-call dry-run inventory, exact opt-in and
 account refusals, custom-report mode and source-hash agreement for selected
@@ -547,8 +551,11 @@ nonce-ignoring source mutant is killed. A high-index cleanup mutant still passes
 the three-role case but is killed by the eight-role case. The deadline-bounded
 full-fixture dry run derives
 the projected-role count `R` and selected-case count `C` from the plan and vector
-fixtures at run time, then requires exactly `1 + 8R + 2C` calls. A dropped-call
-mutant kills the formula check. Its restored path keeps the full denominator;
+fixtures at run time, then requires exactly `1 + 8R + 2G` calls, where `G` is
+the sum of non-empty authorization action groups over the `C` selected cases.
+The current full fixture has `R=8`, `C=156`, `G=157`, and therefore 379 calls.
+A dropped-call mutant kills the formula check. Its restored path keeps the full
+denominator;
 the process-substitution descriptor-leak mutant runs against a reduced 24-case
 fixture under `ulimit -n 16`, reproducing descriptor exhaustion in seconds
 instead of waiting for the former 20-second timeout. Duplicate Sids across

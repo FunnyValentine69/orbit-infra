@@ -11,7 +11,16 @@ from pathlib import Path
 import signal
 import sys
 CORE_DOCUMENTS = ('aws_iam_role_policy.plan_reader_deny', 'aws_iam_role_policy.plan_reader_state', 'aws_iam_policy.task_boundary', 'aws_iam_policy.deployer_state', 'aws_iam_policy.deployer_ec2', 'aws_iam_policy.deployer_elb_ecs', 'aws_iam_policy.deployer_data', 'aws_iam_policy.deployer_iam', 'aws_iam_policy.deployer_guard', 'aws_iam_role_policy.publisher')
+S3_DIFFERENT_AUTHORIZATION_ACTIONS = {'s3:DeleteBucketOwnershipControls', 's3:DeleteBucketPublicAccessBlock'}
 BASE_VECTOR = {'schema_version': 1, 'document': 'aws_iam_role_policy.plan_reader_deny', 'sid': 'DenyReadStateObjectsOutsideScope', 'simulation_mode': 'custom', 'assertion_kind': 'decision', 'action_names': ['iam:GetRole'], 'resource_arns': ['*'], 'context_entries': [], 'expect': {'decision': 'allowed', 'matched_sid_required': [], 'matched_sid_forbidden': []}}
+
+
+def _authorization_action_groups(actions):
+    direct = [action for action in actions if action not in S3_DIFFERENT_AUTHORIZATION_ACTIONS]
+    separate = [action for action in actions if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS]
+    return [group for group in (direct, separate) if group]
+
+
 PLAN_FIXTURES = (
     ('plan.json', 'synthetic', ()),
     ('plan-real-position.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_deny', ('$ctx', 'real_position_policy')),)),
@@ -85,6 +94,7 @@ CUSTOM_REPORT_FIXTURES = (
     ('role-scanner-string-delimiters-custom-report.json', ('records', (('scanner-string-delimiters-vectors/position.json', 'scanner_position_policy', 'custom'),)), ()),
     ('role-scanner-escaped-quotes-custom-report.json', ('records', (('scanner-escaped-quotes-vectors/position.json', 'scanner_position_policy', 'custom'),)), ()),
     ('role-action-level-custom-report.json', ('records', (('role-action-level-vectors/action-level.json', 'aws_iam_role_policy.plan_reader_state', 'custom'),)), ()),
+    ('role-authorization-split-custom-report.json', ('records', (('authorization-split-vectors/authorization-split.json', 'real_deployer_policy', 'custom'),)), (('set', ('records', 0, 'decision_observed'), ('$ctx', 'role_authorization_decision')),)),
     ('role-divergence-custom-report.json', 'role-custom-report.json', (('set', ('records', 0, 'decision_observed'), 'implicitDeny'), ('set', ('records', 0, 'matched_sids'), ['CustomMatchedSid']), ('set', ('records', 0, 'pass'), False), ('set', ('summary', 'passed'), 3), ('set', ('summary', 'failed'), 1))),
     ('role-missing-custom-report.json', 'role-custom-report.json', (('delete', ('records', 0)), ('set', ('summary', 'total'), 3), ('set', ('summary', 'passed'), 3))),
     ('role-projection-custom-report.json', ('records', tuple(((f'role-projection-vectors/projection-{index}.json', '@document', 'custom') for index in range(9)))), ()),
@@ -134,6 +144,14 @@ def _context(taxonomy_path, projection_source):
     projection = json.loads(projection_source.read_text(encoding='utf-8'))
     real_plan = json.loads((taxonomy_path.parent.parent / 'iam-matrix' / 'base-plan.json').read_text(encoding='utf-8'))
     real_deployer = next((item['values']['policy'] for item in real_plan['planned_values']['root_module']['resources'] if item.get('address') == 'aws_iam_policy.deployer_data'))
+    authorization_envelope = json.loads((taxonomy_path.parent / 'vectors' / 'aws_iam_policy.deployer_data__EnvDataBucketLifecycle.json').read_text(encoding='utf-8'))
+    authorization_case = next((case for case in authorization_envelope['cases'] if case['case_id'] == 'case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching'))
+    authorization_resources = [resource.replace('${SUFFIX}', '79s5rw') for resource in authorization_case['resource_arns']]
+    role_authorization_decision = {
+        f'{action}|{resource}': ('implicitDeny' if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed')
+        for action in authorization_case['action_names']
+        for resource in authorization_resources
+    }
     if len(real) != 1163 or hashlib.sha256(real.encode()).hexdigest() != 'f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b': raise SystemExit('FAIL: real position policy fixture bytes changed')
     if len(real_deployer) != 5682 or len([_span(real_deployer, i) for i in range(18)]) != 18 or hashlib.sha256(real_deployer.encode()).hexdigest() != 'dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40': raise SystemExit('FAIL: real deployer_data position fixture changed')
     if not _span(real_deployer, 7)[0] <= 1779 < _span(real_deployer, 7)[1] or _span(real_deployer, 7)[2] != 'ClickhouseSecretCreateWithTag': raise SystemExit('FAIL: real deployer_data offset 1779 owner changed')
@@ -146,7 +164,7 @@ def _context(taxonomy_path, projection_source):
     resources += [{'address': f'aws_iam_role.{short}', 'type': 'aws_iam_role', 'values': {'name': f"orbit-infra-79s5rw-{short.replace('_', '-')}"}} for short in ('plan_reader', 'deployer', 'publisher')]
     categories = json.loads(taxonomy_path.read_text(encoding='utf-8'))
     boundary_hash = hashlib.sha256(ambiguous.encode()).hexdigest()
-    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
+    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'role_authorization_decision': role_authorization_decision, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
     ctx.update({'mapping_match0': _delimiter_match(mapping, 0), 'mapping_match1': _delimiter_match(mapping, 1), 'unmapped_match': _match(1), 'unknown_source_match': _delimiter_match(mapping, 1, 'UnknownPolicyLabel'), 'real_position_match': _match(38, 271)})
     first = ambiguous.index('{', ambiguous.index('[')) + 1
     second = ambiguous.index('{', first) + 1
@@ -301,14 +319,15 @@ def _fake_error(rule, operation):
     message = rule['error'] if rule.get('raw') else f"An error occurred ({rule['error']}) when calling the {''.join((part.title() for part in operation.split('-')))} operation"
     print(message, file=sys.stderr)
     raise SystemExit(rule['exit'])
-def _fake_authorization_split(args):
+def _fake_authorization_split(args, operation):
     actions, resources = (_option(args, '--action-names'), _option(args, '--resource-arns'))
-    aliases = {'s3:DeleteBucketOwnershipControls', 's3:DeleteBucketPublicAccessBlock'}
-    direct, aliased = (sorted((a for a in actions if a not in aliases)), sorted((a for a in actions if a in aliases)))
+    direct = sorted(action for action in actions if action not in S3_DIFFERENT_AUTHORIZATION_ACTIONS)
+    aliased = sorted(action for action in actions if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS)
     if direct and aliased:
-        print(f"An error occurred (InvalidInput) when calling the SimulateCustomPolicy operation: Invalid Input Actions: [{','.join(direct)}] and [{','.join(aliased)}] require different authorization information.", file=sys.stderr)
+        operation_name = ''.join((part.title() for part in operation.split('-')))
+        print(f"An error occurred (InvalidInput) when calling the {operation_name} operation: Invalid Input Actions: [{','.join(direct)}] and [{','.join(aliased)}] require different authorization information.", file=sys.stderr)
         raise SystemExit(254)
-    _json_print({'EvaluationResults': [{'EvalActionName': action, 'EvalDecision': 'allowed', 'MatchedStatements': [], 'ResourceSpecificResults': [{'EvalResourceName': resource, 'EvalResourceDecision': 'allowed', 'MatchedStatements': [], 'MissingContextValues': []} for resource in resources]} for action in actions]})
+    _json_print({'EvaluationResults': [{'EvalActionName': action, 'EvalDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed', 'MatchedStatements': [], 'ResourceSpecificResults': [{'EvalResourceName': resource, 'EvalResourceDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed', 'MatchedStatements': [], 'MissingContextValues': []} for resource in resources]} for action in actions]})
 def _validate_fake_custom_inputs(args):
     expected_path = os.environ.get('FAKE_AWS_EXPECTED_INPUTS')
     if not expected_path: return
@@ -335,7 +354,7 @@ def _fake_aws():
     count = _counter(call_dir, {'simulate-custom-policy': 'simulate-count', 'create-role': 'create-count', 'delete-role-policy': 'delete-policy-count'}.get(operation, operation + '-count')) if counted else 0
     if _scenario_matches(scenario.get('failure'), operation, count, role_name): _fake_error(scenario['failure'], operation)
     if (service, operation) == ('iam', 'simulate-custom-policy'):
-        if scenario.get('custom') == 'authorization-split': _fake_authorization_split(options)
+        if scenario.get('custom') == 'authorization-split': _fake_authorization_split(options, operation)
         else: sys.stdout.write(Path(os.environ['FAKE_AWS_RESPONSE']).read_text(encoding='utf-8'))
     elif (service, operation) == ('sts', 'get-caller-identity'):
         account = os.environ.get('FAKE_ACCOUNT_ID', '000000000000')
@@ -370,7 +389,8 @@ def _fake_aws():
         _json_print({})
     elif (service, operation) == ('iam', 'simulate-principal-policy'):
         response = os.environ.get('FAKE_PRINCIPAL_RESPONSE')
-        if response: sys.stdout.write(Path(response).read_text(encoding='utf-8'))
+        if scenario.get('custom') == 'authorization-split': _fake_authorization_split(options, operation)
+        elif response: sys.stdout.write(Path(response).read_text(encoding='utf-8'))
         else:
             action, resource = (_option(options, '--action-names')[0], _option(options, '--resource-arns')[0])
             decision, matches = ('allowed', [])
@@ -468,6 +488,50 @@ def _command_validate_real_report():
             if reciprocal != group: fail(f'shared-call peers are not reciprocal: {case_id} and {peer}')
     if len(shared_groups) != 8 or len(shared_cases) != 16: fail(f'shared-call census differs: {len(shared_groups)} batches and {len(shared_cases)} cases')
     print('PASS: real 239-vector report coverage (239 records, 8 shared-call batches, 16 shared cases)')
+def _command_mutate_core_authorization_groups():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    old = '    for index, action_class in enumerate(ACTION_AUTHORIZATION_CLASSES, 1):\n'
+    new = '    for index, action_class in enumerate((), 1):\n'
+    if source.count(old) != 1: raise SystemExit('FAIL: shared-core authorization partition mutation anchor changed')
+    Path(sys.argv[2]).write_text(source.replace(old, new, 1), encoding='utf-8')
+
+
+def _command_validate_role_authorization_split():
+    call_paths = sorted(Path(sys.argv[1]).glob('*.json'), key=lambda item: int(item.stem))
+    calls = [json.loads(path.read_text(encoding='utf-8')) for path in call_paths]
+    simulations = [args for args in calls if args[:2] == ['iam', 'simulate-principal-policy']]
+    envelope = json.loads(Path(sys.argv[3]).read_text(encoding='utf-8'))
+    vector = _flatten(envelope)[0]
+    action_groups = _authorization_action_groups(vector['action_names'])
+    if len(action_groups) != 2 or len(simulations) != 2 * len(action_groups):
+        raise SystemExit('FAIL: role authorization partition requires exactly two calls per principal run')
+    resources = sorted(resource.replace('${SUFFIX}', '79s5rw') for resource in vector['resource_arns'])
+    expected_calls = ([(group, True) for group in action_groups] + [(group, False) for group in action_groups])
+    exclusion = '{"PolicyType":"scp"}'
+    for call, (expected_actions, excluded) in zip(simulations, expected_calls):
+        if _option(call, '--action-names') != expected_actions:
+            raise SystemExit('FAIL: role authorization partition submitted the wrong action groups')
+        if sorted(_option(call, '--resource-arns')) != resources:
+            raise SystemExit('FAIL: role authorization partition changed the submitted resources')
+        exclusions = _option(call, '--policy-exclusion-list')
+        if exclusions != ([exclusion] if excluded else []):
+            raise SystemExit('FAIL: role authorization partition changed the principal run shape')
+    expected_decision = {
+        f'{action}|{resource}': ('implicitDeny' if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed')
+        for action in vector['action_names']
+        for resource in resources
+    }
+    payload = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+    records = payload.get('records', [])
+    if len(records) != 1:
+        raise SystemExit('FAIL: role authorization partition report requires one record')
+    record = records[0]
+    if record.get('scp_excluded', {}).get('decision_observed') != expected_decision or record.get('default', {}).get('decision_observed') != expected_decision:
+        raise SystemExit('FAIL: role authorization partition did not combine every per-action decision')
+    if record.get('comparison') != 'agreement' or record.get('pass') is not True:
+        raise SystemExit('FAIL: role authorization partition did not preserve the case result')
+
+
 def _command_mutate_shared_core_overlap():
     source = Path(sys.argv[1]).read_text(encoding='utf-8')
     overlap_line = '            if start < end and start < span_end and span_start < end:'
@@ -892,7 +956,8 @@ def _command_validate_full_scale_role_dry_run():
     resources = plan['planned_values']['root_module']['resources']
     documents = {resource['address']: resource['values']['policy'] for resource in resources if resource.get('address') in role_for_document}
     vectors = [{'schema_version': envelope['schema_version'], 'document': envelope['document'], 'sid': envelope['sid'], **case} for path in sorted(vectors_path.rglob('*.json')) for envelope in [json.loads(path.read_text(encoding='utf-8'))] for case in envelope['cases']]
-    selected = [vector for vector in vectors if vector.get('simulation_mode') == 'custom' and vector.get('document') in role_for_document]
+    eligible = [vector for vector in vectors if vector.get('simulation_mode') == 'custom' and vector.get('document') in role_for_document]
+    selected = [vector for role in ('plan-reader', 'deployer', 'publisher') for vector in eligible if role_for_document[vector['document']] == role]
     selected_roles = {role_for_document[vector['document']] for vector in selected}
     role_count = 0
     for role in selected_roles:
@@ -904,22 +969,34 @@ def _command_validate_full_scale_role_dry_run():
             policy_statements = policy['Statement']
             statements.extend(policy_statements if isinstance(policy_statements, list) else [policy_statements])
         combined = json.dumps({'Version': next(iter(versions)), 'Statement': statements}, separators=(',', ':'))
-        role_count += 1 if len(re.sub('\\s', '', combined)) <= 10240 else len(addresses)
+        role_count += 1 if len(re.sub(r'\s', '', combined)) <= 10240 else len(addresses)
     case_count = len(selected)
-    expected_calls = 1 + 8 * role_count + 2 * case_count
+    action_group_count = sum(len(_authorization_action_groups(vector['action_names'])) for vector in selected)
+    expected_calls = 1 + 8 * role_count + 2 * action_group_count
     lines = [line for line in inventory_path.read_text(encoding='utf-8').splitlines() if line.startswith('DRY-RUN:')]
-    if len(lines) != expected_calls: raise SystemExit(f'FAIL: full-fixture dry-run call count is {len(lines)}, expected 1 + 8*{role_count} + 2*{case_count} = {expected_calls}')
+    if len(lines) != expected_calls: raise SystemExit(f'FAIL: full-fixture dry-run call count is {len(lines)}, expected 1 + 8*{role_count} + 2*{action_group_count} = {expected_calls}')
     operations = Counter()
     for operation in ('create-role', 'list-role-tags', 'put-role-policy', 'simulate-principal-policy', 'delete-role-policy', 'delete-role', 'get-role'): operations[operation] = sum((re.search(f' iam {operation}(?: |$)', line) is not None for line in lines))
-    expected_operations = {'create-role': role_count, 'list-role-tags': 3 * role_count, 'put-role-policy': role_count, 'simulate-principal-policy': 2 * case_count, 'delete-role-policy': role_count, 'delete-role': role_count, 'get-role': role_count}
+    expected_operations = {'create-role': role_count, 'list-role-tags': 3 * role_count, 'put-role-policy': role_count, 'simulate-principal-policy': 2 * action_group_count, 'delete-role-policy': role_count, 'delete-role': role_count, 'get-role': role_count}
     if dict(operations) != expected_operations: raise SystemExit(f'FAIL: full-fixture dry-run operation counts differ: {dict(operations)}')
     if sum((' sts get-caller-identity ' in line for line in lines)) != 1: raise SystemExit('FAIL: full-fixture dry-run requires one caller identity call')
     simulations = [line for line in lines if ' iam simulate-principal-policy ' in line]
-    exclusion = ' --policy-exclusion-list \\{\\"PolicyType\\":\\"scp\\"\\}'
-    for index in range(0, len(simulations), 2):
-        excluded, default = simulations[index:index + 2]
-        if not excluded.endswith(exclusion) or excluded[:-len(exclusion)] != default: raise SystemExit('FAIL: full-fixture dry-run must emit scp-excluded then default for each case')
-    print(f'R={role_count} C={case_count} calls={expected_calls}')
+    exclusion = '{"PolicyType":"scp"}'
+    cursor = 0
+    for vector in selected:
+        action_groups = _authorization_action_groups(vector['action_names'])
+        grouped_calls = simulations[cursor:cursor + 2 * len(action_groups)]
+        cursor += len(grouped_calls)
+        expected_grouped_calls = ([(group, True) for group in action_groups] + [(group, False) for group in action_groups])
+        for line, (expected_actions, excluded) in zip(grouped_calls, expected_grouped_calls):
+            call = shlex.split(line.removeprefix('DRY-RUN:'))
+            if _option(call, '--action-names') != expected_actions:
+                raise SystemExit('FAIL: full-fixture dry-run action groups differ from selected vectors')
+            exclusions = _option(call, '--policy-exclusion-list')
+            if exclusions != ([exclusion] if excluded else []):
+                raise SystemExit('FAIL: full-fixture dry-run must emit every scp-excluded group before every default group for each case')
+    if cursor != len(simulations): raise SystemExit('FAIL: full-fixture dry-run contains unexpected principal simulations')
+    print(f'R={role_count} C={case_count} G={action_group_count} calls={expected_calls}')
 def _command_prepare_fd_vectors():
     source = Path(sys.argv[1])
     destination = Path(sys.argv[2])
