@@ -23,7 +23,10 @@ and `tests/fixtures/iam-simulate/categories.json`. The required prefix is the
 exact string `case:<document>:<sid>:`; case IDs are never split on colons. Only
 `simulator-decision` and `simulator-attribution-only` taxonomy entries may have
 simulator cases. `live-call-only` and `not-simulatable` entries have no
-simulator case.
+simulator case. Schema version 1 intentionally has no `notes` case field and
+no `principal` vector mode: the matrix row plus exact case ID is the review
+linkage, while principal simulation is the separate role-lane projection of
+validated `custom` cases.
 
 ## Envelope and case fields
 

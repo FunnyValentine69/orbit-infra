@@ -372,6 +372,23 @@ ownership nonce is replaced with `<redacted>` so a report cannot replay either
 ownership value. These scripts and their cleanup paths are OFFLINE-VERIFIED only;
 no real role-lane execution is recorded here.
 
+Render the publishable Markdown pair from the completed JSON reports. Omit the
+`--role-report` option when only the custom lane was run:
+
+```
+scripts/iam-simulate-report.sh \
+  --custom-report <custom-report.json> \
+  --role-report <role-report.json> \
+  --out-dir docs/assets
+```
+
+The renderer requires a role report to attest `account_redacted: true`, writes
+both files in a temporary directory, and invokes `scripts/artifact-hygiene.sh`
+on both before publication. Only after both checks pass does it move
+`IAM_SIMULATION_REPORT.md` and `IAM_SIMULATION_PROVENANCE.md` into the output
+directory; a violation leaves the output directory untouched and prints the
+checker's `FAIL:` line.
+
 ## Front-page evidence
 
 Generate the storyboard only from the clean commit that contains its generator:

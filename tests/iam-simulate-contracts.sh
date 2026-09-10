@@ -846,6 +846,7 @@ if [ -f "$PHASE2_CONTRACTS" ]; then
   source "$PHASE2_CONTRACTS"
   run_iam_simulate_runner_contracts
   run_iam_simulate_role_lane_contracts
+  run_iam_simulate_report_contracts
 else
   fail_case "IAM simulate phase-2 contract library exists" "$PHASE2_CONTRACTS is missing"
 fi

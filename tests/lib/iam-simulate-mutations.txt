@@ -92,3 +92,7 @@ role-lane-only-unsupported-id	run_phase2_role_lane	FAIL: --only case:aws_iam_pol
 role-lane-source-partition	mutate_role_source_logic:partition	FAIL: role projection plan-reader source order is
 role-lane-source-concatenation	mutate_role_source_logic:concatenation	FAIL: role projection did not concatenate statements in source order
 role-lane-source-hash	mutate_role_source_logic:hash	FAIL: role projection policy hash differs
+renderer-account-id-case-refusal	doctor custom report case id	FAIL: rendered IAM simulation report contains a non-placeholder account id
+renderer-role-redaction-marker-refusal	remove account_redacted from role report	FAIL: role report must set account_redacted to true
+renderer-hygiene-call-removal	sed:remove-renderer-hygiene-call	FAIL: published renderer mutant is rejected by artifact hygiene: account-id
+renderer-account-redacted-check-removal	sed:remove-renderer-account-redacted-check	FAIL: renderer accepted role report lacking account_redacted

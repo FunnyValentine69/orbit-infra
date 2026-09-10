@@ -10,6 +10,9 @@ IAM_SIM_ROLE_LANE="$REPO_ROOT/scripts/iam-simulate-roles.sh"
 IAM_SIM_CORE="$REPO_ROOT/scripts/iam_simulate_core.py"
 IAM_SIM_FIXTURE_FACTORY="$REPO_ROOT/tests/lib/iam-simulate-fixtures.py"
 IAM_SIM_AWS_WRAPPER="$REPO_ROOT/scripts/aws-cli.sh"
+IAM_SIM_REPORT_RENDERER="$REPO_ROOT/scripts/iam-simulate-report.sh"
+IAM_SIM_ARTIFACT_HYGIENE="$REPO_ROOT/scripts/artifact-hygiene.sh"
+IAM_SIM_REPORT_FIXTURES="$REPO_ROOT/tests/fixtures/artifact-hygiene"
 
 phase2_setup() {
   phase2_dir="$tmp_dir/phase2"
@@ -1729,5 +1732,300 @@ PY
     echo "PASS: IAM simulate ROLE-LANE group"
   else
     echo "FAIL: IAM simulate ROLE-LANE group" >&2
+  fi
+}
+
+
+mutate_report_renderer() {
+  local mutation=$1 output=$2
+  python3 - "$IAM_SIM_REPORT_RENDERER" "$output" "$mutation" <<'PY'
+from pathlib import Path
+import sys
+
+source_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+mutation = sys.argv[3]
+source = source_path.read_text(encoding="utf-8")
+replacements = {
+    "hygiene": (
+        'if ! "$HYGIENE" "$rendered_report" "$rendered_provenance"; then  # artifact-hygiene-publication-guard',
+        'if false; then  # artifact-hygiene-publication-guard',
+    ),
+    "role-redaction": (
+        'if report.get("account_redacted") is not True:  # role-account-redacted-guard',
+        'if False:  # role-account-redacted-guard',
+    ),
+}
+old, new = replacements[mutation]
+if source.count(old) != 1:
+    raise SystemExit(
+        f"FAIL: renderer mutation anchor count for {mutation} is "
+        f"{source.count(old)}, expected 1"
+    )
+output_path.write_text(source.replace(old, new), encoding="utf-8")
+PY
+  chmod +x "$output"
+}
+
+run_report_renderer() {
+  local renderer=$1 custom_report=$2 role_report=$3 out_dir=$4
+  local -a args=(--custom-report "$custom_report" --out-dir "$out_dir")
+  if [ -n "$role_report" ]; then
+    args+=(--role-report "$role_report")
+  fi
+  IAM_SIM_REPORT_REPO_ROOT="$REPO_ROOT" "$renderer" "${args[@]}"
+}
+
+validate_rendered_iam_reports() {
+  python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sys
+
+report = Path(sys.argv[1]).read_text(encoding="utf-8")
+provenance = Path(sys.argv[2]).read_text(encoding="utf-8")
+required_report = (
+    "| Case ID | Mode | Expected | Observed | Matched Sids | Pass |",
+    "## Findings",
+    "case:fixture.policy:DenyRead:ALL:none:non-matching",
+    "Expected: `allowed`; observed: `explicitDeny`.",
+    "## Divergences",
+    "| custom | 2 | 1 | 1 | 0 |",
+    "| role | 2 | 2 | 0 | 0 |",
+    "## Submitted document SHA-256s",
+    "000000000000",
+)
+required_provenance = (
+    "| recorded_from |",
+    "| recorded_on |",
+    "| generator commit |",
+    "| commands |",
+    "Free Plan account in `us-east-1`",
+    "## Exclusions",
+    "isolated single-statement simulation has no principal equivalent",
+    "## Hygiene review (what was actually checked)",
+    "000000000000",
+)
+missing = [value for value in required_report if value not in report]
+missing += [value for value in required_provenance if value not in provenance]
+if missing:
+    raise SystemExit(
+        "FAIL: rendered IAM simulation artifacts omit required content: "
+        f"{missing[0]}"
+    )
+print(
+    "PASS: rendered IAM simulation artifacts contain the required report "
+    "and provenance sections"
+)
+PY
+}
+
+run_iam_simulate_report_contracts() {
+  local group_failures=$failures
+  local clean_custom="$IAM_SIM_REPORT_FIXTURES/iam-simulation-custom-report.json"
+  local clean_role="$IAM_SIM_REPORT_FIXTURES/iam-simulation-role-report.json"
+  local report_name="IAM_SIMULATION_REPORT.md"
+  local provenance_name="IAM_SIMULATION_PROVENANCE.md"
+  local clean_out="$phase2_dir/rendered-clean"
+  local hash_custom="$phase2_dir/custom-report-hash-account-id.json"
+  local hash_out="$phase2_dir/rendered-hash"
+  local bad_case_custom="$phase2_dir/custom-report-case-account-id.json"
+  local bad_case_out="$phase2_dir/rendered-bad-case"
+  local unmarked_role="$phase2_dir/role-report-without-account-redacted.json"
+  local unmarked_out="$phase2_dir/rendered-unmarked-role"
+  local output rc fail_line checker_output
+
+  if [ ! -x "$IAM_SIM_REPORT_RENDERER" ]; then
+    fail_case "IAM simulation report renderer exists" \
+      "$IAM_SIM_REPORT_RENDERER is missing or not executable"
+  else
+    if output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$clean_role" "$clean_out" \
+        2>&1
+    )" &&
+       [ "$(find "$clean_out" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 2 ] &&
+       validate_rendered_iam_reports \
+         "$clean_out/$report_name" "$clean_out/$provenance_name" >/dev/null &&
+       [ "$(grep -c '^PASS:' <<<"$output")" -eq 3 ]; then
+      pass_case "report renderer clean custom/role pair passes both hygiene checks"
+    else
+      fail_case "report renderer clean custom/role pair" "$output"
+    fi
+
+    python3 - \
+      "$clean_custom" "$hash_custom" "$bad_case_custom" \
+      "$unmarked_role" "$clean_role" <<'PY'
+from copy import deepcopy
+import json
+from pathlib import Path
+import sys
+
+clean_custom, hash_path, bad_case_path, unmarked_path, clean_role = map(
+    Path, sys.argv[1:]
+)
+custom = json.loads(clean_custom.read_text(encoding="utf-8"))
+account_shaped_hash = "123456789012" + ("a" * 52)
+custom["records"][0]["document_hashes_submitted"]["policy_input_list"][0][
+    "sha256"
+] = account_shaped_hash
+hash_path.write_text(
+    json.dumps(custom, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+bad_case = deepcopy(custom)
+bad_case["records"][0]["case_id"] = (
+    "case:fixture.policy:123456789012:ALL:none:matching"
+)
+bad_case_path.write_text(
+    json.dumps(bad_case, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+role = json.loads(clean_role.read_text(encoding="utf-8"))
+role.pop("account_redacted")
+unmarked_path.write_text(
+    json.dumps(role, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+PY
+
+    if output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$hash_custom" "$clean_role" "$hash_out" \
+        2>&1
+    )" &&
+       grep -Fq \
+         '123456789012aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+         "$hash_out/$report_name" &&
+       [ "$(grep -c '^PASS:' <<<"$output")" -eq 3 ]; then
+      pass_case \
+        "report renderer preserves SHA-256 while exempting its account-shaped digits"
+    else
+      fail_case "report renderer SHA-256 exemption" "$output"
+    fi
+
+    set +e
+    output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$bad_case_custom" "$clean_role" \
+        "$bad_case_out" 2>&1
+    )"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] &&
+       grep -Fq \
+         ': account-id - non-placeholder 12-digit account id 123456789012' \
+         <<<"$fail_line" &&
+       [ ! -e "$bad_case_out/$report_name" ] &&
+       [ ! -e "$bad_case_out/$provenance_name" ]; then
+      pass_case \
+        "renderer account id case refusal mutation -> FAIL: rendered IAM simulation report contains a non-placeholder account id"
+      printf '%s\n' "$fail_line"
+    else
+      fail_case "renderer account id case refusal mutation did not fail closed" \
+        "rc=$rc output=$output"
+    fi
+
+    set +e
+    output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$unmarked_role" \
+        "$unmarked_out" 2>&1
+    )"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] &&
+       [ "$fail_line" = "FAIL: role report must set account_redacted to true" ] &&
+       [ ! -e "$unmarked_out/$report_name" ] &&
+       [ ! -e "$unmarked_out/$provenance_name" ]; then
+      pass_case "renderer role redaction marker refusal mutation -> $fail_line"
+    else
+      fail_case \
+        "renderer role redaction marker refusal mutation did not fail closed" \
+        "rc=$rc output=$output"
+    fi
+
+    local hygiene_mutant="$phase2_dir/iam-simulate-report-no-hygiene.sh"
+    local hygiene_mutant_out="$phase2_dir/rendered-hygiene-mutant"
+    mutate_report_renderer hygiene "$hygiene_mutant"
+    if output="$(
+      run_report_renderer \
+        "$hygiene_mutant" "$bad_case_custom" "$clean_role" \
+        "$hygiene_mutant_out" 2>&1
+    )" && [ -f "$hygiene_mutant_out/$report_name" ]; then
+      set +e
+      checker_output="$(
+        "$IAM_SIM_ARTIFACT_HYGIENE" "$hygiene_mutant_out/$report_name" 2>&1
+      )"
+      rc=$?
+      set -e
+      fail_line="$(grep -m1 '^FAIL:' <<<"$checker_output" || true)"
+      if [ "$rc" -ne 0 ] && grep -Fq ': account-id -' <<<"$fail_line"; then
+        pass_case \
+          "renderer hygiene call removal mutation -> FAIL: published renderer mutant is rejected by artifact hygiene: account-id"
+        printf '%s\n' "$fail_line"
+      else
+        fail_case \
+          "renderer hygiene call removal mutation did not expose a rejected artifact" \
+          "$checker_output"
+      fi
+    else
+      fail_case "renderer hygiene call removal mutation did not publish" "$output"
+    fi
+    if output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$clean_role" \
+        "$phase2_dir/rendered-hygiene-restored" 2>&1
+    )" && [ "$(grep -c '^PASS:' <<<"$output")" -eq 3 ]; then
+      pass_case "renderer hygiene call removal restored PASS"
+    else
+      fail_case "renderer hygiene call removal restoration" "$output"
+    fi
+
+    local redaction_mutant="$phase2_dir/iam-simulate-report-no-role-redaction.sh"
+    local redaction_mutant_out="$phase2_dir/rendered-redaction-mutant"
+    mutate_report_renderer role-redaction "$redaction_mutant"
+    if output="$(
+      run_report_renderer \
+        "$redaction_mutant" "$clean_custom" "$unmarked_role" \
+        "$redaction_mutant_out" 2>&1
+    )" &&
+       [ -f "$redaction_mutant_out/$report_name" ] &&
+       [ -f "$redaction_mutant_out/$provenance_name" ]; then
+      pass_case \
+        "renderer account redacted check removal mutation -> FAIL: renderer accepted role report lacking account_redacted"
+    else
+      fail_case \
+        "renderer account redacted check removal mutation did not accept the unsafe report" \
+        "$output"
+    fi
+    set +e
+    output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$unmarked_role" \
+        "$phase2_dir/rendered-redaction-restored" 2>&1
+    )"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] &&
+       grep -Fxq 'FAIL: role report must set account_redacted to true' \
+         <<<"$output"; then
+      pass_case "renderer account redacted check removal restored PASS"
+    else
+      fail_case "renderer account redacted check removal restoration" \
+        "rc=$rc output=$output"
+    fi
+  fi
+
+  if output="$(
+    grep -n $'^\t@bash tests/artifact-hygiene-contracts.sh$' "$REPO_ROOT/Makefile"
+  )"; then
+    pass_case "Makefile test target includes artifact hygiene contracts -> $output"
+  else
+    fail_case "Makefile test target includes artifact hygiene contracts"
+  fi
+
+  if [ "$failures" -eq "$group_failures" ]; then
+    echo "PASS: IAM simulate REPORT group"
+  else
+    echo "FAIL: IAM simulate REPORT group" >&2
   fi
 }

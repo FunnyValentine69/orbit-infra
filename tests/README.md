@@ -387,8 +387,9 @@ status and cleanup. It runs from `make test`.
 
 ## IAM simulator contracts
 
-Run all six taxonomy, case-ID, vector-schema, completeness, custom-runner,
-and role-lane contract groups without AWS, Terraform, Docker, or LocalStack:
+Run all seven taxonomy, case-ID, vector-schema, completeness, custom-runner,
+role-lane, and report-renderer contract groups without AWS, Terraform, Docker,
+or LocalStack:
 
 ```bash
 bash tests/iam-simulate-contracts.sh
@@ -398,11 +399,21 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 91 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 95 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
 executed/registered count only after all restored paths pass.
+
+The `REPORT` group executes `scripts/iam-simulate-report.sh` against clean
+custom- and role-report fixtures and checks the rendered case table, findings,
+divergences, outcome counts, submitted document hashes, provenance, exclusions,
+and named hygiene review. A full SHA-256 containing account-shaped digits stays
+valid, while the same digits in a case ID fail closed with no published files.
+The group also refuses a role report without `account_redacted: true`, kills
+mutants that remove either that guard or the renderer's hygiene call, and checks
+the Makefile wiring. The root `make test` recipe runs
+`tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
 
 The `TAXONOMY` group runs
 `scripts/iam-simulate-categories.py --check`, independently compares the 288
