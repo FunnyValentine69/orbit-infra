@@ -41,6 +41,7 @@ import sys
 artifact, forbid_file = sys.argv[1], sys.argv[2]
 
 HEX64 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F])")
+HEX40 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])")
 ACCOUNT_ID = re.compile(r"[0-9]{12}")
 IAM_ARN = re.compile(r"arn:aws:iam::([0-9]{12})")
 PRINCIPAL_ID = re.compile(r"(?:AIDA|AROA|ASIA|AKIA|ANPA|AGPA|AIPA)[A-Z0-9]{12,}")
@@ -66,6 +67,7 @@ with open(artifact, encoding="utf-8") as handle:
 for line_no, line in enumerate(lines, 1):
     content = line.rstrip("\n")
     sanitized = HEX64.sub("", content)
+    sanitized = HEX40.sub("", sanitized)  # git-sha-guard
 
     for account_id in IAM_ARN.findall(sanitized):
         if account_id != PLACEHOLDER_ACCOUNT:  # iam-arn-guard

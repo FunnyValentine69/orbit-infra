@@ -63,6 +63,14 @@ check_suite() {
   echo "clean fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
 
+  verdict="$(run_one "$script" pass "" "$FIXTURES/clean-git-sha.md")"
+  echo "clean git-sha fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" fail "account-id" "$FIXTURES/bad-account-beside-git-sha.md")"
+  echo "account-id beside git-sha fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
   verdict="$(run_one "$script" fail "account-id" "$FIXTURES/bad-account-id.md")"
   echo "account-id fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
@@ -169,6 +177,14 @@ run_mutation_proof \
   "sha256-exemption" \
   "sanitized = HEX64.sub(\"\", content)" \
   "sanitized = content"
+
+# git-sha exemption: without stripping 40-hex tokens first, the clean
+# git-sha fixture's legitimate commit-id line starts tripping the
+# account-id check (its decimal digits contain a spurious 12-digit run).
+run_mutation_proof \
+  "git-sha-exemption" \
+  "sanitized = HEX40.sub(\"\", sanitized)  # git-sha-guard" \
+  "sanitized = sanitized  # git-sha-guard"
 
 echo "---"
 if [ "$failures" -eq 0 ]; then
