@@ -7,7 +7,7 @@ This publication renders account `000000000000` only.
 | Field | Value |
 | --- | --- |
 | recorded_on | 2026-09-10 |
-| generator commit | 401b5fb |
+| generator commit | 0ae9a1e |
 
 ## Case results
 
@@ -36,7 +36,7 @@ This publication renders account `000000000000` only.
 | case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching | custom | allowed | allowed | EcrVerificationAuth | yes |
 | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching | custom | allowed | allowed | EcrVerificationPull | yes |
 | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching | custom | implicitDeny | implicitDeny | none | yes |
-| case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | custom | allowed | allowed | EnvDataBucketLifecycle, S3BucketDescribeReads | no |
+| case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | custom | allowed | allowed | EnvDataBucketLifecycle, S3BucketDescribeReads | yes |
 | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:resource:nonmatching | custom-isolated | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:absent | custom-isolated | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching | custom | allowed | allowed | LogsCreateWithTag | yes |
@@ -411,7 +411,6 @@ This publication renders account `000000000000` only.
 
 ## Findings
 
-- `case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching` (custom). Expected: `allowed`; observed: `allowed`. Matched Sids: `EnvDataBucketLifecycle`, `S3BucketDescribeReads`.
 - `case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching` (custom). Expected: `allowed`; observed: `implicitDeny`. Matched Sids: none.
 - `case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource` (custom). Expected: `allowed`; observed: `implicitDeny`. Matched Sids: none.
 - `case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching` (role). Expected: `allowed`; observed: `implicitDeny`. Matched Sids: none.
@@ -848,7 +847,7 @@ This publication renders account `000000000000` only.
 
 | Lane | Total | Passed | Failed | Runner failures |
 | --- | ---: | ---: | ---: | ---: |
-| custom | 239 | 236 | 3 | 0 |
+| custom | 239 | 237 | 2 | 0 |
 | role | 156 | 155 | 1 | 0 |
 
 ## Submitted document SHA-256s
