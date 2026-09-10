@@ -7,7 +7,7 @@ This publication renders account `000000000000` only.
 | Field | Value |
 | --- | --- |
 | recorded_on | 2026-09-10 |
-| generator commit | c77bfb6 |
+| generator commit | 401b5fb |
 
 ## Case results
 
