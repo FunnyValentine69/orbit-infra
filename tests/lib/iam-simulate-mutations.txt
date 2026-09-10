@@ -39,6 +39,7 @@ evidence-role-forbidden-sid-check	mutate_evidence_role_check:forbidden	FAIL: evi
 evidence-role-required-sid-check	mutate_evidence_role_check:required	FAIL: evidence role required Sid check did not enforce expected refusal
 evidence-per-pair-required-sid	validate_evidence_join:details	FAIL: promoted case is not execution-matching:
 evidence-promoted-empty-hash-list	iam-matrix-contracts.sh:source-mode	FAIL: promoted custom record has an empty policy_input_list hash list:
+evidence-promoted-second-policy-hash	iam-matrix-contracts.sh:plan-mode	FAIL: promoted policy_input_list hashes mismatch for case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary
 runner-per-resource-mapper	run_phase2_runner	FAIL: decision mismatch for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-good/example: expected allowed, observed explicitDeny
 runner-per-pair-required-sid	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope
 runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-bad/example: DenyReadStateObjectsOutsideScope
@@ -137,9 +138,11 @@ report-compact-writer	mutate_report_writer	FAIL: compact report records must con
 report-destination-directory-atomic-replacement	mutate_report_temp_directory	FAIL: shared report writer attempted cross-directory replacement
 renderer-role-expectation-binding	set-role-expectation-different-from-vector	FAIL: role record case:fixture.policy:DenyRead:ALL:none:non-matching expectation differs from custom vector expectation
 renderer-mixed-resource-decisions	mutate_report_renderer:resource-decisions	FAIL: matching resource_decisions rendered as a failure
+renderer-scalar-resource-decision-rejection	mutate_report_renderer:scalar-resource-decisions	FAIL: rendered custom counts differ from JSON summary
 report-whole-object-redaction	mutate_report_redaction	FAIL: shared report writer retained live identifiers
 report-principal-path-redaction	mutate_report_principal_redaction	FAIL: shared report writer retained principal identity path
 artifact-hygiene-principal-arn-guard	mutate_artifact_hygiene_principal_arn	FAIL: artifact hygiene principal ARN guard mutant accepted an identity path
+artifact-hygiene-request-id-case-folding	sed:remove-request-id-ignorecase	FAIL: artifact hygiene request ID case-folding mutant accepted lowercase requestid
 evidence-hyphenated-suffix	mutate_evidence_suffix_check	FAIL: promoted case is not execution-matching:
 renderer-account-id-case-refusal	doctor custom report case id	FAIL: rendered IAM simulation report contains a non-placeholder account id
 renderer-role-redaction-marker-refusal	remove account_redacted from role report	FAIL: role report must set account_redacted to true

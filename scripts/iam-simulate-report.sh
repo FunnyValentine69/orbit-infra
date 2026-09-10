@@ -252,16 +252,34 @@ def custom_matches(record):
     expected_decision = expectation.get("decision")
     per_resource = expectation.get("resource_decisions")
     observed = record["decision_observed"]
+    details = record.get("details")
     if isinstance(per_resource, dict):
-        if not isinstance(observed, dict) or not observed:
-            return False
         missing = object()
         observed_resources = set()
-        for pair_or_resource, decision in observed.items():
-            resource = pair_or_resource.split("|", 1)[-1]
-            observed_resources.add(resource)
-            if per_resource.get(resource, missing) != decision:
+        if isinstance(details, list):  # resource-decision-details-guard
+            if not details:
                 return False
+            for detail in details:
+                if not isinstance(detail, dict):
+                    return False
+                resource = detail.get("resource_arn")
+                observed_resources.add(resource)
+                if per_resource.get(resource, missing) != detail.get(
+                    "decision_observed"
+                ):
+                    return False
+        elif isinstance(observed, dict) and observed:
+            for pair_or_resource, decision in observed.items():
+                resource = pair_or_resource.split("|", 1)[-1]
+                observed_resources.add(resource)
+                if per_resource.get(resource, missing) != decision:
+                    return False
+        elif per_resource and all(
+            decision == observed for decision in per_resource.values()
+        ):
+            observed_resources = set(per_resource)
+        else:
+            return False
         if observed_resources != set(per_resource):
             return False
     elif expected_decision is not None:
@@ -270,7 +288,6 @@ def custom_matches(record):
             return False
     required = set(expectation.get("matched_sid_required", []))
     forbidden = set(expectation.get("matched_sid_forbidden", []))
-    details = record.get("details")
     if isinstance(details, list) and details:
         for detail in details:
             matched = set(detail.get("matched_sids", [])) if isinstance(detail, dict) else set()

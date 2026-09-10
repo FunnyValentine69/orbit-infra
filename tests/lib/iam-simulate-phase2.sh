@@ -2478,6 +2478,10 @@ replacements = {
         '    per_resource = expectation.get("resource_decisions")',
         '    per_resource = None',
     ),
+    "scalar-resource-decisions": (
+        '        if isinstance(details, list):  # resource-decision-details-guard',
+        '        if not isinstance(observed, dict) or not observed:\n            return False\n        if isinstance(details, list):  # resource-decision-details-guard',
+    ),
 }
 old, new = replacements[mutation]
 if source.count(old) != 1:
@@ -2557,6 +2561,51 @@ validate_renderer_mixed_resource_decisions() {
 }
 
 
+validate_renderer_summary_counts() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+
+custom_path, role_path, rendered_path = map(Path, sys.argv[1:])
+rendered = rendered_path.read_text(encoding="utf-8")
+rendered_counts = {
+    match.group(1): {
+        "total": int(match.group(2)),
+        "passed": int(match.group(3)),
+        "failed": int(match.group(4)),
+        "runner_failures": int(match.group(5)),
+    }
+    for match in re.finditer(
+        r"^\| (custom|role) \| (\d+) \| (\d+) \| (\d+) \| (\d+) \|$",
+        rendered,
+        re.MULTILINE,
+    )
+}
+for lane, report_path in (("custom", custom_path), ("role", role_path)):
+    summary = json.loads(report_path.read_text(encoding="utf-8")).get("summary")
+    required = ("total", "passed", "failed")
+    if not isinstance(summary, dict) or any(key not in summary for key in required):
+        raise SystemExit(f"FAIL: committed {lane} JSON summary lacks outcome counts")
+    expected = {key: summary[key] for key in required}
+    if "runner_failures" in summary:
+        expected["runner_failures"] = summary["runner_failures"]
+    actual = {
+        key: rendered_counts.get(lane, {}).get(key)
+        for key in expected
+    }
+    if actual != expected:
+        raise SystemExit(
+            f"FAIL: rendered {lane} counts differ from JSON summary: "
+            f"rendered={actual} json={expected}"
+        )
+print("PASS: rendered IAM simulation counts equal both committed JSON summaries")
+PY
+}
+
+
 run_iam_simulate_report_contracts() {
   local group_failures=$failures
   local clean_custom="$IAM_SIM_REPORT_FIXTURES/iam-simulation-custom-report.json"
@@ -2579,6 +2628,8 @@ run_iam_simulate_report_contracts() {
   local principal_redaction_report="$phase2_dir/principal-redaction-report.json"
   local hygiene_principal_mutant="$phase2_dir/artifact-hygiene-principal-mutant.sh"
   local bad_principal_fixture="$IAM_SIM_REPORT_FIXTURES/bad-principal-arn.md"
+  local hygiene_request_case_mutant="$phase2_dir/artifact-hygiene-request-case-mutant.sh"
+  local bad_lowercase_request_fixture="$IAM_SIM_REPORT_FIXTURES/bad-request-id-lowercase.md"
   local atomic_writer_mutant="$phase2_dir/iam-simulate-core-cross-directory.py"
   local role_expectation_mismatch="$phase2_dir/role-expectation-mismatch.json"
   local role_expectation_out="$phase2_dir/rendered-role-expectation-mismatch"
@@ -2586,6 +2637,10 @@ run_iam_simulate_report_contracts() {
   local mixed_mutant="$phase2_dir/iam-simulate-report-scalar-only.sh"
   local mixed_mutant_out="$phase2_dir/rendered-mixed-mutant"
   local mixed_restored_out="$phase2_dir/rendered-mixed-restored"
+  local evidence_out="$phase2_dir/rendered-evidence-counts"
+  local scalar_rejection_mutant="$phase2_dir/iam-simulate-report-scalar-rejection.sh"
+  local scalar_rejection_out="$phase2_dir/rendered-scalar-rejection"
+  local scalar_restored_out="$phase2_dir/rendered-scalar-restored"
   local failed_case="case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
   local doctored_pass_custom="$phase2_dir/doctored-pass-custom-report.json"
   local doctored_pass_out="$phase2_dir/rendered-doctored-pass"
@@ -2593,7 +2648,7 @@ run_iam_simulate_report_contracts() {
   local publication_out="$phase2_dir/rendered-publication-transaction"
   local json_hygiene_mutant="$phase2_dir/iam-simulate-report-no-json-hygiene.sh"
   local json_hygiene_mutant_out="$phase2_dir/rendered-json-hygiene-mutant"
-  local output rc fail_line checker_output
+  local output rc fail_line checker_output case_fold_anchor case_fold_anchor_count
 
   if output="$(
     python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-atomic-replace \
@@ -2677,6 +2732,7 @@ run_iam_simulate_report_contracts() {
   fi
   mutate_artifact_hygiene_principal_arn \
     "$IAM_SIM_ARTIFACT_HYGIENE" "$hygiene_principal_mutant"
+  # shellcheck disable=SC2016
   expect_failure "artifact hygiene principal ARN guard" \
     "artifact hygiene principal ARN guard mutant accepted an identity path" \
     bash -c '
@@ -2694,6 +2750,36 @@ run_iam_simulate_report_contracts() {
   else
     fail_case "artifact hygiene principal ARN guard mutation restoration" \
       "rc=$rc output=$output"
+  fi
+
+  case_fold_anchor='REQUEST_ID_KEY = re.compile(r"(?:x-amzn-)?RequestId", re.IGNORECASE)'
+  case_fold_anchor_count="$(grep -Fxc "$case_fold_anchor" "$IAM_SIM_ARTIFACT_HYGIENE" || true)"
+  if [ "$case_fold_anchor_count" -ne 1 ]; then
+    fail_case "artifact hygiene request ID case-folding mutation setup" \
+      "anchor count=$case_fold_anchor_count"
+  else
+    sed 's/, re\.IGNORECASE)/)/' "$IAM_SIM_ARTIFACT_HYGIENE" \
+      >"$hygiene_request_case_mutant"
+    chmod +x "$hygiene_request_case_mutant"
+    # shellcheck disable=SC2016
+    expect_failure "artifact hygiene request ID case folding" \
+      "artifact hygiene request ID case-folding mutant accepted lowercase requestid" \
+      bash -c '
+        if bash "$1" "$2" >/dev/null 2>&1; then
+          echo "FAIL: artifact hygiene request ID case-folding mutant accepted lowercase requestid" >&2
+          exit 1
+        fi
+      ' _ "$hygiene_request_case_mutant" "$bad_lowercase_request_fixture"
+    set +e
+    output="$(bash "$IAM_SIM_ARTIFACT_HYGIENE" "$bad_lowercase_request_fixture" 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && grep -Fq ': request-id -' <<<"$output"; then
+      pass_case "artifact hygiene request ID case folding mutation restored PASS"
+    else
+      fail_case "artifact hygiene request ID case folding mutation restoration" \
+        "rc=$rc output=$output"
+    fi
   fi
 
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-writer \
@@ -2727,6 +2813,41 @@ run_iam_simulate_report_contracts() {
       pass_case "report renderer clean custom/role pair passes both hygiene checks"
     else
       fail_case "report renderer clean custom/role pair" "$output"
+    fi
+
+    if output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$CUSTOM_EVIDENCE_REPORT" \
+        "$ROLE_EVIDENCE_REPORT" "$evidence_out" 2>&1
+    )" && validate_renderer_summary_counts \
+      "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+      "$evidence_out/$report_name"; then
+      pass_case "report renderer counts match committed JSON summaries"
+    else
+      fail_case "report renderer committed JSON summary counts" "$output"
+    fi
+
+    mutate_report_renderer scalar-resource-decisions "$scalar_rejection_mutant"
+    if output="$(run_report_renderer \
+      "$scalar_rejection_mutant" "$CUSTOM_EVIDENCE_REPORT" \
+      "$ROLE_EVIDENCE_REPORT" "$scalar_rejection_out" 2>&1)"; then
+      expect_failure "renderer scalar resource decision rejection" \
+        "rendered custom counts differ from JSON summary" \
+        validate_renderer_summary_counts \
+          "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+          "$scalar_rejection_out/$report_name"
+    else
+      fail_case "renderer scalar resource decision rejection mutation setup" "$output"
+    fi
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$CUSTOM_EVIDENCE_REPORT" \
+      "$ROLE_EVIDENCE_REPORT" "$scalar_restored_out" 2>&1)" && \
+       validate_renderer_summary_counts \
+         "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+         "$scalar_restored_out/$report_name" >/dev/null; then
+      pass_case "renderer scalar resource decision rejection mutation restored PASS"
+    else
+      fail_case "renderer scalar resource decision rejection mutation restoration" "$output"
     fi
 
     python3 - \

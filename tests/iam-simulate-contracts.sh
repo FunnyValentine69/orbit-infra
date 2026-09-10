@@ -1357,6 +1357,17 @@ empty_hash_record = next(
 )
 empty_hash_record["document_hashes_submitted"]["policy_input_list"] = []
 write_mutant("empty-hash", custom_payload=empty_hash_custom)
+second_hash_case = "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary"
+second_hash_custom = deepcopy(custom)
+second_hash_record = next(
+    record for record in second_hash_custom["records"]
+    if record["case_id"] == second_hash_case
+)
+second_hash_entries = second_hash_record["document_hashes_submitted"]["policy_input_list"]
+if len(second_hash_entries) != 2:
+    raise SystemExit("FAIL: second policy hash Evidence mutation anchor changed")
+second_hash_entries[1]["sha256"] = "0" * 64
+write_mutant("second-hash", custom_payload=second_hash_custom)
 stale_label = f"AWS-SIMULATED {dates[0]} docs/assets/stale-IAM_SIMULATION_REPORT.md"
 write_mutant("pointer", matrix.replace(first_anchor, f"{first_case}={stale_label}", 1))
 wrong_label = f"AWS-SIMULATED 2026-09-08 {pointer}"
@@ -1613,11 +1624,42 @@ PY_EVIDENCE_MUTANTS
     TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
       bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" 2>&1
   )" && grep -Fq \
-      'PASS: IAM matrix promoted records carry policy hashes (216 cases)' \
+      'PASS: IAM matrix promoted record hash-list lengths match vectors (216 cases)' \
       <<<"$output"; then
     pass_case "evidence promoted empty hash list mutation restored PASS"
   else
     fail_case "evidence promoted empty hash list mutation restoration" "$output"
+  fi
+
+  set +e
+  output="$(
+    TMPDIR="$tmp_dir" \
+      IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$evidence_mutants/second-hash/custom.json" \
+      IAM_MATRIX_SKIP_NEGATIVES=1 \
+      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
+        "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" 2>&1
+  )"
+  rc=$?
+  set -e
+  fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+  if [ "$rc" -ne 0 ] && grep -Fq \
+      'FAIL: promoted policy_input_list hashes mismatch for case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary' \
+      <<<"$output"; then
+    pass_case "evidence promoted second policy hash mutation -> $fail_line"
+  else
+    fail_case "evidence promoted second policy hash mutation did not fail as required" \
+      "rc=$rc output=$output"
+  fi
+  if output="$(
+    TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
+      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
+        "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" 2>&1
+  )" && grep -Fq \
+      'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (216 cases)' \
+      <<<"$output"; then
+    pass_case "evidence promoted second policy hash mutation restored PASS"
+  else
+    fail_case "evidence promoted second policy hash mutation restoration" "$output"
   fi
   expect_failure "evidence missing record" "promoted case has no evidence record" \
     validate_evidence_join \

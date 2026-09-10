@@ -56,7 +56,7 @@ PRINCIPAL_ARN = re.compile(
 REDACTED_PRINCIPAL = "<redacted-principal>"
 RESOURCE_FIELDS = {"resource_arn", "Resource", "NotResource"}
 ASSUMED_ROLE = re.compile(r"assumed-role/")
-REQUEST_ID_KEY = re.compile(r"(?:x-amzn-)?RequestId")
+REQUEST_ID_KEY = re.compile(r"(?:x-amzn-)?RequestId", re.IGNORECASE)
 BARE_UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )

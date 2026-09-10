@@ -1016,7 +1016,7 @@ PY_SOURCE
 scan_hygiene "$DOC"
 scan_fixture_hygiene
 
-python3 - "$DOC" "$CUSTOM_EVIDENCE_REPORT" <<'PY_PROMOTED_HASH_SOURCE'
+python3 - "$DOC" "$CUSTOM_EVIDENCE_REPORT" "$SIMULATOR_VECTORS" <<'PY_PROMOTED_HASH_SOURCE'
 import json
 from pathlib import Path
 import re
@@ -1029,6 +1029,7 @@ def fail(message):
 
 matrix_text = Path(sys.argv[1]).read_text(encoding="utf-8")
 report_path = Path(sys.argv[2])
+vector_root = Path(sys.argv[3])
 if not report_path.is_file():
     fail(f"custom evidence report not found: {report_path}")
 report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1040,6 +1041,19 @@ for record in records:
     if not isinstance(record, dict) or not isinstance(record.get("case_id"), str):
         fail("custom evidence report contains an invalid record")
     records_by_id.setdefault(record["case_id"], []).append(record)
+vectors = {}
+for vector_path in sorted(vector_root.rglob("*.json")):
+    envelope = json.loads(vector_path.read_text(encoding="utf-8"))
+    for case in envelope.get("cases", []):
+        vector = {
+            "document": envelope.get("document"),
+            "sid": envelope.get("sid"),
+            **case,
+        }
+        case_id = vector.get("case_id")
+        if case_id in vectors:
+            fail(f"simulator vectors repeat case id: {case_id}")
+        vectors[case_id] = vector
 promoted = sorted(set(re.findall(
     r"(case:[^ ;=)]+)=AWS-SIMULATED \d{4}-\d{2}-\d{2} [^;`]+(?=; case:|`)",
     matrix_text,
@@ -1050,12 +1064,35 @@ for case_id in promoted:
     matches = records_by_id.get(case_id, [])
     if len(matches) != 1:
         fail(f"promoted custom record count is {len(matches)} for {case_id}")
-    hashes = matches[0].get("document_hashes_submitted", {}).get("policy_input_list")
+    vector = vectors.get(case_id)
+    if vector is None:
+        fail(f"promoted case has no simulator vector: {case_id}")
+    hash_groups = matches[0].get("document_hashes_submitted", {})
+    hashes = hash_groups.get("policy_input_list")
     if not isinstance(hashes, list) or not hashes:
         fail(f"promoted custom record has an empty policy_input_list hash list: {case_id}")
     if not isinstance(hashes[0], dict) or re.fullmatch(r"[0-9a-f]{64}", hashes[0].get("sha256", "")) is None:
         fail(f"promoted custom record has an invalid policy_input_list hash: {case_id}")
-print(f"PASS: IAM matrix promoted records carry policy hashes ({len(promoted)} cases)")
+    if vector.get("simulation_mode") == "custom-isolated":
+        expected_policy_count = 1
+        expected_boundary_count = 0
+    else:
+        expected_policy_count = 1 + len(vector.get("synthetic_policy_input_list", []))
+        expected_boundary_count = len(
+            vector.get("permissions_boundary_policy_input_list", [])
+        )
+    for group, expected_count in (
+        ("policy_input_list", expected_policy_count),
+        ("permissions_boundary_policy_input_list", expected_boundary_count),
+    ):
+        entries = hash_groups.get(group)
+        if not isinstance(entries, list) or len(entries) != expected_count:
+            actual_count = len(entries) if isinstance(entries, list) else "<invalid>"
+            fail(
+                f"promoted custom record {group} hash count mismatch for {case_id}: "
+                f"report={actual_count} vector={expected_count}"
+            )
+print(f"PASS: IAM matrix promoted record hash-list lengths match vectors ({len(promoted)} cases)")
 PY_PROMOTED_HASH_SOURCE
 
 if [ "$REPO_ROOT" = "$DEFAULT_REPO_ROOT" ]; then
@@ -1161,14 +1198,46 @@ plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 matrix_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 vector_root = Path(sys.argv[4])
+plan_resources = plan.get("planned_values", {}).get("root_module", {}).get("resources", [])
 documents = {
     resource["address"]: resource["values"]["policy"]
-    for resource in plan.get("planned_values", {}).get("root_module", {}).get("resources", [])
+    for resource in plan_resources
     if isinstance(resource, dict)
     and isinstance(resource.get("address"), str)
     and isinstance(resource.get("values"), dict)
     and isinstance(resource["values"].get("policy"), str)
 }
+plan_reader_names = [
+    resource.get("values", {}).get("name")
+    for resource in plan_resources
+    if isinstance(resource, dict)
+    and resource.get("address") == "aws_iam_role.plan_reader"
+    and isinstance(resource.get("values"), dict)
+]
+if len(plan_reader_names) != 1 or not isinstance(plan_reader_names[0], str):
+    fail("plan must contain one named aws_iam_role.plan_reader")
+suffix_match = re.fullmatch(r"orbit-infra-(.+)-plan-reader", plan_reader_names[0])
+if suffix_match is None or not suffix_match.group(1):
+    fail(f"cannot derive SUFFIX from plan reader role name: {plan_reader_names[0]}")
+suffix = suffix_match.group(1)
+account_ids = sorted(set(re.findall(
+    r"(?<![0-9])[0-9]{12}(?![0-9])", "\n".join(documents.values())
+)))
+if len(account_ids) > 1:
+    fail(f"plan policy documents contain multiple account ids: {account_ids}")
+account_id = account_ids[0] if account_ids else "000000000000"
+
+
+def render_template(document):
+    if not isinstance(document, str):
+        fail("synthetic policy input must be a string")
+    rendered = document.replace("${ACCOUNT_ID}", account_id).replace("${SUFFIX}", suffix)
+    unknown = re.search(r"\$\{[^}]+\}", rendered)
+    if unknown is not None:
+        fail(f"rendered vector retains unknown template: {unknown.group(0)}")
+    return rendered
+
+
 vectors = {}
 for vector_path in sorted(vector_root.rglob("*.json")):
     envelope = json.loads(vector_path.read_text(encoding="utf-8"))
@@ -1220,12 +1289,52 @@ for case_id in promoted:
         )
     else:
         submitted = document
-    expected = sha256(submitted)
-    entries = matches[0].get("document_hashes_submitted", {}).get("policy_input_list", [])
-    actual = entries[0].get("sha256") if entries and isinstance(entries[0], dict) else "<empty>"
-    if actual != expected:
-        fail(f"promoted policy hash mismatch for {case_id}: report={actual} plan={expected}")
-print(f"PASS: IAM matrix promoted policy hashes bind to plan bytes ({len(promoted)} cases)")
+    if vector.get("simulation_mode") == "custom-isolated":
+        expected_documents = {
+            "policy_input_list": [submitted],
+            "permissions_boundary_policy_input_list": [],
+        }
+    else:
+        expected_documents = {
+            "policy_input_list": [submitted] + [
+                render_template(item)
+                for item in vector.get("synthetic_policy_input_list", [])
+            ],
+            "permissions_boundary_policy_input_list": [],
+        }
+        for boundary_address in vector.get(
+            "permissions_boundary_policy_input_list", []
+        ):
+            boundary = documents.get(boundary_address)
+            if boundary is None:
+                fail(
+                    f"plan lacks promoted boundary policy document "
+                    f"{boundary_address}: {case_id}"
+                )
+            expected_documents["permissions_boundary_policy_input_list"].append(
+                boundary
+            )
+    hash_groups = matches[0].get("document_hashes_submitted")
+    if not isinstance(hash_groups, dict):
+        fail(f"promoted record lacks document hash groups: {case_id}")
+    for group, submitted_documents in expected_documents.items():
+        expected = [sha256(item) for item in submitted_documents]
+        if group not in hash_groups or not isinstance(hash_groups[group], list):
+            fail(f"promoted record has invalid {group} hash list: {case_id}")
+        actual = []
+        for index, entry in enumerate(hash_groups[group]):
+            if not isinstance(entry, dict) or "sha256" not in entry:
+                fail(f"promoted record has invalid {group}[{index}] hash: {case_id}")
+            actual.append(entry["sha256"])
+        if actual != expected:
+            fail(
+                f"promoted {group} hashes mismatch for {case_id}: "
+                f"report={actual} plan={expected}"
+            )
+print(
+    f"PASS: IAM matrix promoted ordered policy and boundary hashes bind to "
+    f"plan/vector bytes ({len(promoted)} cases)"
+)
 PY_PROMOTED_HASH_PLAN
   fi
   exit 0
@@ -2318,6 +2427,34 @@ PY_MUTATE_DOC
     plan_case="$fixture_tmp/$name.json"
     jq "$filter" "$base_plan" >"$plan_case"
   }
+
+  local second_hash_case_id="case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary"
+  local second_hash_report="$fixture_tmp/promoted-second-policy-hash.json"
+  python3 - "$CUSTOM_EVIDENCE_REPORT" "$second_hash_report" <<'PY_SECOND_POLICY_HASH'
+import json
+from pathlib import Path
+import sys
+
+
+source_path, output_path = map(Path, sys.argv[1:])
+payload = json.loads(source_path.read_text(encoding="utf-8"))
+case_id = "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary"
+record = next(
+    (item for item in payload.get("records", []) if item.get("case_id") == case_id),
+    None,
+)
+if record is None:
+    raise SystemExit("promoted second policy hash mutation record is missing")
+entries = record.get("document_hashes_submitted", {}).get("policy_input_list")
+if not isinstance(entries, list) or len(entries) != 2:
+    raise SystemExit("promoted second policy hash mutation anchor changed")
+entries[1]["sha256"] = "0" * 64
+output_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+PY_SECOND_POLICY_HASH
+  expect_fail promoted-second-policy-hash \
+    "promoted policy_input_list hashes mismatch for $second_hash_case_id" \
+    "${child_env[@]}" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$second_hash_report" \
+    "$0" "$base_plan"
 
   make_plan empty-plan '.planned_values.root_module.resources = []'
   expect_fail empty-plan "expected 7 aws_iam_policy resources, found 0" "${child_env[@]}" "$0" "$plan_case"

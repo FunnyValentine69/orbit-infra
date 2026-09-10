@@ -314,9 +314,9 @@ execution role ARN. The same HCL comment stripper protects Sid inventory and
 complete, anchored boundary-assignment counts, so comments and quoted decoys do
 not count. Fixture hygiene scans regular files plus symlink target strings and
 rejects links that resolve outside the IAM fixture directory. Evidence-label
-syntax is checked, and every promoted custom record must carry a
-non-empty submitted policy hash list, but the labels are recorded P0-3d facts
-whose truth cannot otherwise be validated mechanically. The
+syntax is checked, and every promoted custom record's policy and boundary
+hash-list lengths must equal the inputs implied by its vector. Source mode checks
+that shape without claiming plan-byte agreement. The
 `absent-key-passed`, `arn-real-account`,
 `allow-masked-negative-missing`, `masked-negative-missing`,
 `masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
@@ -352,10 +352,12 @@ For an already-rendered post-apply plan, run
 Effect, Principal or NotPrincipal, Action or NotAction, Resource or
 NotResource, Condition, all bindings, and all three trust documents exactly.
 String and array policy fields canonicalise identically. For every promoted case,
-plan mode also binds the record's first submitted policy hash to the SHA-256 of
-the exact plan-rendered document at that case's address; `custom-isolated` records
-are bound to their canonical one-statement wrapper. A mismatch reports the case
-ID plus both report and plan hashes. This byte binding runs under
+plan mode binds the complete ordered policy hash list: the exact plan-rendered
+document (or canonical `custom-isolated` wrapper) followed by each rendered
+`synthetic_policy_input_list` entry. It separately binds every ordered
+`permissions_boundary_policy_input_list` address to its exact plan bytes. A
+second-policy-hash mutant proves that checking only index zero is rejected. This
+byte binding runs under
 `make iam-matrix-plan`. A pre-apply plan whose trust policies are unknown fails
 with the apply-first diagnostic. This exact comparison runs in the same-repository
 `plan-localstack` job and in
@@ -407,7 +409,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 147 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 150 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
@@ -437,13 +439,18 @@ kills mutants that remove the role marker guard, the JSON inputs, or the entire
 hygiene call. The custom fake validates context entries exactly, and a dropped
 `--context-entries` mutant fails. The group also checks that a doctored custom
 `pass` cannot suppress a finding. Role divergences render the vector expectation
-and the custom lane's observed decision in separate columns. Mixed dict results
-are re-evaluated against `expect.resource_decisions`, so a matching
-allowed/explicitDeny result remains a pass. An injected failure between report
+and the custom lane's observed decision in separate columns. Per-pair details are
+re-evaluated against `expect.resource_decisions` even when the aggregate observed
+decision is a homogeneous scalar; dict observations and agreeing scalar fallbacks
+remain supported. The committed custom/role totals, passes, and failures must equal
+their JSON summaries, and a scalar-rejection mutant must make those counts diverge.
+An injected failure between report
 and provenance publication restores both original output files;
 the provenance is published last. The group also checks the Makefile wiring.
 The root `make test` recipe runs
 `tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
+That fixture matrix rejects lowercase `requestid`; removing case-insensitive
+matching is a killed mutation with an explicit restored pass.
 
 The `EVIDENCE` group joins every `AWS-SIMULATED` matrix label to a unique
 execution-matching custom-policy record or, when needed, a unique matching
@@ -458,9 +465,10 @@ disagreement between the Markdown report and provenance. It prints the computed
 custom, role, and Markdown SHA-256 digests and will compare them once P5-52
 makes the renderer record the complete digest set. The join derives `${SUFFIX}`
 from the plan-reader role name recorded in the role report, so suffixes such as
-`team-a` remain valid. Fifteen registered mutants cover those joins and bindings,
-including a doctored SNS pass, a per-pair Sid miss, an empty promoted hash list, a
-hyphenated-suffix matcher regression, and a runner failure. Every restored join
+`team-a` remain valid. Sixteen registered mutants cover those joins and bindings,
+including a doctored SNS pass, a per-pair Sid miss, empty and mismatching-second
+promoted hash lists, a hyphenated-suffix matcher regression, and a runner failure.
+Every restored join
 must pass.
 
 The `TAXONOMY` group runs

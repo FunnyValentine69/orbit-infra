@@ -106,6 +106,10 @@ check_suite() {
   echo "request-id fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
 
+  verdict="$(run_one "$script" fail "request-id" "$FIXTURES/bad-request-id-lowercase.md")"
+  echo "lowercase request-id fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
   verdict="$(run_one "$script" fail "principal-id" "$FIXTURES/bad-assumed-role.md")"
   echo "assumed-role fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
@@ -178,6 +182,25 @@ run_mutation_proof \
   "request-id" \
   "if REQUEST_ID_KEY.search(content):" \
   "if False:"
+
+case_fold_mutant="$tmp_dir/artifact-hygiene.request-id-case-folding.mutant.sh"
+sed 's/, re\.IGNORECASE)/)/' "$SCRIPT" >"$case_fold_mutant"
+chmod +x "$case_fold_mutant"
+if output="$(bash "$case_fold_mutant" "$FIXTURES/bad-request-id-lowercase.md" 2>&1)" && \
+   grep -q '^PASS:' <<<"$output"; then
+  pass_case "request-id case-folding mutation -> FAIL: lowercase requestid fixture was accepted"
+else
+  fail_case "request-id case-folding mutation setup" "$output"
+fi
+set +e
+output="$(bash "$SCRIPT" "$FIXTURES/bad-request-id-lowercase.md" 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && grep -Fq ': request-id -' <<<"$output"; then
+  pass_case "request-id case-folding mutation restored PASS"
+else
+  fail_case "request-id case-folding mutation restoration" "rc=$rc output=$output"
+fi
 
 run_mutation_proof \
   "forbid-list" \
