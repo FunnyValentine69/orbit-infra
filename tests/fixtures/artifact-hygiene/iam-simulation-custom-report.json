@@ -1,0 +1,54 @@
+{
+  "redaction_applied": true,
+  "records": [
+    {
+      "case_id": "case:fixture.policy:AllowRead:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": ["AllowRead"]
+      },
+      "matched_sids": ["AllowRead"],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:fixture.policy:DenyRead:ALL:none:non-matching",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ]
+      },
+      "errors": ["decision mismatch"],
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": []
+      },
+      "matched_sids": ["DenyRead"],
+      "mode": "custom",
+      "pass": false,
+      "shared_call_case_ids": []
+    }
+  ],
+  "summary": {
+    "failed": 1,
+    "passed": 1,
+    "runner_failures": 0,
+    "total": 2
+  }
+}

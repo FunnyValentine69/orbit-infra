@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_data",
+  "sid": "LogsDescribeStarOnly",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["logs:DescribeLogGroups"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["LogsDescribeStarOnly"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

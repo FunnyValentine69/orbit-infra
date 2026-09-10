@@ -5,16 +5,17 @@ This document collects every evidence claim made about orbit-infra: the labels u
 ## Evidence labels
 
 - **LOCALSTACK-VERIFIED** — ran against the LocalStack emulator, in CI or locally.
+- **AWS-SIMULATED** — evaluated by the real-account IAM policy simulator; proves policy evaluation, not service enforcement.
 - **CODE-ONLY** — implemented and contract-tested, but not yet executed on real AWS.
 - **fixture-verified** — exercised through recorded fixtures rather than a live run.
 
 ## Evidence gates
 
-LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY behind P0-3b — the paid upgrade of the AWS account from the Free Plan, which the owner decided on 2026-09-08 not to pursue for this portfolio, so every item labeled "until P0-3b" stays parked. Phase 5 IAM-matrix and recorded-demo evidence is summarized in the table below.
+LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY behind P0-3b — the paid upgrade of the AWS account from the Free Plan, which the owner decided on 2026-09-08 not to pursue for this portfolio. The IAM policy simulator supplied real-account policy-evaluation evidence without applying the stack. Phase 5 IAM-matrix and recorded-demo evidence is summarized in the table below.
 
 ## Evidence table
 
-Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot run the real-AWS checks); `P0-3d` is the real-AWS promotion gate (apply bootstrap once, run the OIDC smoke workflow, then execute the IAM matrix cases).
+Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot run the real bootstrap and service checks); `P0-3d` is the real-AWS promotion gate (apply bootstrap once, run the OIDC smoke workflow, then execute the remaining IAM matrix checks).
 
 | Signal | Status |
 |---|---|
@@ -22,7 +23,8 @@ Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot 
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov + conftest (public S3, open non-ALB ingress) on every PR plan; conftest also gates the saved AWS plan before apply | done (apply-side gate CODE-ONLY until P0-3d) |
-| IAM action-condition matrix | source and post-apply plan contracts; executable cases CODE-ONLY until P0-3d |
+| IAM action-condition matrix | 216 cases in 64 rows are `AWS-SIMULATED 2026-09-10 docs/assets/IAM_SIMULATION_REPORT.md`; rows containing an execution mismatch, live-call-only case, or not-simulatable case retain their lower label |
+| IAM simulation report | `AWS-SIMULATED 2026-09-10 docs/assets/IAM_SIMULATION_REPORT.md`; 239 custom-policy cases (237 matched, 2 findings, 0 runner failures) and 156 role-policy cases (155 passed, 1 failed on the same `SnsSubscriptionManage` finding as the custom-policy lane; 153 custom-lane agreements, 3 divergences); proves policy evaluation, not service enforcement |
 | Recorded LocalStack demo | LOCALSTACK-VERIFIED recording; provenance and generator drift contract-verified in CI |
 | Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
 | Canonical SBOM comparison + Trivy scan predicates + KMS-backed cosign signatures/attestations | CODE-ONLY until real-AWS publication and apply; offline canonicalization, ordering, and freshness contracts pass |
@@ -33,7 +35,7 @@ Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot 
 | Observability: CloudWatch logs, two alarms, one written SLO | done |
 | ADRs, runbooks, threat model | documents done; controls carry their own labels, mostly CODE-ONLY until P0-3d |
 
-`P0-3d` is the real-AWS promotion gate: applying bootstrap, running OIDC smoke, then executing `docs/iam-matrix.md` as the per-principal positive/negative API specification, before any preview apply.
+`P0-3d` remains the real-AWS promotion gate for an applied bootstrap, OIDC smoke, service-enforcement calls, and the cases the simulator cannot execute. The simulator has closed the policy-evaluation portion recorded above without applying the bootstrap.
 
 ## PR checks
 

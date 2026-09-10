@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.task_boundary",
+  "sid": "ProjectDataBucket",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectDataBucket:ALL:none:in-boundary",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "permissions_boundary_policy_input_list": ["aws_iam_policy.task_boundary"],
+      "action_names": ["s3:DeleteObject","s3:GetObject","s3:PutObject"],
+      "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-preview-data/preview"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["ProjectDataBucket"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectDataBucket:ALL:none:outside-boundary",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "synthetic_policy_input_list": ["{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"VectorIdentityAllow\",\"Effect\":\"Allow\",\"Action\":[\"s3:ListAllMyBuckets\"],\"Resource\":[\"*\"]}]}"],
+      "permissions_boundary_policy_input_list": ["aws_iam_policy.task_boundary"],
+      "action_names": ["s3:ListAllMyBuckets"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ProjectDataBucket"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectDataBucket:ALL:resource:nonmatching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "permissions_boundary_policy_input_list": ["aws_iam_policy.task_boundary"],
+      "action_names": ["s3:DeleteObject","s3:GetObject","s3:PutObject"],
+      "resource_arns": ["arn:aws:s3:::outside-${SUFFIX}-resource/example"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ProjectDataBucket"]}
+    }
+  ]
+}

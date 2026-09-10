@@ -314,8 +314,10 @@ execution role ARN. The same HCL comment stripper protects Sid inventory and
 complete, anchored boundary-assignment counts, so comments and quoted decoys do
 not count. Fixture hygiene scans regular files plus symlink target strings and
 rejects links that resolve outside the IAM fixture directory. Evidence-label
-syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
-validated mechanically. The `absent-key-passed`, `arn-real-account`,
+syntax is checked, and every promoted custom record's policy and boundary
+hash-list lengths must equal the inputs implied by its vector. Source mode checks
+that shape without claiming plan-byte agreement. The
+`absent-key-passed`, `arn-real-account`,
 `allow-masked-negative-missing`, `masked-negative-missing`,
 `masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
 `masked-form-whole-document`, `trust-absent-executable`,
@@ -349,8 +351,16 @@ For an already-rendered post-apply plan, run
 `bash tests/iam-matrix-contracts.sh <post-apply-plan.json>`. Plan mode compares
 Effect, Principal or NotPrincipal, Action or NotAction, Resource or
 NotResource, Condition, all bindings, and all three trust documents exactly.
-String and array policy fields canonicalise identically. A pre-apply plan whose
-trust policies are unknown fails with the apply-first diagnostic. This exact comparison runs in the same-repository `plan-localstack` job and in
+String and array policy fields canonicalise identically. For every promoted case,
+plan mode binds the complete ordered policy hash list: the exact plan-rendered
+document (or canonical `custom-isolated` wrapper) followed by each rendered
+`synthetic_policy_input_list` entry. It separately binds every ordered
+`permissions_boundary_policy_input_list` address to its exact plan bytes. A
+second-policy-hash mutant proves that checking only index zero is rejected. This
+byte binding runs under
+`make iam-matrix-plan`. A pre-apply plan whose trust policies are unknown fails
+with the apply-first diagnostic. This exact comparison runs in the same-repository
+`plan-localstack` job and in
 `iam-matrix-plan.yml` after a LocalStack bootstrap apply on every push to
 `main`, weekly, and by manual dispatch from the default branch. Source mode
 remains Sid-keyed on fork PRs; the next main push closes that exact-field drift
@@ -384,6 +394,265 @@ creation and cleanup, directory-backed example-source copy failures that do not
 depend on permission bits and occur before any Terraform call, and injected
 init/plan/apply failures with their original recipe exit
 status and cleanup. It runs from `make test`.
+
+## IAM simulator contracts
+
+Run all eight taxonomy, case-ID, vector-schema, completeness, custom-runner,
+role-lane, report-renderer, and Evidence-join contract groups without AWS,
+Terraform, Docker, or LocalStack:
+
+```bash
+bash tests/iam-simulate-contracts.sh
+```
+
+The phase-2 fixture library describes its plans, vector envelopes, canned
+simulator responses, custom-report records, and fake role-lane scenarios as
+base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
+renderer materializes every family. The execution registry in
+`tests/lib/iam-simulate-mutations.txt` currently names 150 stable mutation case
+IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
+diagnostic prefixes. The suite records each executed failure, rejects missing,
+unregistered, duplicate, or diagnostic-drifting observations, and prints its
+executed/registered count only after all restored paths pass.
+
+The shared report writer applies a final recursive identifier redaction, records
+`redaction_applied: true`, keeps each top-level summary or scalar on one line,
+and renders sorted `records` and role-lane `exclusions` with one compact JSON
+object per line. SHA-256 and Git-SHA tokens remain byte-preserved. The writer
+creates its temporary file beside the destination, so the final `os.replace` is
+atomic even when the configured scratch directory is on another filesystem. The
+`REPORT` group round-trips this form against the equivalent pretty JSON and kills
+redaction-removal, principal-path-redaction, cross-directory-temporary-file, and
+`indent=2` writer mutants before proving the restored paths. IAM and STS principal
+ARNs in diagnostics become `arn:aws:iam::000000000000:<redacted-principal>`;
+semantic policy and simulated-resource ARN fields retain their identity paths. Both
+simulator lanes use the same writer.
+
+The `REPORT` group executes `scripts/iam-simulate-report.sh` against clean
+custom- and role-report fixtures and checks the rendered case table, findings,
+divergences, outcome counts, submitted document hashes, provenance, exclusions,
+and named hygiene review. A full SHA-256 containing account-shaped digits stays
+valid, while the same digits in a case ID fail closed with no published files.
+The group also refuses a role report without `account_redacted: true`, checks
+both JSON inputs and both rendered Markdown outputs with artifact hygiene, and
+kills mutants that remove the role marker guard, the JSON inputs, or the entire
+hygiene call. The custom fake validates context entries exactly, and a dropped
+`--context-entries` mutant fails. The group also checks that a doctored custom
+`pass` cannot suppress a finding. Role divergences render the vector expectation
+and the custom lane's observed decision in separate columns. Per-pair details are
+re-evaluated against `expect.resource_decisions` even when the aggregate observed
+decision is a homogeneous scalar; dict observations and agreeing scalar fallbacks
+remain supported. The committed custom/role totals, passes, and failures must equal
+their JSON summaries, and a scalar-rejection mutant must make those counts diverge.
+An injected failure between report
+and provenance publication restores both original output files;
+the provenance is published last. The group also checks the Makefile wiring.
+The root `make test` recipe runs
+`tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
+That fixture matrix rejects lowercase `requestid`; removing case-insensitive
+matching is a killed mutation with an explicit restored pass.
+
+The `EVIDENCE` group joins every `AWS-SIMULATED` matrix label to a unique
+execution-matching custom-policy record or, when needed, a unique matching
+SCP-excluded role-policy record. When report details are available, every
+asserted action/resource pair must independently include every required Sid and
+exclude every forbidden Sid; the union remains display-only. It ignores stored
+custom `pass` values and re-evaluates both lanes' decisions and
+required/forbidden Sids against the vector; a runner
+failure never matches. It enforces the row minimum, verifies the provenance
+date and exact report pointer, and refuses publication date or generator-commit
+disagreement between the Markdown report and provenance. It prints the computed
+custom, role, and Markdown SHA-256 digests and will compare them once P5-52
+makes the renderer record the complete digest set. The join derives `${SUFFIX}`
+from the plan-reader role name recorded in the role report, so suffixes such as
+`team-a` remain valid. Sixteen registered mutants cover those joins and bindings,
+including a doctored SNS pass, a per-pair Sid miss, empty and mismatching-second
+promoted hash lists, a hyphenated-suffix matcher regression, and a runner failure.
+Every restored join
+must pass.
+
+The `TAXONOMY` group runs
+`scripts/iam-simulate-categories.py --check`, independently compares the 288
+matrix case IDs to `tests/fixtures/iam-simulate/categories.json`, requires the
+four categories to be disjoint with non-empty reasons, and executes added,
+removed, duplicate-category, and empty-reason mutations. Regenerate the file
+with `python3 scripts/iam-simulate-categories.py`; the stdlib-only generator
+parses each row's explicit document and Sid prefix and writes deterministic LF
+JSON with array brackets around one compact object per line and a trailing
+newline.
+
+The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 288
+taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
+`aws:`-prefixed condition key, a colon-bearing trust document, and wrong-document
+refusal. Both runners enforce the same exact-prefix rule instead of splitting
+case IDs on colons.
+
+The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against four
+positive envelopes covering both simulation modes and assertion kinds, plus
+single-defect envelopes for the required failure branches. The files are
+synthetic schema fixtures, not authored execution vectors. Their names are
+`valid-*.json` and `invalid-*.json`; every invalid fixture is passed to the real
+validator and its `FAIL:` diagnostic is asserted. Dedicated cases prove header
+prefix and within-envelope duplicate rejection, while `--jsonl` must flatten a
+validated envelope by materializing its schema version, document, and Sid.
+Embedded `policy_input_list` and `isolated_statement` repository-policy
+snapshots remain invalid. The schema is specified in
+`docs/iam-simulate-vector-schema.md`. This suite makes no external-service
+calls. The validator also accepts a vector directory, validates its 81
+envelopes in sorted order in one process, and emits all prepared cases as JSONL;
+both execution lanes use that directory form.
+
+The `COMPLETENESS` group reads the 81 real `(document, Sid)` envelopes from
+`tests/fixtures/iam-simulate/vectors/`. Filenames are
+`<document>__<sid>.json`, with every character outside `[A-Za-z0-9._-]`
+replaced by `_`. It counts the 239 case IDs globally, requires every case prefix
+to match its envelope header, rejects a case ID appearing in two envelopes,
+checks exact filename derivation, and runs the real validator over every
+envelope. Simulator-eligible cases must occur exactly once unless
+`tests/fixtures/iam-simulate/unresolved.json` records the case ID and a
+non-empty precise question. Vectors for either non-simulator category and
+unknown case IDs are rejected. Independent mutants remove one `cases` member,
+add both forbidden categories, add an unknown ID, duplicate a case across two
+envelopes, drift a filename, invalidate one case, mismatch a header, and prove
+the counted unresolved exemption.
+
+The `RUNNER` group creates a synthetic plan and vector envelopes in its
+temporary workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
+through `scripts/aws-cli.sh`. It proves exact-ARN per-resource mapping
+when those results exist, action-level decision and attribution for explicit
+`*` or an omitted resource list, refusal of missing concrete resource results,
+and shared-core-derived separate requests for the two S3 delete names that
+require different authorization information. Action-class membership is
+case-insensitive, including lower-case
+`s3:deletebucketpublicaccessblock`. It also covers 1-based multiline
+position-to-Sid
+attribution with an exclusive end position and unique overlap against exact
+statement spans. The computed two-statement fixture and the exact 5,682-character,
+18-statement `deployer_data` plan policy both include the preceding comma in a
+returned range; the real `1:1779`/`1:2055` range maps to
+`ClickhouseSecretCreateWithTag`. A sibling range overlaps two statements and
+must remain ambiguous, while a zero-overlap range remains unmapped; both
+refusals assert document-length, span-count, range, and first/last-span
+diagnostics. Scanner contracts and killed mutants cover multiline input, braces
+and brackets inside a string, escaped quotes, and restoration of strict endpoint
+containment. Shared statement scanning also rejects empty and whitespace-only
+Sids with the zero-based statement index; an `isinstance`-only mutant is killed
+and restored in both execution lanes. Those mutants alter
+`scripts/iam_simulate_core.py`, proving the
+runner delegates scanning and unique-overlap attribution to the shared module;
+the restored module must pass again. The group also covers compatible shared-call
+reporting and pre-call
+refusal when a duplicate action/resource pair disagrees on its expectation, the
+five-attempt throttle cap, timeout non-retry, exact `TARGET=aws` refusal,
+byte-equal policy and boundary resolution from raw plan `.values.policy`,
+missing-address refusal, and absent/duplicate-Sid refusal before a fake AWS call.
+Six table-derived doctored plans independently cover non-array resources,
+duplicate addresses, null policies, null role names, invalid suffix names, and
+multiple account IDs; each custom-runner guard has a temporary source mutant.
+A real-vector contract requires exactly 239 report records and currently counts
+8 shared-call batches across 16 cases; mutations make a colliding pair disagree
+and drop one shared case from the report. The isolated statement submitted by
+the runner comes from the named plan document, and its attribution spans are
+computed against that one-statement wrapper. The plan fixture carries all ten
+addresses from `scripts/iam-matrix-documents.sh`; no authored execution vectors
+are added by this suite.
+
+The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
+store. It proves that `custom` vectors are selected unchanged while
+`custom-isolated` vectors carry the recorded no-principal-equivalent exclusion.
+Custom vectors whose documents are not identity-role bindings are excluded
+before custom-report preflight and retain their specific exclusion reason. The
+task-boundary fixture proves that such an excluded record may legitimately
+contain both the plan-document and synthetic-identity hashes without blocking
+the lane. For each selected role it concatenates every mapped document's
+`Statement` array in sorted address order. The plan-reader and publisher
+projections fit under 10,240 whitespace-stripped characters and use one
+combined pass; the six deployer documents do not fit together and therefore
+use six separately created, simulated, and deleted per-document roles. Report
+records identify the deciding projection with source addresses and SHA-256 hashes.
+Before report serialization, one recursive boundary replaces the live account
+ID throughout the final object with `000000000000`; reports carry that placeholder in
+`account`, replace the per-invocation ownership nonce with `<redacted>`, and set
+both redaction markers to `true`. Fake-recorded API calls prove that role names,
+trust policies, and principal-policy source ARNs retain the live account ID
+while the report contains neither the live account nor the replayable nonce. The
+trust document names exactly the invoking `sts get-caller-identity` Arn, never the
+account root; dry-run inventory uses the same builder with the redacted principal.
+Report serialization replaces the complete caller Arn with
+`arn:aws:iam::000000000000:<redacted-principal>`, so no caller user or role name is
+published. Exact `--only` selection executes one case; missing, duplicate, and
+unsupported
+IDs fail with the requested ID and a specific exclusion reason.
+
+An independent projection oracle reconstructs pass partitioning, source order,
+concatenated policy bytes, hashes, character counts, case membership, and call
+ordering from the Terraform plan and vector envelopes. It does not consume the
+role plan emitted by the lane, and source-partition, concatenation, and hash
+mutants must each fail it.
+
+The role-lane mapping cases use the same module for the exact 5,682-character
+delimiter-inclusive/exclusive-end range, braces and brackets inside strings,
+escaped quotes, and an action-level response with no
+`ResourceSpecificResults`. The lane prepares its cases once as a NUL-delimited
+stream and maps every response in one shared-core invocation per principal
+pass, rather than spawning parsers and a mapper per case. The same
+strict-containment module mutation must fail both the `RUNNER` and `ROLE-LANE`
+groups, followed by an explicit restored pass in each group. Role projection
+delegates statement Sid validation to that shared scanner instead of maintaining
+a separate type-only check. The six malformed plan shapes are also run against
+the role extractor, with a separate guard-neutering source mutant for each
+because the two extractors differ. One mutation of the shared action-class
+partition likewise makes both lanes submit the rejected
+mixed S3 request; the fake returns the matching AWS `InvalidInput` diagnostic,
+and both restored lanes must pass.
+
+The group also proves the complete zero-call dry-run inventory, exact opt-in and
+account refusals, plus refusal of a plan carrying neither the placeholder nor
+the expected account with zero creates. Custom-report mode and source-hash
+agreement for selected cases also precede the first create, and selected records
+with synthetic identity documents are refused. The principal fake verifies the
+exact canonical context-entry set for condition-bearing cases, so a runner that
+drops context is killed. Report checks cover both expected- and plan-account
+redaction and the `plan_account_redacted` marker. A mutant that moves the custom
+preflight back over every loaded vector is killed, while the selected wrong-hash
+mutation still records zero create calls. The group also proves both run-id and
+32-hex nonce ownership tags before the first policy put, collision isolation,
+cleanup after a midway create failure and TERM, the delete-policy barrier,
+reverse cleanup across all projection passes, and post-cleanup `NoSuchEntity`
+verification. Midway-create and TERM
+failures run against both the three-role fixture and the eight-role projection.
+Additional eight-role cases inject at deployer p4 between a policy put and its
+marker and immediately after policy deletion; cleanup tolerates an unattached policy,
+defers TERM until cleanup, absence verification, and report writing finish, and
+then returns 143. A nonce-tamper case proves zero policy puts and deletes, and a
+nonce-ignoring source mutant is killed. A high-index cleanup mutant still passes
+the three-role case but is killed by the eight-role case. The deadline-bounded
+full-fixture dry run derives
+the projected-role count `R` and selected-case count `C` from the plan and vector
+fixtures at run time, then requires exactly `1 + 8R + 2G` calls, where `G` is
+the sum of non-empty authorization action groups over the `C` selected cases.
+The current full fixture has `R=8`, `C=156`, `G=157`, and therefore 379 calls.
+A dropped-call mutant kills the formula check. Its restored path keeps the full
+denominator. The descriptor-leak mutant and instrumented bounded-read lane run
+against the same reduced 24-case fixture with a five-second wall-clock cap. Each
+case samples
+`ls -1 /dev/fd`; the deterministic mutant opens and retains exactly one fresh
+descriptor per case, so every increment must be at least one, while the real
+lane's maximum-minus-minimum count must be at most two. The historical bug was a
+nested process substitution that leaked until case 126 on macOS Bash 3.2. That
+shape does not leak on Linux Bash 5, so the registered mutant is a deterministic
+stand-in with the same growth contract on both platforms; its registry action
+explicitly names macOS Bash 3.2 and Linux Bash 5. Duplicate Sids across
+combined role documents and any loaded vector case ID missing from the custom
+report fail before a role is created.
+Every selected case is simulated first with the exact SCP exclusion and then
+with the default effective-policy request. Every detail decision must first match
+the vector's scalar or per-resource expectation; a mismatch marks the record
+failed and makes the lane exit non-zero. The SCP-excluded decision is then compared
+to the custom lane's observed decision: disagreement is reportable divergence
+evidence, not a failed run. Default-versus-SCP differences are separately
+reported per action and resource with Organizations attribution. Every new
+contract has a killed mutation whose `FAIL:` line is printed by the suite.
 
 ## Phase 5 sweeper fixtures
 

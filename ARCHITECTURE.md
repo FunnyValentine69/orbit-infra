@@ -372,6 +372,13 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   the LocalStack target has no saved plan, and this apply-side gate remains
   CODE-ONLY until P0-3d.
 
+`scripts/iam_simulate_core.py` is the single stdlib implementation for both IAM
+simulator lanes' submitted-document hashing, response mapping, and matched-Sid
+attribution. `scripts/iam-simulate-report.sh` is the only publication path for
+`docs/assets/IAM_SIMULATION_REPORT.md` and
+`docs/assets/IAM_SIMULATION_PROVENANCE.md`; it stages both renderings outside
+the destination and publishes only after both pass artifact hygiene.
+
 ### SLO
 
 API availability during a session >= 99%: measured as healthy-host time

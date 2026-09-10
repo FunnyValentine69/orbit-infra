@@ -1,0 +1,129 @@
+{
+  "account": "000000000000",
+  "account_redacted": true,
+  "exclusions": [
+    {
+      "case_id": "case:fixture.policy:IsolatedDeny:ALL:none:matching",
+      "reason": "isolated single-statement simulation has no principal equivalent"
+    }
+  ],
+  "manual_cleanup": [],
+  "ownership_nonce": "<redacted>",
+  "ownership_nonce_redacted": true,
+  "redaction_applied": true,
+  "records": [
+    {
+      "case_id": "case:fixture.policy:AllowRead:ALL:none:matching",
+      "comparison": "agreement",
+      "custom_lane": {
+        "decision_observed": "allowed",
+        "matched_sids": ["AllowRead"]
+      },
+      "default": {
+        "changed_from_scp_excluded": false,
+        "decision_observed": "allowed",
+        "matched_sids": ["AllowRead"],
+        "matched_statement_sources": []
+      },
+      "document_hashes_submitted": {
+        "custom_lane": [
+          {
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ],
+        "put_role_policy": [
+          {
+            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          }
+        ]
+      },
+      "mode": "principal",
+      "organizations_divergences": [],
+      "pass": true,
+      "scp_excluded": {
+        "agrees_with_custom_lane": true,
+        "decision_observed": "allowed",
+        "matched_sids": ["AllowRead"],
+        "matched_statement_sources": []
+      },
+      "source_document_hash_agrees_with_custom_lane": true
+    },
+    {
+      "case_id": "case:fixture.policy:DenyRead:ALL:none:non-matching",
+      "comparison": "divergence",
+      "custom_lane": {
+        "decision_observed": "explicitDeny",
+        "matched_sids": ["DenyRead"]
+      },
+      "default": {
+        "changed_from_scp_excluded": true,
+        "decision_observed": "explicitDeny",
+        "matched_sids": ["DenyRead"],
+        "matched_statement_sources": []
+      },
+      "divergence": {
+        "custom_lane": {
+          "decision_observed": "explicitDeny",
+          "matched_sids": ["DenyRead"]
+        },
+        "default": {
+          "decision_observed": "explicitDeny",
+          "matched_sids": ["DenyRead"]
+        },
+        "observed_in": ["scp-excluded"],
+        "scp_excluded": {
+          "decision_observed": "allowed",
+          "matched_sids": []
+        }
+      },
+      "document_hashes_submitted": {
+        "custom_lane": [
+          {
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ],
+        "put_role_policy": [
+          {
+            "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        ]
+      },
+      "mode": "principal",
+      "organizations_divergences": [
+        {
+          "action_name": "s3:GetObject",
+          "default": {
+            "decision_observed": "explicitDeny"
+          },
+          "resource_arn": "arn:aws:s3:::fixture/example",
+          "scp_excluded": {
+            "decision_observed": "allowed"
+          }
+        }
+      ],
+      "pass": true,
+      "scp_excluded": {
+        "agrees_with_custom_lane": false,
+        "decision_observed": "allowed",
+        "matched_sids": [],
+        "matched_statement_sources": []
+      },
+      "source_document_hash_agrees_with_custom_lane": true
+    }
+  ],
+  "run_id": "fixture-run",
+  "summary": {
+    "agreements": 1,
+    "cases_excluded": 1,
+    "cases_excluded_by_reason": {
+      "isolated single-statement simulation has no principal equivalent": 1
+    },
+    "cases_selected": 2,
+    "divergences": 1,
+    "failed": 0,
+    "manual_cleanup_notes": 0,
+    "organizations_divergences": 1,
+    "passed": 2,
+    "total": 2
+  }
+}

@@ -225,6 +225,8 @@ endif
 
 test:
 	@bash tests/storyboard-contracts.sh
+	@bash tests/iam-simulate-contracts.sh
+	@bash tests/artifact-hygiene-contracts.sh
 	@bash tests/sweeper.sh
 	@bash tests/cleanup-verifier.sh
 	@bash tests/phase3-contracts.sh

@@ -290,6 +290,129 @@ fresh runner cannot recover the prior emulator or local state. LocalStack CI
 uses licensed credits, so this lane is dispatch-only and must never be added to
 a schedule.
 
+## IAM simulator lanes
+
+Phase 3 supplies the authored vector directory. The custom lane reads the ten
+raw policy strings from a post-bootstrap Terraform plan, renders vector
+templates, and writes a per-case JSON report. It refuses every target except
+real AWS and routes all simulator calls through the repository wrapper:
+
+```
+TARGET=aws scripts/iam-simulate.sh \
+  --plan <terraform-plan.json> \
+  --vectors <vector-directory> \
+  --report <custom-report.json>
+```
+
+Preview the role lane without its opt-in. `--dry-run` uses the real call builder,
+prints the caller check, every tagged projection-role create and inline-policy
+put, both simulations for every selected case, reverse cleanup, and absence
+checks; it makes zero AWS calls. Its create-role inventory uses the same trust
+policy builder as a live run, with the invoking identity represented by the
+redacted principal placeholder. With the complete authored vector directory and
+current plan this inventory has eight projection passes: one combined
+plan-reader pass, six per-document deployer passes, and one publisher pass:
+
+```
+TARGET=aws scripts/iam-simulate-roles.sh \
+  --plan <terraform-plan.json> \
+  --vectors <role-vector-directory> \
+  --report <role-report.json> \
+  --expect-account <12-digit-account> \
+  --dry-run
+```
+
+A real role-lane run additionally requires the literal environment value
+`IAM_SIM_LANE_CONFIRM=create-real-iam-resources` and the custom-lane report for
+the same vectors. Before the caller check or first role create, each custom
+record's mode and submitted source-policy SHA-256 must match the current vector
+and plan document. The plan-derived account must be the authored
+`000000000000` placeholder or equal `--expect-account`; a third account fails
+before the caller check or any role create. After `sts get-caller-identity`, every
+temporary role's trust policy must name exactly the returned caller Arn as its
+sole AWS principal; an account-root principal is refused before create-role. The
+opt-in string authorizes only the roles carrying both the run tag and a
+per-invocation
+`OrbitIamSimulationNonce`: 32 lowercase hexadecimal characters read from
+`/dev/urandom`. The lane verifies both tags on every created role before the
+first policy put and re-reads both immediately before each cleanup mutation. It
+treats `EntityAlreadyExists` as manual cleanup without deleting it, removes
+owned roles in reverse order, and requires `NoSuchEntity` afterward. The
+inline-policy cleanup marker is persisted before the put; an unattached
+policy's `NoSuchEntity` is therefore safe to continue past. TERM and INT
+received during cleanup are recorded until cleanup, absence verification, and
+report writing finish, then returned as their signal-derived status.
+
+The role lane consumes the same `custom` vectors as the custom lane.
+`custom-isolated` cases are excluded because an isolated single-statement
+simulation has no principal equivalent, and documents without an identity-role
+binding remain excluded. For each selected role, mapped documents are sorted by
+address and their `Statement` arrays are concatenated. A combined policy at or
+below 10,240 whitespace-stripped characters uses one role. If it is larger,
+each source document uses its own complete create, put, simulate, and delete
+pass; no document's cases are dropped. A duplicate Sid across documents in a
+combined role fails closed with both source addresses.
+
+Every selected case runs first with the exact `{"PolicyType":"scp"}` exclusion
+and then without an exclusion. Required and forbidden Sids are checked on every
+action/resource detail independently; their union is retained only for display.
+The SCP-excluded result is compared to the custom
+report's observed decision. A mismatch is a non-failing divergence record with
+the deciding projection, both decisions, both matched-Sid lists, and the run or
+runs where it appears. The default request is the effective-policy result; each
+action/resource decision changed by Organizations is separately attributed and
+counted. Any loaded vector case missing from the custom report is fatal:
+
+```
+IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws \
+  scripts/iam-simulate-roles.sh \
+  --plan <terraform-plan.json> \
+  --vectors <role-vector-directory> \
+  --custom-report <custom-report.json> \
+  --report <role-report.json> \
+  --expect-account <12-digit-account>
+```
+
+The role report records each projection's source addresses, source-policy
+SHA-256 hashes, selected and excluded case counts by reason, agreements,
+principal/custom divergences, and Organizations divergences. The AWS-managed
+`ReadOnlyAccess` attachment has no inline equivalent and is always recorded as a
+role-lane exclusion. A single final redaction replaces both the live account and
+any non-placeholder plan account with `000000000000`; the report records
+`plan_account_redacted`, and the ownership nonce is replaced with `<redacted>`
+so a report cannot replay either ownership value. The caller identity is replaced
+in full with `arn:aws:iam::000000000000:<redacted-principal>`; the writer refuses
+any report retaining the caller's user or role name. The shared writer then
+applies a final whole-report identifier redaction and records
+`redaction_applied: true`. The cleanup paths remain contract-tested offline. A
+real role-lane execution on 2026-09-10 recorded 156 cases: 155 passed and 1
+failed on the same `SnsSubscriptionManage` finding as the custom lane, with 153
+custom-lane agreements, 3 divergences, and zero residue; see
+`docs/assets/iam-simulation-role-report.json`.
+
+Render the publishable Markdown pair from the completed JSON reports. Omit the
+`--role-report` option when only the custom lane was run:
+
+```
+scripts/iam-simulate-report.sh \
+  --custom-report <custom-report.json> \
+  --role-report <role-report.json> \
+  --out-dir docs/assets
+```
+
+The renderer requires a role report to attest `account_redacted: true`, writes
+both files in a temporary directory, and invokes `scripts/artifact-hygiene.sh`
+on each supplied JSON lane report and both rendered Markdown files before
+publication. Only after every check passes does it publish the report and then
+the provenance last, rolling the pair back if either move
+fails. Both files record the publication date and generator commit; the
+Evidence join refuses a disagreeing pair. A violation leaves the output
+directory untouched and prints the checker's `FAIL:` line. Custom-lane pass
+cells, counts, and findings are re-derived from observed decisions and
+required/forbidden Sids rather than trusting the stored `pass` field. Role
+divergence rows show the vector expectation separately from custom observed, and
+mixed resource results are compared with `expect.resource_decisions`.
+
 ## Front-page evidence
 
 Generate the storyboard only from the clean commit that contains its generator:

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "EnvServiceRolePutPolicy",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:iam:PermissionsBoundary:absent",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PutRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRolePutPolicy"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:iam:PermissionsBoundary:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PutRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["EnvServiceRolePutPolicy"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:iam:PermissionsBoundary:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PutRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-other-boundary"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRolePutPolicy"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:resource:nonmatching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PutRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/outside-${SUFFIX}-example"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRolePutPolicy"]}
+    }
+  ]
+}

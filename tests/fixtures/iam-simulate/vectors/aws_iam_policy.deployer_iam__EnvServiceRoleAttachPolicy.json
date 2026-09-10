@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "EnvServiceRoleAttachPolicy",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PermissionsBoundary:absent",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PolicyARN","ContextKeyValues":["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRoleAttachPolicy"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PermissionsBoundary:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"],"ContextKeyType":"string"},{"ContextKeyName":"iam:PolicyARN","ContextKeyValues":["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["EnvServiceRoleAttachPolicy"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PermissionsBoundary:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-other-boundary"],"ContextKeyType":"string"},{"ContextKeyName":"iam:PolicyARN","ContextKeyValues":["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRoleAttachPolicy"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PolicyARN:absent",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRoleAttachPolicy"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PolicyARN:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"],"ContextKeyType":"string"},{"ContextKeyName":"iam:PolicyARN","ContextKeyValues":["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["EnvServiceRoleAttachPolicy"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PolicyARN:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"],"ContextKeyType":"string"},{"ContextKeyName":"iam:PolicyARN","ContextKeyValues":["arn:aws:iam::aws:policy/ReadOnlyAccess"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRoleAttachPolicy"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:resource:nonmatching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/outside-${SUFFIX}-example"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-task-boundary"],"ContextKeyType":"string"},{"ContextKeyName":"iam:PolicyARN","ContextKeyValues":["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRoleAttachPolicy"]}
+    }
+  ]
+}

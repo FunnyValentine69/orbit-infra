@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.task_boundary",
+  "sid": "EcrAuth",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:in-boundary",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "policy_input_list": [
+        "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"StaleCopy\",\"Effect\":\"Allow\",\"Action\":\"ecr:GetAuthorizationToken\",\"Resource\":\"*\"}]}"
+      ],
+      "action_names": [
+        "ecr:GetAuthorizationToken"
+      ],
+      "resource_arns": [
+        "*"
+      ],
+      "context_entries": [],
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_required": [],
+        "matched_sid_forbidden": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "document": "fixture.missing",
+  "sid": "Missing",
+  "cases": [
+    {
+      "case_id": "case:fixture.missing:Missing:ALL:none:missing",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": [
+        "s3:GetObject"
+      ],
+      "resource_arns": [
+        "arn:aws:s3:::orbit-infra-${SUFFIX}-missing/example"
+      ],
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_required": [],
+        "matched_sid_forbidden": []
+      }
+    }
+  ]
+}

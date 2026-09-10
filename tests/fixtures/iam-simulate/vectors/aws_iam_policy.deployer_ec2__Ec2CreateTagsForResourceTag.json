@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_ec2",
+  "sid": "Ec2CreateTagsForResourceTag",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForResourceTag:ALL:ec2:ResourceTag/Project:absent",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["ec2:CreateTags"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["Ec2CreateTagsForResourceTag"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForResourceTag:ALL:ec2:ResourceTag/Project:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ec2:CreateTags"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"ec2:ResourceTag/Project","ContextKeyValues":["orbit-infra"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["Ec2CreateTagsForResourceTag"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForResourceTag:ALL:ec2:ResourceTag/Project:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["ec2:CreateTags"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"ec2:ResourceTag/Project","ContextKeyValues":["other-project"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["Ec2CreateTagsForResourceTag"]}
+    }
+  ]
+}

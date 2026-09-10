@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_data",
+  "sid": "S3BucketDescribeReads",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["s3:GetAccelerateConfiguration","s3:GetBucketAcl","s3:GetBucketCORS","s3:GetBucketLocation","s3:GetBucketLogging","s3:GetBucketObjectLockConfiguration","s3:GetBucketOwnershipControls","s3:GetBucketPolicy","s3:GetBucketPolicyStatus","s3:GetBucketPublicAccessBlock","s3:GetBucketRequestPayment","s3:GetBucketTagging","s3:GetBucketVersioning","s3:GetBucketWebsite","s3:GetEncryptionConfiguration","s3:GetLifecycleConfiguration","s3:GetReplicationConfiguration","s3:ListBucket"],
+      "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-preview"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["S3BucketDescribeReads"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:resource:nonmatching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["s3:GetAccelerateConfiguration","s3:GetBucketAcl","s3:GetBucketCORS","s3:GetBucketLocation","s3:GetBucketLogging","s3:GetBucketObjectLockConfiguration","s3:GetBucketOwnershipControls","s3:GetBucketPolicy","s3:GetBucketPolicyStatus","s3:GetBucketPublicAccessBlock","s3:GetBucketRequestPayment","s3:GetBucketTagging","s3:GetBucketVersioning","s3:GetBucketWebsite","s3:GetEncryptionConfiguration","s3:GetLifecycleConfiguration","s3:GetReplicationConfiguration","s3:ListBucket"],
+      "resource_arns": ["arn:aws:s3:::outside-${SUFFIX}-resource"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["S3BucketDescribeReads"]}
+    }
+  ]
+}

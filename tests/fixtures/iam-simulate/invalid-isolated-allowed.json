@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_data",
+  "sid": "LogsCreateWithTag",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": [
+        "logs:CreateLogGroup",
+        "logs:TagResource"
+      ],
+      "resource_arns": [
+        "arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:/orbit/${SUFFIX}/example"
+      ],
+      "context_entries": [
+        {
+          "ContextKeyName": "aws:RequestTag/Project",
+          "ContextKeyValues": [
+            "not-orbit-infra"
+          ],
+          "ContextKeyType": "string"
+        }
+      ],
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_required": [],
+        "matched_sid_forbidden": []
+      }
+    }
+  ]
+}

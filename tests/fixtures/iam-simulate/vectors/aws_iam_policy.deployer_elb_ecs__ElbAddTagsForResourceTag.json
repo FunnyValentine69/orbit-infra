@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "ElbAddTagsForResourceTag",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTagsForResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:absent",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["elasticloadbalancing:AddTags"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ElbAddTagsForResourceTag"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTagsForResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["elasticloadbalancing:AddTags"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"elasticloadbalancing:ResourceTag/Project","ContextKeyValues":["orbit-infra"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["ElbAddTagsForResourceTag"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTagsForResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["elasticloadbalancing:AddTags"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"elasticloadbalancing:ResourceTag/Project","ContextKeyValues":["other-project"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ElbAddTagsForResourceTag"]}
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "ServiceDiscoveryTagResourceExisting",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResourceExisting:ALL:aws:ResourceTag/Project:absent",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:TagResource"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ServiceDiscoveryTagResourceExisting"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResourceExisting:ALL:aws:ResourceTag/Project:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:TagResource"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:ResourceTag/Project","ContextKeyValues":["orbit-infra"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["ServiceDiscoveryTagResourceExisting"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResourceExisting:ALL:aws:ResourceTag/Project:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:TagResource"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:ResourceTag/Project","ContextKeyValues":["other-project"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ServiceDiscoveryTagResourceExisting"]}
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "EnvServiceRoleLifecycle",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleLifecycle:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:DeleteRole","iam:DeleteRolePolicy","iam:DetachRolePolicy","iam:GetRole","iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListInstanceProfilesForRole","iam:ListRolePolicies","iam:TagRole","iam:UntagRole"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["EnvServiceRoleLifecycle"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleLifecycle:ALL:resource:nonmatching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:DeleteRole","iam:DeleteRolePolicy","iam:DetachRolePolicy","iam:GetRole","iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListInstanceProfilesForRole","iam:ListRolePolicies","iam:TagRole","iam:UntagRole"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/outside-${SUFFIX}-example"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EnvServiceRoleLifecycle"]}
+    }
+  ]
+}
