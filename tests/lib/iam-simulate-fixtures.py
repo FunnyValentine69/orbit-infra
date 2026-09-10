@@ -686,16 +686,32 @@ def _command_mutate_evidence_role_check():
     source = Path(sys.argv[1]).read_text(encoding='utf-8')
     destination = Path(sys.argv[2])
     mutation = sys.argv[3]
-    strict = '    return set(required) <= matched_set and not (set(forbidden) & matched_set)'
+    per_pair_strict = (
+        '            if not set(required) <= matched_set '
+        'or set(forbidden) & matched_set:'
+    )
+    aggregate_strict = (
+        '    return set(required) <= matched_set '
+        'and not (set(forbidden) & matched_set)'
+    )
     replacements = {
-        'forbidden': '    return set(required) <= matched_set',
-        'required': '    return not (set(forbidden) & matched_set)',
+        'forbidden': (
+            '            if not set(required) <= matched_set:',
+            '    return set(required) <= matched_set',
+        ),
+        'required': (
+            '            if set(forbidden) & matched_set:',
+            '    return not (set(forbidden) & matched_set)',
+        ),
     }
     if mutation not in replacements:
         raise SystemExit(f'FAIL: unknown Evidence role-check mutation: {mutation}')
-    if source.count(strict) != 1:
+    if source.count(per_pair_strict) != 1 or source.count(aggregate_strict) != 1:
         raise SystemExit('FAIL: Evidence role-check mutation anchor changed')
-    destination.write_text(source.replace(strict, replacements[mutation], 1), encoding='utf-8')
+    per_pair_replacement, aggregate_replacement = replacements[mutation]
+    source = source.replace(per_pair_strict, per_pair_replacement, 1)
+    source = source.replace(aggregate_strict, aggregate_replacement, 1)
+    destination.write_text(source, encoding='utf-8')
 
 
 def _command_validate_role_authorization_split():

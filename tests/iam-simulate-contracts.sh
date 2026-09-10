@@ -1329,11 +1329,22 @@ forbidden_case = (
 )
 forbidden_sid = "DenyListBucketOutsideScope"
 forbidden_source = role_by_id.get(forbidden_case)
+forbidden_details = (
+    forbidden_source.get("scp_excluded", {}).get("details")
+    if forbidden_source is not None
+    else None
+)
 if (
     forbidden_source is None
     or custom_by_id.get(forbidden_case, {}).get("pass") is not False
     or forbidden_source.get("scp_excluded", {}).get("decision_observed") != "allowed"
     or forbidden_sid in forbidden_source.get("scp_excluded", {}).get("matched_sids", [])
+    or not isinstance(forbidden_details, list)
+    or not forbidden_details
+    or any(
+        forbidden_sid in detail.get("matched_sids", [])
+        for detail in forbidden_details
+    )
 ):
     raise SystemExit("FAIL: forbidden-Sid Evidence mutation anchor changed")
 forbidden_role = deepcopy(role)
@@ -1341,6 +1352,7 @@ forbidden_record = next(
     record for record in forbidden_role["records"] if record["case_id"] == forbidden_case
 )
 forbidden_record["scp_excluded"]["matched_sids"].append(forbidden_sid)
+forbidden_record["scp_excluded"]["details"][0]["matched_sids"].append(forbidden_sid)
 write_mutant("role-forbidden-sid", role_payload=forbidden_role)
 
 required_case = (
@@ -1348,12 +1360,36 @@ required_case = (
     "ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching"
 )
 required_sid = "ClickhouseSecretCreateWithTag"
+required_custom_source = custom_by_id.get(required_case)
+required_custom_details = (
+    required_custom_source.get("details")
+    if required_custom_source is not None
+    else None
+)
 required_source = role_by_id.get(required_case)
+required_details = (
+    required_source.get("scp_excluded", {}).get("details")
+    if required_source is not None
+    else None
+)
 if (
-    custom_by_id.get(required_case, {}).get("pass") is not True
+    required_custom_source is None
+    or required_custom_source.get("pass") is not True
+    or not isinstance(required_custom_details, list)
+    or not required_custom_details
+    or any(
+        required_sid not in detail.get("matched_sids", [])
+        for detail in required_custom_details
+    )
     or required_source is None
     or required_source.get("scp_excluded", {}).get("decision_observed") != "allowed"
     or required_sid not in required_source.get("scp_excluded", {}).get("matched_sids", [])
+    or not isinstance(required_details, list)
+    or not required_details
+    or any(
+        required_sid not in detail.get("matched_sids", [])
+        for detail in required_details
+    )
 ):
     raise SystemExit("FAIL: required-Sid Evidence mutation anchor changed")
 required_custom = deepcopy(custom)
@@ -1363,6 +1399,11 @@ required_custom_record = next(
 required_custom_record["matched_sids"] = [
     sid for sid in required_custom_record["matched_sids"] if sid != required_sid
 ]
+required_custom_record["details"][0]["matched_sids"] = [
+    sid
+    for sid in required_custom_record["details"][0]["matched_sids"]
+    if sid != required_sid
+]
 required_role = deepcopy(role)
 required_record = next(
     record for record in required_role["records"] if record["case_id"] == required_case
@@ -1370,6 +1411,11 @@ required_record = next(
 required_record["scp_excluded"]["matched_sids"] = [
     sid
     for sid in required_record["scp_excluded"]["matched_sids"]
+    if sid != required_sid
+]
+required_record["scp_excluded"]["details"][0]["matched_sids"] = [
+    sid
+    for sid in required_record["scp_excluded"]["details"][0]["matched_sids"]
     if sid != required_sid
 ]
 write_mutant(
