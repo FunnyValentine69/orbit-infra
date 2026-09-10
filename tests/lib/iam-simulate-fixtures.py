@@ -1198,22 +1198,101 @@ def _command_prepare_fd_vectors():
         written += 1
         remaining -= len(cases)
     if remaining: raise SystemExit(f'FAIL: reduced FD fixture contains {limit - remaining} cases, expected {limit}')
+def _instrument_role_fd_reads(source_path, repo_root):
+    source = source_path.read_text(encoding='utf-8')
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    function_anchor = 'read_case_record() {'
+    dry_run_loop = '  while read_case_record; do'
+    live_loop = '\nwhile read_case_record; do'
+    if source.count(root_line) != 1: raise SystemExit('FAIL: role FD probe root anchor changed')
+    if source.count(function_anchor) != 1: raise SystemExit('FAIL: role FD probe function anchor changed')
+    if source.count(dry_run_loop) != 1: raise SystemExit('FAIL: role FD probe dry-run loop anchor changed')
+    if source.count(live_loop) != 1: raise SystemExit('FAIL: role FD probe live loop anchor changed')
+    probe_function = r'''record_open_fd_count() {
+  local fd_count
+  if [ -z "${IAM_SIM_TEST_FD_SAMPLES:-}" ]; then
+    return 0
+  fi
+  fd_count="$(ls -1 /dev/fd | wc -l | tr -d ' ')"
+  printf '%s\t%s\n' "$1" "$fd_count" >>"$IAM_SIM_TEST_FD_SAMPLES"
+}
+
+'''
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(repo_root)}', 1)
+    source = source.replace(function_anchor, probe_function + function_anchor, 1)
+    source = source.replace(dry_run_loop, dry_run_loop + '\n    record_open_fd_count "$case_index"', 1)
+    return source.replace(live_loop, live_loop + '\n  record_open_fd_count "$case_index"', 1)
+
+
 def _command_mutate_role_array_reads():
     source_path = Path(sys.argv[1])
     destination = Path(sys.argv[2])
-    source = source_path.read_text(encoding='utf-8')
-    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
-    if source.count(root_line) != 1: raise SystemExit('FAIL: role array-read mutation root anchor changed')
-    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}')
+    source = _instrument_role_fd_reads(source_path, sys.argv[3])
     bounded = "    IFS= read -r -d '' value <&3"
     leaking = '    IFS= read -r -d \'\' value < <(IFS= read -r -d \'\' item <&3; printf \'%s\\0\' "$item")'
     if source.count(bounded) != 2: raise SystemExit('FAIL: role array-read mutation anchors changed')
     destination.write_text(source.replace(bounded, leaking), encoding='utf-8')
+
+
+def _command_instrument_role_fd_reads():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    destination.write_text(_instrument_role_fd_reads(source_path, sys.argv[3]), encoding='utf-8')
+
+
+def _load_fd_samples(path, expected_count):
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except OSError as exc:
+        raise SystemExit(f'FAIL: role-lane FD samples cannot be read: {exc}') from exc
+    if len(lines) != expected_count:
+        raise SystemExit(f'FAIL: role-lane FD probe recorded {len(lines)} samples, expected {expected_count}')
+    samples = []
+    for expected_index, line in enumerate(lines):
+        fields = line.split('\t')
+        if len(fields) != 2:
+            raise SystemExit(f'FAIL: role-lane FD sample {expected_index} is malformed')
+        try:
+            case_index, fd_count = (int(field) for field in fields)
+        except ValueError as exc:
+            raise SystemExit(f'FAIL: role-lane FD sample {expected_index} is not numeric') from exc
+        if case_index != expected_index:
+            raise SystemExit(f'FAIL: role-lane FD sample index is {case_index}, expected {expected_index}')
+        if fd_count < 0:
+            raise SystemExit(f'FAIL: role-lane FD sample {expected_index} has a negative count')
+        samples.append(fd_count)
+    return samples
+
+
 def _command_validate_fd_leak_probe():
-    output = Path(sys.argv[1]).read_text(encoding='utf-8')
-    indicators = ('Too many open files', 'cannot make pipe for process substitution')
-    if not any((indicator in output for indicator in indicators)): raise SystemExit('FAIL: reduced low-FD probe did not reproduce descriptor exhaustion')
-    raise SystemExit('FAIL: full-fixture role-lane dry-run exceeded 20 seconds (reproduced by reduced low-FD probe)')
+    samples = _load_fd_samples(Path(sys.argv[1]), int(sys.argv[2]))
+    growth = [after - before for before, after in zip(samples, samples[1:])]
+    for index, step in enumerate(growth, 1):
+        if step < 2:
+            raise SystemExit(
+                f'FAIL: role-lane array-read descriptor growth was {step} at '
+                f'case transition {index - 1}->{index}, expected at least 2'
+            )
+    raise SystemExit(
+        'FAIL: role-lane array-read descriptor count grew by at least 2 per case '
+        f'({len(samples)} samples; {samples[0]}->{samples[-1]}; minimum step={min(growth)})'
+    )
+
+
+def _command_validate_fd_stability_probe():
+    samples = _load_fd_samples(Path(sys.argv[1]), int(sys.argv[2]))
+    minimum = min(samples)
+    maximum = max(samples)
+    spread = maximum - minimum
+    if spread > 2:
+        raise SystemExit(
+            f'FAIL: role-lane descriptor count spread is {spread}, expected at most 2 '
+            f'(min={minimum}; max={maximum})'
+        )
+    print(
+        f'PASS: role-lane descriptor count stayed flat '
+        f'({len(samples)} samples; min={minimum}; max={maximum}; spread={spread})'
+    )
 def _command_run_full_scale_role_dry_run():
     role_lane, plan, vectors, output_path, timeout_seconds, phase2_dir, wrapper = sys.argv[1:]
     environment = os.environ.copy()

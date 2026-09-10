@@ -1234,11 +1234,20 @@ prepare_fd_vectors() {
 }
 
 validate_fd_leak_probe() {
-  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-fd-leak-probe "$1"
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-fd-leak-probe "$1" 24
+}
+
+validate_fd_stability_probe() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-fd-stability-probe "$1" 24
 }
 
 mutate_role_array_reads() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-array-reads "$@" "$REPO_ROOT"
+  chmod +x "$2"
+}
+
+instrument_role_fd_reads() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" instrument-role-fd-reads "$@" "$REPO_ROOT"
   chmod +x "$2"
 }
 
@@ -1943,20 +1952,46 @@ SOURCE_MUTATIONS
       role_lane_mutant="$phase2_dir/iam-simulate-roles-array-read-mutant.sh"
       mutate_role_array_reads "$IAM_SIM_ROLE_LANE" "$role_lane_mutant"
       mutant_inventory="$phase2_dir/reduced-fd-mutant-dry-run.txt"
+      mutant_fd_samples="$phase2_dir/reduced-fd-mutant-samples.txt"
       fd_vectors="$phase2_dir/reduced-fd-vectors"
       prepare_fd_vectors "$fd_vectors"
+      : >"$mutant_fd_samples"
       reset_phase2_fake
       set +e
-      (
-        ulimit -n 16
+      IAM_SIM_TEST_FD_SAMPLES="$mutant_fd_samples" \
         IAM_SIM_FULL_SCALE_VECTORS="$fd_vectors" \
-          IAM_SIM_FULL_SCALE_TIMEOUT_SECONDS=5 \
-          run_full_scale_role_dry_run "$role_lane_mutant" "$mutant_inventory"
-      ) >/dev/null 2>&1
+        IAM_SIM_FULL_SCALE_TIMEOUT_SECONDS=5 \
+        run_full_scale_role_dry_run \
+          "$role_lane_mutant" "$mutant_inventory" >/dev/null 2>&1
+      rc=$?
       set -e
-      expect_failure "role-lane full-fixture array-read" \
-        "full-fixture role-lane dry-run exceeded 20 seconds" \
-        validate_fd_leak_probe "$mutant_inventory"
+      if [ "$rc" -eq 0 ]; then
+        expect_failure "role-lane full-fixture array-read" \
+          "role-lane array-read descriptor count grew by at least 2 per case" \
+          validate_fd_leak_probe "$mutant_fd_samples"
+      else
+        fail_case "role-lane full-fixture array-read measurement" \
+          "mutant run did not complete within 5 seconds: rc=$rc"
+      fi
+
+      role_lane_fd_probe="$phase2_dir/iam-simulate-roles-fd-probe.sh"
+      real_fd_inventory="$phase2_dir/reduced-fd-real-dry-run.txt"
+      real_fd_samples="$phase2_dir/reduced-fd-real-samples.txt"
+      instrument_role_fd_reads "$IAM_SIM_ROLE_LANE" "$role_lane_fd_probe"
+      : >"$real_fd_samples"
+      reset_phase2_fake
+      if IAM_SIM_TEST_FD_SAMPLES="$real_fd_samples" \
+           IAM_SIM_FULL_SCALE_VECTORS="$fd_vectors" \
+           IAM_SIM_FULL_SCALE_TIMEOUT_SECONDS=5 \
+           run_full_scale_role_dry_run \
+             "$role_lane_fd_probe" "$real_fd_inventory" >/dev/null 2>&1 && \
+         fd_stability="$(validate_fd_stability_probe "$real_fd_samples" 2>&1)" && \
+         [ "$(find "$phase2_calls" -name '*.json' -type f | wc -l | tr -d ' ')" -eq 0 ]; then
+        pass_case "role-lane array-read real-lane FD stability ($fd_stability)"
+      else
+        fail_case "role-lane array-read real-lane FD stability" \
+          "${fd_stability:-validation did not run}"
+      fi
 
       reset_phase2_fake
       if run_full_scale_role_dry_run \

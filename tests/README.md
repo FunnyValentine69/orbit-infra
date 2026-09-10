@@ -599,10 +599,12 @@ fixtures at run time, then requires exactly `1 + 8R + 2G` calls, where `G` is
 the sum of non-empty authorization action groups over the `C` selected cases.
 The current full fixture has `R=8`, `C=156`, `G=157`, and therefore 379 calls.
 A dropped-call mutant kills the formula check. Its restored path keeps the full
-denominator;
-the process-substitution descriptor-leak mutant runs against a reduced 24-case
-fixture under `ulimit -n 16`, reproducing descriptor exhaustion in seconds
-instead of waiting for the former 20-second timeout. Duplicate Sids across
+denominator. The process-substitution descriptor-leak mutant and instrumented
+bounded-read lane run against the same reduced 24-case fixture with a five-second
+wall-clock cap. Each case samples `ls -1 /dev/fd`; every mutant increment must
+be at least two descriptors, while the bounded-read lane's maximum-minus-minimum
+count must be at most two. This measures the leak rather than relying on
+platform-specific descriptor exhaustion. Duplicate Sids across
 combined role documents and any loaded vector case ID missing from the custom
 report fail before a role is created.
 Every selected case is simulated first with the exact SCP exclusion and then

@@ -92,7 +92,7 @@ role-lane-missing-custom-case	run_phase2_role_lane	FAIL: custom report lacks exa
 role-lane-two-run-call-shape	mutate_role_two_run_calls	FAIL: two-run contract requires one exact scp-excluded call and one default call per case
 role-lane-dry-run-inventory	sed:drop-delete-role-policy-call	FAIL: dry-run inventory requires three iam delete-role-policy calls
 role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 378, expected 1 + 8*8 + 2*157 = 379
-role-lane-full-fixture-array-read	mutate_role_array_reads	FAIL: full-fixture role-lane dry-run exceeded 20 seconds
+role-lane-full-fixture-array-read	mutate_role_array_reads	FAIL: role-lane array-read descriptor count grew by at least 2 per case
 role-lane-empty-sid-shared-core-guard	mutate_core_sid_validation	FAIL: role lane empty Sid shared core guard did not enforce expected refusal
 role-lane-plan-resources-array-guard	mutate_plan_guard:role-lane:resources-array	FAIL: role lane plan resources array guard did not enforce expected refusal
 role-lane-plan-exactly-one-document-guard	mutate_plan_guard:role-lane:exactly-one-document	FAIL: role lane plan exactly one document guard did not enforce expected refusal
