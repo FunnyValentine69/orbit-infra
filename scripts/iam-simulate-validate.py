@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate one offline IAM simulator vector envelope."""
+"""Validate offline IAM simulator vector envelopes or a vector directory."""
 
 from __future__ import annotations
 
@@ -325,7 +325,9 @@ def validate_case(
 
 
 def validate_envelope(
-    vector_path: Path, categories_path: Path
+    vector_path: Path,
+    categories_path: Path,
+    categories: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     raw_envelope, raw_text = read_json(vector_path, "vector envelope")
     validate_templates(raw_text)
@@ -343,7 +345,8 @@ def validate_envelope(
     raw_cases = envelope["cases"]
     if not isinstance(raw_cases, list) or not raw_cases:
         fail("cases must be a non-empty array")
-    categories = load_categories(categories_path)
+    if categories is None:
+        categories = load_categories(categories_path)
     flattened = []
     seen_case_ids = set()
     for index, raw_case in enumerate(raw_cases):
@@ -366,12 +369,25 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    vectors = validate_envelope(args.vector, args.categories)
+    paths = (
+        sorted(args.vector.rglob("*.json"))
+        if args.vector.is_dir()
+        else [args.vector]
+    )
+    if not paths:
+        fail(f"vector directory contains no JSON envelopes: {args.vector}")
+    categories = load_categories(args.categories)
+    vectors = [
+        vector
+        for path in paths
+        for vector in validate_envelope(path, args.categories, categories)
+    ]
     if args.jsonl:
         for vector in vectors:
             print(json.dumps(vector, ensure_ascii=False, separators=(",", ":")))
     else:
-        print(f"PASS: IAM simulate vector envelope schema: {args.vector}")
+        label = "directory" if args.vector.is_dir() else "envelope schema"
+        print(f"PASS: IAM simulate vector {label}: {args.vector}")
 
 
 if __name__ == "__main__":

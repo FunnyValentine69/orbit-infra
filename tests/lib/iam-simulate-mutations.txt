@@ -1,0 +1,94 @@
+# Stable mutation case id<TAB>named mutation action or sed target<TAB>expected FAIL prefix.
+# Generated from the R3 execution baseline, then maintained as an execution contract.
+taxonomy-added-case	mutate_taxonomy	FAIL: taxonomy contains case absent from matrix: case:fixture.missing:Missing:ALL:none:missing
+taxonomy-removed-case	mutate_taxonomy	FAIL: taxonomy omits matrix case: case:trust:publisher:trust:publisher#0:ALL:token.actions.githubusercontent.com:sub:mutable-name
+taxonomy-duplicate-category	mutate_taxonomy	FAIL: taxonomy case appears in two categories: case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource
+taxonomy-empty-reason	mutate_taxonomy	FAIL: taxonomy entry 0 has an empty or non-string reason
+case-id-wrong-document-refusal	iam_simulate_case_suffix	FAIL: case id exact prefix mismatch: expected case:trust:trust:plan_reader#0:
+schema-missing-decision	iam-simulate-validate.py	FAIL: expect.decision is required for a decision vector
+schema-attribution-decision	iam-simulate-validate.py	FAIL: expect.decision is forbidden for attribution-only vectors
+schema-isolated-statement-on-non-isolated-mode	iam-simulate-validate.py	FAIL: isolated_statement is forbidden for custom vectors; resolve repository policies from the plan
+schema-isolated-allowed-decision	iam-simulate-validate.py	FAIL: custom-isolated vectors cannot expect allowed
+schema-embedded-custom-policy	iam-simulate-validate.py	FAIL: policy_input_list is forbidden for custom vectors; resolve repository policies from the plan
+schema-embedded-isolated-statement	iam-simulate-validate.py	FAIL: isolated_statement is forbidden for custom-isolated vectors; resolve repository policies from the plan
+schema-literal-account-id	iam-simulate-validate.py	FAIL: vector contains a literal 12-digit account id; use ${ACCOUNT_ID}
+schema-unknown-context-type	iam-simulate-validate.py	FAIL: unknown ContextKeyType: mystery
+schema-unknown-case-id	iam-simulate-validate.py	FAIL: case_id is absent from categories.json: case:fixture.missing:Missing:ALL:none:missing
+schema-unknown-custom-field	iam-simulate-validate.py	FAIL: unexpected is forbidden for custom vectors
+schema-envelope-header-mismatch	iam-simulate-validate.py	FAIL: case_id prefix does not match envelope header: case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:in-boundary expected case:aws_iam_policy.task_boundary:NotEcrAuth:
+schema-duplicate-case	iam-simulate-validate.py	FAIL: envelope repeats case_id: case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:in-boundary
+completeness-missing-array-member	validate_completeness	FAIL: simulator-eligible case lacks a vector or unresolved entry: case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:absent
+completeness-live-call-vector	validate_completeness	FAIL: vector exists for non-simulator category: case:aws_kms_key.signing:EnableRootAdministration:ALL:none:plan-reader-describe
+completeness-not-simulatable-vector	validate_completeness	FAIL: vector exists for non-simulator category: case:trust:plan_reader:trust:plan_reader#0:ALL:token.actions.githubusercontent.com:aud:matching
+completeness-unknown-case-id	validate_completeness	FAIL: vector case id is absent from taxonomy: case:unknown.document:UnknownSid:ALL:none:example
+completeness-duplicate-case-across-envelopes	validate_completeness	FAIL: case id appears in two envelopes: case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:absent
+completeness-filename-derivation	validate_completeness	FAIL: vector filename mismatch for aws_iam_policy.deployer_data ClickhouseSecretCreateWithTag: expected aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json
+completeness-schema-validation	validate_completeness	FAIL: vector validation failed for aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json: FAIL: case is missing required field: expect
+completeness-envelope-header-mismatch	validate_completeness	FAIL: case_id prefix does not match envelope header: case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource expected case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:
+runner-per-resource-mapper	run_phase2_runner	FAIL: decision mismatch for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-good/example: expected allowed, observed explicitDeny
+runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent: DenyReadStateObjectsOutsideScope
+runner-real-deployer-data-two-statement-overlap-refusal	run_phase2_runner	FAIL: ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5682 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
+runner-plan-policy-byte-equality	mutate_submitted_document	FAIL: submitted --policy-input-list document differs from plan text for aws_iam_policy.task_boundary
+runner-boundary-policy-byte-equality	mutate_submitted_document	FAIL: submitted --permissions-boundary-policy-input-list document differs from plan text for aws_iam_policy.task_boundary
+runner-action-level-explicit-star-decision	run_phase2_runner	FAIL: decision mismatch for ecr:GetAuthorizationToken *: expected allowed, observed implicitDeny
+runner-action-level-no-resource-attribution	run_phase2_runner	FAIL: required matched Sid is absent: EcrAuth
+runner-multiple-concrete-action-level-refusal	run_phase2_runner	FAIL: action-level result lacks ResourceSpecificResults for s3:GetObject
+runner-missing-exact-concrete-arn-refusal	run_phase2_runner	FAIL: submitted resource ARN is absent from response: s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-tfstate/other/x
+runner-missing-named-document	run_phase2_runner	FAIL: named policy document is absent from plan: aws_iam_policy.task_boundary
+runner-missing-named-sid	run_phase2_runner	FAIL: named Sid is absent from plan policy aws_iam_policy.deployer_data: LogsCreateWithTag
+runner-duplicate-named-sid	run_phase2_runner	FAIL: named Sid matches more than one statement in plan policy aws_iam_policy.deployer_data: LogsCreateWithTag
+runner-ambiguous-position-refusal	run_phase2_runner	FAIL: ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=212 statement_span_count=2 returned_range=[37,125) first_span=[37,123):EcrAuth last_span=[124,210):Other__
+runner-unmapped-position-refusal	run_phase2_runner	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=0 document_length=288 statement_span_count=2 returned_range=[0,1) first_span=[37,152):FixtureAllow last_span=[153,286):DenyReadStateObjectsOutsideScope
+runner-unknown-source-label-refusal	run_phase2_runner	FAIL: unrecognised SourcePolicyId UnknownPolicyLabel; submitted labels: PolicyInputList.1
+runner-missing-submitted-arn-refusal	run_phase2_runner	FAIL: submitted resource ARN is absent from response: s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-bad/example
+real-report-dropped-shared-case	sed:drop-shared-report-record	FAIL: report omits selected case_id: case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching
+real-colliding-case-expectation-disagreement	sed:change-colliding-expectation	FAIL: expectation-disagreeing duplicate action/resource pair in batch: iam:AttachRolePolicy * (case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:absent and case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:none:protected-resource)
+runner-throttle-attempt-cap	run_phase2_runner	FAIL: AWS simulator throttling failed after 5 attempts: An error occurred (RequestLimitExceeded) when calling the SimulateCustomPolicy operation
+runner-timeout-no-retry	run_phase2_runner	FAIL: AWS simulator timed out with exit 124
+runner-target-refusal	run_phase2_runner	FAIL: TARGET must be exactly aws
+runner-isolated-one-statement-decision	run_phase2_runner	FAIL: decision mismatch for logs:CreateLogGroup arn:aws:logs:us-east-1:000000000000:log-group:/orbit/79s5rw/example: expected implicitDeny, observed allowed
+runner-isolated-wrapper-position-attribution	run_phase2_runner	FAIL: forbidden matched Sid is present: LogsCreateWithTag
+runner-two-statement-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=37 document_length=288 statement_span_count=2 returned_range=[37,152) first_span=[37,152):FixtureAllow last_span=[153,286):DenyReadStateObjectsOutsideScope
+runner-real-deployer-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5682 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
+runner-string-delimiters-shared-core-scanner	mutate_shared_core_scanner	FAIL: cannot scan submitted statement: Unterminated string starting at: line 1 column 184 (char 183)
+runner-escaped-quotes-shared-core-scanner	mutate_shared_core_scanner	FAIL: cannot scan submitted statement: Expecting ',' delimiter: line 1 column 459 (char 458)
+runner-fake-resource-set-enforcement	run_phase2_runner	FAIL: AWS simulator call failed with exit 1: FAIL: fake simulate-custom-policy resource ARNs mismatch: expected ["arn:aws:s3:::orbit-infra-79s5rw-bad/example","arn:aws:s3:::orbit-infra-79s5rw-good/example"], submitted ["arn:aws:s3:::orbit-infra-wrong/example"]
+role-lane-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5682 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
+role-lane-report-account-redaction	mutate_role_report_redaction	FAIL: role report contains unredacted 12-digit account id: 123456789012
+role-lane-selection-reason	mutate_role_selection_report	FAIL: role selection must record one custom-isolated exclusion with its reason
+role-lane-projection-pass-count	mutate_role_projection_report	FAIL: role projection requires eight passes, found 7
+role-lane-wrong-hash-preflight	run_phase2_role_lane	FAIL: custom report policy hash mismatch for case:aws_iam_policy.deployer_guard:DenyMutatingOwnControlRoles:ALL:none:protected-resource: report=0000000000000000000000000000000000000000000000000000000000000000 plan=b1198b2ed182297f09172bf96917ce6a1e18cef2657361a195dfa28765017832
+role-lane-wrong-mode-preflight	run_phase2_role_lane	FAIL: custom report mode mismatch for case:aws_iam_policy.deployer_guard:DenyMutatingOwnControlRoles:ALL:none:protected-resource: report='principal' vector='custom'
+role-lane-duplicate-sid	run_phase2_role_lane	FAIL: duplicate Sid CrossDocumentDuplicate across aws_iam_role_policy.plan_reader_deny and aws_iam_role_policy.plan_reader_state
+role-lane-divergence-evidence	mutate_role_divergence_report	FAIL: role divergence summary must contain two agreements and one divergence
+role-lane-missing-custom-case	run_phase2_role_lane	FAIL: custom report lacks exactly one record for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching
+role-lane-two-run-call-shape	mutate_role_two_run_calls	FAIL: two-run contract requires one exact scp-excluded call and one default call per case
+role-lane-dry-run-inventory	sed:drop-delete-role-policy-call	FAIL: dry-run inventory requires three iam delete-role-policy calls
+role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 376, expected 1 + 8*8 + 2*156 = 377
+role-lane-full-fixture-array-read	mutate_role_array_reads	FAIL: full-fixture role-lane dry-run exceeded 20 seconds
+role-lane-opt-in-refusal	run_phase2_role_lane	FAIL: IAM_SIM_LANE_CONFIRM must equal create-real-iam-resources
+role-lane-account-mismatch-refusal	run_phase2_role_lane	FAIL: caller account mismatch: expected 000000000000, observed 111111111111
+role-lane-tag-mismatch-pre-mutation-refusal	run_phase2_role_lane	FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-plan-reader
+role-lane-nonce-tamper-at-deployer-p4	run_phase2_role_lane	FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-deployer-p4
+role-lane-nonce-ignoring-mutant	mutate_role_nonce_check	FAIL: nonce tamper reached policy or role mutations: put=8 delete-policy=8 delete-role=8
+role-lane-entityalreadyexists-isolation	run_phase2_role_lane	FAIL: manual cleanup: role already existed at create time: orbit-iam-sim-fixture-run-plan-reader
+role-lane-midway-create-cleanup-3-roles	run_role_cleanup_race_case	FAIL: create-role failed for orbit-iam-sim-fixture-run-deployer: An error occurred (ServiceFailure) when calling the CreateRole operation
+role-lane-midway-create-cleanup-8-roles-at-deployer-p4	run_role_cleanup_race_case	FAIL: create-role failed for orbit-iam-sim-fixture-run-deployer-p4: An error occurred (ServiceFailure) when calling the CreateRole operation
+role-lane-high-index-cleanup-mutation-retains-3-role-pass	mutate_role_cleanup_high_indices	FAIL: create-role failed for orbit-iam-sim-fixture-run-deployer: An error occurred (ServiceFailure) when calling the CreateRole operation
+role-lane-high-index-cleanup-8-role	mutate_role_cleanup_high_indices	FAIL: role failure cleanup did not delete every created role in reverse order
+role-lane-high-index-cleanup-mutation-restored-8-role-pass	mutate_role_cleanup_high_indices	FAIL: create-role failed for orbit-iam-sim-fixture-run-deployer-p4: An error occurred (ServiceFailure) when calling the CreateRole operation
+role-lane-delete-policy-barrier	run_phase2_role_lane	FAIL: manual cleanup: delete-role-policy failed for orbit-iam-sim-fixture-run-publisher
+role-lane-term-cleanup-3-roles	run_role_cleanup_race_case	FAIL: terminated by TERM
+role-lane-term-cleanup-8-roles-at-deployer-p4	run_role_cleanup_race_case	FAIL: terminated by TERM
+role-lane-term-between-put-and-marker-8-roles-at-deployer-p4	run_role_cleanup_race_case	FAIL: terminated by TERM
+role-lane-unattached-policy-nosuchentity-cleanup-8-roles-at-deployer-p4	run_role_cleanup_race_case	FAIL: put-role-policy failed for orbit-iam-sim-fixture-run-deployer-p4: An error occurred (ServiceFailure) when calling the PutRolePolicy operation
+role-lane-deferred-term-after-delete-role-policy-8-roles-at-deployer-p4	run_role_cleanup_race_case	FAIL: terminated by TERM
+role-lane-post-cleanup-verification	run_role_cleanup_race_case	FAIL: manual cleanup: role still exists after cleanup: orbit-iam-sim-fixture-run-plan-reader
+
+role-lane-only-exact-id-selection	mutate_role_only_selection	FAIL: --only case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching excluded: case id was not found
+role-lane-only-missing-id	run_phase2_role_lane	FAIL: --only case:fixture:missing excluded: case id was not found
+role-lane-only-duplicate-id	run_phase2_role_lane	FAIL: --only case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching excluded: duplicate exact case id (2 matches)
+role-lane-only-unsupported-id	run_phase2_role_lane	FAIL: --only case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:non-matching excluded: isolated single-statement simulation has no principal equivalent
+role-lane-source-partition	mutate_role_source_logic:partition	FAIL: role projection plan-reader source order is
+role-lane-source-concatenation	mutate_role_source_logic:concatenation	FAIL: role projection did not concatenate statements in source order
+role-lane-source-hash	mutate_role_source_logic:hash	FAIL: role projection policy hash differs

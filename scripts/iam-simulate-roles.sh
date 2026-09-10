@@ -74,6 +74,7 @@ expected_tags_json="$(jq -cn \
   --arg nonce_key "$nonce_tag_key" --arg nonce_value "$nonce_value" \
   '[{Key:$run_key,Value:$run_value},{Key:$nonce_key,Value:$nonce_value}]')"
 role_plan="$tmp_dir/role-plan.json"
+case_stream="$tmp_dir/cases.bin"
 records="$tmp_dir/records.jsonl"
 manual_notes="$tmp_dir/manual-cleanup.txt"
 : >"$records"
@@ -81,7 +82,7 @@ manual_notes="$tmp_dir/manual-cleanup.txt"
 
 prepare_args=(
   "$REPO_ROOT" "$VALIDATOR" "$IAM_SIM_CORE" "$plan" "$vectors" "$expect_account" "$run_id"
-  "$role_plan" "$custom_report" "$dry_run"
+  "$role_plan" "$case_stream" "$custom_report" "$dry_run"
 )
 if [ -n "$only" ]; then
   prepare_args+=("$only")
@@ -106,9 +107,10 @@ vectors_path = Path(sys.argv[separator + 5])
 account_id = sys.argv[separator + 6]
 run_id = sys.argv[separator + 7]
 output_path = Path(sys.argv[separator + 8])
-custom_report_path = Path(sys.argv[separator + 9]) if sys.argv[separator + 9] else None
-dry_run = sys.argv[separator + 10] == "1"
-only = sys.argv[separator + 11] if len(sys.argv) > separator + 11 else None
+case_stream_path = Path(sys.argv[separator + 9])
+custom_report_path = Path(sys.argv[separator + 10]) if sys.argv[separator + 10] else None
+dry_run = sys.argv[separator + 11] == "1"
+only = sys.argv[separator + 12] if len(sys.argv) > separator + 12 else None
 
 
 sys.dont_write_bytecode = True
@@ -198,32 +200,39 @@ def render(value):
 
 if not vectors_path.is_dir():
     fail(f"vector directory not found: {vectors_path}")
-vectors = []
-for path in sorted(vectors_path.rglob("*.json")):
-    checked = subprocess.run(
-        [sys.executable, str(validator), str(path), "--jsonl"],
-        text=True,
-        capture_output=True,
-        check=False,
+checked = subprocess.run(
+    [sys.executable, str(validator), str(vectors_path), "--jsonl"],
+    text=True,
+    capture_output=True,
+    check=False,
+)
+if checked.returncode != 0:
+    fail(
+        f"vector validation failed for {vectors_path}: "
+        f"{checked.stderr.strip() or checked.stdout.strip()}"
     )
-    if checked.returncode != 0:
-        fail(f"vector validation failed for {path}: {checked.stderr.strip() or checked.stdout.strip()}")
-    try:
-        flattened = [json.loads(line) for line in checked.stdout.splitlines()]
-    except json.JSONDecodeError as exc:
-        fail(f"vector validator emitted invalid JSONL for {path}: {exc}")
-    if not flattened:
-        fail(f"vector validator emitted no cases for {path}")
-    for vector in flattened:
-        prefix = f"case:{vector['document']}:{vector['sid']}:"
-        if not vector["case_id"].startswith(prefix) or vector["case_id"] == prefix:
-            fail(f"case id exact prefix mismatch: expected {prefix}")
-        if only is None or vector["case_id"] == only:
-            vectors.append(render(vector))
-if not vectors:
-    fail(f"no vectors selected{f' for --only {only}' if only else ''}")
-if only is not None and len(vectors) != 1:
-    fail(f"--only selected {len(vectors)} vectors")
+try:
+    flattened = [json.loads(line) for line in checked.stdout.splitlines()]
+except json.JSONDecodeError as exc:
+    fail(f"vector validator emitted invalid JSONL for {vectors_path}: {exc}")
+if not flattened:
+    fail(f"vector validator emitted no cases for {vectors_path}")
+vectors = []
+for vector in flattened:
+    prefix = f"case:{vector['document']}:{vector['sid']}:"
+    if not vector["case_id"].startswith(prefix) or vector["case_id"] == prefix:
+        fail(f"case id exact prefix mismatch: expected {prefix}")
+    vectors.append(render(vector))
+if only is not None:
+    selected = [vector for vector in vectors if vector["case_id"] == only]
+    if not selected:
+        fail(f"--only {only} excluded: case id was not found")
+    if len(selected) != 1:
+        fail(
+            f"--only {only} excluded: duplicate exact case id "
+            f"({len(selected)} matches)"
+        )
+    vectors = selected
 case_ids = [vector["case_id"] for vector in vectors]
 if len(case_ids) != len(set(case_ids)):
     fail("vector directory repeats a case_id")
@@ -346,7 +355,6 @@ for role in ("plan-reader", "deployer", "publisher"):
             policy_name += f"-p{pass_index}"
         entries = source_entries(source_addresses)
         roles.append({
-            "kind": role,
             "role_kind": role,
             "projection_id": projection_id,
             "projection_kind": projection_kind,
@@ -368,6 +376,13 @@ for role in ("plan-reader", "deployer", "publisher"):
     supported.extend(cases)
 
 if not supported:
+    if only is not None:
+        reason = next(
+            exclusion["reason"]
+            for exclusion in exclusions
+            if exclusion.get("case_id") == only
+        )
+        fail(f"--only {only} excluded: {reason}")
     fail("role lane selected no supported custom cases")
 
 if not dry_run:
@@ -443,6 +458,29 @@ payload = {
     "exclusions": exclusions,
 }
 output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+roles_by_projection = {role["projection_id"]: role for role in roles}
+with case_stream_path.open("wb") as stream:
+    for case in supported:
+        projection = roles_by_projection[case["temporary_projection_id"]]
+        context = sorted(
+            case.get("context_entries", []),
+            key=lambda entry: (
+                entry["ContextKeyName"],
+                entry["ContextKeyType"],
+                "\0".join(entry["ContextKeyValues"]),
+            ),
+        )
+        fields = [
+            case["case_id"],
+            projection["name"],
+            str(len(case["action_names"])),
+            *case["action_names"],
+            str(len(case["resource_arns"])),
+            *case["resource_arns"],
+            json.dumps(context, separators=(",", ":")),
+        ]
+        for field in fields:
+            stream.write(field.encode("utf-8") + b"\0")
 PY
 
 role_count="$(jq '.roles | length' "$role_plan")"
@@ -721,9 +759,30 @@ role_call_args() {
   POLICY_DOCUMENT="$(jq -r ".roles[$index].policy_document" "$role_plan")"
 }
 
+read_case_record() {
+  local count index value context
+  IFS= read -r -d '' CASE_ID <&3 || return 1
+  IFS= read -r -d '' CASE_ROLE_NAME <&3
+  IFS= read -r -d '' count <&3
+  CASE_ACTIONS=()
+  for ((index = 0; index < count; index++)); do
+    IFS= read -r -d '' value <&3
+    CASE_ACTIONS+=("$value")
+  done
+  IFS= read -r -d '' count <&3
+  CASE_RESOURCES=()
+  for ((index = 0; index < count; index++)); do
+    IFS= read -r -d '' value <&3
+    CASE_RESOURCES+=("$value")
+  done
+  IFS= read -r -d '' context <&3
+  CASE_CONTEXT_ARGS=(--output json)
+  [ "$context" = '[]' ] || CASE_CONTEXT_ARGS=(--context-entries "$context" --output json)
+}
+
+
 print_dry_run_inventory() {
-  local index case_json projection_id role_name context
-  local -a actions resources context_args
+  local index
   call_capture sts get-caller-identity --output json
   for ((index = 0; index < role_count; index++)); do
     role_call_args "$index"
@@ -741,28 +800,18 @@ print_dry_run_inventory() {
     call_capture iam put-role-policy --role-name "$ROLE_NAME" \
       --policy-name "$POLICY_NAME" --policy-document "$POLICY_DOCUMENT"
   done
-  while IFS= read -r case_json; do
-    projection_id="$(jq -r '.temporary_projection_id' <<<"$case_json")"
-    role_name="$(jq -r --arg projection_id "$projection_id" \
-      '.roles[] | select(.projection_id == $projection_id) | .name' "$role_plan")"
-    actions=()
-    jq -r '.action_names[]' <<<"$case_json" >"$tmp_dir/action-names"
-    while IFS= read -r value; do actions+=("$value"); done <"$tmp_dir/action-names"
-    resources=()
-    jq -r '.resource_arns[]' <<<"$case_json" >"$tmp_dir/resource-arns"
-    while IFS= read -r value; do resources+=("$value"); done <"$tmp_dir/resource-arns"
-    context="$(jq -c '.context_entries // [] | sort_by(.ContextKeyName,.ContextKeyType,(.ContextKeyValues|join("\u0000")))' <<<"$case_json")"
-    context_args=(--output json)
-    [ "$context" = '[]' ] || context_args=(--context-entries "$context" --output json)
+  exec 3<"$case_stream"
+  while read_case_record; do
     call_capture iam simulate-principal-policy \
-      --policy-source-arn "arn:aws:iam::$expect_account:role/$role_name" \
-      --action-names "${actions[@]}" --resource-arns "${resources[@]}" \
-      "${context_args[@]}" --policy-exclusion-list '{"PolicyType":"scp"}'
+      --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
+      --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
+      "${CASE_CONTEXT_ARGS[@]}" --policy-exclusion-list '{"PolicyType":"scp"}'
     call_capture iam simulate-principal-policy \
-      --policy-source-arn "arn:aws:iam::$expect_account:role/$role_name" \
-      --action-names "${actions[@]}" --resource-arns "${resources[@]}" \
-      "${context_args[@]}"
-  done < <(jq -c '.cases[]' "$role_plan")
+      --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
+      --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
+      "${CASE_CONTEXT_ARGS[@]}"
+  done
+  exec 3<&-
   for ((index = role_count - 1; index >= 0; index--)); do
     role_call_args "$index"
     call_capture iam list-role-tags --role-name "$ROLE_NAME" --output json
@@ -834,226 +883,213 @@ for ((index = 0; index < role_count; index++)); do
   printf 'loaded\n' >"$(role_policy_file "$index")"
 done
 
-evaluate_case() {
-  local case_file=$1
-  local excluded_response=$2
-  local organizations_response=$3
-  local projection=$4
-  local mapping_prefix="${case_file%.json}"
-  local excluded_mapping="$mapping_prefix-excluded-mapping.json"
-  local organizations_mapping="$mapping_prefix-organizations-mapping.json"
-  if ! jq -n --slurpfile response "$excluded_response" \
-    --slurpfile case "$case_file" --argjson projection "$projection" '
+map_role_pass() {
+  local response_prefix=$1
+  local ignore_organizations=$2
+  local output_path=$3
+  jq -cn \
+    --arg role_plan_path "$role_plan" \
+    --arg response_directory "$tmp_dir" \
+    --arg response_prefix "$response_prefix" \
+    --argjson ignore_organizations "$ignore_organizations" '
       {
-        response: $response[0],
-        action_names: $case[0].action_names,
-        resource_arns: $case[0].resource_arns,
-        policy_input_list: [$projection.policy_document],
-        permissions_boundary_policy_input_list: [],
-        bind_to_single_document: true
+        role_plan_path: $role_plan_path,
+        response_directory: $response_directory,
+        response_prefix: $response_prefix,
+        ignore_organizations: $ignore_organizations
       }
-    ' | python3 "$IAM_SIM_CORE" map-response >"$excluded_mapping"; then
-    return 1
-  fi
-  if ! jq -n --slurpfile response "$organizations_response" \
-    --slurpfile case "$case_file" --argjson projection "$projection" '
-      {
-        response: $response[0],
-        action_names: $case[0].action_names,
-        resource_arns: $case[0].resource_arns,
-        policy_input_list: [$projection.policy_document],
-        permissions_boundary_policy_input_list: [],
-        bind_to_single_document: true,
-        ignore_organizations: true
-      }
-    ' | python3 "$IAM_SIM_CORE" map-response >"$organizations_mapping"; then
-    return 1
-  fi
-  python3 - "$case_file" "$excluded_mapping" "$organizations_mapping" \
-    "$projection" "$custom_report" <<'PY'
+    ' | python3 "$IAM_SIM_CORE" map-role-pass >"$output_path"
+}
+
+
+evaluate_all_cases() {
+  local excluded_mapping=$1
+  local organizations_mapping=$2
+  python3 - "$role_plan" "$excluded_mapping" "$organizations_mapping" \
+    "$custom_report" <<'PY'
 import json
 from pathlib import Path
 import sys
 
-case = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-excluded = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-organizations = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-projection = json.loads(sys.argv[4])
-custom = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
+role_plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+excluded_payload = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+organizations_payload = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+custom = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
 
 
 def fail(message):
     raise SystemExit(f"FAIL: {message}")
 
 
-excluded_decision = excluded["decision_observed"]
-excluded_sources = excluded["matched_statement_sources"]
-excluded_sids = excluded["matched_sids"]
-excluded_details = excluded["details"]
-organizations_decision = organizations["decision_observed"]
-organizations_sources = organizations["matched_statement_sources"]
-organizations_sids = organizations["matched_sids"]
-organizations_details = organizations["details"]
-custom_records = [record for record in custom.get("records", []) if record.get("case_id") == case["case_id"]]
-if len(custom_records) != 1:
-    fail(f"custom report lacks exactly one record for {case['case_id']}")
-custom_record = custom_records[0]
-custom_decision = custom_record.get("decision_observed")
-if custom_decision is None:
-    fail(f"custom report lacks an observed decision for {case['case_id']}")
-custom_sids = custom_record.get("matched_sids")
-if not isinstance(custom_sids, list) or any(not isinstance(sid, str) for sid in custom_sids):
-    fail(f"custom report matched_sids is invalid for {case['case_id']}")
-custom_hashes = [
-    entry.get("sha256")
-    for entry in custom_record.get("document_hashes_submitted", {}).get("policy_input_list", [])
-]
-source_document = next(
-    entry for entry in projection["source_documents"]
-    if entry["address"] == case["document"]
-)
-same_decision = excluded_decision == custom_decision
-observed_in = []
-if excluded_decision != custom_decision:
-    observed_in.append("scp-excluded")
-if organizations_decision != custom_decision:
-    observed_in.append("default")
-projection_record = {
-    "projection_id": projection["projection_id"],
-    "projection_kind": projection["projection_kind"],
-    "role_kind": projection["role_kind"],
-    "policy_sha256": projection["policy_sha256"],
-    "source_documents": projection["source_documents"],
-}
-organizations_divergences = []
-excluded_by_pair = {
-    (detail["action_name"], detail["resource_arn"]): detail
-    for detail in excluded_details
-}
-organizations_by_pair = {
-    (detail["action_name"], detail["resource_arn"]): detail
-    for detail in organizations_details
-}
-if set(excluded_by_pair) != set(organizations_by_pair):
-    fail(f"principal runs returned different action/resource pairs for {case['case_id']}")
-for pair in sorted(excluded_by_pair):
-    excluded_detail = excluded_by_pair[pair]
-    organizations_detail = organizations_by_pair[pair]
-    if excluded_detail["decision_observed"] == organizations_detail["decision_observed"]:
-        continue
-    organizations_divergences.append({
-        "action_name": pair[0],
-        "resource_arn": pair[1],
-        "scp_excluded": excluded_detail,
-        "default": organizations_detail,
-    })
-record = {
-    "case_id": case["case_id"],
-    "mode": "principal",
-    "projection": projection_record,
-    "document_hashes_submitted": {
-        "put_role_policy": [{"sha256": projection["policy_sha256"]}],
-        "custom_lane": [{"sha256": value} for value in custom_hashes],
-    },
-    "source_document_hash_agrees_with_custom_lane": (
-        custom_hashes == [source_document["sha256"]]
-    ),
-    "custom_lane": {
-        "decision_observed": custom_decision,
-        "matched_sids": custom_sids,
-    },
-    "scp_excluded": {
-        "decision_observed": excluded_decision,
-        "matched_statement_sources": excluded_sources,
-        "matched_sids": excluded_sids,
-        "agrees_with_custom_lane": same_decision,
-    },
-    "default": {
-        "decision_observed": organizations_decision,
-        "matched_statement_sources": organizations_sources,
-        "matched_sids": organizations_sids,
-        "changed_from_scp_excluded": organizations_decision != excluded_decision,
-    },
-    "comparison": "agreement" if same_decision else "divergence",
-    "organizations_divergences": organizations_divergences,
-    "pass": custom_hashes == [source_document["sha256"]],
-}
-if not same_decision:
-    record["divergence"] = {
-        "observed_in": observed_in,
+cases = role_plan["cases"]
+roles = {role["projection_id"]: role for role in role_plan["roles"]}
+excluded_results = excluded_payload.get("results")
+organizations_results = organizations_payload.get("results")
+if not isinstance(excluded_results, list) or len(excluded_results) != len(cases):
+    fail("SCP-excluded bulk mapper returned the wrong result count")
+if not isinstance(organizations_results, list) or len(organizations_results) != len(cases):
+    fail("Organizations-applied bulk mapper returned the wrong result count")
+for case, excluded, organizations in zip(
+    cases, excluded_results, organizations_results
+):
+    for mapping in (excluded, organizations):
+        if isinstance(mapping, dict) and isinstance(mapping.get("error"), str):
+            fail(mapping["error"])
+    projection = roles[case["temporary_projection_id"]]
+    excluded_decision = excluded["decision_observed"]
+    excluded_sources = excluded["matched_statement_sources"]
+    excluded_sids = excluded["matched_sids"]
+    excluded_details = excluded["details"]
+    organizations_decision = organizations["decision_observed"]
+    organizations_sources = organizations["matched_statement_sources"]
+    organizations_sids = organizations["matched_sids"]
+    organizations_details = organizations["details"]
+    custom_records = [record for record in custom.get("records", []) if record.get("case_id") == case["case_id"]]
+    if len(custom_records) != 1:
+        fail(f"custom report lacks exactly one record for {case['case_id']}")
+    custom_record = custom_records[0]
+    custom_decision = custom_record.get("decision_observed")
+    if custom_decision is None:
+        fail(f"custom report lacks an observed decision for {case['case_id']}")
+    custom_sids = custom_record.get("matched_sids")
+    if not isinstance(custom_sids, list) or any(not isinstance(sid, str) for sid in custom_sids):
+        fail(f"custom report matched_sids is invalid for {case['case_id']}")
+    custom_hashes = [
+        entry.get("sha256")
+        for entry in custom_record.get("document_hashes_submitted", {}).get("policy_input_list", [])
+    ]
+    source_document = next(
+        entry for entry in projection["source_documents"]
+        if entry["address"] == case["document"]
+    )
+    same_decision = excluded_decision == custom_decision
+    observed_in = []
+    if excluded_decision != custom_decision:
+        observed_in.append("scp-excluded")
+    if organizations_decision != custom_decision:
+        observed_in.append("default")
+    projection_record = {
+        "projection_id": projection["projection_id"],
+        "projection_kind": projection["projection_kind"],
+        "role_kind": projection["role_kind"],
+        "policy_sha256": projection["policy_sha256"],
+        "source_documents": projection["source_documents"],
+    }
+    organizations_divergences = []
+    excluded_by_pair = {
+        (detail["action_name"], detail["resource_arn"]): detail
+        for detail in excluded_details
+    }
+    organizations_by_pair = {
+        (detail["action_name"], detail["resource_arn"]): detail
+        for detail in organizations_details
+    }
+    if set(excluded_by_pair) != set(organizations_by_pair):
+        fail(f"principal runs returned different action/resource pairs for {case['case_id']}")
+    for pair in sorted(excluded_by_pair):
+        excluded_detail = excluded_by_pair[pair]
+        organizations_detail = organizations_by_pair[pair]
+        if excluded_detail["decision_observed"] == organizations_detail["decision_observed"]:
+            continue
+        organizations_divergences.append({
+            "action_name": pair[0],
+            "resource_arn": pair[1],
+            "scp_excluded": excluded_detail,
+            "default": organizations_detail,
+        })
+    record = {
+        "case_id": case["case_id"],
+        "mode": "principal",
+        "projection": projection_record,
+        "document_hashes_submitted": {
+            "put_role_policy": [{"sha256": projection["policy_sha256"]}],
+            "custom_lane": [{"sha256": value} for value in custom_hashes],
+        },
+        "source_document_hash_agrees_with_custom_lane": (
+            custom_hashes == [source_document["sha256"]]
+        ),
         "custom_lane": {
             "decision_observed": custom_decision,
             "matched_sids": custom_sids,
         },
         "scp_excluded": {
             "decision_observed": excluded_decision,
+            "matched_statement_sources": excluded_sources,
             "matched_sids": excluded_sids,
+            "agrees_with_custom_lane": same_decision,
         },
         "default": {
             "decision_observed": organizations_decision,
+            "matched_statement_sources": organizations_sources,
             "matched_sids": organizations_sids,
+            "changed_from_scp_excluded": organizations_decision != excluded_decision,
         },
+        "comparison": "agreement" if same_decision else "divergence",
+        "organizations_divergences": organizations_divergences,
+        "pass": custom_hashes == [source_document["sha256"]],
     }
+    if not same_decision:
+        record["divergence"] = {
+            "observed_in": observed_in,
+            "custom_lane": {
+                "decision_observed": custom_decision,
+                "matched_sids": custom_sids,
+            },
+            "scp_excluded": {
+                "decision_observed": excluded_decision,
+                "matched_sids": excluded_sids,
+            },
+            "default": {
+                "decision_observed": organizations_decision,
+                "matched_sids": organizations_sids,
+            },
+        }
 
-print(json.dumps(record, sort_keys=True))
+    print(json.dumps(record, sort_keys=True))
 PY
 }
 
 simulation_failed=0
 case_index=0
-while IFS= read -r case_json; do
-  case_file="$tmp_dir/case-$case_index.json"
+exec 3<"$case_stream"
+while read_case_record; do
   excluded_file="$tmp_dir/excluded-$case_index.json"
   organizations_file="$tmp_dir/organizations-$case_index.json"
-  printf '%s\n' "$case_json" >"$case_file"
-  projection_id="$(jq -r '.temporary_projection_id' <<<"$case_json")"
-  role_name="$(jq -r --arg projection_id "$projection_id" \
-    '.roles[] | select(.projection_id == $projection_id) | .name' "$role_plan")"
-  projection="$(jq -c --arg projection_id "$projection_id" \
-    '.roles[] | select(.projection_id == $projection_id)' "$role_plan")"
-  actions=()
-  jq -r '.action_names[]' <<<"$case_json" >"$tmp_dir/action-names"
-  while IFS= read -r value; do actions+=("$value"); done <"$tmp_dir/action-names"
-  resources=()
-  jq -r '.resource_arns[]' <<<"$case_json" >"$tmp_dir/resource-arns"
-  while IFS= read -r value; do resources+=("$value"); done <"$tmp_dir/resource-arns"
-  context="$(jq -c '.context_entries // [] | sort_by(.ContextKeyName,.ContextKeyType,(.ContextKeyValues|join("\u0000")))' <<<"$case_json")"
-  context_args=(--output json)
-  [ "$context" = '[]' ] || context_args=(--context-entries "$context" --output json)
-
   call_capture iam simulate-principal-policy \
-    --policy-source-arn "arn:aws:iam::$expect_account:role/$role_name" \
-    --action-names "${actions[@]}" --resource-arns "${resources[@]}" \
-    "${context_args[@]}" --policy-exclusion-list '{"PolicyType":"scp"}'
+    --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
+    --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
+    "${CASE_CONTEXT_ARGS[@]}" --policy-exclusion-list '{"PolicyType":"scp"}'
   if [ "$CALL_RC" -ne 0 ]; then
-    echo "FAIL: SCP-excluded principal simulation failed for $(jq -r '.case_id' <<<"$case_json"): $CALL_ERROR" >&2
+    echo "FAIL: SCP-excluded principal simulation failed for $CASE_ID: $CALL_ERROR" >&2
     simulation_failed=1
     break
   fi
   printf '%s\n' "$CALL_OUTPUT" >"$excluded_file"
 
   call_capture iam simulate-principal-policy \
-    --policy-source-arn "arn:aws:iam::$expect_account:role/$role_name" \
-    --action-names "${actions[@]}" --resource-arns "${resources[@]}" \
-    "${context_args[@]}"
+    --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME" \
+    --action-names "${CASE_ACTIONS[@]}" --resource-arns "${CASE_RESOURCES[@]}" \
+    "${CASE_CONTEXT_ARGS[@]}"
   if [ "$CALL_RC" -ne 0 ]; then
-    echo "FAIL: Organizations-applied principal simulation failed for $(jq -r '.case_id' <<<"$case_json"): $CALL_ERROR" >&2
+    echo "FAIL: Organizations-applied principal simulation failed for $CASE_ID: $CALL_ERROR" >&2
     simulation_failed=1
     break
   fi
   printf '%s\n' "$CALL_OUTPUT" >"$organizations_file"
-  set +e
-  evaluated="$(evaluate_case "$case_file" "$excluded_file" "$organizations_file" "$projection" 2>&1)"
-  evaluate_rc=$?
-  set -e
-  if [ "$evaluate_rc" -ne 0 ]; then
-    echo "$evaluated" >&2
-    simulation_failed=1
-    break
-  fi
-  printf '%s\n' "$evaluated" >>"$records"
   case_index=$((case_index + 1))
-done < <(jq -c '.cases[]' "$role_plan")
+done
+exec 3<&-
+
+if [ "$simulation_failed" -eq 0 ]; then
+  excluded_mapping="$tmp_dir/excluded-mapping.json"
+  organizations_mapping="$tmp_dir/organizations-mapping.json"
+  if ! map_role_pass excluded false "$excluded_mapping" || \
+     ! map_role_pass organizations true "$organizations_mapping"; then
+    simulation_failed=1
+  elif ! evaluate_all_cases "$excluded_mapping" "$organizations_mapping" >"$records"; then
+    simulation_failed=1
+  fi
+fi
 
 if [ "$simulation_failed" -ne 0 ]; then
   exit 1

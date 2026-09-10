@@ -394,6 +394,16 @@ and role-lane contract groups without AWS, Terraform, Docker, or LocalStack:
 bash tests/iam-simulate-contracts.sh
 ```
 
+The phase-2 fixture library describes its plans, vector envelopes, canned
+simulator responses, custom-report records, and fake role-lane scenarios as
+base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
+renderer materializes every family. The execution registry in
+`tests/lib/iam-simulate-mutations.txt` currently names 91 stable mutation case
+IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
+diagnostic prefixes. The suite records each executed failure, rejects missing,
+unregistered, duplicate, or diagnostic-drifting observations, and prints its
+executed/registered count only after all restored paths pass.
+
 The `TAXONOMY` group runs
 `scripts/iam-simulate-categories.py --check`, independently compares the 288
 matrix case IDs to `tests/fixtures/iam-simulate/categories.json`, requires the
@@ -421,7 +431,9 @@ validated envelope by materializing its schema version, document, and Sid.
 Embedded `policy_input_list` and `isolated_statement` repository-policy
 snapshots remain invalid. The schema is specified in
 `docs/iam-simulate-vector-schema.md`. This suite makes no external-service
-calls.
+calls. The validator also accepts a vector directory, validates its 81
+envelopes in sorted order in one process, and emits all prepared cases as JSONL;
+both execution lanes use that directory form.
 
 The `COMPLETENESS` group reads the 81 real `(document, Sid)` envelopes from
 `tests/fixtures/iam-simulate/vectors/`. Filenames are
@@ -484,13 +496,23 @@ the final object with `000000000000`; reports carry that placeholder in
 both redaction markers to `true`. Fake-recorded API calls prove that role names,
 trust policies, and principal-policy source ARNs retain the live account ID
 while the report contains neither the live account nor the replayable nonce.
+Exact `--only` selection executes one case; missing, duplicate, and unsupported
+IDs fail with the requested ID and a specific exclusion reason.
+
+An independent projection oracle reconstructs pass partitioning, source order,
+concatenated policy bytes, hashes, character counts, case membership, and call
+ordering from the Terraform plan and vector envelopes. It does not consume the
+role plan emitted by the lane, and source-partition, concatenation, and hash
+mutants must each fail it.
 
 The role-lane mapping cases use the same module for the exact 5,682-character
 delimiter-inclusive/exclusive-end range, braces and brackets inside strings,
 escaped quotes, and an action-level response with no
-`ResourceSpecificResults`. The same strict-containment module mutation must
-fail both the `RUNNER` and `ROLE-LANE` groups, followed by an explicit restored
-pass in each group.
+`ResourceSpecificResults`. The lane prepares its cases once as a NUL-delimited
+stream and maps every response in one shared-core invocation per principal
+pass, rather than spawning parsers and a mapper per case. The same
+strict-containment module mutation must fail both the `RUNNER` and `ROLE-LANE`
+groups, followed by an explicit restored pass in each group.
 
 The group also proves the complete zero-call dry-run inventory, exact opt-in and
 account refusals, custom-report mode and source-hash agreement before the first
@@ -508,11 +530,12 @@ the three-role case but is killed by the eight-role case. The deadline-bounded
 full-fixture dry run derives
 the projected-role count `R` and selected-case count `C` from the plan and vector
 fixtures at run time, then requires exactly `1 + 8R + 2C` calls. A dropped-call
-mutant kills the formula check; a process-substitution mutant kills termination.
-The real and dry-run case loops both use bounded temporary-file reads so action
-and resource array loading cannot retain two descriptors per case. Duplicate
-Sids across combined role documents and any loaded vector case ID missing from
-the custom report fail before a role is created.
+mutant kills the formula check. Its restored path keeps the full denominator;
+the process-substitution descriptor-leak mutant runs against a reduced 24-case
+fixture under `ulimit -n 16`, reproducing descriptor exhaustion in seconds
+instead of waiting for the former 20-second timeout. Duplicate Sids across
+combined role documents and any loaded vector case ID missing from the custom
+report fail before a role is created.
 Every selected case is simulated first with the exact SCP exclusion and then
 with the default effective-policy request. The SCP-excluded decision is compared
 to the custom lane's observed decision: disagreement is reportable divergence

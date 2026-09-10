@@ -437,6 +437,79 @@ def _command_map_batch(payload: Any) -> dict[str, Any]:
     return {"results": results}
 
 
+def _command_map_many(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        raise RunnerFailure("map-many input must contain an items array")
+    results = []
+    for index, item in enumerate(payload["items"]):
+        if not isinstance(item, dict) or "response" not in item or "request" not in item:
+            raise RunnerFailure(f"map-many item {index} must contain response and request")
+        try:
+            results.append(map_request(item["response"], item["request"]))
+        except RunnerFailure as exc:
+            results.append({"error": str(exc)})
+    return {"results": results}
+
+
+def _command_map_role_pass(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise RunnerFailure("map-role-pass input is not an object")
+    role_plan_path = payload.get("role_plan_path")
+    response_directory = payload.get("response_directory")
+    response_prefix = payload.get("response_prefix")
+    if not all(isinstance(value, str) and value for value in (
+        role_plan_path, response_directory, response_prefix
+    )):
+        raise RunnerFailure(
+            "map-role-pass requires role_plan_path, response_directory, and response_prefix"
+        )
+    try:
+        role_plan = json.loads(Path(role_plan_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RunnerFailure(f"cannot read role plan for mapping: {exc}") from exc
+    cases = role_plan.get("cases") if isinstance(role_plan, dict) else None
+    roles = role_plan.get("roles") if isinstance(role_plan, dict) else None
+    if not isinstance(cases, list) or not isinstance(roles, list):
+        raise RunnerFailure("role plan mapping input lacks cases or roles")
+    by_projection = {
+        role.get("projection_id"): role
+        for role in roles
+        if isinstance(role, dict) and isinstance(role.get("projection_id"), str)
+    }
+    response_paths = [
+        Path(response_directory) / f"{response_prefix}-{index}.json"
+        for index in range(len(cases))
+    ]
+    missing_responses = [path for path in response_paths if not path.is_file()]
+    if missing_responses:
+        raise RunnerFailure(
+            f"map-role-pass response is missing: {missing_responses[0]}"
+        )
+    items = []
+    for index, (case, response_path) in enumerate(zip(cases, response_paths)):
+        if not isinstance(case, dict):
+            raise RunnerFailure(f"role plan case {index} is not an object")
+        projection = by_projection.get(case.get("temporary_projection_id"))
+        if not isinstance(projection, dict):
+            raise RunnerFailure(f"role plan case {index} has no projection")
+        try:
+            response = json.loads(response_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RunnerFailure(f"cannot read role response {response_path}: {exc}") from exc
+        items.append({
+            "response": response,
+            "request": {
+                "action_names": case.get("action_names"),
+                "resource_arns": case.get("resource_arns"),
+                "policy_input_list": [projection.get("policy_document")],
+                "permissions_boundary_policy_input_list": [],
+                "bind_to_single_document": True,
+                "ignore_organizations": payload.get("ignore_organizations") is True,
+            },
+        })
+    return _command_map_many({"items": items})
+
+
 def _fail(message: str) -> NoReturn:
     print(f"FAIL: {message}", file=sys.stderr)
     raise SystemExit(1)
@@ -445,7 +518,9 @@ def _fail(message: str) -> NoReturn:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("scan", "hash", "map-response", "map-batch"):
+    for command in (
+        "scan", "hash", "map-response", "map-batch", "map-many", "map-role-pass"
+    ):
         child = subparsers.add_parser(command)
         child.add_argument("input", nargs="?", default="-")
     args = parser.parse_args()
@@ -458,8 +533,12 @@ def main() -> int:
         if not isinstance(payload, dict):
             raise RunnerFailure("map-response input is not an object")
         result = map_request(payload.get("response"), payload)
-    else:
+    elif args.command == "map-batch":
         result = _command_map_batch(payload)
+    elif args.command == "map-many":
+        result = _command_map_many(payload)
+    else:
+        result = _command_map_role_pass(payload)
     _write_payload(result)
     return 0
 

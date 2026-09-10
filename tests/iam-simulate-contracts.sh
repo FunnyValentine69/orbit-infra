@@ -12,12 +12,26 @@ VECTORS="$VECTOR_FIXTURES/vectors"
 UNRESOLVED="$VECTOR_FIXTURES/unresolved.json"
 SCHEMA_DOC="$REPO_ROOT/docs/iam-simulate-vector-schema.md"
 PHASE2_CONTRACTS="$REPO_ROOT/tests/lib/iam-simulate-phase2.sh"
+MUTATION_REGISTRY="$REPO_ROOT/tests/lib/iam-simulate-mutations.txt"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-simulate.XXXXXX")"
 results="$tmp_dir/results.txt"
+mutation_observations="$tmp_dir/mutation-observations.txt"
 failures=0
+: >"$mutation_observations"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 pass_case() {
+  local message=$1 prefix label case_id diagnostic
+  if [[ "$message" == *" -> FAIL:"* ]]; then
+    prefix=${message%%" -> FAIL:"*}
+    label=${prefix% mutation}
+    diagnostic="FAIL:${message#*" -> FAIL:"}"
+    case_id="$(
+      LC_ALL=C tr '[:upper:]' '[:lower:]' <<<"$label" |
+        sed -E 's/[^a-z0-9]+/-/g; s/^-//; s/-$//'
+    )"
+    printf '%s\t%s\n' "$case_id" "$diagnostic" >>"$mutation_observations"
+  fi
   printf 'PASS: %s\n' "$1" | tee -a "$results"
 }
 
@@ -36,12 +50,85 @@ expect_failure() {
   rc=$?
   set -e
   fail_line="$(grep -m1 '^FAIL:' <<< "$output" || true)"
-  if [ "$rc" -ne 0 ] && [ -n "$fail_line" ] && grep -Fq "$expected" <<< "$output"; then
+  if [ "$rc" -ne 0 ] && [ -n "$fail_line" ] && grep -Fq -- "$expected" <<< "$output"; then
     pass_case "$label mutation -> $fail_line"
   else
     fail_case "$label mutation did not fail as required" "rc=$rc output=$output"
   fi
 }
+
+validate_mutation_registry() {
+  python3 - "$MUTATION_REGISTRY" "${1:-}" <<'PY_REGISTRY'
+from pathlib import Path
+import sys
+
+registry_path = Path(sys.argv[1])
+observations_path = Path(sys.argv[2]) if sys.argv[2] else None
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: mutation registry {message}")
+
+
+try:
+    lines = registry_path.read_text(encoding="utf-8").splitlines()
+except OSError as exc:
+    fail(f"cannot be read: {exc}")
+
+registry = {}
+for line_number, line in enumerate(lines, 1):
+    if not line or line.startswith("#"):
+        continue
+    fields = line.split("\t")
+    if len(fields) != 3:
+        fail(f"line {line_number} must contain id, action, and diagnostic")
+    case_id, action, diagnostic = fields
+    if not case_id or not action or not diagnostic.startswith("FAIL:"):
+        fail(f"line {line_number} has an invalid id, action, or diagnostic")
+    if case_id in registry:
+        fail(f"repeats case id: {case_id}")
+    registry[case_id] = (action, diagnostic)
+if not registry:
+    fail("contains no cases")
+
+if observations_path is None:
+    print(f"PASS: IAM simulate mutation registry schema ({len(registry)} case(s))")
+    raise SystemExit(0)
+
+observations = {}
+for line_number, line in enumerate(
+    observations_path.read_text(encoding="utf-8").splitlines(), 1
+):
+    fields = line.split("\t", 1)
+    if len(fields) != 2:
+        fail(f"observation line {line_number} is malformed")
+    case_id, diagnostic = fields
+    if case_id in observations:
+        fail(f"observed case more than once: {case_id}")
+    observations[case_id] = diagnostic
+
+missing = sorted(set(registry) - set(observations))
+if missing:
+    fail(f"did not execute case: {missing[0]}")
+unexpected = sorted(set(observations) - set(registry))
+if unexpected:
+    fail(f"observed unregistered case: {unexpected[0]}")
+for case_id in sorted(registry):
+    expected = registry[case_id][1]
+    observed = observations[case_id]
+    if not observed.startswith(expected):
+        fail(
+            f"diagnostic mismatch for {case_id}: "
+            f"expected prefix {expected!r}, observed {observed!r}"
+        )
+print(
+    f"PASS: IAM simulate mutation registry "
+    f"({len(observations)}/{len(registry)} executed; restored suite passed)"
+)
+PY_REGISTRY
+}
+
+validate_mutation_registry
 
 validate_taxonomy() {
   local taxonomy=$1
@@ -340,6 +427,15 @@ if [ -f "$VALIDATOR" ]; then
     pass_case "schema validator emits flattened cases as JSONL"
   else
     fail_case "schema validator emits flattened cases as JSONL" "$output"
+  fi
+
+
+  if output="$(python3 "$VALIDATOR" "$VECTORS" --jsonl 2>&1)" && \
+     [ "$(wc -l <<<"$output" | tr -d ' ')" -eq 239 ] && \
+     [ "$(jq -s 'map(.case_id) | unique | length' <<<"$output")" -eq 239 ]; then
+    pass_case "schema validator loads the vector directory in one JSONL pass"
+  else
+    fail_case "schema validator loads the vector directory in one JSONL pass" "$output"
   fi
 
   examples_dir="$tmp_dir/schema-examples"
@@ -752,6 +848,12 @@ if [ -f "$PHASE2_CONTRACTS" ]; then
   run_iam_simulate_role_lane_contracts
 else
   fail_case "IAM simulate phase-2 contract library exists" "$PHASE2_CONTRACTS is missing"
+fi
+
+if output="$(validate_mutation_registry "$mutation_observations" 2>&1)"; then
+  pass_case "${output#PASS: }"
+else
+  fail_case "IAM simulate mutation registry execution" "$output"
 fi
 
 if [ "$failures" -eq 0 ]; then
