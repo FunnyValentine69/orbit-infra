@@ -65,6 +65,7 @@ runner-real-deployer-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL:
 runner-string-delimiters-shared-core-scanner	mutate_shared_core_scanner	FAIL: cannot scan submitted statement: Unterminated string starting at: line 1 column 184 (char 183)
 runner-escaped-quotes-shared-core-scanner	mutate_shared_core_scanner	FAIL: cannot scan submitted statement: Expecting ',' delimiter: line 1 column 459 (char 458)
 runner-fake-resource-set-enforcement	run_phase2_runner	FAIL: AWS simulator call failed with exit 1: FAIL: fake simulate-custom-policy resource ARNs mismatch: expected ["arn:aws:s3:::orbit-infra-79s5rw-bad/example","arn:aws:s3:::orbit-infra-79s5rw-good/example"], submitted ["arn:aws:s3:::orbit-infra-wrong/example"]
+runner-custom-context-entry-preservation	mutate_custom_context_entries	FAIL: AWS simulator call failed with exit 1: FAIL: fake simulate-custom-policy context entries mismatch:
 runner-shared-authorization-partition	mutate_core_authorization_groups	FAIL: AWS simulator call failed with exit 254: An error occurred (InvalidInput) when calling the SimulateCustomPolicy operation: Invalid Input Actions:
 runner-case-insensitive-s3-authorization-partition	lowercase s3:DeleteBucketPublicAccessBlock	FAIL: lower-case s3:deletebucketpublicaccessblock was not partitioned into the second authorization class
 runner-empty-sid-shared-core-guard	mutate_core_sid_validation	FAIL: runner empty Sid shared core guard did not enforce expected refusal
@@ -76,7 +77,7 @@ runner-plan-suffix-guard	mutate_plan_guard:runner:suffix	FAIL: runner plan suffi
 runner-plan-account-id-uniqueness-guard	mutate_plan_guard:runner:account-id-uniqueness	FAIL: runner plan account id uniqueness guard did not enforce expected refusal
 role-lane-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5682 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
 role-lane-shared-authorization-partition	mutate_core_authorization_groups	FAIL: SCP-excluded principal simulation failed for case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching: An error occurred (InvalidInput) when calling the SimulatePrincipalPolicy operation: Invalid Input Actions:
-role-lane-report-account-redaction	mutate_role_report_redaction	FAIL: role report contains unredacted 12-digit account id: 123456789012
+role-lane-report-account-redaction	mutate_role_report_redaction+mutate_report_redaction	FAIL: role report contains unredacted 12-digit account id: 123456789012
 role-lane-plan-account-binding	use plan account 222222222222 with expected 000000000000	FAIL: plan account mismatch: plan 222222222222, expected 000000000000
 role-lane-plan-account-redaction	render non-placeholder plan account report	FAIL: role report contains unredacted plan account id: 123456789012
 role-lane-principal-context-entry-preservation	mutate_role_context_entries	FAIL: SCP-excluded principal simulation failed for case:
@@ -126,9 +127,11 @@ role-lane-source-partition	mutate_role_source_logic:partition	FAIL: role project
 role-lane-source-concatenation	mutate_role_source_logic:concatenation	FAIL: role projection did not concatenate statements in source order
 role-lane-source-hash	mutate_role_source_logic:hash	FAIL: role projection policy hash differs
 report-compact-writer	mutate_report_writer	FAIL: compact report records must contain exactly one record per line
+report-whole-object-redaction	mutate_report_redaction	FAIL: shared report writer retained live identifiers
 renderer-account-id-case-refusal	doctor custom report case id	FAIL: rendered IAM simulation report contains a non-placeholder account id
 renderer-role-redaction-marker-refusal	remove account_redacted from role report	FAIL: role report must set account_redacted to true
 renderer-hygiene-call-removal	sed:remove-renderer-hygiene-call	FAIL: published renderer mutant is rejected by artifact hygiene: account-id
+renderer-json-hygiene-call-removal	sed:remove-renderer-json-hygiene-input	FAIL: renderer accepted JSON report containing account-id
 renderer-account-redacted-check-removal	sed:remove-renderer-account-redacted-check	FAIL: renderer accepted role report lacking account_redacted
 renderer-doctored-pass-finding	set failed SNS record pass true and render	FAIL: doctored pass suppressed renderer finding: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching
 renderer-pair-publication-rollback	inject failure between report and provenance moves	FAIL: injected publication failure between report and provenance

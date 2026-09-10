@@ -373,9 +373,12 @@ principal/custom divergences, and Organizations divergences. The AWS-managed
 role-lane exclusion. A single final redaction replaces both the live account and
 any non-placeholder plan account with `000000000000`; the report records
 `plan_account_redacted`, and the ownership nonce is replaced with `<redacted>`
-so a report cannot replay either ownership value. These scripts and their
-cleanup paths are OFFLINE-VERIFIED only; no real role-lane execution is recorded
-here.
+so a report cannot replay either ownership value. The shared writer then
+applies a final whole-report identifier redaction and records
+`redaction_applied: true`. The cleanup paths remain contract-tested offline. A
+real role-lane execution on 2026-09-10 recorded 156 cases, 153 custom-lane
+agreements, 3 divergences, and zero residue; see
+`docs/assets/iam-simulation-role-report.json`.
 
 Render the publishable Markdown pair from the completed JSON reports. Omit the
 `--role-report` option when only the custom lane was run:
@@ -389,8 +392,9 @@ scripts/iam-simulate-report.sh \
 
 The renderer requires a role report to attest `account_redacted: true`, writes
 both files in a temporary directory, and invokes `scripts/artifact-hygiene.sh`
-on both before publication. Only after both checks pass does it publish the
-report and then the provenance last, rolling the pair back if either move
+on each supplied JSON lane report and both rendered Markdown files before
+publication. Only after every check passes does it publish the report and then
+the provenance last, rolling the pair back if either move
 fails. Both files record the publication date and generator commit; the
 Evidence join refuses a disagreeing pair. A violation leaves the output
 directory untouched and prints the checker's `FAIL:` line. Custom-lane pass

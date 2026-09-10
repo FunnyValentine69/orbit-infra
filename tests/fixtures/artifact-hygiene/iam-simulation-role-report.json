@@ -10,6 +10,7 @@
   "manual_cleanup": [],
   "ownership_nonce": "<redacted>",
   "ownership_nonce_redacted": true,
+  "redaction_applied": true,
   "records": [
     {
       "case_id": "case:fixture.policy:AllowRead:ALL:none:matching",

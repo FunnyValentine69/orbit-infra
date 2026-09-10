@@ -483,7 +483,7 @@ provenance_lines.extend(
         "",
         "## Hygiene review (what was actually checked)",
         "",
-        "Before publication, `scripts/artifact-hygiene.sh` checks both Markdown files for:",
+        "Before publication, `scripts/artifact-hygiene.sh` checks each supplied JSON lane report and both Markdown files for:",
         "",
         "- non-placeholder 12-digit account identifiers, including IAM ARN accounts;",
         "- AWS principal and session identifiers, including assumed-role paths;",
@@ -498,7 +498,12 @@ Path(provenance_path).write_text(
 )
 PY
 
-if ! "$HYGIENE" "$rendered_report" "$rendered_provenance"; then  # artifact-hygiene-publication-guard
+hygiene_inputs=("$custom_report")
+if [ -n "$role_report" ]; then
+  hygiene_inputs+=("$role_report")
+fi
+hygiene_inputs+=("$rendered_report" "$rendered_provenance")
+if ! "$HYGIENE" "${hygiene_inputs[@]}"; then  # artifact-hygiene-publication-guard
   exit 1
 fi
 

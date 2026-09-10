@@ -421,13 +421,14 @@ import sys
 print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
 PY
 )" && \
-       [ "$report_sha" = "927e6b605aa92fc066684f32260495281cc3d1f05d65ddab177e408bc39239ec" ] && \
+       [ "$report_sha" = "5a3b72e743f575326b77103ba753032cc00c89131b2c57f3444136d398261e3a" ] && \
        jq -e '
-         .records | length == 1
-         and .[0].decision_observed == {"arn:aws:s3:::orbit-infra-79s5rw-bad/example":"explicitDeny","arn:aws:s3:::orbit-infra-79s5rw-good/example":"allowed"}
-         and .[0].matched_sids == ["DenyReadStateObjectsOutsideScope","FixtureAllow"]
-         and .[0].pass == true
-         and (.[0].document_hashes_submitted.policy_input_list | length) == 1
+         .redaction_applied == true
+         and (.records | length) == 1
+         and .records[0].decision_observed == {"arn:aws:s3:::orbit-infra-79s5rw-bad/example":"explicitDeny","arn:aws:s3:::orbit-infra-79s5rw-good/example":"allowed"}
+         and .records[0].matched_sids == ["DenyReadStateObjectsOutsideScope","FixtureAllow"]
+         and .records[0].pass == true
+         and (.records[0].document_hashes_submitted.policy_input_list | length) == 1
        ' "$report" >/dev/null; then
       pass_case "runner maps nested per-resource decisions and source positions (custom fake report sha256=$report_sha)"
     else
@@ -913,6 +914,35 @@ PY
       fail_case "runner shared-core mutation restoration" "$output"
     fi
 
+    local context_mutant="$phase2_dir/iam-simulate-no-context.sh"
+    mutate_custom_context_entries "$IAM_SIM_RUNNER" "$context_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_TEST_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      IAM_SIM_TEST_RUNNER="$context_mutant" run_phase2_runner \
+      context-required "$phase2_dir/response-deployer-position.json" \
+      "$phase2_dir/deployer-position-vectors" \
+      "$phase2_dir/custom-context-mutant-report.json" 2>&1)"
+    mutant_rc=$?
+    set -e
+    fail_line="$(grep -m1 'FAIL: fake simulate-custom-policy context entries mismatch:' <<<"$output" || true)"
+    if [ "$mutant_rc" -ne 0 ] && [ -n "$fail_line" ]; then
+      pass_case "runner custom context-entry preservation mutation -> $fail_line"
+    else
+      fail_case "runner custom context-entry preservation mutation did not fail" \
+        "rc=$mutant_rc output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(IAM_SIM_TEST_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      run_phase2_runner context-required \
+      "$phase2_dir/response-deployer-position.json" \
+      "$phase2_dir/deployer-position-vectors" \
+      "$phase2_dir/custom-context-restored-report.json" 2>&1)"; then
+      pass_case "runner custom context-entry preservation mutation restored PASS"
+    else
+      fail_case "runner custom context-entry preservation mutation restoration" "$output"
+    fi
+
     runner_mutant="$phase2_dir/iam-simulate-wrong-resource.sh"
     python3 - "$IAM_SIM_RUNNER" "$runner_mutant" "$REPO_ROOT" <<'PY_MUTANT'
 from pathlib import Path
@@ -1116,6 +1146,10 @@ mutate_role_context_entries() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-context-entries "$@" "$REPO_ROOT"
 }
 
+mutate_custom_context_entries() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-custom-context-entries "$@" "$REPO_ROOT"
+}
+
 validate_role_plan_account_redaction() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-plan-account-redaction "$@"
 }
@@ -1301,7 +1335,7 @@ PLAN_GUARDS
 
 run_iam_simulate_role_lane_contracts() {
   local output rc mutated_inventory full_inventory full_scale role_lane_mutant
-  local account account_mutant account_report cleanup_mutant cleanup_report
+  local account account_mutant account_core_mutant account_report cleanup_mutant cleanup_report
   local mutant_inventory mutated_full_inventory mutation_fail mutation_output mutation_rc
   local fd_vectors only_case isolated_case duplicate_vectors
   local core_mutant expected_sid expected_hash_failure wrong_hash_report nonce_report fail_line
@@ -1494,13 +1528,17 @@ run_iam_simulate_role_lane_contracts() {
     account=123456
     account+='789012'
     account_mutant="$phase2_dir/iam-simulate-roles-account-redaction-mutant.sh"
+    account_core_mutant="$phase2_dir/iam-simulate-core-account-redaction-mutant.py"
     account_report="$phase2_dir/role-account-redaction-mutant-report.json"
     mutate_role_report_redaction "$IAM_SIM_ROLE_LANE" "$account_mutant"
+    python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-redaction \
+      "$IAM_SIM_CORE" "$account_core_mutant"
     reset_phase2_fake
     set +e
     output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
       IAM_SIM_TEST_ACCOUNT_ID="$account" \
       IAM_SIM_TEST_RUN_ID="fixture-$account" \
+      IAM_SIM_TEST_CORE="$account_core_mutant" \
       IAM_SIM_TEST_ROLE_LANE="$account_mutant" \
       IAM_SIM_TEST_ROLE_REPORT="$account_report" \
       run_phase2_role_lane verify-present 2>&1)"
@@ -2178,8 +2216,12 @@ mutation = sys.argv[3]
 source = source_path.read_text(encoding="utf-8")
 replacements = {
     "hygiene": (
-        'if ! "$HYGIENE" "$rendered_report" "$rendered_provenance"; then  # artifact-hygiene-publication-guard',
+        'if ! "$HYGIENE" "${hygiene_inputs[@]}"; then  # artifact-hygiene-publication-guard',
         'if false; then  # artifact-hygiene-publication-guard',
+    ),
+    "json-hygiene": (
+        'hygiene_inputs=("$custom_report")',
+        'hygiene_inputs=()',
     ),
     "role-redaction": (
         'if report.get("account_redacted") is not True:  # role-account-redacted-guard',
@@ -2266,15 +2308,20 @@ run_iam_simulate_report_contracts() {
   local hash_out="$phase2_dir/rendered-hash"
   local bad_case_custom="$phase2_dir/custom-report-case-account-id.json"
   local bad_case_out="$phase2_dir/rendered-bad-case"
+  local bad_json_custom="$IAM_SIM_REPORT_FIXTURES/bad-iam-simulation-report.json"
+  local bad_json_out="$phase2_dir/rendered-bad-json"
   local unmarked_role="$phase2_dir/role-report-without-account-redacted.json"
   local unmarked_out="$phase2_dir/rendered-unmarked-role"
   local compact_report="$phase2_dir/compact-writer-report.json"
   local compact_writer_mutant="$phase2_dir/iam-simulate-core-pretty-report.py"
+  local redaction_writer_mutant="$phase2_dir/iam-simulate-core-no-redaction.py"
   local failed_case="case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
   local doctored_pass_custom="$phase2_dir/doctored-pass-custom-report.json"
   local doctored_pass_out="$phase2_dir/rendered-doctored-pass"
   local publication_mutant="$phase2_dir/iam-simulate-report-publication-mutant.sh"
   local publication_out="$phase2_dir/rendered-publication-transaction"
+  local json_hygiene_mutant="$phase2_dir/iam-simulate-report-no-json-hygiene.sh"
+  local json_hygiene_mutant_out="$phase2_dir/rendered-json-hygiene-mutant"
   local output rc fail_line checker_output
 
   if output="$(
@@ -2284,6 +2331,21 @@ run_iam_simulate_report_contracts() {
     pass_case "shared report writer preserves JSON content and compact sorted record lines"
   else
     fail_case "shared report writer compact rendering" "$output"
+  fi
+
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-redaction \
+    "$IAM_SIM_CORE" "$redaction_writer_mutant"
+  expect_failure "report whole-object redaction" \
+    "shared report writer retained live identifiers" \
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-writer \
+      "$redaction_writer_mutant" "$compact_report"
+  if output="$(
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-writer \
+      "$IAM_SIM_CORE" "$compact_report" 2>&1
+  )"; then
+    pass_case "report whole-object redaction mutation restored PASS"
+  else
+    fail_case "report whole-object redaction mutation restoration" "$output"
   fi
 
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-writer \
@@ -2313,7 +2375,7 @@ run_iam_simulate_report_contracts() {
        [ "$(find "$clean_out" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 2 ] &&
        validate_rendered_iam_reports \
          "$clean_out/$report_name" "$clean_out/$provenance_name" >/dev/null &&
-       [ "$(grep -c '^PASS:' <<<"$output")" -eq 3 ]; then
+       [ "$(grep -c '^PASS:' <<<"$output")" -eq 5 ]; then
       pass_case "report renderer clean custom/role pair passes both hygiene checks"
     else
       fail_case "report renderer clean custom/role pair" "$output"
@@ -2437,11 +2499,31 @@ PY
        grep -Fq \
          '123456789012aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
          "$hash_out/$report_name" &&
-       [ "$(grep -c '^PASS:' <<<"$output")" -eq 3 ]; then
+       [ "$(grep -c '^PASS:' <<<"$output")" -eq 5 ]; then
       pass_case \
         "report renderer preserves SHA-256 while exempting its account-shaped digits"
     else
       fail_case "report renderer SHA-256 exemption" "$output"
+    fi
+
+    set +e
+    output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$bad_json_custom" "$clean_role" \
+        "$bad_json_out" 2>&1
+    )"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] &&
+       grep -Fq ': account-id - non-placeholder 12-digit account id 123456789012' \
+         <<<"$fail_line" &&
+       [ ! -e "$bad_json_out/$report_name" ] &&
+       [ ! -e "$bad_json_out/$provenance_name" ]; then
+      pass_case "renderer refuses JSON report containing an unrendered account id"
+    else
+      fail_case "renderer refuses JSON report containing an unrendered account id" \
+        "rc=$rc output=$output"
     fi
 
     set +e
@@ -2487,6 +2569,35 @@ PY
         "rc=$rc output=$output"
     fi
 
+    mutate_report_renderer json-hygiene "$json_hygiene_mutant"
+    if output="$(
+      run_report_renderer \
+        "$json_hygiene_mutant" "$bad_json_custom" "$clean_role" \
+        "$json_hygiene_mutant_out" 2>&1
+    )" &&
+       [ -f "$json_hygiene_mutant_out/$report_name" ] &&
+       [ -f "$json_hygiene_mutant_out/$provenance_name" ]; then
+      pass_case \
+        "renderer JSON hygiene call removal mutation -> FAIL: renderer accepted JSON report containing account-id"
+    else
+      fail_case "renderer JSON hygiene call removal mutation did not publish" "$output"
+    fi
+    set +e
+    output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$bad_json_custom" "$clean_role" \
+        "$phase2_dir/rendered-json-hygiene-restored" 2>&1
+    )"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && grep -Fq ': account-id -' <<<"$fail_line"; then
+      pass_case "renderer JSON hygiene call removal mutation restored PASS"
+    else
+      fail_case "renderer JSON hygiene call removal mutation restoration" \
+        "rc=$rc output=$output"
+    fi
+
     local hygiene_mutant="$phase2_dir/iam-simulate-report-no-hygiene.sh"
     local hygiene_mutant_out="$phase2_dir/rendered-hygiene-mutant"
     mutate_report_renderer hygiene "$hygiene_mutant"
@@ -2518,7 +2629,7 @@ PY
       run_report_renderer \
         "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$clean_role" \
         "$phase2_dir/rendered-hygiene-restored" 2>&1
-    )" && [ "$(grep -c '^PASS:' <<<"$output")" -eq 3 ]; then
+    )" && [ "$(grep -c '^PASS:' <<<"$output")" -eq 5 ]; then
       pass_case "renderer hygiene call removal restored PASS"
     else
       fail_case "renderer hygiene call removal restoration" "$output"

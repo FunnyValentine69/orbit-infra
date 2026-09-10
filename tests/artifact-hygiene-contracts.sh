@@ -5,6 +5,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$REPO_ROOT/scripts/artifact-hygiene.sh"
 FIXTURES="$REPO_ROOT/tests/fixtures/artifact-hygiene"
 CLEAN="$FIXTURES/clean.md"
+CLEAN_CUSTOM_JSON="$FIXTURES/iam-simulation-custom-report.json"
+CLEAN_ROLE_JSON="$FIXTURES/iam-simulation-role-report.json"
+BAD_JSON="$FIXTURES/bad-iam-simulation-report.json"
 FORBID_FILE="$FIXTURES/forbid-list.txt"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-artifact-hygiene.XXXXXX")"
 results="$tmp_dir/results.txt"
@@ -61,6 +64,18 @@ check_suite() {
 
   verdict="$(run_one "$script" pass "" "$CLEAN")"
   echo "clean fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" pass "" "$CLEAN_CUSTOM_JSON")"
+  echo "clean custom JSON report fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" pass "" "$CLEAN_ROLE_JSON")"
+  echo "clean role JSON report fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" fail "account-id" "$BAD_JSON")"
+  echo "bad JSON report fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
 
   verdict="$(run_one "$script" pass "" "$FIXTURES/clean-git-sha.md")"

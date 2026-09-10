@@ -1,0 +1,32 @@
+{
+  "records": [
+    {
+      "case_id": "case:fixture.policy:AllowRead:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": ["AllowRead"]
+      },
+      "matched_sids": ["AllowRead"],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    }
+  ],
+  "summary": {
+    "failed": 0,
+    "passed": 1,
+    "runner_failures": 0,
+    "total": 1
+  },
+  "unrendered_diagnostic": "live account 123456789012"
+}

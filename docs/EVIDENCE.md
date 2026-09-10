@@ -23,8 +23,8 @@ Codes used below: `P0-3b` is the paid AWS account upgrade (the Free Plan cannot 
 | Remote state, S3 native locking, bootstrapped once | in progress |
 | Reusable modules + `terraform test` | in progress |
 | Policy gates: tflint + checkov + conftest (public S3, open non-ALB ingress) on every PR plan; conftest also gates the saved AWS plan before apply | done (apply-side gate CODE-ONLY until P0-3d) |
-| IAM action-condition matrix | 216 cases in 64 rows are `AWS-SIMULATED 2026-09-09 docs/assets/IAM_SIMULATION_REPORT.md`; rows containing an execution mismatch, live-call-only case, or not-simulatable case retain their lower label |
-| IAM simulation report | `AWS-SIMULATED 2026-09-09 docs/assets/IAM_SIMULATION_REPORT.md`; 239 custom-policy cases (237 matched, 2 findings, 0 runner failures) and 156 role-policy cases (153 custom-lane agreements, 3 divergences); proves policy evaluation, not service enforcement |
+| IAM action-condition matrix | 216 cases in 64 rows are `AWS-SIMULATED 2026-09-10 docs/assets/IAM_SIMULATION_REPORT.md`; rows containing an execution mismatch, live-call-only case, or not-simulatable case retain their lower label |
+| IAM simulation report | `AWS-SIMULATED 2026-09-10 docs/assets/IAM_SIMULATION_REPORT.md`; 239 custom-policy cases (237 matched, 2 findings, 0 runner failures) and 156 role-policy cases (153 custom-lane agreements, 3 divergences); proves policy evaluation, not service enforcement |
 | Recorded LocalStack demo | LOCALSTACK-VERIFIED recording; provenance and generator drift contract-verified in CI |
 | Dispatch-only LocalStack CI apply → acceptance → Stage 1 | LOCALSTACK-VERIFIED in CI (Phase 4 run) |
 | Canonical SBOM comparison + Trivy scan predicates + KMS-backed cosign signatures/attestations | CODE-ONLY until real-AWS publication and apply; offline canonicalization, ordering, and freshness contracts pass |

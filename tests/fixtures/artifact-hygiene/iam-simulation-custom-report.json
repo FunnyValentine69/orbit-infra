@@ -1,4 +1,5 @@
 {
+  "redaction_applied": true,
   "records": [
     {
       "case_id": "case:fixture.policy:AllowRead:ALL:none:matching",

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 [--forbid-file <path>] <artifact.md> [artifact.md ...]" >&2
+  echo "usage: $0 [--forbid-file <path>] <artifact> [artifact ...]" >&2
   exit 2
 }
 

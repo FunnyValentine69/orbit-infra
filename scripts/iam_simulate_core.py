@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, NamedTuple, NoReturn
 
@@ -242,8 +243,87 @@ def document_sha256(document: str) -> str:
     return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
 
+REPORT_PLACEHOLDER_ACCOUNT = "000000000000"
+REPORT_REDACTED = "<redacted>"
+REPORT_DIGEST = re.compile(
+    r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{64}|[0-9A-Fa-f]{40})(?![0-9A-Fa-f])"
+)
+REPORT_IAM_ARN_ACCOUNT = re.compile(r"(arn:[^:\s]+:iam::)([0-9]{12})")
+REPORT_ACCOUNT_ID = re.compile(r"[0-9]{12}")
+REPORT_PRINCIPAL_ID = re.compile(
+    r"(?<![A-Z0-9])(?:AIDA|AROA|ASIA|AKIA)[A-Z0-9]{12,}(?![A-Z0-9])"
+)
+REPORT_REQUEST_ID = re.compile(
+    r"(?:x-amzn-)?request[-_]?id"
+    r"(?:(?:\s*[:=]\s*|\s+)[A-Za-z0-9-]+)?",
+    re.IGNORECASE,
+)
+REPORT_UUID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _redact_report_fragment(value: str) -> str:
+    value = REPORT_PRINCIPAL_ID.sub(REPORT_REDACTED, value)
+    value = REPORT_REQUEST_ID.sub(REPORT_REDACTED, value)
+    value = REPORT_UUID.sub(REPORT_REDACTED, value)
+    value = REPORT_IAM_ARN_ACCOUNT.sub(
+        lambda match: match.group(1)
+        + (
+            match.group(2)
+            if match.group(2) == REPORT_PLACEHOLDER_ACCOUNT
+            else REPORT_PLACEHOLDER_ACCOUNT
+        ),
+        value,
+    )
+    return REPORT_ACCOUNT_ID.sub(
+        lambda match: (
+            match.group(0)
+            if match.group(0) == REPORT_PLACEHOLDER_ACCOUNT
+            else REPORT_PLACEHOLDER_ACCOUNT
+        ),
+        value,
+    )
+
+
+def _redact_report_text(value: str) -> str:
+    redacted: list[str] = []
+    start = 0
+    for digest in REPORT_DIGEST.finditer(value):
+        redacted.append(_redact_report_fragment(value[start : digest.start()]))
+        redacted.append(digest.group(0))
+        start = digest.end()
+    redacted.append(_redact_report_fragment(value[start:]))
+    return "".join(redacted)
+
+
+def redact_report(value: Any) -> Any:
+    """Redact report identifiers recursively while preserving digest tokens."""
+    if isinstance(value, str):
+        return _redact_report_text(value)
+    if isinstance(value, list):
+        return [redact_report(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_report(item) for item in value)
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            request_id_key = isinstance(key, str) and REPORT_REQUEST_ID.search(key)
+            redacted_key = redact_report(key)
+            if redacted_key in redacted:
+                raise RunnerFailure("report redaction creates a duplicate key")
+            redacted[redacted_key] = (
+                REPORT_REDACTED if request_id_key else redact_report(item)
+            )
+        return redacted
+    return value
+
+
 def write_report(path: Path, payload: dict[str, Any]) -> None:
-    """Write a stable report with one compact record or exclusion per line."""
+    """Write a redacted stable report with one compact record or exclusion per line."""
+    payload = redact_report(payload)
+    payload["redaction_applied"] = True
     keys = sorted(payload)
     lines = ["{"]
     for key_index, key in enumerate(keys):

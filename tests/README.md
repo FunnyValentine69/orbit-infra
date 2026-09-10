@@ -399,26 +399,31 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 131 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 134 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
 executed/registered count only after all restored paths pass.
 
-The shared report writer keeps each top-level summary or scalar on one line and
-renders sorted `records` and role-lane `exclusions` with one compact JSON object
-per line. The `REPORT` group round-trips this form against the equivalent pretty
-JSON and kills an `indent=2` writer mutant before proving the restored path.
-Both simulator lanes use the same writer.
+The shared report writer applies a final recursive identifier redaction, records
+`redaction_applied: true`, keeps each top-level summary or scalar on one line,
+and renders sorted `records` and role-lane `exclusions` with one compact JSON
+object per line. SHA-256 and Git-SHA tokens remain byte-preserved. The `REPORT`
+group round-trips this form against the equivalent pretty JSON and kills both a
+redaction-removal mutant and an `indent=2` writer mutant before proving the
+restored paths. Both simulator lanes use the same writer.
 
 The `REPORT` group executes `scripts/iam-simulate-report.sh` against clean
 custom- and role-report fixtures and checks the rendered case table, findings,
 divergences, outcome counts, submitted document hashes, provenance, exclusions,
 and named hygiene review. A full SHA-256 containing account-shaped digits stays
 valid, while the same digits in a case ID fail closed with no published files.
-The group also refuses a role report without `account_redacted: true`, kills
-mutants that remove either that guard or the renderer's hygiene call, and checks
-that a doctored custom `pass` cannot suppress a finding. An injected failure
+The group also refuses a role report without `account_redacted: true`, checks
+both JSON inputs and both rendered Markdown outputs with artifact hygiene, and
+kills mutants that remove the role marker guard, the JSON inputs, or the entire
+hygiene call. The custom fake validates context entries exactly, and a dropped
+`--context-entries` mutant fails. The group also checks that a doctored custom
+`pass` cannot suppress a finding. An injected failure
 between report and provenance publication restores both original output files;
 the provenance is published last. The group also checks the Makefile wiring.
 The root `make test` recipe runs

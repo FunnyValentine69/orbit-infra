@@ -397,7 +397,7 @@ def _fake_authorization_split(args, operation):
         print(f"An error occurred (InvalidInput) when calling the {operation_name} operation: Invalid Input Actions: [{','.join(direct)}] and [{','.join(aliased)}] require different authorization information.", file=sys.stderr)
         raise SystemExit(254)
     _json_print({'EvaluationResults': [{'EvalActionName': action, 'EvalDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action.casefold() in special else 'allowed', 'MatchedStatements': [], 'ResourceSpecificResults': [{'EvalResourceName': resource, 'EvalResourceDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action.casefold() in special else 'allowed', 'MatchedStatements': [], 'MissingContextValues': []} for resource in resources]} for action in actions]})
-def _validate_fake_principal_context(args, scenario):
+def _validate_fake_context(args, scenario, operation):
     expected = scenario.get('expected_context_entries')
     if expected is None: return
     raw = _option(args, '--context-entries')
@@ -407,7 +407,7 @@ def _validate_fake_principal_context(args, scenario):
         submitted = raw
     canonical = lambda entries: sorted(json.dumps(entry, sort_keys=True, separators=(',', ':')) for entry in entries) if isinstance(entries, list) else []
     if canonical(submitted) != canonical(expected):
-        raise SystemExit(f"FAIL: fake simulate-principal-policy context entries mismatch: expected {json.dumps(expected, sort_keys=True, separators=(',', ':'))}, submitted {json.dumps(submitted, sort_keys=True, separators=(',', ':'))}")
+        raise SystemExit(f"FAIL: fake {operation} context entries mismatch: expected {json.dumps(expected, sort_keys=True, separators=(',', ':'))}, submitted {json.dumps(submitted, sort_keys=True, separators=(',', ':'))}")
 def _validate_fake_custom_inputs(args):
     expected_path = os.environ.get('FAKE_AWS_EXPECTED_INPUTS')
     if not expected_path: return
@@ -429,7 +429,9 @@ def _fake_aws():
     service, operation, *options = args
     scenario = json.loads(Path(scenario_file).read_text(encoding='utf-8'))[os.environ.get('FAKE_AWS_SCENARIO', 'success')]
     role_name = (_option(options, '--role-name') or [''])[0]
-    if service == 'iam' and operation == 'simulate-custom-policy': _validate_fake_custom_inputs(args)
+    if service == 'iam' and operation == 'simulate-custom-policy':
+        _validate_fake_custom_inputs(args)
+        _validate_fake_context(options, scenario, operation)
     counted = operation in ('simulate-custom-policy', 'create-role', 'delete-role-policy')
     count = _counter(call_dir, {'simulate-custom-policy': 'simulate-count', 'create-role': 'create-count', 'delete-role-policy': 'delete-policy-count'}.get(operation, operation + '-count')) if counted else 0
     if _scenario_matches(scenario.get('failure'), operation, count, role_name): _fake_error(scenario['failure'], operation)
@@ -468,7 +470,7 @@ def _fake_aws():
         _save_state(path, state)
         _json_print({})
     elif (service, operation) == ('iam', 'simulate-principal-policy'):
-        _validate_fake_principal_context(options, scenario)
+        _validate_fake_context(options, scenario, operation)
         response = os.environ.get('FAKE_PRINCIPAL_RESPONSE')
         if scenario.get('custom') == 'authorization-split': _fake_authorization_split(options, operation)
         elif response: sys.stdout.write(Path(response).read_text(encoding='utf-8'))
@@ -695,6 +697,17 @@ def _command_mutate_role_context_entries():
     source = source.replace(context_line, '  : # context entries deliberately dropped', 1)
     destination.write_text(source, encoding='utf-8')
     destination.chmod(0o755)
+def _command_mutate_custom_context_entries():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    context_line = '        if first["context"]:'
+    if source.count(root_line) != 1 or source.count(context_line) != 1: raise SystemExit('FAIL: custom context-entry mutation anchor changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
+    source = source.replace(context_line, '        if False:  # context entries deliberately dropped', 1)
+    destination.write_text(source, encoding='utf-8')
+    destination.chmod(0o755)
 def _command_validate_role_plan_account_redaction():
     report_path = Path(sys.argv[1])
     account = sys.argv[2]
@@ -720,6 +733,7 @@ def _command_validate_role_account_redaction():
     unexpected = sorted(account_runs - {placeholder})
     if unexpected: raise SystemExit(f'FAIL: role report contains unredacted 12-digit account id: {unexpected[0]}')
     payload = json.loads(serialized)
+    if payload.get('redaction_applied') is not True: raise SystemExit('FAIL: role report lacks the shared redaction marker')
     if payload.get('account') != placeholder or payload.get('account_redacted') is not True: raise SystemExit('FAIL: role report lacks the placeholder account and account_redacted marker')
     if payload.get('ownership_nonce') != '<redacted>' or payload.get('ownership_nonce_redacted') is not True: raise SystemExit('FAIL: role report lacks the redacted ownership nonce marker')
     if not payload.get('manual_cleanup'): raise SystemExit('FAIL: role report account-redaction fixture lacks a manual-cleanup note')
@@ -1238,12 +1252,22 @@ def _command_mutate_report_writer():
     start = source.index(start_marker)
     end = source.index(end_marker, start)
     pretty_writer = """def write_report(path: Path, payload: dict[str, Any]) -> None:
+    payload = redact_report(payload)
+    payload["redaction_applied"] = True
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8"
     )
 """
     destination.write_text(source[:start] + pretty_writer + source[end:], encoding='utf-8')
+
+
+def _command_mutate_report_redaction():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    strict = '    payload = redact_report(payload)\n'
+    if source.count(strict) != 1: raise SystemExit('FAIL: shared report redaction mutation anchor changed')
+    destination.write_text(source.replace(strict, '    payload = dict(payload)\n', 1), encoding='utf-8')
 
 
 def _command_validate_report_writer():
@@ -1263,16 +1287,40 @@ def _command_validate_report_writer():
             {'case_id': 'case:z', 'reason': 'last'},
         ],
         'records': [
-            {'case_id': 'case:a', 'nested': {'z': 4, 'a': 3}, 'pass': True},
+            {
+                'case_id': 'case:a',
+                'errors': [
+                    'live 123456789012 arn:aws:iam::210987654321:role/example '
+                    'AROAEXAMPLE1234567'
+                ],
+                'mode': 'custom',
+                'nested': {'z': 4, 'a': 3},
+                'pass': True,
+                'response': {'RequestId': 'request-token'},
+                'trace_id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+            },
             {'case_id': 'case:z', 'nested': {'z': 2, 'a': 1}, 'pass': True},
         ],
         'summary': {'total': 2, 'passed': 2, 'failed': 0},
     }
-    pretty = json.dumps(payload, indent=2, sort_keys=True) + '\n'
+    expected_payload = deepcopy(payload)
+    expected_payload['records'][0]['errors'] = [
+        'live 000000000000 arn:aws:iam::000000000000:role/example <redacted>'
+    ]
+    expected_payload['records'][0]['response'] = {'<redacted>': '<redacted>'}
+    expected_payload['records'][0]['trace_id'] = '<redacted>'
+    expected_payload['redaction_applied'] = True
     core.write_report(output_path, payload)
     rendered = output_path.read_text(encoding='utf-8')
+    actual_payload = json.loads(rendered)
+    if (
+        '123456789012' in rendered
+        or 'AROAEXAMPLE1234567' in rendered
+        or actual_payload.get('redaction_applied') is not True
+    ):
+        raise SystemExit('FAIL: shared report writer retained live identifiers')
     lines = rendered.splitlines()
-    keys = sorted(payload)
+    keys = sorted(expected_payload)
     for key in ('records', 'exclusions'):
         diagnostic = f'FAIL: compact report {key} must contain exactly one record per line'
         opener = f'  {json.dumps(key)}:['
@@ -1280,7 +1328,7 @@ def _command_validate_report_writer():
         start = lines.index(opener) + 1
         try: end = lines.index('  ]' + (',' if keys.index(key) < len(keys) - 1 else ''), start)
         except ValueError: raise SystemExit(diagnostic) from None
-        values = sorted(payload[key], key=lambda item: item.get('case_id', ''))
+        values = sorted(expected_payload[key], key=lambda item: item.get('case_id', ''))
         expected = [
             '    ' + json.dumps(item, sort_keys=True, separators=(',', ':')) +
             (',' if index < len(values) - 1 else '')
@@ -1290,11 +1338,11 @@ def _command_validate_report_writer():
     for key in set(keys) - {'records', 'exclusions'}:
         expected = (
             f'  {json.dumps(key)}:' +
-            json.dumps(payload[key], sort_keys=True, separators=(',', ':')) +
+            json.dumps(expected_payload[key], sort_keys=True, separators=(',', ':')) +
             (',' if keys.index(key) < len(keys) - 1 else '')
         )
         if lines.count(expected) != 1: raise SystemExit(f'FAIL: compact report top-level key is not on one line: {key}')
-    if json.loads(rendered) != json.loads(pretty): raise SystemExit('FAIL: compact report changes JSON content')
+    if actual_payload != expected_payload: raise SystemExit('FAIL: compact report changes JSON content')
     print('PASS: compact report writer preserves content and renders sorted one-record lines')
 COMMANDS = {
     'build': build_fixtures, 'fake-aws': _fake_aws, 'table-counts': _table_counts,
