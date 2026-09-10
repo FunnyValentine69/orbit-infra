@@ -314,8 +314,10 @@ execution role ARN. The same HCL comment stripper protects Sid inventory and
 complete, anchored boundary-assignment counts, so comments and quoted decoys do
 not count. Fixture hygiene scans regular files plus symlink target strings and
 rejects links that resolve outside the IAM fixture directory. Evidence-label
-syntax is checked, but the labels are recorded P0-3d facts whose truth cannot be
-validated mechanically. The `absent-key-passed`, `arn-real-account`,
+syntax is checked, and every promoted custom record must carry a
+non-empty submitted policy hash list, but the labels are recorded P0-3d facts
+whose truth cannot otherwise be validated mechanically. The
+`absent-key-passed`, `arn-real-account`,
 `allow-masked-negative-missing`, `masked-negative-missing`,
 `masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
 `masked-form-whole-document`, `trust-absent-executable`,
@@ -349,8 +351,14 @@ For an already-rendered post-apply plan, run
 `bash tests/iam-matrix-contracts.sh <post-apply-plan.json>`. Plan mode compares
 Effect, Principal or NotPrincipal, Action or NotAction, Resource or
 NotResource, Condition, all bindings, and all three trust documents exactly.
-String and array policy fields canonicalise identically. A pre-apply plan whose
-trust policies are unknown fails with the apply-first diagnostic. This exact comparison runs in the same-repository `plan-localstack` job and in
+String and array policy fields canonicalise identically. For every promoted case,
+plan mode also binds the record's first submitted policy hash to the SHA-256 of
+the exact plan-rendered document at that case's address; `custom-isolated` records
+are bound to their canonical one-statement wrapper. A mismatch reports the case
+ID plus both report and plan hashes. This byte binding runs under
+`make iam-matrix-plan`. A pre-apply plan whose trust policies are unknown fails
+with the apply-first diagnostic. This exact comparison runs in the same-repository
+`plan-localstack` job and in
 `iam-matrix-plan.yml` after a LocalStack bootstrap apply on every push to
 `main`, weekly, and by manual dispatch from the default branch. Source mode
 remains Sid-keyed on fork PRs; the next main push closes that exact-field drift
@@ -399,7 +407,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 134 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 143 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
@@ -408,10 +416,12 @@ executed/registered count only after all restored paths pass.
 The shared report writer applies a final recursive identifier redaction, records
 `redaction_applied: true`, keeps each top-level summary or scalar on one line,
 and renders sorted `records` and role-lane `exclusions` with one compact JSON
-object per line. SHA-256 and Git-SHA tokens remain byte-preserved. The `REPORT`
-group round-trips this form against the equivalent pretty JSON and kills both a
-redaction-removal mutant and an `indent=2` writer mutant before proving the
-restored paths. Both simulator lanes use the same writer.
+object per line. SHA-256 and Git-SHA tokens remain byte-preserved. The writer
+creates its temporary file beside the destination, so the final `os.replace` is
+atomic even when the configured scratch directory is on another filesystem. The
+`REPORT` group round-trips this form against the equivalent pretty JSON and kills
+redaction-removal, cross-directory-temporary-file, and `indent=2` writer mutants
+before proving the restored paths. Both simulator lanes use the same writer.
 
 The `REPORT` group executes `scripts/iam-simulate-report.sh` against clean
 custom- and role-report fixtures and checks the rendered case table, findings,
@@ -423,23 +433,29 @@ both JSON inputs and both rendered Markdown outputs with artifact hygiene, and
 kills mutants that remove the role marker guard, the JSON inputs, or the entire
 hygiene call. The custom fake validates context entries exactly, and a dropped
 `--context-entries` mutant fails. The group also checks that a doctored custom
-`pass` cannot suppress a finding. An injected failure
-between report and provenance publication restores both original output files;
+`pass` cannot suppress a finding. Role divergences render the vector expectation
+and the custom lane's observed decision in separate columns. Mixed dict results
+are re-evaluated against `expect.resource_decisions`, so a matching
+allowed/explicitDeny result remains a pass. An injected failure between report
+and provenance publication restores both original output files;
 the provenance is published last. The group also checks the Makefile wiring.
 The root `make test` recipe runs
 `tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
 
 The `EVIDENCE` group joins every `AWS-SIMULATED` matrix label to a unique
 execution-matching custom-policy record or, when needed, a unique matching
-SCP-excluded
-role-policy record. It ignores stored custom `pass` values and re-evaluates both
-lanes' decisions and required/forbidden Sids against the vector; a runner
+SCP-excluded role-policy record. When report details are available, every
+asserted action/resource pair must independently include every required Sid and
+exclude every forbidden Sid; the union remains display-only. It ignores stored
+custom `pass` values and re-evaluates both lanes' decisions and
+required/forbidden Sids against the vector; a runner
 failure never matches. It enforces the row minimum, verifies the provenance
 date and exact report pointer, and refuses publication date or generator-commit
 disagreement between the Markdown report and provenance. It prints the computed
 custom, role, and Markdown SHA-256 digests and will compare them once P5-52
-makes the renderer record the complete digest set. Twelve registered mutants
-cover those joins and bindings, including a doctored SNS pass and a runner
+makes the renderer record the complete digest set. Fourteen registered mutants
+cover those joins and bindings, including a doctored SNS pass, a per-pair Sid
+miss, an empty promoted hash list, and a runner
 failure. Every restored join must pass.
 
 The `TAXONOMY` group runs
@@ -546,8 +562,13 @@ ID throughout the final object with `000000000000`; reports carry that placehold
 `account`, replace the per-invocation ownership nonce with `<redacted>`, and set
 both redaction markers to `true`. Fake-recorded API calls prove that role names,
 trust policies, and principal-policy source ARNs retain the live account ID
-while the report contains neither the live account nor the replayable nonce.
-Exact `--only` selection executes one case; missing, duplicate, and unsupported
+while the report contains neither the live account nor the replayable nonce. The
+trust document names exactly the invoking `sts get-caller-identity` Arn, never the
+account root; dry-run inventory uses the same builder with the redacted principal.
+Report serialization replaces the complete caller Arn with
+`arn:aws:iam::000000000000:<redacted-principal>`, so no caller user or role name is
+published. Exact `--only` selection executes one case; missing, duplicate, and
+unsupported
 IDs fail with the requested ID and a specific exclusion reason.
 
 An independent projection oracle reconstructs pass partitioning, source order,
@@ -599,12 +620,16 @@ fixtures at run time, then requires exactly `1 + 8R + 2G` calls, where `G` is
 the sum of non-empty authorization action groups over the `C` selected cases.
 The current full fixture has `R=8`, `C=156`, `G=157`, and therefore 379 calls.
 A dropped-call mutant kills the formula check. Its restored path keeps the full
-denominator. The process-substitution descriptor-leak mutant and instrumented
-bounded-read lane run against the same reduced 24-case fixture with a five-second
-wall-clock cap. Each case samples `ls -1 /dev/fd`; every mutant increment must
-be at least two descriptors, while the bounded-read lane's maximum-minus-minimum
-count must be at most two. This measures the leak rather than relying on
-platform-specific descriptor exhaustion. Duplicate Sids across
+denominator. The descriptor-leak mutant and instrumented bounded-read lane run
+against the same reduced 24-case fixture with a five-second wall-clock cap. Each
+case samples
+`ls -1 /dev/fd`; the deterministic mutant opens and retains exactly one fresh
+descriptor per case, so every increment must be at least one, while the real
+lane's maximum-minus-minimum count must be at most two. The historical bug was a
+nested process substitution that leaked until case 126 on macOS Bash 3.2. That
+shape does not leak on Linux Bash 5, so the registered mutant is a deterministic
+stand-in with the same growth contract on both platforms; its registry action
+explicitly names macOS Bash 3.2 and Linux Bash 5. Duplicate Sids across
 combined role documents and any loaded vector case ID missing from the custom
 report fail before a role is created.
 Every selected case is simulated first with the exact SCP exclusion and then

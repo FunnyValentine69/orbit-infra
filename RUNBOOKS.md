@@ -307,7 +307,9 @@ TARGET=aws scripts/iam-simulate.sh \
 Preview the role lane without its opt-in. `--dry-run` uses the real call builder,
 prints the caller check, every tagged projection-role create and inline-policy
 put, both simulations for every selected case, reverse cleanup, and absence
-checks; it makes zero AWS calls. With the complete authored vector directory and
+checks; it makes zero AWS calls. Its create-role inventory uses the same trust
+policy builder as a live run, with the invoking identity represented by the
+redacted principal placeholder. With the complete authored vector directory and
 current plan this inventory has eight projection passes: one combined
 plan-reader pass, six per-document deployer passes, and one publisher pass:
 
@@ -326,8 +328,11 @@ the same vectors. Before the caller check or first role create, each custom
 record's mode and submitted source-policy SHA-256 must match the current vector
 and plan document. The plan-derived account must be the authored
 `000000000000` placeholder or equal `--expect-account`; a third account fails
-before the caller check or any role create. That string authorizes only the
-roles carrying both the run tag and a per-invocation
+before the caller check or any role create. After `sts get-caller-identity`, every
+temporary role's trust policy must name exactly the returned caller Arn as its
+sole AWS principal; an account-root principal is refused before create-role. The
+opt-in string authorizes only the roles carrying both the run tag and a
+per-invocation
 `OrbitIamSimulationNonce`: 32 lowercase hexadecimal characters read from
 `/dev/urandom`. The lane verifies both tags on every created role before the
 first policy put and re-reads both immediately before each cleanup mutation. It
@@ -349,7 +354,9 @@ pass; no document's cases are dropped. A duplicate Sid across documents in a
 combined role fails closed with both source addresses.
 
 Every selected case runs first with the exact `{"PolicyType":"scp"}` exclusion
-and then without an exclusion. The SCP-excluded result is compared to the custom
+and then without an exclusion. Required and forbidden Sids are checked on every
+action/resource detail independently; their union is retained only for display.
+The SCP-excluded result is compared to the custom
 report's observed decision. A mismatch is a non-failing divergence record with
 the deciding projection, both decisions, both matched-Sid lists, and the run or
 runs where it appears. The default request is the effective-policy result; each
@@ -373,7 +380,9 @@ principal/custom divergences, and Organizations divergences. The AWS-managed
 role-lane exclusion. A single final redaction replaces both the live account and
 any non-placeholder plan account with `000000000000`; the report records
 `plan_account_redacted`, and the ownership nonce is replaced with `<redacted>`
-so a report cannot replay either ownership value. The shared writer then
+so a report cannot replay either ownership value. The caller identity is replaced
+in full with `arn:aws:iam::000000000000:<redacted-principal>`; the writer refuses
+any report retaining the caller's user or role name. The shared writer then
 applies a final whole-report identifier redaction and records
 `redaction_applied: true`. The cleanup paths remain contract-tested offline. A
 real role-lane execution on 2026-09-10 recorded 156 cases, 153 custom-lane
@@ -399,7 +408,9 @@ fails. Both files record the publication date and generator commit; the
 Evidence join refuses a disagreeing pair. A violation leaves the output
 directory untouched and prints the checker's `FAIL:` line. Custom-lane pass
 cells, counts, and findings are re-derived from observed decisions and
-required/forbidden Sids rather than trusting the stored `pass` field.
+required/forbidden Sids rather than trusting the stored `pass` field. Role
+divergence rows show the vector expectation separately from custom observed, and
+mixed resource results are compared with `expect.resource_decisions`.
 
 ## Front-page evidence
 

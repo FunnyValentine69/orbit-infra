@@ -176,15 +176,24 @@ def validate_custom(report):
         validate_hashes(record, label)
 
 
-def validate_role(report):
+def validate_role(report, custom_by_id):
     if report.get("account_redacted") is not True:  # role-account-redacted-guard
         fail("role report must set account_redacted to true")
     for index, record in enumerate(report["records"]):
         label = f"role record {index}"
         if not isinstance(record, dict):
             fail(f"{label} must be an object")
-        require_string(record.get("case_id"), f"{label} case_id")
+        case_id = require_string(record.get("case_id"), f"{label} case_id")
         require_string(record.get("mode"), f"{label} mode")
+        custom_record = custom_by_id.get(case_id)
+        if "expect" in record and not isinstance(record["expect"], dict):
+            fail(f"{label} expect must be an object")
+        if (
+            custom_record is not None
+            and "expect" in record
+            and record["expect"] != custom_record["expect"]
+        ):
+            fail(f"role record {case_id} expectation differs from custom vector expectation")
         if not isinstance(record.get("pass"), bool):
             fail(f"{label} pass must be boolean")
         for lane in ("custom_lane", "scp_excluded", "default"):
@@ -223,8 +232,15 @@ def custom_view(record):
     return expected, record["decision_observed"], record["matched_sids"]
 
 
+def role_expectation(record):
+    if "expect" in record:
+        return record["expect"]
+    custom_record = custom_by_id.get(record["case_id"])
+    return custom_record["expect"] if custom_record is not None else {}
+
+
 def role_view(record):
-    expected = record["custom_lane"]["decision_observed"]
+    expected = role_expectation(record).get("decision", "attribution-only")
     observed = record["scp_excluded"]["decision_observed"]
     return expected, observed, record["scp_excluded"]["matched_sids"]
 
@@ -234,14 +250,34 @@ def custom_matches(record):
         return False
     expectation = record["expect"]
     expected_decision = expectation.get("decision")
-    if expected_decision is not None:
-        observed = record["decision_observed"]
+    per_resource = expectation.get("resource_decisions")
+    observed = record["decision_observed"]
+    if isinstance(per_resource, dict):
+        if not isinstance(observed, dict) or not observed:
+            return False
+        missing = object()
+        observed_resources = set()
+        for pair_or_resource, decision in observed.items():
+            resource = pair_or_resource.split("|", 1)[-1]
+            observed_resources.add(resource)
+            if per_resource.get(resource, missing) != decision:
+                return False
+        if observed_resources != set(per_resource):
+            return False
+    elif expected_decision is not None:
         decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
         if not decisions or any(decision != expected_decision for decision in decisions):
             return False
-    matched = set(record["matched_sids"])
     required = set(expectation.get("matched_sid_required", []))
     forbidden = set(expectation.get("matched_sid_forbidden", []))
+    details = record.get("details")
+    if isinstance(details, list) and details:
+        for detail in details:
+            matched = set(detail.get("matched_sids", [])) if isinstance(detail, dict) else set()
+            if not required <= matched or forbidden & matched:
+                return False
+        return True
+    matched = set(record["matched_sids"])
     return required <= matched and not (forbidden & matched)
 
 
@@ -282,11 +318,17 @@ def append_hash_rows(lines, lane, records):
 
 custom = read_report(custom_path, "custom")
 validate_custom(custom)
+custom_records = custom["records"]
+custom_by_id = {}
+for record in custom_records:
+    case_id = record["case_id"]
+    if case_id in custom_by_id:
+        fail(f"custom report repeats case_id: {case_id}")
+    custom_by_id[case_id] = record
 role = read_report(role_path, "role") if role_path else None
 if role is not None:
-    validate_role(role)
+    validate_role(role, custom_by_id)
 
-custom_records = custom["records"]
 role_records = role["records"] if role is not None else []
 report_lines = [
     "# IAM simulation report",
@@ -336,6 +378,7 @@ else:
                 (
                     record["case_id"],
                     "principal/custom",
+                    role_expectation(record).get("decision", "attribution-only"),
                     record["custom_lane"]["decision_observed"],
                     record["scp_excluded"]["decision_observed"],
                     record["default"]["decision_observed"],
@@ -357,7 +400,8 @@ else:
                 (
                     record["case_id"],
                     f"Organizations: {item.get('action_name')} {item.get('resource_arn')}",
-                    "not applicable",
+                    role_expectation(record).get("decision", "attribution-only"),
+                    record["custom_lane"]["decision_observed"],
                     item.get("scp_excluded", {}).get("decision_observed"),
                     item.get("default", {}).get("decision_observed"),
                 )
@@ -365,15 +409,15 @@ else:
     if divergence_rows:
         report_lines.extend(
             [
-                "| Case ID | Scope | Custom | SCP-excluded | Default |",
-                "| --- | --- | --- | --- | --- |",
+                "| Case ID | Scope | Expected | Custom observed | SCP-excluded | Default |",
+                "| --- | --- | --- | --- | --- | --- |",
             ]
         )
-        for case_id, scope, custom_decision, excluded, default in divergence_rows:
+        for case_id, scope, expected, custom_decision, excluded, default in divergence_rows:
             report_lines.append(
                 f"| {markdown(case_id)} | {markdown(scope)} | "
-                f"{markdown(custom_decision)} | {markdown(excluded)} | "
-                f"{markdown(default)} |"
+                f"{markdown(expected)} | {markdown(custom_decision)} | "
+                f"{markdown(excluded)} | {markdown(default)} |"
             )
     else:
         report_lines.append("No divergences recorded.")

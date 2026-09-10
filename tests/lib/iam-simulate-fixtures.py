@@ -26,6 +26,7 @@ def _authorization_action_groups(actions):
 
 PLAN_FIXTURES = (
     ('plan.json', 'synthetic', ()),
+    ('plan-per-pair-sid.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_deny', ('$ctx', 'per_pair_sid_policy')),)),
     ('plan-resources-object.json', 'plan.json', (('set', ('planned_values', 'root_module', 'resources'), {}),)),
     ('plan-duplicate-document.json', 'plan.json', (('duplicate-resource', 'aws_iam_role_policy.plan_reader_deny'),)),
     ('plan-null-policy.json', 'plan.json', (('policy', 'aws_iam_role_policy.plan_reader_deny', None),)),
@@ -44,6 +45,7 @@ PLAN_FIXTURES = (
     ('role-duplicate-sid-plan.json', 'role-projection-plan.json', (('statement-sid', 'aws_iam_role_policy.plan_reader_deny', 0, 'CrossDocumentDuplicate'), ('statement-sid', 'aws_iam_role_policy.plan_reader_state', 0, 'CrossDocumentDuplicate'))),
 )
 VECTOR_FIXTURES = (
+    ('per-pair-sid-vectors/per-pair.json', 'decision', (('set', ('case_id',), 'case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource'), ('set', ('action_names',), ['s3:GetObject', 's3:GetObjectVersion']), ('set', ('resource_arns',), ['*']), ('set', ('expect',), {'decision': 'allowed', 'matched_sid_required': ['DenyReadStateObjectsOutsideScope'], 'matched_sid_forbidden': []}))),
     ('runner-vectors/mapping.json', 'decision', (('set', ('case_id',), 'case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource'), ('set', ('action_names',), ['s3:GetObject']), ('set', ('resource_arns',), ['arn:aws:s3:::orbit-infra-${SUFFIX}-good/example', 'arn:aws:s3:::orbit-infra-${SUFFIX}-bad/example']), ('set', ('expect',), {'decision': 'explicitDeny', 'resource_decisions': {'arn:aws:s3:::orbit-infra-${SUFFIX}-good/example': 'allowed', 'arn:aws:s3:::orbit-infra-${SUFFIX}-bad/example': 'explicitDeny'}, 'matched_sid_required': ['FixtureAllow', 'DenyReadStateObjectsOutsideScope'], 'matched_sid_forbidden': []}))),
     ('real-position-vectors/position.json', 'decision', (('set', ('case_id',), 'case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource'), ('set', ('action_names',), ['s3:GetObject']), ('set', ('resource_arns',), ['arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate/other/x']), ('set', ('expect', 'decision'), 'explicitDeny'), ('set', ('expect', 'matched_sid_required'), ['DenyReadStateObjectsOutsideScope']))),
     ('multiline-position-vectors/position.json', 'real-position-vectors/position.json', ()),
@@ -84,6 +86,8 @@ RESPONSE_FIXTURES = (
     ('response-deployer-ambiguous.json', 'response-deployer-position.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 0, 'MatchedStatements', 0, 'StartPosition', 'Column'), 1778),)),
     ('response-decision-mutant.json', 'response-baseline.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 0, 'EvalResourceDecision'), 'explicitDeny'),)),
     ('response-position-mutant.json', 'response-baseline.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 1, 'MatchedStatements'), [('$ctx', 'mapping_match0')]),)),
+    ('response-per-pair-sid-mutant.json', 'per-pair-sid-mutant', ()),
+    ('response-per-pair-sid-restored.json', 'per-pair-sid-restored', ()),
     ('response-missing-arn.json', 'response-baseline.json', (('delete', ('EvaluationResults', 0, 'ResourceSpecificResults', -1)),)),
     ('response-unmapped.json', 'response-baseline.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 1, 'MatchedStatements'), [('$ctx', 'unmapped_match')]),)),
     ('response-unknown-source.json', 'response-baseline.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 1, 'MatchedStatements'), [('$ctx', 'unknown_source_match')]),)),
@@ -102,6 +106,7 @@ RESPONSE_FIXTURES = (
 )
 CUSTOM_REPORT_FIXTURES = (
     ('role-custom-report.json', ('records', (('role-vectors/role-0.json', 'aws_iam_role_policy.plan_reader_state', 'custom'), ('role-vectors/role-1.json', 'aws_iam_policy.deployer_data', 'custom'), ('role-vectors/role-2.json', 'aws_iam_role_policy.publisher', 'custom'), ('role-vectors/role-isolated.json', None, 'custom-isolated'), ('role-vectors/role-excluded-boundary.json', 'aws_iam_policy.task_boundary', 'custom'))), (('set', ('records', 4, 'document_hashes_submitted', 'policy_input_list'), ('$ctx', 'excluded_boundary_policy_hashes')), ('set', ('records', 4, 'document_hashes_submitted', 'permissions_boundary_policy_input_list'), ('$ctx', 'excluded_boundary_boundary_hashes')))),
+    ('role-per-pair-custom-report.json', ('records', (('per-pair-sid-vectors/per-pair.json', 'per_pair_sid_policy', 'custom'),)), ()),
     ('role-deployer-position-custom-report.json', ('records', (('deployer-position-vectors/position.json', 'real_deployer_policy', 'custom'),)), ()),
     ('role-scanner-string-delimiters-custom-report.json', ('records', (('scanner-string-delimiters-vectors/position.json', 'scanner_position_policy', 'custom'),)), ()),
     ('role-scanner-escaped-quotes-custom-report.json', ('records', (('scanner-escaped-quotes-vectors/position.json', 'scanner_position_policy', 'custom'),)), ()),
@@ -150,6 +155,7 @@ def _delimiter_match(policy, index, source='PolicyInputList.1'):
 def _policy(sid): return json.dumps({'Version': '2012-10-17', 'Statement': [{'Sid': sid, 'Effect': 'Allow', 'Action': 'iam:GetRole', 'Resource': '*'}]}, separators=(',', ':'))
 def _context(taxonomy_path, projection_source):
     mapping = '{"Version":"2012-10-17","Statement":[{"Sid":"FixtureAllow","Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::orbit-infra-79s5rw-good/*"},{"Sid":"DenyReadStateObjectsOutsideScope","Effect":"Deny","Action":"s3:GetObject","Resource":"arn:aws:s3:::orbit-infra-79s5rw-bad/*"}]}'
+    per_pair_sid = '{"Version":"2012-10-17","Statement":[{"Sid":"DenyReadStateObjectsOutsideScope","Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion"],"Resource":"*"},{"Sid":"FixtureAllow","Effect":"Allow","Action":"s3:GetObjectVersion","Resource":"*"}]}'
     real = '{"Version":"2012-10-17","Statement":[{"Action":["s3:GetObjectVersion","s3:GetObject"],"Effect":"Deny","NotResource":["arn:aws:s3:::orbit-infra-79s5rw-tfstate/envs/preview/*","arn:aws:s3:::orbit-infra-79s5rw-tfstate/bootstrap/*"],"Sid":"DenyReadStateObjectsOutsideScope"},{"Action":"s3:ListBucket","Effect":"Deny","NotResource":"arn:aws:s3:::orbit-infra-79s5rw-tfstate","Sid":"DenyListBucketOutsideScope"},{"Action":["s3:ListBucketVersions","s3:ListBucket"],"Condition":{"StringNotLike":{"s3:prefix":["envs/preview/*","bootstrap/*","envs/preview","bootstrap"]}},"Effect":"Deny","Resource":"arn:aws:s3:::orbit-infra-79s5rw-tfstate","Sid":"DenyListBucketOutsideScopePrefix"},{"Action":["s3:ListBucketVersions","s3:ListBucket"],"Condition":{"Null":{"s3:prefix":"true"}},"Effect":"Deny","Resource":"arn:aws:s3:::orbit-infra-79s5rw-tfstate","Sid":"DenyListBucketMissingPrefix"},{"Action":["ssm:GetParametersByPath","ssm:GetParameters","ssm:GetParameterHistory","ssm:GetParameter","secretsmanager:GetSecretValue","lambda:GetLayerVersion","lambda:GetFunctionConfiguration","lambda:GetFunction","kms:Decrypt"],"Effect":"Deny","Resource":"*","Sid":"DenySecretsAndParams"}]}'
     multiline = '\n'.join(('{', '  "Version": "2012-10-17",', '  "Statement": [', '    {"Sid":"FixtureAllow","Effect":"Allow","Action":"s3:GetObject","Resource":"*"},', '    {"Action":"s3:GetObject","Effect":"Deny","Resource":"*","Sid":"DenyReadStateObjectsOutsideScope"}', '  ]', '}'))
     scanner = json.dumps({'Version': '2012-10-17', 'Statement': [{'Sid': 'DenyReadStateObjectsOutsideScope', 'Effect': 'Allow', 'Action': 's3:GetObject', 'Resource': 'arn:aws:s3:::orbit-infra-79s5rw-delimiters/*', 'Condition': {'StringEquals': {'test:Value': 'literal { and } and [ stay inside this string'}}}, {'Sid': 'DenyListBucketOutsideScope', 'Effect': 'Allow', 'Action': 's3:GetObject', 'Resource': 'arn:aws:s3:::orbit-infra-79s5rw-escaped/*', 'Condition': {'StringEquals': {'test:Value': 'an escaped "quote } [" stays inside this string'}}}]}, separators=(',', ':'))
@@ -196,7 +202,8 @@ def _context(taxonomy_path, projection_source):
         '"Resource":"*"',
         f'"Resource":"arn:aws:iam::{second_account}:role/example"',
     )
-    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'second_account_policy': second_account_policy, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'role_authorization_decision': role_authorization_decision, 'role_authorization_casefold_decision': role_authorization_casefold_decision, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
+    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'second_account_policy': second_account_policy, 'per_pair_sid_policy': per_pair_sid, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'role_authorization_decision': role_authorization_decision, 'role_authorization_casefold_decision': role_authorization_casefold_decision, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
+    ctx.update({'per_pair_sid_match0': _delimiter_match(per_pair_sid, 0), 'per_pair_sid_match1': _delimiter_match(per_pair_sid, 1)})
     ctx.update({'mapping_match0': _delimiter_match(mapping, 0), 'mapping_match1': _delimiter_match(mapping, 1), 'unmapped_match': _match(1), 'unknown_source_match': _delimiter_match(mapping, 1, 'UnknownPolicyLabel'), 'real_position_match': _match(38, 271)})
     first = ambiguous.index('{', ambiguous.index('[')) + 1
     second = ambiguous.index('{', first) + 1
@@ -256,8 +263,16 @@ def _evaluation(action, resource, decision, matches, template=None):
 def _response_source(ctx, name, outputs):
     if name == 'mapping':
         good, bad = ('arn:aws:s3:::orbit-infra-79s5rw-good/example', 'arn:aws:s3:::orbit-infra-79s5rw-bad/example')
-        result = {'EvalActionName': 's3:GetObject', 'EvalResourceName': 'arn:aws:s3:::${BucketName}/${KeyName}', 'EvalDecision': 'explicitDeny', 'MatchedStatements': [], 'MissingContextValues': [], 'OrganizationsDecisionDetail': {'AllowedByOrganizations': True}, 'ResourceSpecificResults': [{'EvalResourceName': good, 'EvalResourceDecision': 'allowed', 'MatchedStatements': [ctx['mapping_match0']], 'MissingContextValues': []}, {'EvalResourceName': bad, 'EvalResourceDecision': 'explicitDeny', 'MatchedStatements': [ctx['mapping_match1']], 'MissingContextValues': []}]}
+        result = {'EvalActionName': 's3:GetObject', 'EvalResourceName': 'arn:aws:s3:::${BucketName}/${KeyName}', 'EvalDecision': 'explicitDeny', 'MatchedStatements': [], 'MissingContextValues': [], 'OrganizationsDecisionDetail': {'AllowedByOrganizations': True}, 'ResourceSpecificResults': [{'EvalResourceName': good, 'EvalResourceDecision': 'allowed', 'MatchedStatements': [ctx['mapping_match0'], ctx['mapping_match1']], 'MissingContextValues': []}, {'EvalResourceName': bad, 'EvalResourceDecision': 'explicitDeny', 'MatchedStatements': [ctx['mapping_match0'], ctx['mapping_match1']], 'MissingContextValues': []}]}
         return {'EvaluationResults': [result], 'IsTruncated': False}
+    if name.startswith('per-pair-sid-'):
+        second_matches = [ctx['per_pair_sid_match1']]
+        if name.endswith('restored'):
+            second_matches.insert(0, ctx['per_pair_sid_match0'])
+        return {'EvaluationResults': [
+            _evaluation('s3:GetObject', '*', 'allowed', [ctx['per_pair_sid_match0']])['EvaluationResults'][0],
+            _evaluation('s3:GetObjectVersion', '*', 'allowed', second_matches)['EvaluationResults'][0],
+        ]}
     if name == 'real-position': return _evaluation('s3:GetObject', 'arn:aws:s3:::orbit-infra-79s5rw-tfstate/other/x', 'explicitDeny', [ctx['real_position_match']])
     if name.startswith('scanner-'):
         index = int(name[-1])
@@ -280,9 +295,55 @@ def _record_report(ctx, outputs, specs):
         if policy_name == '@document': policy = ctx['projection_policies'][vector['document']]
         elif policy_name == 'real_deployer_policy': policy = ctx[policy_name]
         elif policy_name: policy = ctx['policy_map'].get(policy_name, ctx.get(policy_name))
-        records.append({'case_id': vector['case_id'], 'decision_observed': vector['expect']['decision'], 'matched_sids': vector['expect']['matched_sid_required'], 'expect': vector['expect'], 'pass': True, 'mode': mode, 'document_hashes_submitted': {'policy_input_list': [] if policy is None else [{'sha256': hashlib.sha256(policy.encode()).hexdigest()}], 'permissions_boundary_policy_input_list': []}})
+        elif mode == 'custom-isolated':
+            source_policy = json.loads(ctx['policy_map'][vector['document']])
+            isolated_statement = next(
+                statement for statement in source_policy['Statement']
+                if statement.get('Sid') == vector['sid']
+            )
+            policy = json.dumps(
+                {'Version': '2012-10-17', 'Statement': [isolated_statement]},
+                separators=(',', ':'),
+            )
+        render = lambda value: value.replace('${ACCOUNT_ID}', '000000000000').replace('${SUFFIX}', '79s5rw')
+        resources = [render(resource) for resource in vector.get('resource_arns', [])] or ['*']
+        per_resource = vector['expect'].get('resource_decisions')
+        rendered_resource_decisions = (
+            {render(resource): decision for resource, decision in per_resource.items()}
+            if isinstance(per_resource, dict) else None
+        )
+        decision_observed = rendered_resource_decisions or vector['expect']['decision']
+        details = [
+            {
+                'action_name': action,
+                'resource_arn': resource,
+                'decision_observed': (
+                    rendered_resource_decisions[resource]
+                    if rendered_resource_decisions is not None
+                    else vector['expect']['decision']
+                ),
+                'matched_statement_sources': [],
+                'matched_sids': vector['expect']['matched_sid_required'],
+            }
+            for action in vector['action_names']
+            for resource in resources
+        ]
+        records.append({
+            'case_id': vector['case_id'],
+            'decision_observed': decision_observed,
+            'matched_sids': vector['expect']['matched_sid_required'],
+            'details': details,
+            'expect': vector['expect'],
+            'pass': True,
+            'mode': mode,
+            'document_hashes_submitted': {
+                'policy_input_list': [] if policy is None else [{'sha256': hashlib.sha256(policy.encode()).hexdigest()}],
+                'permissions_boundary_policy_input_list': [],
+            },
+        })
     total = len(records)
     return {'records': records, 'summary': {'total': total, 'passed': total, 'failed': 0, 'runner_failures': 0}}
+
 def _materialize(ctx, outputs, base, family):
     if isinstance(base, tuple) and base[0] == 'records': return _record_report(ctx, outputs, base[1])
     if base in outputs: return deepcopy(outputs[base])
@@ -440,7 +501,7 @@ def _fake_aws():
         else: sys.stdout.write(Path(os.environ['FAKE_AWS_RESPONSE']).read_text(encoding='utf-8'))
     elif (service, operation) == ('sts', 'get-caller-identity'):
         account = os.environ.get('FAKE_ACCOUNT_ID', '000000000000')
-        _json_print({'Account': account, 'Arn': f'arn:aws:iam::{account}:root', 'UserId': 'fixture'})
+        _json_print({'Account': account, 'Arn': f'arn:aws:iam::{account}:user/fixture-caller', 'UserId': 'fixture'})
     elif (service, operation) == ('iam', 'create-role'):
         tags = []
         for item in _option(options, '--tags'):
@@ -736,6 +797,11 @@ def _command_validate_role_account_redaction():
     if payload.get('redaction_applied') is not True: raise SystemExit('FAIL: role report lacks the shared redaction marker')
     if payload.get('account') != placeholder or payload.get('account_redacted') is not True: raise SystemExit('FAIL: role report lacks the placeholder account and account_redacted marker')
     if payload.get('ownership_nonce') != '<redacted>' or payload.get('ownership_nonce_redacted') is not True: raise SystemExit('FAIL: role report lacks the redacted ownership nonce marker')
+    redacted_principal = 'arn:aws:iam::000000000000:<redacted-principal>'
+    report_trust = json.loads(payload.get('projection', {}).get('assume_role_policy', '{}'))
+    report_principal = report_trust.get('Statement', [{}])[0].get('Principal', {}).get('AWS')
+    if report_principal != redacted_principal: raise SystemExit('FAIL: role report does not fully redact the caller principal ARN')
+    if 'fixture-caller' in serialized: raise SystemExit('FAIL: role report contains the caller principal name')
     if not payload.get('manual_cleanup'): raise SystemExit('FAIL: role report account-redaction fixture lacks a manual-cleanup note')
     calls = [json.loads(path.read_text(encoding='utf-8')) for path in call_paths]
     creates = [call for call in calls if call[:2] == ['iam', 'create-role']]
@@ -744,8 +810,8 @@ def _command_validate_role_account_redaction():
     for call in creates:
         role_name = call[call.index('--role-name') + 1]
         trust_policy = call[call.index('--assume-role-policy-document') + 1]
-        expected_trust = f'arn:aws:iam::{account}:root'
-        if account not in role_name or json.loads(trust_policy)['Statement'][0]['Principal']['AWS'] != expected_trust: raise SystemExit('FAIL: create-role call did not retain the real account id')
+        expected_trust = f'arn:aws:iam::{account}:user/fixture-caller'
+        if account not in role_name or json.loads(trust_policy)['Statement'][0]['Principal']['AWS'] != expected_trust: raise SystemExit('FAIL: create-role call did not trust exactly the invoking identity')
         tag_index = call.index('--tags') + 1
         nonce_tag = next((tag for tag in call[tag_index:] if tag.startswith('Key=OrbitIamSimulationNonce,Value=')), None)
         if nonce_tag is None: raise SystemExit('FAIL: create-role call lacks the ownership nonce')
@@ -872,11 +938,83 @@ def _command_mutate_role_report_redaction():
     destination = Path(sys.argv[2])
     source = source_path.read_text(encoding='utf-8')
     root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
-    redaction_block = 'redactions = [(role_plan["account_id"], placeholder_account)]\nif role_plan["vector_account_id"] != placeholder_account:\n    redactions.append((role_plan["vector_account_id"], placeholder_account))\nredactions.append((nonce, "<redacted>"))\npayload = redact_sensitive(payload, redactions)\n'
+    redaction_block = 'redactions.append((role_plan["account_id"], placeholder_account))\nif role_plan["vector_account_id"] != placeholder_account:\n    redactions.append((role_plan["vector_account_id"], placeholder_account))\n'
     if source.count(root_line) != 1 or source.count(redaction_block) != 1: raise SystemExit('FAIL: role report-redaction mutation anchor changed')
     source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}')
     source = source.replace(redaction_block, '')
     destination.write_text(source, encoding='utf-8')
+def _command_mutate_role_trust_root():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    principal_line = 'principal = caller_arn'
+    if source.count(root_line) != 1 or source.count(principal_line) != 1:
+        raise SystemExit('FAIL: role root-trust mutation anchors changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
+    source = source.replace(
+        principal_line,
+        'principal = f"arn:aws:iam::{caller_arn.split(chr(58))[4]}:root"',
+        1,
+    )
+    destination.write_text(source, encoding='utf-8')
+
+
+def _command_mutate_role_principal_redaction():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    redaction_line = 'redactions = [(role_plan["caller_arn"], redacted_principal)]'
+    if source.count(root_line) != 1 or source.count(redaction_line) != 1:
+        raise SystemExit('FAIL: role principal-redaction mutation anchors changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
+    source = source.replace(redaction_line, 'redactions = []', 1)
+    destination.write_text(source, encoding='utf-8')
+
+
+def _command_validate_role_trust_calls():
+    call_paths = sorted(Path(sys.argv[1]).glob('*.json'), key=lambda item: int(item.stem))
+    account = sys.argv[2]
+    expected = f'arn:aws:iam::{account}:user/fixture-caller'
+    calls = [json.loads(path.read_text(encoding='utf-8')) for path in call_paths]
+    creates = [call for call in calls if call[:2] == ['iam', 'create-role']]
+    if not creates: raise SystemExit('FAIL: exact-caller trust fixture has no create-role calls')
+    for call in creates:
+        policy = json.loads(call[call.index('--assume-role-policy-document') + 1])
+        if policy.get('Statement', [{}])[0].get('Principal') != {'AWS': expected}:
+            raise SystemExit('FAIL: create-role trust does not name exactly the invoking identity')
+    print('PASS: every create-role trust names exactly the invoking identity')
+
+
+def _command_validate_role_principal_redaction():
+    serialized = Path(sys.argv[1]).read_text(encoding='utf-8')
+    payload = json.loads(serialized)
+    expected = 'arn:aws:iam::000000000000:<redacted-principal>'
+    policy = json.loads(payload.get('projection', {}).get('assume_role_policy', '{}'))
+    if policy.get('Statement', [{}])[0].get('Principal') != {'AWS': expected}:
+        raise SystemExit('FAIL: role report does not fully redact the caller principal ARN')
+    if 'fixture-caller' in serialized:
+        raise SystemExit('FAIL: role report contains the caller principal name')
+    print('PASS: role report fully redacts the caller principal ARN')
+
+
+def _command_validate_role_per_pair():
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+    records = payload.get('records', [])
+    if len(records) != 1:
+        raise SystemExit('FAIL: role per-pair fixture must contain one record')
+    record = records[0]
+    if record.get('pass') is not True:
+        errors = record.get('errors', [])
+        detail = errors[0] if errors else 'role record did not pass'
+        raise SystemExit(f'FAIL: role comparison {detail}')
+    details = record.get('scp_excluded', {}).get('details', [])
+    if len(details) != 2:
+        raise SystemExit('FAIL: role comparison did not retain two per-pair details')
+    print('PASS: role comparison validates every action/resource pair')
+
+
 def _command_mutate_role_nonce_check():
     source_path = Path(sys.argv[1])
     destination = Path(sys.argv[2])
@@ -1224,14 +1362,19 @@ def _instrument_role_fd_reads(source_path, repo_root):
     return source.replace(live_loop, live_loop + '\n  record_open_fd_count "$case_index"', 1)
 
 
-def _command_mutate_role_array_reads():
+def _command_mutate_role_deterministic_fd_leak():
     source_path = Path(sys.argv[1])
     destination = Path(sys.argv[2])
     source = _instrument_role_fd_reads(source_path, sys.argv[3])
-    bounded = "    IFS= read -r -d '' value <&3"
-    leaking = '    IFS= read -r -d \'\' value < <(IFS= read -r -d \'\' item <&3; printf \'%s\\0\' "$item")'
-    if source.count(bounded) != 2: raise SystemExit('FAIL: role array-read mutation anchors changed')
-    destination.write_text(source.replace(bounded, leaking), encoding='utf-8')
+    dry_probe = '\n    record_open_fd_count "$case_index"'
+    live_probe = '\n  record_open_fd_count "$case_index"'
+    if source.count(dry_probe) != 1 or source.count(live_probe) != 1:
+        raise SystemExit('FAIL: deterministic role FD mutation anchors changed')
+    dry_leak = '\n    eval "exec $((10 + case_index))<\"$case_stream\""' + dry_probe
+    live_leak = '\n  eval "exec $((10 + case_index))<\"$case_stream\""' + live_probe
+    source = source.replace(dry_probe, dry_leak, 1)
+    source = source.replace(live_probe, live_leak, 1)
+    destination.write_text(source, encoding='utf-8')
 
 
 def _command_instrument_role_fd_reads():
@@ -1268,13 +1411,13 @@ def _command_validate_fd_leak_probe():
     samples = _load_fd_samples(Path(sys.argv[1]), int(sys.argv[2]))
     growth = [after - before for before, after in zip(samples, samples[1:])]
     for index, step in enumerate(growth, 1):
-        if step < 2:
+        if step < 1:
             raise SystemExit(
-                f'FAIL: role-lane array-read descriptor growth was {step} at '
-                f'case transition {index - 1}->{index}, expected at least 2'
+                f'FAIL: role-lane deterministic descriptor growth was {step} at '
+                f'case transition {index - 1}->{index}, expected at least 1'
             )
     raise SystemExit(
-        'FAIL: role-lane array-read descriptor count grew by at least 2 per case '
+        'FAIL: role-lane deterministic descriptor count grew by at least 1 per case '
         f'({len(samples)} samples; {samples[0]}->{samples[-1]}; minimum step={min(growth)})'
     )
 
@@ -1341,12 +1484,65 @@ def _command_mutate_report_writer():
     destination.write_text(source[:start] + pretty_writer + source[end:], encoding='utf-8')
 
 
+def _command_mutate_report_temp_directory():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    strict = '            dir=path.parent,\n'
+    if source.count(strict) != 1:
+        raise SystemExit('FAIL: report temp-directory mutation anchor changed')
+    destination.write_text(source.replace(strict, '            dir=None,\n', 1), encoding='utf-8')
+
+
 def _command_mutate_report_redaction():
     source = Path(sys.argv[1]).read_text(encoding='utf-8')
     destination = Path(sys.argv[2])
     strict = '    payload = redact_report(payload)\n'
     if source.count(strict) != 1: raise SystemExit('FAIL: shared report redaction mutation anchor changed')
     destination.write_text(source.replace(strict, '    payload = dict(payload)\n', 1), encoding='utf-8')
+
+
+def _command_validate_report_atomic_replace():
+    core_path = Path(sys.argv[1])
+    output_path = Path(sys.argv[2])
+    external_scratch = Path(sys.argv[3])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    external_scratch.mkdir(parents=True, exist_ok=True)
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location('iam_simulate_core_atomic', core_path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f'FAIL: cannot load IAM simulator core: {core_path}')
+    core = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = core
+    spec.loader.exec_module(core)
+    if not hasattr(core, 'os') or not hasattr(core, 'tempfile'):
+        raise SystemExit('FAIL: shared report writer did not atomically replace its destination')
+    replacements = []
+    real_replace = core.os.replace
+    core.tempfile.tempdir = str(external_scratch)
+
+    def guarded_replace(source, destination):
+        source_path = Path(source)
+        destination_path = Path(destination)
+        replacements.append((source_path, destination_path))
+        if source_path.parent != destination_path.parent:
+            raise OSError(18, 'Invalid cross-device link')
+        return real_replace(source_path, destination_path)
+
+    core.os.replace = guarded_replace
+    try:
+        core.write_report(output_path, {'records': [], 'summary': {'total': 0}})
+    except OSError as exc:
+        if exc.errno == 18:
+            raise SystemExit('FAIL: shared report writer attempted cross-directory replacement') from exc
+        raise
+    if len(replacements) != 1:
+        raise SystemExit('FAIL: shared report writer did not atomically replace its destination')
+    if replacements[0][0].parent != output_path.parent:
+        raise SystemExit('FAIL: shared report writer attempted cross-directory replacement')
+    if json.loads(output_path.read_text(encoding='utf-8')).get('redaction_applied') is not True:
+        raise SystemExit('FAIL: shared report writer atomic replacement changed report content')
+    print('PASS: shared report writer atomically replaced from the destination directory')
 
 
 def _command_validate_report_writer():

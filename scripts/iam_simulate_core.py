@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 from typing import Any, NamedTuple, NoReturn
 
 
@@ -352,7 +354,23 @@ def write_report(path: Path, payload: dict[str, Any]) -> None:
         lines.append(f"  ]{suffix}")
     lines.append("}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write("\n".join(lines) + "\n")
+        os.replace(temporary_path, path)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def document_hashes(

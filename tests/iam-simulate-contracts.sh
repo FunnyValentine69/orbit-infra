@@ -188,10 +188,83 @@ def load_vectors(root: Path) -> dict[str, dict]:
     return vectors
 
 
-def observation_matches(expectation: dict, evidence: dict) -> bool:
+def rendered_resource_matches(template: str, observed: str) -> bool:
+    pattern = re.escape(template)
+    pattern = pattern.replace(re.escape("${ACCOUNT_ID}"), "000000000000")
+    pattern = pattern.replace(re.escape("${SUFFIX}"), r"[a-z0-9]+")
+    return re.fullmatch(pattern, observed) is not None
+
+
+def expected_resource_decision(expectation: dict, resource: str):
+    per_resource = expectation.get("resource_decisions")
+    if not isinstance(per_resource, dict):
+        return expectation.get("decision")
+    matches = [
+        decision for template, decision in per_resource.items()
+        if rendered_resource_matches(template, resource)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def details_cover_vector(vector: dict, details: list[dict]) -> bool:
+    actions = vector.get("action_names")
+    resources = vector.get("resource_arns") or ["*"]
+    if not isinstance(actions, list) or len(details) != len(actions) * len(resources):
+        return False
+    unmatched = list(details)
+    for action in actions:
+        for resource_template in resources:
+            matches = [
+                detail for detail in unmatched
+                if isinstance(detail, dict)
+                and detail.get("action_name") == action
+                and isinstance(detail.get("resource_arn"), str)
+                and rendered_resource_matches(resource_template, detail["resource_arn"])
+            ]
+            if len(matches) != 1:
+                return False
+            unmatched.remove(matches[0])
+    return not unmatched
+
+
+def observation_matches(vector: dict, evidence: dict) -> bool:
+    expectation = vector.get("expect")
+    if not isinstance(expectation, dict):
+        return False
+    required = expectation.get("matched_sid_required", [])
+    forbidden = expectation.get("matched_sid_forbidden", [])
+    details = evidence.get("details")
+    if isinstance(details, list):
+        if not details_cover_vector(vector, details):
+            return False
+        for detail in details:
+            if vector.get("assertion_kind") == "decision":
+                expected = expected_resource_decision(expectation, detail["resource_arn"])
+                if detail.get("decision_observed") != expected:
+                    return False
+            matched = detail.get("matched_sids")
+            if not isinstance(matched, list) or any(not isinstance(sid, str) for sid in matched):
+                return False
+            matched_set = set(matched)
+            if not set(required) <= matched_set or set(forbidden) & matched_set:
+                return False
+        return True
     expected_decision = expectation.get("decision")
-    if expected_decision is not None:
-        observed = evidence.get("decision_observed")
+    per_resource = expectation.get("resource_decisions")
+    observed = evidence.get("decision_observed")
+    if isinstance(per_resource, dict) and isinstance(observed, dict):
+        if not observed:
+            return False
+        observed_resources = set()
+        for pair_or_resource, decision in observed.items():
+            resource = pair_or_resource.split("|", 1)[-1]
+            observed_resources.add(resource)
+            if expected_resource_decision(expectation, resource) != decision:
+                return False
+        for template in per_resource:
+            if not any(rendered_resource_matches(template, resource) for resource in observed_resources):
+                return False
+    elif expected_decision is not None:
         decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
         if not decisions or any(decision != expected_decision for decision in decisions):
             return False
@@ -199,8 +272,6 @@ def observation_matches(expectation: dict, evidence: dict) -> bool:
     if not isinstance(matched, list) or any(not isinstance(sid, str) for sid in matched):
         return False
     matched_set = set(matched)
-    required = expectation.get("matched_sid_required", [])
-    forbidden = expectation.get("matched_sid_forbidden", [])
     return set(required) <= matched_set and not (set(forbidden) & matched_set)
 
 
@@ -209,7 +280,7 @@ def custom_matches(vector: dict, record: dict) -> bool:
     return (
         "runner_failure" not in record
         and isinstance(expectation, dict)
-        and observation_matches(expectation, record)
+        and observation_matches(vector, record)
     )
 
 
@@ -220,7 +291,7 @@ def role_matches(vector: dict, record: dict) -> bool:
         "runner_failure" not in record
         and isinstance(evidence, dict)
         and isinstance(expectation, dict)
-        and observation_matches(expectation, evidence)
+        and observation_matches(vector, evidence)
     )
 
 
@@ -1118,7 +1189,8 @@ if [ "$failures" -eq "$group_failures" ]; then
   evidence_mutants="$tmp_dir/evidence-mutants"
   python3 - \
     "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
-    "$EVIDENCE_PROVENANCE" "$evidence_mutants" "$EVIDENCE_POINTER" <<'PY_EVIDENCE_MUTANTS'
+    "$EVIDENCE_PROVENANCE" "$evidence_mutants" "$EVIDENCE_POINTER" \
+    "$VECTORS" <<'PY_EVIDENCE_MUTANTS'
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -1132,6 +1204,7 @@ role_path = Path(sys.argv[3])
 provenance_path = Path(sys.argv[4])
 mutants_root = Path(sys.argv[5])
 pointer = sys.argv[6]
+vector_root = Path(sys.argv[7])
 matrix = matrix_path.read_text(encoding="utf-8")
 custom = json.loads(custom_path.read_text(encoding="utf-8"))
 role = json.loads(role_path.read_text(encoding="utf-8"))
@@ -1150,6 +1223,11 @@ if not promoted:
 custom_by_id = {record["case_id"]: record for record in custom["records"]}
 role_by_id = {record["case_id"]: record for record in role["records"]}
 role_ids = set(role_by_id)
+vectors = {
+    vector["case_id"]: vector
+    for path in sorted(vector_root.rglob("*.json"))
+    for vector in json.loads(path.read_text(encoding="utf-8"))["cases"]
+}
 
 
 def write_mutant(name, matrix_text=None, custom_payload=None, role_payload=None):
@@ -1217,6 +1295,13 @@ first_case = promoted[0]
 first_anchor = f"{first_case}={label}"
 if matrix.count(first_anchor) != 1:
     raise SystemExit("FAIL: pointer/date Evidence mutation anchor changed")
+empty_hash_custom = deepcopy(custom)
+empty_hash_record = next(
+    record for record in empty_hash_custom["records"]
+    if record["case_id"] == first_case
+)
+empty_hash_record["document_hashes_submitted"]["policy_input_list"] = []
+write_mutant("empty-hash", custom_payload=empty_hash_custom)
 stale_label = f"AWS-SIMULATED {dates[0]} docs/assets/stale-IAM_SIMULATION_REPORT.md"
 write_mutant("pointer", matrix.replace(first_anchor, f"{first_case}={stale_label}", 1))
 wrong_label = f"AWS-SIMULATED 2026-09-08 {pointer}"
@@ -1292,6 +1377,39 @@ write_mutant(
     custom_payload=required_custom,
     role_payload=required_role,
 )
+
+per_pair_case = (
+    "case:aws_iam_policy.task_boundary:"
+    "EcsExec:ALL:none:in-boundary"
+)
+per_pair_vector = vectors.get(per_pair_case)
+per_pair_source = custom_by_id.get(per_pair_case)
+if (
+    per_pair_case not in promoted
+    or per_pair_case in role_ids
+    or per_pair_vector is None
+    or per_pair_source is None
+    or per_pair_vector.get("resource_arns") != ["*"]
+    or per_pair_vector.get("expect", {}).get("matched_sid_required") != ["EcsExec"]
+    or len(per_pair_vector.get("action_names", [])) < 2
+):
+    raise SystemExit("FAIL: per-pair Sid Evidence mutation anchor changed")
+per_pair_custom = deepcopy(custom)
+per_pair_record = next(
+    record for record in per_pair_custom["records"]
+    if record["case_id"] == per_pair_case
+)
+per_pair_record["details"] = [
+    {
+        "action_name": action,
+        "resource_arn": "*",
+        "decision_observed": "allowed",
+        "matched_sids": ["EcsExec"],
+    }
+    for action in per_pair_vector["action_names"]
+]
+per_pair_record["details"][-1]["matched_sids"] = []
+write_mutant("per-pair-sid", custom_payload=per_pair_custom)
 PY_EVIDENCE_MUTANTS
 
   restore_evidence_join() {
@@ -1328,6 +1446,42 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/runner-failure/role.json" \
       "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
   restore_evidence_join "evidence runner failure refusal"
+  expect_failure "evidence per-pair required Sid" \
+    "promoted case is not execution-matching" \
+    validate_evidence_join \
+      "$evidence_mutants/per-pair-sid/matrix.md" \
+      "$evidence_mutants/per-pair-sid/custom.json" \
+      "$evidence_mutants/per-pair-sid/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence per-pair required Sid"
+
+  set +e
+  output="$(
+    TMPDIR="$tmp_dir" \
+      IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$evidence_mutants/empty-hash/custom.json" \
+      IAM_MATRIX_SKIP_NEGATIVES=1 \
+      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" 2>&1
+  )"
+  rc=$?
+  set -e
+  fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+  if [ "$rc" -ne 0 ] && \
+     grep -Fq 'FAIL: promoted custom record has an empty policy_input_list hash list:' <<<"$output"; then
+    pass_case "evidence promoted empty hash list mutation -> $fail_line"
+  else
+    fail_case "evidence promoted empty hash list mutation did not fail as required" \
+      "rc=$rc output=$output"
+  fi
+  if output="$(
+    TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
+      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" 2>&1
+  )" && grep -Fq \
+      'PASS: IAM matrix promoted records carry policy hashes (216 cases)' \
+      <<<"$output"; then
+    pass_case "evidence promoted empty hash list mutation restored PASS"
+  else
+    fail_case "evidence promoted empty hash list mutation restoration" "$output"
+  fi
   expect_failure "evidence missing record" "promoted case has no evidence record" \
     validate_evidence_join \
       "$evidence_mutants/missing/matrix.md" \

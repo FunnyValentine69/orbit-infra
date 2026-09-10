@@ -450,11 +450,12 @@ if not dry_run:
                     f"report={observed_hash} plan={plan_hash}"
                 )
 
+initial_principal = f"arn:aws:iam::{account_id}:<redacted-principal>"
 assume_policy = json.dumps({
     "Version": "2012-10-17",
     "Statement": [{
         "Effect": "Allow",
-        "Principal": {"AWS": f"arn:aws:iam::{account_id}:root"},
+        "Principal": {"AWS": initial_principal},
         "Action": "sts:AssumeRole",
     }],
 }, separators=(",", ":"))
@@ -463,6 +464,7 @@ payload = {
     "vector_account_id": vector_account_id,
     "suffix": suffix,
     "run_id": run_id,
+    "caller_arn": initial_principal,
     "assume_role_policy": assume_policy,
     "assume_role_policy_sha256": core.document_sha256(assume_policy),
     "roles": roles,
@@ -724,12 +726,22 @@ payload = {
         "manual_cleanup_notes": len(notes),
     },
 }
-redactions = [(role_plan["account_id"], placeholder_account)]
+redacted_principal = "arn:aws:iam::000000000000:<redacted-principal>"
+redactions = [(role_plan["caller_arn"], redacted_principal)]
+redactions.append((role_plan["account_id"], placeholder_account))
 if role_plan["vector_account_id"] != placeholder_account:
     redactions.append((role_plan["vector_account_id"], placeholder_account))
 redactions.append((nonce, "<redacted>"))
 payload = redact_sensitive(payload, redactions)
-report_path.parent.mkdir(parents=True, exist_ok=True)
+serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+principal_identity = role_plan["caller_arn"].split(":", 5)[-1]
+if principal_identity != "<redacted-principal>" and (
+    role_plan["caller_arn"] in serialized or principal_identity in serialized
+):
+    raise SystemExit("FAIL: role report contains caller principal identity")
+report_trust = json.loads(payload["projection"]["assume_role_policy"])
+if report_trust["Statement"][0]["Principal"] != {"AWS": redacted_principal}:
+    raise SystemExit("FAIL: role report does not fully redact the caller principal ARN")
 core.write_report(report_path, payload)
 PY
 }
@@ -857,6 +869,47 @@ principal_simulation_pass() {
 }
 
 
+bind_assume_role_policy() {
+  python3 - "$IAM_SIM_CORE" "$role_plan" "$1" <<'PY_TRUST'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+core_path = Path(sys.argv[1])
+role_plan_path = Path(sys.argv[2])
+caller_arn = sys.argv[3]
+spec = importlib.util.spec_from_file_location("iam_simulate_core_trust", core_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"FAIL: cannot load IAM simulator core: {core_path}")
+core = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = core
+spec.loader.exec_module(core)
+if not caller_arn.startswith("arn:aws:") or caller_arn.endswith(":root"):
+    raise SystemExit("FAIL: temporary role trust must name exactly the invoking identity")
+principal = caller_arn
+assume_policy_object = {
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"AWS": principal},
+        "Action": "sts:AssumeRole",
+    }],
+}
+observed_principal = assume_policy_object["Statement"][0]["Principal"]
+if observed_principal != {"AWS": caller_arn}:
+    raise SystemExit("FAIL: temporary role trust must name exactly the invoking identity")
+assume_policy = json.dumps(assume_policy_object, separators=(",", ":"))
+role_plan = json.loads(role_plan_path.read_text(encoding="utf-8"))
+role_plan["caller_arn"] = caller_arn
+role_plan["assume_role_policy"] = assume_policy
+role_plan["assume_role_policy_sha256"] = core.document_sha256(assume_policy)
+role_plan_path.write_text(json.dumps(role_plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY_TRUST
+}
+
+
 print_dry_run_inventory() {
   local index case_index=0
   call_capture sts get-caller-identity --output json
@@ -897,6 +950,7 @@ print_dry_run_inventory() {
 }
 
 if [ "$dry_run" -eq 1 ]; then
+  bind_assume_role_policy "arn:aws:iam::$expect_account:<redacted-principal>"
   print_dry_run_inventory
   main_succeeded=1
   exit 0
@@ -911,10 +965,15 @@ actual_account="$(jq -er '.Account | select(type == "string")' <<<"$CALL_OUTPUT"
   echo "FAIL: caller identity response lacks Account" >&2
   exit 1
 }
+caller_arn="$(jq -er '.Arn | select(type == "string" and length > 0)' <<<"$CALL_OUTPUT")" || {
+  echo "FAIL: caller identity response lacks Arn" >&2
+  exit 1
+}
 if [ "$actual_account" != "$expect_account" ]; then
   echo "FAIL: caller account mismatch: expected $expect_account, observed $actual_account" >&2
   exit 1
 fi
+bind_assume_role_policy "$caller_arn"
 
 for ((index = 0; index < role_count; index++)); do
   role_call_args "$index"
@@ -992,6 +1051,44 @@ def fail(message):
     raise SystemExit(f"FAIL: {message}")
 
 
+def observation_matches(case, details):
+    if not isinstance(details, list):
+        return False, ["per-pair details are missing"]
+    resources = case["resource_arns"] or ["*"]
+    expected_pairs = {
+        (action, resource)
+        for action in case["action_names"]
+        for resource in resources
+    }
+    observed_pairs = {
+        (detail.get("action_name"), detail.get("resource_arn"))
+        for detail in details
+        if isinstance(detail, dict)
+    }
+    errors = []
+    if len(details) != len(expected_pairs) or observed_pairs != expected_pairs:
+        errors.append("action/resource pairs differ from the vector")
+    expect = case["expect"]
+    per_resource = expect.get("resource_decisions")
+    for detail in details:
+        if not isinstance(detail, dict):
+            errors.append("per-pair detail is invalid")
+            continue
+        action = detail.get("action_name")
+        resource = detail.get("resource_arn")
+        matched = detail.get("matched_sids")
+        if not isinstance(matched, list):
+            errors.append(f"matched Sids are invalid for {action} {resource}")
+            continue
+        for sid in expect["matched_sid_required"]:
+            if sid not in matched:
+                errors.append(f"required matched Sid is absent for {action} {resource}: {sid}")
+        for sid in expect["matched_sid_forbidden"]:
+            if sid in matched:
+                errors.append(f"forbidden matched Sid is present for {action} {resource}: {sid}")
+    return not errors, errors
+
+
 cases = role_plan["cases"]
 roles = {role["projection_id"]: role for role in role_plan["roles"]}
 excluded_results = excluded_payload.get("results")
@@ -1025,6 +1122,9 @@ for case, excluded, organizations in zip(
     custom_sids = custom_record.get("matched_sids")
     if not isinstance(custom_sids, list) or any(not isinstance(sid, str) for sid in custom_sids):
         fail(f"custom report matched_sids is invalid for {case['case_id']}")
+    custom_details = custom_record.get("details")
+    if not isinstance(custom_details, list):
+        fail(f"custom report per-pair details are invalid for {case['case_id']}")
     custom_hashes = [
         entry.get("sha256")
         for entry in custom_record.get("document_hashes_submitted", {}).get("policy_input_list", [])
@@ -1034,6 +1134,7 @@ for case, excluded, organizations in zip(
         if entry["address"] == case["document"]
     )
     same_decision = excluded_decision == custom_decision
+    role_matches_expectation, role_errors = observation_matches(case, excluded_details)
     observed_in = []
     if excluded_decision != custom_decision:
         observed_in.append("scp-excluded")
@@ -1071,6 +1172,7 @@ for case, excluded, organizations in zip(
     record = {
         "case_id": case["case_id"],
         "mode": "principal",
+        "expect": case["expect"],
         "projection": projection_record,
         "document_hashes_submitted": {
             "put_role_policy": [{"sha256": projection["policy_sha256"]}],
@@ -1082,23 +1184,32 @@ for case, excluded, organizations in zip(
         "custom_lane": {
             "decision_observed": custom_decision,
             "matched_sids": custom_sids,
+            "details": custom_details,
         },
         "scp_excluded": {
             "decision_observed": excluded_decision,
             "matched_statement_sources": excluded_sources,
             "matched_sids": excluded_sids,
+            "details": excluded_details,
             "agrees_with_custom_lane": same_decision,
+            "matches_expectation": role_matches_expectation,
         },
         "default": {
             "decision_observed": organizations_decision,
             "matched_statement_sources": organizations_sources,
             "matched_sids": organizations_sids,
+            "details": organizations_details,
             "changed_from_scp_excluded": organizations_decision != excluded_decision,
         },
         "comparison": "agreement" if same_decision else "divergence",
         "organizations_divergences": organizations_divergences,
-        "pass": custom_hashes == [source_document["sha256"]],
+        "pass": (
+            custom_hashes == [source_document["sha256"]]
+            and role_matches_expectation
+        ),
     }
+    if role_errors:
+        record["errors"] = role_errors
     if not same_decision:
         record["divergence"] = {
             "observed_in": observed_in,

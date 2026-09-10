@@ -129,6 +129,7 @@
   (`scripts/artifact-hygiene.sh:43` and `scripts/artifact-hygiene.sh:44`)
 - [ ] P5-55: mutation registry: store the mutation action verbatim and re-derive its effect at run time so a stale action string cannot pass vacuously
   (`tests/iam-simulate-contracts.sh:90` and `tests/iam-simulate-contracts.sh:122`)
+- [x] P5-56: close PR #24 Tier-3 simulator findings with per-pair Sid checks, exact-caller temporary-role trust and full principal redaction, promoted-record plan-byte hash binding, corrected divergence and mixed-resource rendering, same-directory atomic report replacement, and a cross-platform deterministic FD-leak mutation (2026-09-10)
 - [x] P5-2b: Tier-3 P2 follow-ups from PR #10 — STATE ranges through P5-22, trust-boundary diagram shows deployer control-plane reach and plan-reader account-wide read, upstream SBOM Actions-artifact upload removed and ADR 0007 amended (2026-09-04); cosign 3.1.3 compatibility — `--use-signing-config=false` on all nine sign/attest calls, explicit predicate-type URIs instead of `--type custom`, `jq -s` over per-line envelopes in all thirteen attestation checks (found by Tier 1, proven on a local registry) — PR #11 (2026-09-04)
 
 ## End-of-project decisions (user, low priority)

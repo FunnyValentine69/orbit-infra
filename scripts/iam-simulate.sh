@@ -430,7 +430,7 @@ def map_batch(
 
 def evaluate(
     item: dict[str, Any], mapping: dict[str, Any]
-) -> tuple[Any, list[str], list[str]]:
+) -> tuple[Any, list[str], list[dict[str, Any]], list[str]]:
     if isinstance(mapping.get("error"), str):
         raise RunnerFailure(mapping["error"])
     vector = item["vector"]
@@ -457,7 +457,19 @@ def evaluate(
     for sid in expect["matched_sid_forbidden"]:
         if sid in matched:
             errors.append(f"forbidden matched Sid is present: {sid}")
-    return mapping["decision_observed"], matched, errors
+    for detail in details:
+        detail_matched = detail.get("matched_sids")
+        if not isinstance(detail_matched, list):
+            raise RunnerFailure("shared IAM simulator core returned invalid per-pair attribution")
+        action = detail["action_name"]
+        resource = detail["resource_arn"]
+        for sid in expect["matched_sid_required"]:
+            if sid not in detail_matched:
+                errors.append(f"required matched Sid is absent for {action} {resource}: {sid}")
+        for sid in expect["matched_sid_forbidden"]:
+            if sid in detail_matched:
+                errors.append(f"forbidden matched Sid is present for {action} {resource}: {sid}")
+    return mapping["decision_observed"], matched, details, errors
 
 
 def hashes(item: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
@@ -486,10 +498,7 @@ def write_report(
         "runner_failures": sum("runner_failure" in record for record in records),
     }
     payload = {"records": sorted(records, key=lambda record: record["case_id"]), "summary": summary}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = scratch / "report.json"
-    core.write_report(temporary, payload)
-    os.replace(temporary, path)
+    core.write_report(path, payload)
 
 
 def main() -> int:
@@ -508,6 +517,7 @@ def main() -> int:
                 "case_id": vector["case_id"],
                 "decision_observed": None,
                 "matched_sids": [],
+                "details": [],
                 "shared_call_case_ids": [],
                 "expect": vector["expect"],
                 "pass": False,
@@ -531,6 +541,7 @@ def main() -> int:
                     "case_id": vector["case_id"],
                     "decision_observed": None,
                     "matched_sids": [],
+                    "details": [],
                     "shared_call_case_ids": shared_call_case_ids(
                         batch, vector["case_id"]
                     ),
@@ -545,11 +556,12 @@ def main() -> int:
         for item, mapping in zip(batch, mappings):
             vector = item["vector"]
             try:
-                decision, matched, errors = evaluate(item, mapping)
+                decision, matched, details, errors = evaluate(item, mapping)
                 record = {
                     "case_id": vector["case_id"],
                     "decision_observed": decision,
                     "matched_sids": matched,
+                    "details": details,
                     "shared_call_case_ids": shared_call_case_ids(
                         batch, vector["case_id"]
                     ),
@@ -566,6 +578,7 @@ def main() -> int:
                     "case_id": vector["case_id"],
                     "decision_observed": None,
                     "matched_sids": [],
+                    "details": [],
                     "shared_call_case_ids": shared_call_case_ids(
                         batch, vector["case_id"]
                     ),

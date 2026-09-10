@@ -37,8 +37,11 @@ evidence-publication-date-binding	doctor report-provenance recorded_on pair	FAIL
 evidence-row-above-minimum	validate_evidence_join	FAIL: Evidence row is above its computed minimum at line
 evidence-role-forbidden-sid-check	mutate_evidence_role_check:forbidden	FAIL: evidence role forbidden Sid check did not enforce expected refusal
 evidence-role-required-sid-check	mutate_evidence_role_check:required	FAIL: evidence role required Sid check did not enforce expected refusal
+evidence-per-pair-required-sid	validate_evidence_join:details	FAIL: promoted case is not execution-matching:
+evidence-promoted-empty-hash-list	iam-matrix-contracts.sh:source-mode	FAIL: promoted custom record has an empty policy_input_list hash list:
 runner-per-resource-mapper	run_phase2_runner	FAIL: decision mismatch for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-good/example: expected allowed, observed explicitDeny
-runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent: DenyReadStateObjectsOutsideScope
+runner-per-pair-required-sid	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope
+runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-bad/example: DenyReadStateObjectsOutsideScope
 runner-real-deployer-data-two-statement-overlap-refusal	run_phase2_runner	FAIL: ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5682 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
 runner-plan-policy-byte-equality	mutate_submitted_document	FAIL: submitted --policy-input-list document differs from plan text for aws_iam_policy.task_boundary
 runner-boundary-policy-byte-equality	mutate_submitted_document	FAIL: submitted --permissions-boundary-policy-input-list document differs from plan text for aws_iam_policy.task_boundary
@@ -92,7 +95,7 @@ role-lane-missing-custom-case	run_phase2_role_lane	FAIL: custom report lacks exa
 role-lane-two-run-call-shape	mutate_role_two_run_calls	FAIL: two-run contract requires one exact scp-excluded call and one default call per case
 role-lane-dry-run-inventory	sed:drop-delete-role-policy-call	FAIL: dry-run inventory requires three iam delete-role-policy calls
 role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 378, expected 1 + 8*8 + 2*157 = 379
-role-lane-full-fixture-array-read	mutate_role_array_reads	FAIL: role-lane array-read descriptor count grew by at least 2 per case
+role-lane-portable-deterministic-descriptor-leak	mutate_role_deterministic_fd_leak:macOS-bash-3.2+Linux-bash-5	FAIL: role-lane deterministic descriptor count grew by at least 1 per case
 role-lane-empty-sid-shared-core-guard	mutate_core_sid_validation	FAIL: role lane empty Sid shared core guard did not enforce expected refusal
 role-lane-plan-resources-array-guard	mutate_plan_guard:role-lane:resources-array	FAIL: role lane plan resources array guard did not enforce expected refusal
 role-lane-plan-exactly-one-document-guard	mutate_plan_guard:role-lane:exactly-one-document	FAIL: role lane plan exactly one document guard did not enforce expected refusal
@@ -102,6 +105,9 @@ role-lane-plan-suffix-guard	mutate_plan_guard:role-lane:suffix	FAIL: role lane p
 role-lane-plan-account-id-uniqueness-guard	mutate_plan_guard:role-lane:account-id-uniqueness	FAIL: role lane plan account id uniqueness guard did not enforce expected refusal
 role-lane-opt-in-refusal	run_phase2_role_lane	FAIL: IAM_SIM_LANE_CONFIRM must equal create-real-iam-resources
 role-lane-account-mismatch-refusal	run_phase2_role_lane	FAIL: caller account mismatch: expected 000000000000, observed 111111111111
+role-lane-root-trust-refusal	mutate_role_trust_root	FAIL: temporary role trust must name exactly the invoking identity
+role-lane-caller-principal-report	mutate_role_principal_redaction	FAIL: role report contains caller principal identity
+role-lane-per-pair-required-sid	validate_role_per_pair	FAIL: role comparison required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope
 role-lane-tag-mismatch-pre-mutation-refusal	run_phase2_role_lane	FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-plan-reader
 role-lane-nonce-tamper-at-deployer-p4	run_phase2_role_lane	FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-deployer-p4
 role-lane-nonce-ignoring-mutant	mutate_role_nonce_check	FAIL: nonce tamper reached policy or role mutations: put=8 delete-policy=8 delete-role=8
@@ -127,6 +133,9 @@ role-lane-source-partition	mutate_role_source_logic:partition	FAIL: role project
 role-lane-source-concatenation	mutate_role_source_logic:concatenation	FAIL: role projection did not concatenate statements in source order
 role-lane-source-hash	mutate_role_source_logic:hash	FAIL: role projection policy hash differs
 report-compact-writer	mutate_report_writer	FAIL: compact report records must contain exactly one record per line
+report-destination-directory-atomic-replacement	mutate_report_temp_directory	FAIL: shared report writer attempted cross-directory replacement
+renderer-role-expectation-binding	set-role-expectation-different-from-vector	FAIL: role record case:fixture.policy:DenyRead:ALL:none:non-matching expectation differs from custom vector expectation
+renderer-mixed-resource-decisions	mutate_report_renderer:resource-decisions	FAIL: matching resource_decisions rendered as a failure
 report-whole-object-redaction	mutate_report_redaction	FAIL: shared report writer retained live identifiers
 renderer-account-id-case-refusal	doctor custom report case id	FAIL: rendered IAM simulation report contains a non-placeholder account id
 renderer-role-redaction-marker-refusal	remove account_redacted from role report	FAIL: role report must set account_redacted to true

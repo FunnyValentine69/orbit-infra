@@ -421,7 +421,7 @@ import sys
 print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
 PY
 )" && \
-       [ "$report_sha" = "5a3b72e743f575326b77103ba753032cc00c89131b2c57f3444136d398261e3a" ] && \
+       [ "$report_sha" = "4bff35da7395c630a69c8eb171fe7d81bf57df7aa903f0c1a04b966a11145d00" ] && \
        jq -e '
          .redaction_applied == true
          and (.records | length) == 1
@@ -440,6 +440,30 @@ PY
       success "$phase2_dir/response-decision-mutant.json" "$phase2_dir/runner-vectors"
     expect_runner_failure "runner position-to-Sid attribution" "required matched Sid is absent" \
       success "$phase2_dir/response-position-mutant.json" "$phase2_dir/runner-vectors"
+
+    IAM_SIM_TEST_PLAN="$phase2_dir/plan-per-pair-sid.json" \
+      expect_runner_failure "runner per-pair required Sid" \
+        "required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope" \
+        success "$phase2_dir/response-per-pair-sid-mutant.json" \
+        "$phase2_dir/per-pair-sid-vectors"
+
+    reset_phase2_fake
+    report="$phase2_dir/per-pair-sid-restored-report.json"
+    if output="$(IAM_SIM_TEST_PLAN="$phase2_dir/plan-per-pair-sid.json" \
+      run_phase2_runner success "$phase2_dir/response-per-pair-sid-restored.json" \
+        "$phase2_dir/per-pair-sid-vectors" "$report" 2>&1)" && \
+       jq -e '
+         .records | length == 1
+         and .[0].pass == true
+         and (.[0].details | length) == 2
+         and all(.[0].details[];
+           .matched_sids | index("DenyReadStateObjectsOutsideScope") != null
+         )
+       ' "$report" >/dev/null; then
+      pass_case "runner per-pair required Sid restored"
+    else
+      fail_case "runner per-pair required Sid restored" "$output"
+    fi
 
     for name in real-position multiline-position; do
       reset_phase2_fake
@@ -1142,6 +1166,28 @@ mutate_role_report_redaction() {
   chmod +x "$2"
 }
 
+mutate_role_trust_root() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-trust-root "$@" "$REPO_ROOT"
+  chmod +x "$2"
+}
+
+mutate_role_principal_redaction() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-principal-redaction "$@" "$REPO_ROOT"
+  chmod +x "$2"
+}
+
+validate_role_trust_calls() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-trust-calls "$@"
+}
+
+validate_role_principal_redaction() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-principal-redaction "$@"
+}
+
+validate_role_per_pair() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-per-pair "$@"
+}
+
 mutate_role_context_entries() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-context-entries "$@" "$REPO_ROOT"
 }
@@ -1241,8 +1287,8 @@ validate_fd_stability_probe() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" validate-fd-stability-probe "$1" 24
 }
 
-mutate_role_array_reads() {
-  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-array-reads "$@" "$REPO_ROOT"
+mutate_role_deterministic_fd_leak() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-deterministic-fd-leak "$@" "$REPO_ROOT"
   chmod +x "$2"
 }
 
@@ -1254,6 +1300,26 @@ instrument_role_fd_reads() {
 validate_dry_run_inventory() {
   local inventory=$1
   local operation expected
+  if ! python3 - "$inventory" <<'PY_TRUST'
+import json
+import shlex
+import sys
+
+expected = "arn:aws:iam::000000000000:<redacted-principal>"
+create_calls = [
+    shlex.split(line.removeprefix("DRY-RUN:"))
+    for line in sys.argv[1].splitlines()
+    if " iam create-role " in f" {line} "
+]
+for call in create_calls:
+    policy = json.loads(call[call.index("--assume-role-policy-document") + 1])
+    principal = policy.get("Statement", [{}])[0].get("Principal")
+    if principal != {"AWS": expected}:
+        raise SystemExit("FAIL: dry-run create-role trust does not name only the redacted invoking identity")
+PY_TRUST
+  then
+    return 1
+  fi
   for operation in create-role put-role-policy delete-role-policy delete-role; do
     expected=3
     if [ "$(grep -Ec "iam $operation( |$)" <<<"$inventory" || true)" -ne "$expected" ]; then
@@ -1350,7 +1416,8 @@ run_iam_simulate_role_lane_contracts() {
   local core_mutant expected_sid expected_hash_failure wrong_hash_report nonce_report fail_line
   local preflight_scope_mutant expected_scope_failure boundary_case authorization_report
   local wrong_mode_report wrong_mode_case_id expected_mode_failure
-  local context_mutant plan_account_report
+  local context_mutant plan_account_report trust_mutant principal_mutant principal_report
+  local per_pair_report trust_restored_report
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
@@ -1532,6 +1599,87 @@ run_iam_simulate_role_lane_contracts() {
       pass_case "role-lane principal context-entry preservation mutation restored PASS"
     else
       fail_case "role-lane principal context-entry preservation mutation restoration" "$output"
+    fi
+
+    trust_mutant="$phase2_dir/iam-simulate-roles-root-trust-mutant.sh"
+    mutate_role_trust_root "$IAM_SIM_ROLE_LANE" "$trust_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_LANE="$trust_mutant" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq 'FAIL: temporary role trust must name exactly the invoking identity' <<<"$output" && \
+       [ "$(phase2_call_count iam create-role)" -eq 0 ]; then
+      pass_case "role-lane root trust refusal mutation -> $(grep -m1 '^FAIL:' <<<"$output")"
+    else
+      fail_case "role-lane root trust refusal mutation did not fail before create-role" \
+        "rc=$rc create_calls=$(phase2_call_count iam create-role) output=$output"
+    fi
+
+    principal_mutant="$phase2_dir/iam-simulate-roles-principal-redaction-mutant.sh"
+    principal_report="$phase2_dir/role-principal-redaction-mutant-report.json"
+    mutate_role_principal_redaction "$IAM_SIM_ROLE_LANE" "$principal_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_LANE="$principal_mutant" \
+      IAM_SIM_TEST_ROLE_REPORT="$principal_report" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq 'FAIL: role report contains caller principal identity' <<<"$output"; then
+      pass_case "role-lane caller-principal report mutation -> $(grep -m1 '^FAIL: role report contains caller principal identity' <<<"$output")"
+    else
+      fail_case "role-lane caller-principal report mutation did not fail in the writer" \
+        "rc=$rc output=$output"
+    fi
+
+    trust_restored_report="$phase2_dir/role-exact-caller-restored-report.json"
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_REPORT="$trust_restored_report" \
+      run_phase2_role_lane success 2>&1)" && \
+       validate_role_trust_calls "$phase2_calls" 000000000000 && \
+       validate_role_principal_redaction "$trust_restored_report"; then
+      pass_case "role-lane root trust refusal mutation restored PASS"
+      pass_case "role-lane caller-principal report mutation restored PASS"
+    else
+      fail_case "role-lane exact-caller trust and principal redaction restoration" "$output"
+    fi
+
+    per_pair_report="$phase2_dir/role-per-pair-mutant-report.json"
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-per-pair-sid.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/per-pair-sid-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-per-pair-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$per_pair_report" \
+      IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-per-pair-sid-mutant.json" \
+      run_phase2_role_lane success 2>&1)"; then
+      expect_failure "role-lane per-pair required Sid" \
+        "role comparison required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope" \
+        validate_role_per_pair "$per_pair_report"
+    else
+      fail_case "role-lane per-pair required Sid mutation setup" "$output"
+    fi
+
+    per_pair_report="$phase2_dir/role-per-pair-restored-report.json"
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-per-pair-sid.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/per-pair-sid-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-per-pair-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$per_pair_report" \
+      IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-per-pair-sid-restored.json" \
+      run_phase2_role_lane success 2>&1)" && \
+       validate_role_per_pair "$per_pair_report"; then
+      pass_case "role-lane per-pair required Sid mutation restored PASS"
+    else
+      fail_case "role-lane per-pair required Sid mutation restoration" "$output"
     fi
 
     account=123456
@@ -1949,8 +2097,8 @@ SOURCE_MUTATIONS
         fail_case "role-lane full-fixture formula count mutation restoration" "$full_scale"
       fi
 
-      role_lane_mutant="$phase2_dir/iam-simulate-roles-array-read-mutant.sh"
-      mutate_role_array_reads "$IAM_SIM_ROLE_LANE" "$role_lane_mutant"
+      role_lane_mutant="$phase2_dir/iam-simulate-roles-deterministic-fd-mutant.sh"
+      mutate_role_deterministic_fd_leak "$IAM_SIM_ROLE_LANE" "$role_lane_mutant"
       mutant_inventory="$phase2_dir/reduced-fd-mutant-dry-run.txt"
       mutant_fd_samples="$phase2_dir/reduced-fd-mutant-samples.txt"
       fd_vectors="$phase2_dir/reduced-fd-vectors"
@@ -1966,11 +2114,11 @@ SOURCE_MUTATIONS
       rc=$?
       set -e
       if [ "$rc" -eq 0 ]; then
-        expect_failure "role-lane full-fixture array-read" \
-          "role-lane array-read descriptor count grew by at least 2 per case" \
+        expect_failure "role-lane portable deterministic descriptor leak" \
+          "role-lane deterministic descriptor count grew by at least 1 per case" \
           validate_fd_leak_probe "$mutant_fd_samples"
       else
-        fail_case "role-lane full-fixture array-read measurement" \
+        fail_case "role-lane portable deterministic descriptor leak measurement" \
           "mutant run did not complete within 5 seconds: rc=$rc"
       fi
 
@@ -1987,9 +2135,9 @@ SOURCE_MUTATIONS
              "$role_lane_fd_probe" "$real_fd_inventory" >/dev/null 2>&1 && \
          fd_stability="$(validate_fd_stability_probe "$real_fd_samples" 2>&1)" && \
          [ "$(find "$phase2_calls" -name '*.json' -type f | wc -l | tr -d ' ')" -eq 0 ]; then
-        pass_case "role-lane array-read real-lane FD stability ($fd_stability)"
+        pass_case "role-lane real-lane FD stability ($fd_stability)"
       else
-        fail_case "role-lane array-read real-lane FD stability" \
+        fail_case "role-lane real-lane FD stability" \
           "${fd_stability:-validation did not run}"
       fi
 
@@ -1998,9 +2146,9 @@ SOURCE_MUTATIONS
            "$IAM_SIM_ROLE_LANE" "$full_inventory" >/dev/null 2>&1 && \
          full_scale="$(validate_full_scale_role_dry_run "$full_inventory" 2>&1)" && \
          [ "$(find "$phase2_calls" -name '*.json' -type f | wc -l | tr -d ' ')" -eq 0 ]; then
-        pass_case "role-lane full-fixture array-read mutation restored PASS ($full_scale)"
+        pass_case "role-lane portable deterministic descriptor leak mutation restored PASS ($full_scale)"
       else
-        fail_case "role-lane full-fixture array-read mutation restoration" \
+        fail_case "role-lane portable deterministic descriptor leak mutation restoration" \
           "${full_scale:-validation did not run}"
       fi
     else
@@ -2266,6 +2414,10 @@ replacements = {
         'mv -- "$rendered_report" "$out_dir/IAM_SIMULATION_REPORT.md"',
         'mv -- "$rendered_report" "$out_dir/IAM_SIMULATION_REPORT.md"\necho "FAIL: injected publication failure between report and provenance" >&2\nfalse',
     ),
+    "resource-decisions": (
+        '    per_resource = expectation.get("resource_decisions")',
+        '    per_resource = None',
+    ),
 }
 old, new = replacements[mutation]
 if source.count(old) != 1:
@@ -2302,6 +2454,8 @@ required_report = (
     "case:fixture.policy:DenyRead:ALL:none:non-matching",
     "Expected: `allowed`; observed: `explicitDeny`.",
     "## Divergences",
+    "| Case ID | Scope | Expected | Custom observed | SCP-excluded | Default |",
+    "| case:fixture.policy:DenyRead:ALL:none:non-matching | principal/custom | allowed | explicitDeny | allowed | explicitDeny |",
     "| custom | 2 | 1 | 1 | 0 |",
     "| role | 2 | 2 | 0 | 0 |",
     "## Submitted document SHA-256s",
@@ -2332,6 +2486,17 @@ print(
 PY
 }
 
+validate_renderer_mixed_resource_decisions() {
+  local report=$1
+  local case_id=case:fixture.policy:MixedRead:ALL:none:mixed
+  if ! grep -Fq "| $case_id | custom | explicitDeny |" "$report" || \
+     ! grep -F "| $case_id |" "$report" | grep -Fq '| yes |'; then
+    echo "FAIL: matching resource_decisions rendered as a failure" >&2
+    return 1
+  fi
+}
+
+
 run_iam_simulate_report_contracts() {
   local group_failures=$failures
   local clean_custom="$IAM_SIM_REPORT_FIXTURES/iam-simulation-custom-report.json"
@@ -2350,6 +2515,13 @@ run_iam_simulate_report_contracts() {
   local compact_report="$phase2_dir/compact-writer-report.json"
   local compact_writer_mutant="$phase2_dir/iam-simulate-core-pretty-report.py"
   local redaction_writer_mutant="$phase2_dir/iam-simulate-core-no-redaction.py"
+  local atomic_writer_mutant="$phase2_dir/iam-simulate-core-cross-directory.py"
+  local role_expectation_mismatch="$phase2_dir/role-expectation-mismatch.json"
+  local role_expectation_out="$phase2_dir/rendered-role-expectation-mismatch"
+  local mixed_custom="$phase2_dir/mixed-resource-decisions.json"
+  local mixed_mutant="$phase2_dir/iam-simulate-report-scalar-only.sh"
+  local mixed_mutant_out="$phase2_dir/rendered-mixed-mutant"
+  local mixed_restored_out="$phase2_dir/rendered-mixed-restored"
   local failed_case="case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
   local doctored_pass_custom="$phase2_dir/doctored-pass-custom-report.json"
   local doctored_pass_out="$phase2_dir/rendered-doctored-pass"
@@ -2358,6 +2530,33 @@ run_iam_simulate_report_contracts() {
   local json_hygiene_mutant="$phase2_dir/iam-simulate-report-no-json-hygiene.sh"
   local json_hygiene_mutant_out="$phase2_dir/rendered-json-hygiene-mutant"
   local output rc fail_line checker_output
+
+  if output="$(
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-atomic-replace \
+      "$IAM_SIM_CORE" "$phase2_dir/atomic-report/output/report.json" \
+      "$phase2_dir/atomic-report/external-scratch" 2>&1
+  )"; then
+    pass_case "shared report writer uses a destination-directory atomic replacement"
+  else
+    fail_case "shared report writer destination-directory atomic replacement" "$output"
+  fi
+
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-temp-directory \
+    "$IAM_SIM_CORE" "$atomic_writer_mutant"
+  expect_failure "report destination-directory atomic replacement" \
+    "shared report writer attempted cross-directory replacement" \
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-atomic-replace \
+      "$atomic_writer_mutant" "$phase2_dir/atomic-mutant/output/report.json" \
+      "$phase2_dir/atomic-mutant/external-scratch"
+  if output="$(
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-atomic-replace \
+      "$IAM_SIM_CORE" "$phase2_dir/atomic-restored/output/report.json" \
+      "$phase2_dir/atomic-restored/external-scratch" 2>&1
+  )"; then
+    pass_case "report destination-directory atomic replacement mutation restored PASS"
+  else
+    fail_case "report destination-directory atomic replacement mutation restoration" "$output"
+  fi
 
   if output="$(
     python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-writer \
@@ -2419,7 +2618,8 @@ run_iam_simulate_report_contracts() {
     python3 - \
       "$clean_custom" "$hash_custom" "$bad_case_custom" \
       "$unmarked_role" "$clean_role" \
-      "$CUSTOM_EVIDENCE_REPORT" "$doctored_pass_custom" <<'PY'
+      "$CUSTOM_EVIDENCE_REPORT" "$doctored_pass_custom" \
+      "$role_expectation_mismatch" "$mixed_custom" <<'PY'
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -2433,6 +2633,8 @@ import sys
     clean_role,
     evidence_custom,
     doctored_pass_path,
+    role_expectation_mismatch_path,
+    mixed_custom_path,
 ) = map(Path, sys.argv[1:])
 custom = json.loads(clean_custom.read_text(encoding="utf-8"))
 account_shaped_hash = "123456789012" + ("a" * 52)
@@ -2450,6 +2652,16 @@ bad_case_path.write_text(
     json.dumps(bad_case, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )
 role = json.loads(clean_role.read_text(encoding="utf-8"))
+role_expectation_mutant = deepcopy(role)
+role_expectation_mutant["records"][1]["expect"] = {
+    "decision": "implicitDeny",
+    "matched_sid_required": [],
+    "matched_sid_forbidden": [],
+}
+role_expectation_mismatch_path.write_text(
+    json.dumps(role_expectation_mutant, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
 role.pop("account_redacted")
 unmarked_path.write_text(
     json.dumps(role, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -2463,7 +2675,83 @@ failed["pass"] = True
 doctored_pass_path.write_text(
     json.dumps(doctored, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )
+mixed = {
+    "redaction_applied": True,
+    "records": [{
+        "case_id": "case:fixture.policy:MixedRead:ALL:none:mixed",
+        "decision_observed": {
+            "arn:aws:s3:::fixture/good": "allowed",
+            "arn:aws:s3:::fixture/bad": "explicitDeny",
+        },
+        "document_hashes_submitted": {
+            "permissions_boundary_policy_input_list": [],
+            "policy_input_list": [{"sha256": "5" * 64}],
+        },
+        "expect": {
+            "decision": "explicitDeny",
+            "resource_decisions": {
+                "arn:aws:s3:::fixture/good": "allowed",
+                "arn:aws:s3:::fixture/bad": "explicitDeny",
+            },
+            "matched_sid_required": [],
+            "matched_sid_forbidden": [],
+        },
+        "matched_sids": [],
+        "mode": "custom",
+        "pass": True,
+    }],
+    "summary": {"failed": 0, "passed": 1, "runner_failures": 0, "total": 1},
+}
+mixed_custom_path.write_text(
+    json.dumps(mixed, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
 PY
+
+    set +e
+    output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$role_expectation_mismatch" \
+      "$role_expectation_out" 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       [ "$fail_line" = "FAIL: role record case:fixture.policy:DenyRead:ALL:none:non-matching expectation differs from custom vector expectation" ]; then
+      pass_case "renderer role expectation binding mutation -> $fail_line"
+    else
+      fail_case "renderer role expectation binding mutation did not fail" \
+        "rc=$rc output=$output"
+    fi
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$clean_role" \
+      "$phase2_dir/rendered-role-expectation-restored" 2>&1)" && \
+       grep -Fq '| Case ID | Scope | Expected | Custom observed | SCP-excluded | Default |' \
+         "$phase2_dir/rendered-role-expectation-restored/$report_name" && \
+       grep -Fq '| case:fixture.policy:DenyRead:ALL:none:non-matching | principal/custom | allowed | explicitDeny | allowed | explicitDeny |' \
+         "$phase2_dir/rendered-role-expectation-restored/$report_name"; then
+      pass_case "renderer role expectation binding mutation restored PASS"
+    else
+      fail_case "renderer role expectation binding mutation restoration" "$output"
+    fi
+
+    mutate_report_renderer resource-decisions "$mixed_mutant"
+    if output="$(run_report_renderer \
+      "$mixed_mutant" "$mixed_custom" "" "$mixed_mutant_out" 2>&1)"; then
+      expect_failure "renderer mixed resource decisions" \
+        "matching resource_decisions rendered as a failure" \
+        validate_renderer_mixed_resource_decisions \
+          "$mixed_mutant_out/$report_name"
+    else
+      fail_case "renderer mixed resource decisions mutation setup" "$output"
+    fi
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$mixed_custom" "" \
+      "$mixed_restored_out" 2>&1)" && \
+       validate_renderer_mixed_resource_decisions \
+         "$mixed_restored_out/$report_name"; then
+      pass_case "renderer mixed resource decisions mutation restored PASS"
+    else
+      fail_case "renderer mixed resource decisions mutation restoration" "$output"
+    fi
 
     if output="$(run_report_renderer \
       "$IAM_SIM_REPORT_RENDERER" "$doctored_pass_custom" "" \

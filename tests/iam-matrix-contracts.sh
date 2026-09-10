@@ -7,6 +7,8 @@ REPO_ROOT="${IAM_MATRIX_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 DOC="${IAM_MATRIX_DOC:-$DEFAULT_REPO_ROOT/docs/iam-matrix.md}"
 GENERATOR="$DEFAULT_REPO_ROOT/scripts/iam-matrix-inventory.sh"
 FIXTURES="${IAM_MATRIX_FIXTURES:-$DEFAULT_REPO_ROOT/tests/fixtures/iam-matrix}"
+CUSTOM_EVIDENCE_REPORT="${IAM_MATRIX_CUSTOM_EVIDENCE_REPORT:-$DEFAULT_REPO_ROOT/docs/assets/iam-simulation-custom-report.json}"
+SIMULATOR_VECTORS="${IAM_MATRIX_SIMULATOR_VECTORS:-$DEFAULT_REPO_ROOT/tests/fixtures/iam-simulate/vectors}"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -1014,8 +1016,56 @@ PY_SOURCE
 scan_hygiene "$DOC"
 scan_fixture_hygiene
 
+python3 - "$DOC" "$CUSTOM_EVIDENCE_REPORT" <<'PY_PROMOTED_HASH_SOURCE'
+import json
+from pathlib import Path
+import re
+import sys
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: {message}")
+
+
+matrix_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+report_path = Path(sys.argv[2])
+if not report_path.is_file():
+    fail(f"custom evidence report not found: {report_path}")
+report = json.loads(report_path.read_text(encoding="utf-8"))
+records = report.get("records")
+if not isinstance(records, list):
+    fail("custom evidence report records must be an array")
+records_by_id = {}
+for record in records:
+    if not isinstance(record, dict) or not isinstance(record.get("case_id"), str):
+        fail("custom evidence report contains an invalid record")
+    records_by_id.setdefault(record["case_id"], []).append(record)
+promoted = sorted(set(re.findall(
+    r"(case:[^ ;=)]+)=AWS-SIMULATED \d{4}-\d{2}-\d{2} [^;`]+(?=; case:|`)",
+    matrix_text,
+)))
+if not promoted:
+    fail("matrix contains no promoted simulator cases")
+for case_id in promoted:
+    matches = records_by_id.get(case_id, [])
+    if len(matches) != 1:
+        fail(f"promoted custom record count is {len(matches)} for {case_id}")
+    hashes = matches[0].get("document_hashes_submitted", {}).get("policy_input_list")
+    if not isinstance(hashes, list) or not hashes:
+        fail(f"promoted custom record has an empty policy_input_list hash list: {case_id}")
+    if not isinstance(hashes[0], dict) or re.fullmatch(r"[0-9a-f]{64}", hashes[0].get("sha256", "")) is None:
+        fail(f"promoted custom record has an invalid policy_input_list hash: {case_id}")
+print(f"PASS: IAM matrix promoted records carry policy hashes ({len(promoted)} cases)")
+PY_PROMOTED_HASH_SOURCE
+
 if [ "$REPO_ROOT" = "$DEFAULT_REPO_ROOT" ]; then
-  make_recipe="$(make -n -C "$DEFAULT_REPO_ROOT" iam-matrix-plan)"
+  make_recipe="$(
+    awk '
+      /^iam-matrix-plan:/ { in_recipe = 1; next }
+      in_recipe && /^\t/ { print; next }
+      in_recipe { exit }
+    ' "$DEFAULT_REPO_ROOT/Makefile" | sed 's/\$\$/\$/g'
+  )"
   # shellcheck disable=SC2016
   for required in \
     'mktemp "${TMPDIR:-/tmp}/orbit-iam-matrix.XXXXXX"' \
@@ -1090,6 +1140,94 @@ if generated_bindings != doc_bindings:
 
 print(f"PASS: IAM matrix plan inventory ({len(doc_statements)} statements, {len(doc_bindings)} bindings)")
 PY_PLAN
+  if [ "${IAM_MATRIX_SKIP_EVIDENCE_HASH_BINDING:-0}" != 1 ]; then
+    python3 - "$plan_json" "$DOC" "$CUSTOM_EVIDENCE_REPORT" "$SIMULATOR_VECTORS" <<'PY_PROMOTED_HASH_PLAN'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+
+def fail(message):
+    raise SystemExit(f"FAIL: {message}")
+
+
+def sha256(document):
+    return hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+matrix_text = Path(sys.argv[2]).read_text(encoding="utf-8")
+report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+vector_root = Path(sys.argv[4])
+documents = {
+    resource["address"]: resource["values"]["policy"]
+    for resource in plan.get("planned_values", {}).get("root_module", {}).get("resources", [])
+    if isinstance(resource, dict)
+    and isinstance(resource.get("address"), str)
+    and isinstance(resource.get("values"), dict)
+    and isinstance(resource["values"].get("policy"), str)
+}
+vectors = {}
+for vector_path in sorted(vector_root.rglob("*.json")):
+    envelope = json.loads(vector_path.read_text(encoding="utf-8"))
+    for case in envelope.get("cases", []):
+        vector = {
+            "document": envelope.get("document"),
+            "sid": envelope.get("sid"),
+            **case,
+        }
+        case_id = vector.get("case_id")
+        if case_id in vectors:
+            fail(f"simulator vectors repeat case id: {case_id}")
+        vectors[case_id] = vector
+records_by_id = {}
+for record in report.get("records", []):
+    if isinstance(record, dict):
+        records_by_id.setdefault(record.get("case_id"), []).append(record)
+promoted = sorted(set(re.findall(
+    r"(case:[^ ;=)]+)=AWS-SIMULATED \d{4}-\d{2}-\d{2} [^;`]+(?=; case:|`)",
+    matrix_text,
+)))
+for case_id in promoted:
+    vector = vectors.get(case_id)
+    if vector is None:
+        fail(f"promoted case has no simulator vector: {case_id}")
+    matches = records_by_id.get(case_id, [])
+    if len(matches) != 1:
+        fail(f"promoted custom record count is {len(matches)} for {case_id}")
+    document = documents.get(vector["document"])
+    if document is None:
+        fail(f"plan lacks promoted policy document {vector['document']}: {case_id}")
+    if vector.get("simulation_mode") == "custom-isolated":
+        policy = json.loads(document)
+        raw_statements = policy.get("Statement", [])
+        statements = raw_statements if isinstance(raw_statements, list) else [raw_statements]
+        isolated = [
+            statement for statement in statements
+            if isinstance(statement, dict) and statement.get("Sid") == vector["sid"]
+        ]
+        if len(isolated) != 1:
+            fail(f"isolated promoted statement count is {len(isolated)} for {case_id}")
+        submitted = json.dumps(
+            {
+                "Version": policy.get("Version", "2012-10-17"),
+                "Statement": isolated,
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+    else:
+        submitted = document
+    expected = sha256(submitted)
+    entries = matches[0].get("document_hashes_submitted", {}).get("policy_input_list", [])
+    actual = entries[0].get("sha256") if entries and isinstance(entries[0], dict) else "<empty>"
+    if actual != expected:
+        fail(f"promoted policy hash mismatch for {case_id}: report={actual} plan={expected}")
+print(f"PASS: IAM matrix promoted policy hashes bind to plan bytes ({len(promoted)} cases)")
+PY_PROMOTED_HASH_PLAN
+  fi
   exit 0
 fi
 
@@ -2189,7 +2327,8 @@ PY_MUTATE_DOC
   expect_fail pre-apply-trust "trust policies unknown at plan time: apply bootstrap to LocalStack first" "${child_env[@]}" "$0" "$plan_case"
 
   make_plan action-string-array '(.planned_values.root_module.resources[] | select(.address == "aws_iam_role_policy.plan_reader_deny").values.policy) |= (fromjson | .Statement[1].Action = [.Statement[1].Action] | tojson)'
-  "${child_env[@]}" "$0" "$plan_case" >/dev/null
+  "${child_env[@]}" IAM_MATRIX_SKIP_EVIDENCE_HASH_BINDING=1 \
+    "$0" "$plan_case" >/dev/null
   echo "PASS: positive fixture action-string-array canonicalises identically"
 
   make_plan condition-keys-reordered '(.planned_values.root_module.resources[] | select(.address == "aws_iam_policy.deployer_ec2").values.policy) |= (fromjson | .Statement[2].Condition.StringEquals |= (to_entries | reverse | from_entries) | tojson)'
