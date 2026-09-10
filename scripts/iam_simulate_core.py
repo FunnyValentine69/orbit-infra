@@ -48,9 +48,13 @@ def split_action_authorization_groups(action_names: list[str]) -> list[list[str]
     """Partition actions into groups accepted by one IAM simulator request."""
     groups = [[] for _ in range(len(ACTION_AUTHORIZATION_CLASSES) + 1)]
     classified: dict[str, int] = {}
-    for index, action_class in enumerate(ACTION_AUTHORIZATION_CLASSES, 1):
+    normalized_classes = tuple(
+        frozenset(member.casefold() for member in action_class)
+        for action_class in ACTION_AUTHORIZATION_CLASSES
+    )
+    for index, action_class in enumerate(normalized_classes, 1):
         for action in action_names:
-            if action not in action_class:
+            if action.casefold() not in action_class:
                 continue
             if action in classified and classified[action] != index:
                 raise RunnerFailure(

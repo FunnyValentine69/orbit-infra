@@ -125,6 +125,10 @@
 - [ ] P5-51: the supply provenance names only the three fixtures used by the direct comparisons, while `tests/sbom-canon.sh` consumes every fixture under tests/fixtures/sbom; enumerate the full contract-suite input set or distinguish it from the comparison set (Tier 3 on PR #23)
 - [ ] P5-52: make the IAM simulation renderer write `custom report sha256`, `role report sha256`, and `Markdown report sha256` rows to `docs/assets/IAM_SIMULATION_PROVENANCE.md`; the Evidence join already computes and prints all three digests and will enforce them once the complete provenance digest set exists
 - [ ] P5-53: `SnsSubscriptionManage` grants `sns:GetSubscriptionAttributes`, `sns:SetSubscriptionAttributes`, and `sns:Unsubscribe` on a subscription ARN, but those actions do not support resource-level permissions; decide whether to widen the grant to `*` with a condition or drop it
+- [ ] P5-54: hygiene: a 12-digit run embedded inside a 64/40-hex token is exempted by construction; consider field-scoped exemption
+  (`scripts/artifact-hygiene.sh:43` and `scripts/artifact-hygiene.sh:44`)
+- [ ] P5-55: mutation registry: store the mutation action verbatim and re-derive its effect at run time so a stale action string cannot pass vacuously
+  (`tests/iam-simulate-contracts.sh:90` and `tests/iam-simulate-contracts.sh:122`)
 - [x] P5-2b: Tier-3 P2 follow-ups from PR #10 — STATE ranges through P5-22, trust-boundary diagram shows deployer control-plane reach and plan-reader account-wide read, upstream SBOM Actions-artifact upload removed and ADR 0007 amended (2026-09-04); cosign 3.1.3 compatibility — `--use-signing-config=false` on all nine sign/attest calls, explicit predicate-type URIs instead of `--type custom`, `jq -s` over per-line envelopes in all thirteen attestation checks (found by Tier 1, proven on a local registry) — PR #11 (2026-09-04)
 
 ## End-of-project decisions (user, low priority)

@@ -51,9 +51,41 @@ fi
 }
 
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-sim-report.XXXXXX")"
-trap 'rm -rf -- "$temp_dir"' EXIT
 rendered_report="$temp_dir/IAM_SIMULATION_REPORT.md"
 rendered_provenance="$temp_dir/IAM_SIMULATION_PROVENANCE.md"
+report_backup="$temp_dir/original-IAM_SIMULATION_REPORT.md"
+provenance_backup="$temp_dir/original-IAM_SIMULATION_PROVENANCE.md"
+publication_started=0
+publication_complete=0
+report_had_original=0
+provenance_had_original=0
+
+rollback_publication() {
+  local rollback_rc=0
+  if [ "$report_had_original" -eq 1 ]; then
+    mv -- "$report_backup" "$out_dir/IAM_SIMULATION_REPORT.md" || rollback_rc=1
+  elif [ -e "$out_dir/IAM_SIMULATION_REPORT.md" ]; then
+    mv -- "$out_dir/IAM_SIMULATION_REPORT.md" "$temp_dir/failed-report.md" || rollback_rc=1
+  fi
+  if [ "$provenance_had_original" -eq 1 ]; then
+    mv -- "$provenance_backup" "$out_dir/IAM_SIMULATION_PROVENANCE.md" || rollback_rc=1
+  elif [ -e "$out_dir/IAM_SIMULATION_PROVENANCE.md" ]; then
+    mv -- "$out_dir/IAM_SIMULATION_PROVENANCE.md" \
+      "$temp_dir/failed-provenance.md" || rollback_rc=1
+  fi
+  return "$rollback_rc"
+}
+
+on_exit() {
+  local rc=$?
+  trap - EXIT
+  if [ "$publication_started" -eq 1 ] && [ "$publication_complete" -eq 0 ]; then
+    rollback_publication || rc=1
+  fi
+  rm -rf -- "$temp_dir" || rc=1
+  exit "$rc"
+}
+trap on_exit EXIT
 recorded_on="$(date +%F)"
 generator_commit="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
@@ -197,23 +229,44 @@ def role_view(record):
     return expected, observed, record["scp_excluded"]["matched_sids"]
 
 
-def outcome(records):
+def custom_matches(record):
+    if "runner_failure" in record:
+        return False
+    expectation = record["expect"]
+    expected_decision = expectation.get("decision")
+    if expected_decision is not None:
+        observed = record["decision_observed"]
+        decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
+        if not decisions or any(decision != expected_decision for decision in decisions):
+            return False
+    matched = set(record["matched_sids"])
+    required = set(expectation.get("matched_sid_required", []))
+    forbidden = set(expectation.get("matched_sid_forbidden", []))
+    return required <= matched and not (forbidden & matched)
+
+
+def role_matches(record):
+    return record["pass"] is True
+
+
+def outcome(records, matches):
+    passed = sum(matches(record) for record in records)
     return {
         "total": len(records),
-        "passed": sum(record["pass"] is True for record in records),
-        "failed": sum(record["pass"] is False for record in records),
+        "passed": passed,
+        "failed": len(records) - passed,
         "runner_failures": sum("runner_failure" in record for record in records),
     }
 
 
-def append_case_rows(lines, records, view):
+def append_case_rows(lines, records, view, matches):
     for record in sorted(records, key=lambda item: item["case_id"]):
         expected, observed, matched_sids = view(record)
         matched = ", ".join(markdown(sid) for sid in matched_sids) or "none"
         lines.append(
             f"| {markdown(record['case_id'])} | {markdown(record['mode'])} | "
             f"{markdown(expected)} | {markdown(observed)} | {matched} | "
-            f"{'yes' if record['pass'] else 'no'} |"
+            f"{'yes' if matches(record) else 'no'} |"
         )
 
 
@@ -240,22 +293,29 @@ report_lines = [
     "",
     "This publication renders account `000000000000` only.",
     "",
+    "## Publication metadata",
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    f"| recorded_on | {recorded_on} |",
+    f"| generator commit | {generator_commit} |",
+    "",
     "## Case results",
     "",
     "| Case ID | Mode | Expected | Observed | Matched Sids | Pass |",
     "| --- | --- | --- | --- | --- | --- |",
 ]
-append_case_rows(report_lines, custom_records, custom_view)
-append_case_rows(report_lines, role_records, role_view)
+append_case_rows(report_lines, custom_records, custom_view, custom_matches)
+append_case_rows(report_lines, role_records, role_view, role_matches)
 
 report_lines.extend(["", "## Findings", ""])
 findings = []
-for lane, records, view in (
-    ("custom", custom_records, custom_view),
-    ("role", role_records, role_view),
+for lane, records, view, matches in (
+    ("custom", custom_records, custom_view, custom_matches),
+    ("role", role_records, role_view, role_matches),
 ):
     for record in sorted(records, key=lambda item: item["case_id"]):
-        if record["pass"]:
+        if matches(record):
             continue
         expected, observed, matched_sids = view(record)
         matched = ", ".join(code(sid) for sid in matched_sids) or "none"
@@ -327,10 +387,13 @@ report_lines.extend(
         "| --- | ---: | ---: | ---: | ---: |",
     ]
 )
-for lane, records in (("custom", custom_records), ("role", role_records)):
+for lane, records, matches in (
+    ("custom", custom_records, custom_matches),
+    ("role", role_records, role_matches),
+):
     if lane == "role" and role is None:
         continue
-    counts = outcome(records)
+    counts = outcome(records, matches)
     report_lines.append(
         f"| {lane} | {counts['total']} | {counts['passed']} | "
         f"{counts['failed']} | {counts['runner_failures']} |"
@@ -349,8 +412,8 @@ append_hash_rows(report_lines, "custom", custom_records)
 append_hash_rows(report_lines, "role", role_records)
 Path(report_path).write_text("\n".join(report_lines) + "\n", encoding="utf-8")
 
-custom_counts = outcome(custom_records)
-role_counts = outcome(role_records)
+custom_counts = outcome(custom_records, custom_matches)
+role_counts = outcome(role_records, role_matches)
 recorded_from = "custom-policy report"
 if role is not None:
     recorded_from += " and temporary-role principal-policy report"
@@ -440,6 +503,16 @@ if ! "$HYGIENE" "$rendered_report" "$rendered_provenance"; then  # artifact-hygi
 fi
 
 mkdir -p "$out_dir"
+if [ -e "$out_dir/IAM_SIMULATION_REPORT.md" ]; then
+  cp -p -- "$out_dir/IAM_SIMULATION_REPORT.md" "$report_backup"
+  report_had_original=1
+fi
+if [ -e "$out_dir/IAM_SIMULATION_PROVENANCE.md" ]; then
+  cp -p -- "$out_dir/IAM_SIMULATION_PROVENANCE.md" "$provenance_backup"
+  provenance_had_original=1
+fi
+publication_started=1
 mv -- "$rendered_report" "$out_dir/IAM_SIMULATION_REPORT.md"
 mv -- "$rendered_provenance" "$out_dir/IAM_SIMULATION_PROVENANCE.md"
+publication_complete=1
 echo "PASS: IAM simulation artifacts rendered in $out_dir"

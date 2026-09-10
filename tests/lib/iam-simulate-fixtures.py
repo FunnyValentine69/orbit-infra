@@ -13,12 +13,14 @@ import signal
 import sys
 CORE_DOCUMENTS = ('aws_iam_role_policy.plan_reader_deny', 'aws_iam_role_policy.plan_reader_state', 'aws_iam_policy.task_boundary', 'aws_iam_policy.deployer_state', 'aws_iam_policy.deployer_ec2', 'aws_iam_policy.deployer_elb_ecs', 'aws_iam_policy.deployer_data', 'aws_iam_policy.deployer_iam', 'aws_iam_policy.deployer_guard', 'aws_iam_role_policy.publisher')
 S3_DIFFERENT_AUTHORIZATION_ACTIONS = {'s3:DeleteBucketOwnershipControls', 's3:DeleteBucketPublicAccessBlock'}
+REQUIRED_CONTEXT_ENTRIES = [{'ContextKeyName': 'aws:RequestTag/Project', 'ContextKeyValues': ['orbit-infra'], 'ContextKeyType': 'string'}]
 BASE_VECTOR = {'schema_version': 1, 'document': 'aws_iam_role_policy.plan_reader_deny', 'sid': 'DenyReadStateObjectsOutsideScope', 'simulation_mode': 'custom', 'assertion_kind': 'decision', 'action_names': ['iam:GetRole'], 'resource_arns': ['*'], 'context_entries': [], 'expect': {'decision': 'allowed', 'matched_sid_required': [], 'matched_sid_forbidden': []}}
 
 
 def _authorization_action_groups(actions):
-    direct = [action for action in actions if action not in S3_DIFFERENT_AUTHORIZATION_ACTIONS]
-    separate = [action for action in actions if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS]
+    special = {action.casefold() for action in S3_DIFFERENT_AUTHORIZATION_ACTIONS}
+    direct = [action for action in actions if action.casefold() not in special]
+    separate = [action for action in actions if action.casefold() in special]
     return [group for group in (direct, separate) if group]
 
 
@@ -51,6 +53,7 @@ VECTOR_FIXTURES = (
     ('ambiguous-vectors/ambiguous.json', 'decision', (('set', ('document',), 'aws_iam_policy.task_boundary'), ('set', ('sid',), 'EcrAuth'), ('set', ('case_id',), 'case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:in-boundary'), ('set', ('permissions_boundary_policy_input_list',), ['aws_iam_policy.task_boundary']), ('set', ('action_names',), ['ecr:GetAuthorizationToken']), ('set', ('expect', 'matched_sid_required'), ['EcrAuth']))),
     ('no-resource-vectors/no-resource.json', 'ambiguous-vectors/ambiguous.json', (('set', ('resource_arns',), []),)),
     ('authorization-split-vectors/authorization-split.json', 'authorization-source', (('set', ('expect', 'matched_sid_required'), []),)),
+    ('authorization-casefold-vectors/authorization-split.json', 'authorization-split-vectors/authorization-split.json', (('set', ('action_names', 5), 's3:deletebucketpublicaccessblock'),)),
     ('duplicate-vectors/duplicate-0.json', 'decision', (('set', ('document',), 'aws_iam_policy.deployer_data'), ('set', ('sid',), 'ClickhouseSecretCreateWithTag'), ('set', ('case_id',), ('$case', 0)), ('set', ('action_names',), ['secretsmanager:CreateSecret']), ('set', ('resource_arns',), ['arn:aws:secretsmanager:us-east-1:${ACCOUNT_ID}:secret:duplicate']))),
     ('duplicate-vectors/duplicate-1.json', 'duplicate-vectors/duplicate-0.json', (('set', ('case_id',), ('$case', 1)),)),
     ('isolated-vectors/isolated.json', 'isolated-source', (('set', ('expect', 'matched_sid_forbidden'), ['LogsCreateWithTag']),)),
@@ -104,6 +107,7 @@ CUSTOM_REPORT_FIXTURES = (
     ('role-scanner-escaped-quotes-custom-report.json', ('records', (('scanner-escaped-quotes-vectors/position.json', 'scanner_position_policy', 'custom'),)), ()),
     ('role-action-level-custom-report.json', ('records', (('role-action-level-vectors/action-level.json', 'aws_iam_role_policy.plan_reader_state', 'custom'),)), ()),
     ('role-authorization-split-custom-report.json', ('records', (('authorization-split-vectors/authorization-split.json', 'real_deployer_policy', 'custom'),)), (('set', ('records', 0, 'decision_observed'), ('$ctx', 'role_authorization_decision')),)),
+    ('role-authorization-casefold-custom-report.json', ('records', (('authorization-casefold-vectors/authorization-split.json', 'real_deployer_policy', 'custom'),)), (('set', ('records', 0, 'decision_observed'), ('$ctx', 'role_authorization_casefold_decision')),)),
     ('role-divergence-custom-report.json', 'role-custom-report.json', (('set', ('records', 0, 'decision_observed'), 'implicitDeny'), ('set', ('records', 0, 'matched_sids'), ['CustomMatchedSid']), ('set', ('records', 0, 'pass'), False), ('set', ('summary', 'passed'), 3), ('set', ('summary', 'failed'), 1))),
     ('role-missing-custom-report.json', 'role-custom-report.json', (('delete', ('records', 0)), ('set', ('summary', 'total'), 3), ('set', ('summary', 'passed'), 3))),
     ('role-projection-custom-report.json', ('records', tuple(((f'role-projection-vectors/projection-{index}.json', '@document', 'custom') for index in range(9)))), ()),
@@ -113,6 +117,7 @@ CUSTOM_REPORT_FIXTURES = (
 ROLE_SCENARIOS = (
     ('success', None, {}),
     ('authorization-split', 'success', {'custom': 'authorization-split'}),
+    ('context-required', 'success', {'expected_context_entries': REQUIRED_CONTEXT_ENTRIES}),
     ('throttle-once', 'success', {'failure': {'operation': 'simulate-custom-policy', 'at': 1, 'error': 'Throttling', 'exit': 254}}),
     ('throttle-always', 'throttle-once', {'failure.at': 'always', 'failure.error': 'RequestLimitExceeded'}),
     ('timeout', 'throttle-once', {'failure.at': 'always', 'failure.error': 'aws-cli.sh: AWS command timed out after 30s', 'failure.exit': 124, 'failure.raw': True}),
@@ -161,6 +166,19 @@ def _context(taxonomy_path, projection_source):
         for action in authorization_case['action_names']
         for resource in authorization_resources
     }
+    authorization_casefold_actions = [
+        's3:deletebucketpublicaccessblock' if action == 's3:DeleteBucketPublicAccessBlock' else action
+        for action in authorization_case['action_names']
+    ]
+    role_authorization_casefold_decision = {
+        f'{action}|{resource}': (
+            'implicitDeny'
+            if action.casefold() in {item.casefold() for item in S3_DIFFERENT_AUTHORIZATION_ACTIONS}
+            else 'allowed'
+        )
+        for action in authorization_casefold_actions
+        for resource in authorization_resources
+    }
     if len(real) != 1163 or hashlib.sha256(real.encode()).hexdigest() != 'f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b': raise SystemExit('FAIL: real position policy fixture bytes changed')
     if len(real_deployer) != 5682 or len([_span(real_deployer, i) for i in range(18)]) != 18 or hashlib.sha256(real_deployer.encode()).hexdigest() != 'dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40': raise SystemExit('FAIL: real deployer_data position fixture changed')
     if not _span(real_deployer, 7)[0] <= 1779 < _span(real_deployer, 7)[1] or _span(real_deployer, 7)[2] != 'ClickhouseSecretCreateWithTag': raise SystemExit('FAIL: real deployer_data offset 1779 owner changed')
@@ -178,7 +196,7 @@ def _context(taxonomy_path, projection_source):
         '"Resource":"*"',
         f'"Resource":"arn:aws:iam::{second_account}:role/example"',
     )
-    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'second_account_policy': second_account_policy, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'role_authorization_decision': role_authorization_decision, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
+    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'second_account_policy': second_account_policy, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'role_authorization_decision': role_authorization_decision, 'role_authorization_casefold_decision': role_authorization_casefold_decision, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
     ctx.update({'mapping_match0': _delimiter_match(mapping, 0), 'mapping_match1': _delimiter_match(mapping, 1), 'unmapped_match': _match(1), 'unknown_source_match': _delimiter_match(mapping, 1, 'UnknownPolicyLabel'), 'real_position_match': _match(38, 271)})
     first = ambiguous.index('{', ambiguous.index('[')) + 1
     second = ambiguous.index('{', first) + 1
@@ -300,18 +318,48 @@ def _scenario_payloads():
             parent[parts[-1]] = value
         results[name] = payload
     return results
-def _authorization_inputs(ctx, outputs):
-    vector = outputs['authorization-split-vectors/authorization-split.json']
-    aliases = {'s3:DeleteBucketOwnershipControls', 's3:DeleteBucketPublicAccessBlock'}
+def _authorization_inputs(ctx, outputs, vector_path):
+    vector = outputs[vector_path]
+    aliases = {action.casefold() for action in S3_DIFFERENT_AUTHORIZATION_ACTIONS}
     actions = sorted(vector['action_names'])
-    direct, aliased = ([a for a in actions if a not in aliases], [a for a in actions if a in aliases])
+    direct = [action for action in actions if action.casefold() not in aliases]
+    aliased = [action for action in actions if action.casefold() in aliases]
     return {'actions': actions, 'resources': sorted((r.replace('${SUFFIX}', '79s5rw') for r in vector['resource_arns'])), 'accepted_action_groups': [actions, direct, aliased], 'required_action_groups': [direct, aliased]}
+def _replace_account(value, account):
+    if isinstance(value, str): return value.replace('000000000000', account)
+    if isinstance(value, list): return [_replace_account(item, account) for item in value]
+    if isinstance(value, dict): return {key: _replace_account(item, account) for key, item in value.items()}
+    return value
+def _custom_report_for_plan(report, plan, outputs):
+    result = deepcopy(report)
+    documents = {
+        resource['address']: resource['values']['policy']
+        for resource in plan['planned_values']['root_module']['resources']
+        if isinstance(resource.get('values'), dict) and isinstance(resource['values'].get('policy'), str)
+    }
+    vectors = {
+        payload['case_id']: payload
+        for payload in outputs.values()
+        if isinstance(payload, dict) and isinstance(payload.get('case_id'), str)
+        and isinstance(payload.get('document'), str)
+    }
+    for record in result['records']:
+        vector = vectors.get(record['case_id'])
+        entries = record['document_hashes_submitted']['policy_input_list']
+        if vector is not None and len(entries) == 1 and vector['document'] in documents:
+            entries[0]['sha256'] = hashlib.sha256(documents[vector['document']].encode()).hexdigest()
+    return result
 def build_fixtures():
     taxonomy_path, root, projection_source = map(Path, sys.argv[1:4])
     ctx = _context(taxonomy_path, projection_source)
     outputs = {}
     for table, family, style in ((PLAN_FIXTURES, 'plans', 'pretty'), (VECTOR_FIXTURES, 'vectors', 'vector'), (RESPONSE_FIXTURES, 'responses', 'compact'), (CUSTOM_REPORT_FIXTURES, 'reports', 'pretty')): _render_table(ctx, root, table, family, style, outputs)
-    _write(root, 'expected-authorization-split-inputs.json', _authorization_inputs(ctx, outputs), 'sorted')
+    _write(root, 'expected-authorization-split-inputs.json', _authorization_inputs(ctx, outputs, 'authorization-split-vectors/authorization-split.json'), 'sorted')
+    _write(root, 'expected-authorization-casefold-inputs.json', _authorization_inputs(ctx, outputs, 'authorization-casefold-vectors/authorization-split.json'), 'sorted')
+    bound_plan = _replace_account(outputs['plan.json'], '123456789012')
+    _write(root, 'plan-account-bound.json', bound_plan, 'pretty')
+    _write(root, 'plan-account-foreign.json', _replace_account(outputs['plan.json'], '222222222222'), 'pretty')
+    _write(root, 'role-plan-account-custom-report.json', _custom_report_for_plan(outputs['role-custom-report.json'], bound_plan, outputs), 'pretty')
     _write(root, 'role-scenarios.json', _scenario_payloads(), 'pretty')
 def _option(args, name):
     try:
@@ -341,13 +389,25 @@ def _fake_error(rule, operation):
     raise SystemExit(rule['exit'])
 def _fake_authorization_split(args, operation):
     actions, resources = (_option(args, '--action-names'), _option(args, '--resource-arns'))
-    direct = sorted(action for action in actions if action not in S3_DIFFERENT_AUTHORIZATION_ACTIONS)
-    aliased = sorted(action for action in actions if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS)
+    special = {action.casefold() for action in S3_DIFFERENT_AUTHORIZATION_ACTIONS}
+    direct = sorted(action for action in actions if action.casefold() not in special)
+    aliased = sorted(action for action in actions if action.casefold() in special)
     if direct and aliased:
         operation_name = ''.join((part.title() for part in operation.split('-')))
         print(f"An error occurred (InvalidInput) when calling the {operation_name} operation: Invalid Input Actions: [{','.join(direct)}] and [{','.join(aliased)}] require different authorization information.", file=sys.stderr)
         raise SystemExit(254)
-    _json_print({'EvaluationResults': [{'EvalActionName': action, 'EvalDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed', 'MatchedStatements': [], 'ResourceSpecificResults': [{'EvalResourceName': resource, 'EvalResourceDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed', 'MatchedStatements': [], 'MissingContextValues': []} for resource in resources]} for action in actions]})
+    _json_print({'EvaluationResults': [{'EvalActionName': action, 'EvalDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action.casefold() in special else 'allowed', 'MatchedStatements': [], 'ResourceSpecificResults': [{'EvalResourceName': resource, 'EvalResourceDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action.casefold() in special else 'allowed', 'MatchedStatements': [], 'MissingContextValues': []} for resource in resources]} for action in actions]})
+def _validate_fake_principal_context(args, scenario):
+    expected = scenario.get('expected_context_entries')
+    if expected is None: return
+    raw = _option(args, '--context-entries')
+    try:
+        submitted = json.loads(raw[0]) if len(raw) == 1 else []
+    except json.JSONDecodeError:
+        submitted = raw
+    canonical = lambda entries: sorted(json.dumps(entry, sort_keys=True, separators=(',', ':')) for entry in entries) if isinstance(entries, list) else []
+    if canonical(submitted) != canonical(expected):
+        raise SystemExit(f"FAIL: fake simulate-principal-policy context entries mismatch: expected {json.dumps(expected, sort_keys=True, separators=(',', ':'))}, submitted {json.dumps(submitted, sort_keys=True, separators=(',', ':'))}")
 def _validate_fake_custom_inputs(args):
     expected_path = os.environ.get('FAKE_AWS_EXPECTED_INPUTS')
     if not expected_path: return
@@ -408,6 +468,7 @@ def _fake_aws():
         _save_state(path, state)
         _json_print({})
     elif (service, operation) == ('iam', 'simulate-principal-policy'):
+        _validate_fake_principal_context(options, scenario)
         response = os.environ.get('FAKE_PRINCIPAL_RESPONSE')
         if scenario.get('custom') == 'authorization-split': _fake_authorization_split(options, operation)
         elif response: sys.stdout.write(Path(response).read_text(encoding='utf-8'))
@@ -510,7 +571,7 @@ def _command_validate_real_report():
     print('PASS: real 239-vector report coverage (239 records, 8 shared-call batches, 16 shared cases)')
 def _command_mutate_core_authorization_groups():
     source = Path(sys.argv[1]).read_text(encoding='utf-8')
-    old = '    for index, action_class in enumerate(ACTION_AUTHORIZATION_CLASSES, 1):\n'
+    old = '    for index, action_class in enumerate(normalized_classes, 1):\n'
     new = '    for index, action_class in enumerate((), 1):\n'
     if source.count(old) != 1: raise SystemExit('FAIL: shared-core authorization partition mutation anchor changed')
     Path(sys.argv[2]).write_text(source.replace(old, new, 1), encoding='utf-8')
@@ -623,6 +684,31 @@ def _command_mutate_shared_core_scanner():
     if sys.argv[3] == 'string-delimiters': mutation = '                        end = policy.index("}", start) + 1\n                        statement = json.loads(policy[start:end])'
     else: mutation = '                        mutated_policy = policy[:start] + policy[start:].replace(chr(92) + chr(34), chr(34), 1)\n                        statement, end = decoder.raw_decode(mutated_policy, start)'
     Path(sys.argv[2]).write_text(source.replace(scan_line, mutation), encoding='utf-8')
+def _command_mutate_role_context_entries():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    context_line = "  [ \"$context\" = '[]' ] || CASE_CONTEXT_ARGS=(--context-entries \"$context\" --output json)"
+    if source.count(root_line) != 1 or source.count(context_line) != 1: raise SystemExit('FAIL: role context-entry mutation anchor changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
+    source = source.replace(context_line, '  : # context entries deliberately dropped', 1)
+    destination.write_text(source, encoding='utf-8')
+    destination.chmod(0o755)
+def _command_validate_role_plan_account_redaction():
+    report_path = Path(sys.argv[1])
+    account = sys.argv[2]
+    expected_marker = sys.argv[3] == 'true'
+    placeholder = '000000000000'
+    serialized = report_path.read_text(encoding='utf-8')
+    without_hashes = re.sub('(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])', '', serialized)
+    if account != placeholder and account in without_hashes:
+        raise SystemExit(f'FAIL: role report contains unredacted plan account id: {account}')
+    payload = json.loads(serialized)
+    if payload.get('plan_account') != placeholder:
+        raise SystemExit('FAIL: role report plan_account is not the placeholder')
+    if payload.get('plan_account_redacted') is not expected_marker:
+        raise SystemExit(f'FAIL: role report plan_account_redacted is not {str(expected_marker).lower()}')
 def _command_validate_role_account_redaction():
     report_path = Path(sys.argv[1])
     call_paths = sorted(Path(sys.argv[2]).glob('*.json'), key=lambda path: int(path.stem))
@@ -772,7 +858,7 @@ def _command_mutate_role_report_redaction():
     destination = Path(sys.argv[2])
     source = source_path.read_text(encoding='utf-8')
     root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
-    redaction_block = 'payload = redact_sensitive(payload, [\n    (role_plan["account_id"], "000000000000"),\n    (nonce, "<redacted>"),\n])\n'
+    redaction_block = 'redactions = [(role_plan["account_id"], placeholder_account)]\nif role_plan["vector_account_id"] != placeholder_account:\n    redactions.append((role_plan["vector_account_id"], placeholder_account))\nredactions.append((nonce, "<redacted>"))\npayload = redact_sensitive(payload, redactions)\n'
     if source.count(root_line) != 1 or source.count(redaction_block) != 1: raise SystemExit('FAIL: role report-redaction mutation anchor changed')
     source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}')
     source = source.replace(redaction_block, '')

@@ -373,6 +373,8 @@ validate_core_map_many() {
 run_authorization_split_runner() {
   local core=$1
   local report=$2
+  local vector_dir=${3:-$phase2_dir/authorization-split-vectors}
+  local expected_inputs=${4:-$phase2_dir/expected-authorization-split-inputs.json}
   env -u AWS_PROFILE \
     PATH="$phase2_dir/bin:$PATH" \
     AWS_CLI_BIN=aws \
@@ -381,12 +383,12 @@ run_authorization_split_runner() {
     FAKE_ROLE_STATE_DIR="$phase2_roles" \
     FAKE_AWS_SCENARIO=authorization-split \
     FAKE_AWS_RESPONSE="$phase2_dir/response-empty.json" \
-    FAKE_AWS_EXPECTED_INPUTS="$phase2_dir/expected-authorization-split-inputs.json" \
+    FAKE_AWS_EXPECTED_INPUTS="$expected_inputs" \
     IAM_SIM_CORE="$core" \
     IAM_SIM_RETRY_BASE_SECONDS=0 \
     TARGET=aws \
     "$IAM_SIM_RUNNER" --plan "$phase2_plan" \
-      --vectors "$phase2_dir/authorization-split-vectors" \
+      --vectors "$vector_dir" \
       --report "$report"
 }
 
@@ -781,6 +783,46 @@ PY
     fi
 
     reset_phase2_fake
+    report="$phase2_dir/authorization-casefold-report.json"
+    expected_inputs="$phase2_dir/expected-authorization-casefold-inputs.json"
+    if output="$(run_authorization_split_runner \
+      "$IAM_SIM_CORE" "$report" \
+      "$phase2_dir/authorization-casefold-vectors" "$expected_inputs" 2>&1)" && \
+       python3 - "$phase2_calls" "$expected_inputs" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+calls = []
+for path in sorted(Path(sys.argv[1]).glob("*.json")):
+    args = json.loads(path.read_text(encoding="utf-8"))
+    if args[:2] != ["iam", "simulate-custom-policy"]:
+        continue
+    start = args.index("--action-names") + 1
+    end = start
+    while end < len(args) and not args[end].startswith("--"):
+        end += 1
+    calls.append(sorted(args[start:end]))
+expected = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if sorted(calls) != sorted(expected["required_action_groups"]):
+    raise SystemExit(
+        "FAIL: lower-case s3:deletebucketpublicaccessblock was not "
+        f"partitioned into the second authorization class: {json.dumps(calls)}"
+    )
+PY
+    then
+      pass_case "runner case-insensitive S3 authorization partition mutation -> FAIL: lower-case s3:deletebucketpublicaccessblock was not partitioned into the second authorization class"
+    else
+      fail_case "runner case-insensitive S3 authorization partition mutation" "$output"
+    fi
+    reset_phase2_fake
+    if output="$(run_authorization_split_runner "$IAM_SIM_CORE" "$report" 2>&1)"; then
+      pass_case "runner case-insensitive S3 authorization partition mutation restored PASS"
+    else
+      fail_case "runner case-insensitive S3 authorization partition mutation restoration" "$output"
+    fi
+
+    reset_phase2_fake
     report="$phase2_dir/isolated-report.json"
     if output="$(run_phase2_runner success "$phase2_dir/response-isolated.json" "$phase2_dir/isolated-vectors" "$report" 2>&1)"; then
       isolated_policy="$(python3 - "$phase2_calls" <<'PY'
@@ -1070,6 +1112,14 @@ mutate_role_report_redaction() {
   chmod +x "$2"
 }
 
+mutate_role_context_entries() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-context-entries "$@" "$REPO_ROOT"
+}
+
+validate_role_plan_account_redaction() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-plan-account-redaction "$@"
+}
+
 mutate_role_nonce_check() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-nonce-check "$@" "$REPO_ROOT"
   chmod +x "$2"
@@ -1257,6 +1307,7 @@ run_iam_simulate_role_lane_contracts() {
   local core_mutant expected_sid expected_hash_failure wrong_hash_report nonce_report fail_line
   local preflight_scope_mutant expected_scope_failure boundary_case authorization_report
   local wrong_mode_report wrong_mode_case_id expected_mode_failure
+  local context_mutant plan_account_report
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
@@ -1265,6 +1316,30 @@ run_iam_simulate_role_lane_contracts() {
   else
     run_sid_contracts role-lane
     run_role_plan_guard_contracts
+
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-account-foreign.json" \
+      run_phase2_role_lane success --dry-run 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       [ "$fail_line" = "FAIL: plan account mismatch: plan 222222222222, expected 000000000000" ] && \
+       [ "$(phase2_call_count iam create-role)" -eq 0 ]; then
+      pass_case "role-lane plan account binding mutation -> $fail_line"
+    else
+      fail_case "role-lane plan account binding mutation did not fail before create" \
+        "rc=$rc creates=$(phase2_call_count iam create-role) output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(IAM_SIM_TEST_ACCOUNT_ID=123456789012 \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-account-bound.json" \
+      run_phase2_role_lane success --dry-run 2>&1)"; then
+      pass_case "role-lane plan account binding mutation restored PASS"
+    else
+      fail_case "role-lane plan account binding mutation restoration" "$output"
+    fi
 
     counter_core="$phase2_dir/iam-simulate-core-counter.py"
     core_call_log="$phase2_dir/core-calls.txt"
@@ -1382,6 +1457,40 @@ run_iam_simulate_role_lane_contracts() {
       "$phase2_dir/response-deployer-position.json" \
       "ClickhouseSecretCreateWithTag"
 
+    context_mutant="$phase2_dir/iam-simulate-roles-no-context.sh"
+    mutate_role_context_entries "$IAM_SIM_ROLE_LANE" "$context_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_LANE="$context_mutant" \
+      IAM_SIM_TEST_ROLE_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/deployer-position-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-deployer-position-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$phase2_dir/role-context-mutant-report.json" \
+      IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-deployer-position.json" \
+      run_phase2_role_lane context-required 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 'FAIL: fake simulate-principal-policy context entries mismatch:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && [ -n "$fail_line" ]; then
+      pass_case "role-lane principal context-entry preservation mutation -> $fail_line"
+    else
+      fail_case "role-lane principal context-entry preservation mutation did not fail" \
+        "rc=$rc output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/deployer-position-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-deployer-position-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$phase2_dir/role-context-restored-report.json" \
+      IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-deployer-position.json" \
+      run_phase2_role_lane context-required 2>&1)"; then
+      pass_case "role-lane principal context-entry preservation mutation restored PASS"
+    else
+      fail_case "role-lane principal context-entry preservation mutation restoration" "$output"
+    fi
+
     account=123456
     account+='789012'
     account_mutant="$phase2_dir/iam-simulate-roles-account-redaction-mutant.sh"
@@ -1428,6 +1537,25 @@ run_iam_simulate_role_lane_contracts() {
     else
       fail_case "role-lane report account redaction mutation restoration" \
         "rc=$rc output=$output"
+    fi
+
+    plan_account_report="$phase2_dir/role-plan-account-redaction-report.json"
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ACCOUNT_ID="$account" \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-account-bound.json" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-plan-account-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$plan_account_report" \
+      run_phase2_role_lane success 2>&1)" && \
+       validate_role_plan_account_redaction "$plan_account_report" "$account" true; then
+      pass_case "role-lane plan account redaction mutation -> FAIL: role report contains unredacted plan account id: $account"
+    else
+      fail_case "role-lane plan account redaction mutation" "$output"
+    fi
+    if validate_role_plan_account_redaction "$account_report" 000000000000 false; then
+      pass_case "role-lane plan account redaction mutation restored PASS"
+    else
+      fail_case "role-lane plan account redaction mutation restoration"
     fi
 
     reset_phase2_fake
@@ -2057,6 +2185,10 @@ replacements = {
         'if report.get("account_redacted") is not True:  # role-account-redacted-guard',
         'if False:  # role-account-redacted-guard',
     ),
+    "publication": (
+        'mv -- "$rendered_report" "$out_dir/IAM_SIMULATION_REPORT.md"',
+        'mv -- "$rendered_report" "$out_dir/IAM_SIMULATION_REPORT.md"\necho "FAIL: injected publication failure between report and provenance" >&2\nfalse',
+    ),
 }
 old, new = replacements[mutation]
 if source.count(old) != 1:
@@ -2088,6 +2220,8 @@ provenance = Path(sys.argv[2]).read_text(encoding="utf-8")
 required_report = (
     "| Case ID | Mode | Expected | Observed | Matched Sids | Pass |",
     "## Findings",
+    "| recorded_on |",
+    "| generator commit |",
     "case:fixture.policy:DenyRead:ALL:none:non-matching",
     "Expected: `allowed`; observed: `explicitDeny`.",
     "## Divergences",
@@ -2136,6 +2270,11 @@ run_iam_simulate_report_contracts() {
   local unmarked_out="$phase2_dir/rendered-unmarked-role"
   local compact_report="$phase2_dir/compact-writer-report.json"
   local compact_writer_mutant="$phase2_dir/iam-simulate-core-pretty-report.py"
+  local failed_case="case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+  local doctored_pass_custom="$phase2_dir/doctored-pass-custom-report.json"
+  local doctored_pass_out="$phase2_dir/rendered-doctored-pass"
+  local publication_mutant="$phase2_dir/iam-simulate-report-publication-mutant.sh"
+  local publication_out="$phase2_dir/rendered-publication-transaction"
   local output rc fail_line checker_output
 
   if output="$(
@@ -2182,15 +2321,22 @@ run_iam_simulate_report_contracts() {
 
     python3 - \
       "$clean_custom" "$hash_custom" "$bad_case_custom" \
-      "$unmarked_role" "$clean_role" <<'PY'
+      "$unmarked_role" "$clean_role" \
+      "$CUSTOM_EVIDENCE_REPORT" "$doctored_pass_custom" <<'PY'
 from copy import deepcopy
 import json
 from pathlib import Path
 import sys
 
-clean_custom, hash_path, bad_case_path, unmarked_path, clean_role = map(
-    Path, sys.argv[1:]
-)
+(
+    clean_custom,
+    hash_path,
+    bad_case_path,
+    unmarked_path,
+    clean_role,
+    evidence_custom,
+    doctored_pass_path,
+) = map(Path, sys.argv[1:])
 custom = json.loads(clean_custom.read_text(encoding="utf-8"))
 account_shaped_hash = "123456789012" + ("a" * 52)
 custom["records"][0]["document_hashes_submitted"]["policy_input_list"][0][
@@ -2211,7 +2357,77 @@ role.pop("account_redacted")
 unmarked_path.write_text(
     json.dumps(role, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )
+failed_case = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+doctored = json.loads(evidence_custom.read_text(encoding="utf-8"))
+failed = next(record for record in doctored["records"] if record["case_id"] == failed_case)
+if failed.get("pass") is not False:
+    raise SystemExit("FAIL: renderer doctored-pass fixture requires the failed SNS record")
+failed["pass"] = True
+doctored_pass_path.write_text(
+    json.dumps(doctored, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
 PY
+
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$doctored_pass_custom" "" \
+      "$doctored_pass_out" 2>&1)" && \
+       python3 - "$doctored_pass_out/$report_name" <<'PY'; then
+from pathlib import Path
+import sys
+
+case_id = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+report = Path(sys.argv[1]).read_text(encoding="utf-8")
+try:
+    findings = report.split("## Findings", 1)[1].split("## Divergences", 1)[0]
+except IndexError:
+    raise SystemExit("FAIL: rendered report lacks a bounded Findings section") from None
+if case_id not in findings:
+    raise SystemExit(f"FAIL: doctored pass suppressed renderer finding: {case_id}")
+PY
+      pass_case "renderer doctored pass finding mutation -> FAIL: doctored pass suppressed renderer finding: $failed_case"
+    else
+      fail_case "renderer doctored pass finding mutation" "$output"
+    fi
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$CUSTOM_EVIDENCE_REPORT" "" \
+      "$phase2_dir/rendered-doctored-pass-restored" 2>&1)" && \
+       sed -n '/^## Findings$/,/^## Divergences$/p' \
+         "$phase2_dir/rendered-doctored-pass-restored/$report_name" | \
+         grep -Fq "$failed_case"; then
+      pass_case "renderer doctored pass finding mutation restored PASS"
+    else
+      fail_case "renderer doctored pass finding mutation restoration" "$output"
+    fi
+
+    mkdir -p "$publication_out"
+    printf '%s\n' 'original report sentinel' >"$publication_out/$report_name"
+    printf '%s\n' 'original provenance sentinel' >"$publication_out/$provenance_name"
+    mutate_report_renderer publication "$publication_mutant"
+    set +e
+    output="$(run_report_renderer \
+      "$publication_mutant" "$clean_custom" "$clean_role" \
+      "$publication_out" 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       [ "$fail_line" = "FAIL: injected publication failure between report and provenance" ] && \
+       grep -Fxq 'original report sentinel' "$publication_out/$report_name" && \
+       grep -Fxq 'original provenance sentinel' "$publication_out/$provenance_name"; then
+      pass_case "renderer pair publication rollback mutation -> $fail_line"
+    else
+      fail_case "renderer pair publication rollback mutation changed the output directory" \
+        "rc=$rc output=$output"
+    fi
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$clean_role" \
+      "$publication_out" 2>&1)" && \
+       ! grep -Fq 'original report sentinel' "$publication_out/$report_name" && \
+       ! grep -Fq 'original provenance sentinel' "$publication_out/$provenance_name"; then
+      pass_case "renderer pair publication rollback mutation restored PASS"
+    else
+      fail_case "renderer pair publication rollback mutation restoration" "$output"
+    fi
 
     if output="$(
       run_report_renderer \

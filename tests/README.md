@@ -399,7 +399,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 121 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 131 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
@@ -418,21 +418,24 @@ and named hygiene review. A full SHA-256 containing account-shaped digits stays
 valid, while the same digits in a case ID fail closed with no published files.
 The group also refuses a role report without `account_redacted: true`, kills
 mutants that remove either that guard or the renderer's hygiene call, and checks
-the Makefile wiring. The root `make test` recipe runs
+that a doctored custom `pass` cannot suppress a finding. An injected failure
+between report and provenance publication restores both original output files;
+the provenance is published last. The group also checks the Makefile wiring.
+The root `make test` recipe runs
 `tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
 
 The `EVIDENCE` group joins every `AWS-SIMULATED` matrix label to a unique
-passing custom-policy record or, when needed, a unique matching SCP-excluded
-role-policy record. It re-evaluates role
-decisions and required/forbidden Sids against the vector, and enforces the row
-minimum. It verifies the provenance date and exact report pointer, prints the
-computed custom, role, and Markdown SHA-256 digests, and will compare them once
-P5-52 makes the renderer record the complete digest set. Eight registered mutants
-cover failed promotion, missing and duplicate records, stale pointer, wrong date,
-and a row promoted above its least-supported case. The other two doctor role
-records while preserving their matching decisions, then prove that a forbidden
-Sid or a missing required Sid blocks promotion even when the corresponding
-`role_matches` check is temporarily neutered. Every restored join must pass.
+execution-matching custom-policy record or, when needed, a unique matching
+SCP-excluded
+role-policy record. It ignores stored custom `pass` values and re-evaluates both
+lanes' decisions and required/forbidden Sids against the vector; a runner
+failure never matches. It enforces the row minimum, verifies the provenance
+date and exact report pointer, and refuses publication date or generator-commit
+disagreement between the Markdown report and provenance. It prints the computed
+custom, role, and Markdown SHA-256 digests and will compare them once P5-52
+makes the renderer record the complete digest set. Twelve registered mutants
+cover those joins and bindings, including a doctored SNS pass and a runner
+failure. Every restored join must pass.
 
 The `TAXONOMY` group runs
 `scripts/iam-simulate-categories.py --check`, independently compares the 288
@@ -485,7 +488,9 @@ through `scripts/aws-cli.sh`. It proves exact-ARN per-resource mapping
 when those results exist, action-level decision and attribution for explicit
 `*` or an omitted resource list, refusal of missing concrete resource results,
 and shared-core-derived separate requests for the two S3 delete names that
-require different authorization information. It also covers 1-based multiline
+require different authorization information. Action-class membership is
+case-insensitive, including lower-case
+`s3:deletebucketpublicaccessblock`. It also covers 1-based multiline
 position-to-Sid
 attribution with an exclusive end position and unique overlap against exact
 statement spans. The computed two-statement fixture and the exact 5,682-character,
@@ -563,14 +568,19 @@ mixed S3 request; the fake returns the matching AWS `InvalidInput` diagnostic,
 and both restored lanes must pass.
 
 The group also proves the complete zero-call dry-run inventory, exact opt-in and
-account refusals, custom-report mode and source-hash agreement for selected
-cases before the first create, and refusal of selected records with synthetic
-identity documents. A mutant that moves this preflight back over every loaded
-vector is killed, while the selected wrong-hash mutation still records zero
-create calls. It also proves both run-id and 32-hex nonce ownership tags before
-the first policy put, collision isolation, cleanup after a midway create failure
-and TERM, the delete-policy barrier, reverse cleanup across all projection
-passes, and post-cleanup `NoSuchEntity` verification. Midway-create and TERM
+account refusals, plus refusal of a plan carrying neither the placeholder nor
+the expected account with zero creates. Custom-report mode and source-hash
+agreement for selected cases also precede the first create, and selected records
+with synthetic identity documents are refused. The principal fake verifies the
+exact canonical context-entry set for condition-bearing cases, so a runner that
+drops context is killed. Report checks cover both expected- and plan-account
+redaction and the `plan_account_redacted` marker. A mutant that moves the custom
+preflight back over every loaded vector is killed, while the selected wrong-hash
+mutation still records zero create calls. The group also proves both run-id and
+32-hex nonce ownership tags before the first policy put, collision isolation,
+cleanup after a midway create failure and TERM, the delete-policy barrier,
+reverse cleanup across all projection passes, and post-cleanup `NoSuchEntity`
+verification. Midway-create and TERM
 failures run against both the three-role fixture and the eight-role projection.
 Additional eight-role cases inject at deployer p4 between a policy put and its
 marker and immediately after policy deletion; cleanup tolerates an unattached policy,

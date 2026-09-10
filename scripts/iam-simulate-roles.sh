@@ -178,7 +178,10 @@ plan_account_ids = sorted(set(re.findall(
 )))
 if len(plan_account_ids) > 1:
     fail(f"plan policy documents contain multiple account ids: {plan_account_ids}")
-vector_account_id = plan_account_ids[0] if plan_account_ids else "000000000000"
+placeholder_account = "000000000000"
+vector_account_id = plan_account_ids[0] if plan_account_ids else placeholder_account
+if vector_account_id not in (placeholder_account, account_id):
+    fail(f"plan account mismatch: plan {vector_account_id}, expected {account_id}")
 
 
 def render(value):
@@ -689,9 +692,12 @@ for exclusion in role_plan["exclusions"]:
     if "case_id" in exclusion:
         reason = exclusion["reason"]
         case_exclusions[reason] = case_exclusions.get(reason, 0) + 1
+placeholder_account = "000000000000"
 payload = {
     "account": role_plan["account_id"],
     "account_redacted": True,
+    "plan_account": role_plan["vector_account_id"],
+    "plan_account_redacted": role_plan["vector_account_id"] != placeholder_account,
     "run_id": role_plan["run_id"],
     "ownership_nonce": nonce,
     "ownership_nonce_redacted": True,
@@ -718,10 +724,11 @@ payload = {
         "manual_cleanup_notes": len(notes),
     },
 }
-payload = redact_sensitive(payload, [
-    (role_plan["account_id"], "000000000000"),
-    (nonce, "<redacted>"),
-])
+redactions = [(role_plan["account_id"], placeholder_account)]
+if role_plan["vector_account_id"] != placeholder_account:
+    redactions.append((role_plan["vector_account_id"], placeholder_account))
+redactions.append((nonce, "<redacted>"))
+payload = redact_sensitive(payload, redactions)
 report_path.parent.mkdir(parents=True, exist_ok=True)
 core.write_report(report_path, payload)
 PY

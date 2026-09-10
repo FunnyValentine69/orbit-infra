@@ -188,13 +188,7 @@ def load_vectors(root: Path) -> dict[str, dict]:
     return vectors
 
 
-def role_matches(vector: dict, record: dict) -> bool:
-    evidence = record.get("scp_excluded")
-    if not isinstance(evidence, dict):
-        return False
-    expectation = vector.get("expect")
-    if not isinstance(expectation, dict):
-        return False
+def observation_matches(expectation: dict, evidence: dict) -> bool:
     expected_decision = expectation.get("decision")
     if expected_decision is not None:
         observed = evidence.get("decision_observed")
@@ -210,6 +204,26 @@ def role_matches(vector: dict, record: dict) -> bool:
     return set(required) <= matched_set and not (set(forbidden) & matched_set)
 
 
+def custom_matches(vector: dict, record: dict) -> bool:
+    expectation = vector.get("expect")
+    return (
+        "runner_failure" not in record
+        and isinstance(expectation, dict)
+        and observation_matches(expectation, record)
+    )
+
+
+def role_matches(vector: dict, record: dict) -> bool:
+    evidence = record.get("scp_excluded")
+    expectation = vector.get("expect")
+    return (
+        "runner_failure" not in record
+        and isinstance(evidence, dict)
+        and isinstance(expectation, dict)
+        and observation_matches(expectation, evidence)
+    )
+
+
 matrix_path = Path(sys.argv[1])
 vectors = load_vectors(Path(sys.argv[2]))
 custom_path = Path(sys.argv[3])
@@ -221,6 +235,7 @@ custom_records = load_records(custom_path, "custom evidence report")
 role_records = load_records(role_path, "role evidence report")
 try:
     matrix_text = matrix_path.read_text(encoding="utf-8")
+    rendered_text = rendered_path.read_text(encoding="utf-8")
     provenance_text = provenance_path.read_text(encoding="utf-8")
 except OSError as exc:
     fail(f"cannot read Evidence input: {exc}")
@@ -230,6 +245,32 @@ recorded_on_matches = re.findall(
 if len(recorded_on_matches) != 1:
     fail("provenance must contain exactly one recorded_on date")
 recorded_on = recorded_on_matches[0]
+generator_matches = re.findall(
+    r"^\| generator commit \| ([0-9a-f]+) \|$", provenance_text, re.MULTILINE
+)
+if len(generator_matches) != 1:
+    fail("provenance must contain exactly one generator commit")
+generator_commit = generator_matches[0]
+report_recorded_on = re.findall(
+    r"^\| recorded_on \| (\d{4}-\d{2}-\d{2}) \|$", rendered_text, re.MULTILINE
+)
+report_generator = re.findall(
+    r"^\| generator commit \| ([0-9a-f]+) \|$", rendered_text, re.MULTILINE
+)
+if bool(report_recorded_on) != bool(report_generator):
+    fail("Evidence report publication metadata set is incomplete")
+if len(report_recorded_on) > 1 or len(report_generator) > 1:
+    fail("Evidence report repeats publication metadata")
+if report_recorded_on and report_recorded_on[0] != recorded_on:
+    fail(
+        "Evidence publication recorded_on mismatch: "
+        f"report={report_recorded_on[0]} provenance={recorded_on}"
+    )
+if report_generator and report_generator[0] != generator_commit:
+    fail(
+        "Evidence publication generator commit mismatch: "
+        f"report={report_generator[0]} provenance={generator_commit}"
+    )
 expected_label = f"AWS-SIMULATED {recorded_on} {expected_pointer}"
 
 digest_paths = {
@@ -284,7 +325,7 @@ def matching_path(case_id: str) -> str | None:
         return None
     custom = custom_records.get(case_id, [])
     role = role_records.get(case_id, [])
-    if len(custom) == 1 and custom[0].get("pass") is True:
+    if len(custom) == 1 and custom_matches(vector, custom[0]):
         return "custom"
     if len(role) == 1 and role_matches(vector, role[0]):
         return "role"
@@ -1127,9 +1168,23 @@ def write_mutant(name, matrix_text=None, custom_payload=None, role_payload=None)
 
 failed_case = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
 failed_anchor = f"{failed_case}=CODE-ONLY"
-if matrix.count(failed_anchor) != 1:
+failed_source = custom_by_id.get(failed_case)
+if matrix.count(failed_anchor) != 1 or failed_source is None:
     raise SystemExit("FAIL: failed-case Evidence mutation anchor changed")
 write_mutant("failed", matrix.replace(failed_anchor, f"{failed_case}={label}", 1))
+doctored_pass_custom = deepcopy(custom)
+doctored_pass_record = next(
+    record for record in doctored_pass_custom["records"]
+    if record["case_id"] == failed_case
+)
+if doctored_pass_record.get("pass") is not False:
+    raise SystemExit("FAIL: doctored-pass Evidence mutation requires a failed source record")
+doctored_pass_record["pass"] = True
+write_mutant(
+    "doctored-pass",
+    matrix.replace(failed_anchor, f"{failed_case}={label}", 1),
+    custom_payload=doctored_pass_custom,
+)
 
 missing_case = next(
     (case_id for case_id in promoted if case_id not in role_ids and case_id in custom_by_id),
@@ -1142,6 +1197,14 @@ missing_custom["records"] = [
     record for record in missing_custom["records"] if record["case_id"] != missing_case
 ]
 write_mutant("missing", custom_payload=missing_custom)
+runner_failure_custom = deepcopy(custom)
+runner_failure_record = next(
+    record for record in runner_failure_custom["records"]
+    if record["case_id"] == missing_case
+)
+runner_failure_record["pass"] = True
+runner_failure_record["runner_failure"] = "doctored runner failure"
+write_mutant("runner-failure", custom_payload=runner_failure_custom)
 
 duplicate_case = next((case_id for case_id in promoted if case_id in custom_by_id), None)
 if duplicate_case is None:
@@ -1209,9 +1272,12 @@ if (
 ):
     raise SystemExit("FAIL: required-Sid Evidence mutation anchor changed")
 required_custom = deepcopy(custom)
-next(
+required_custom_record = next(
     record for record in required_custom["records"] if record["case_id"] == required_case
-)["pass"] = False
+)
+required_custom_record["matched_sids"] = [
+    sid for sid in required_custom_record["matched_sids"] if sid != required_sid
+]
 required_role = deepcopy(role)
 required_record = next(
     record for record in required_role["records"] if record["case_id"] == required_case
@@ -1248,6 +1314,20 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/failed/role.json" \
       "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
   restore_evidence_join "evidence failed case promoted"
+  expect_failure "evidence doctored pass refusal" "promoted case is not execution-matching" \
+    validate_evidence_join \
+      "$evidence_mutants/doctored-pass/matrix.md" \
+      "$evidence_mutants/doctored-pass/custom.json" \
+      "$evidence_mutants/doctored-pass/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence doctored pass refusal"
+  expect_failure "evidence runner failure refusal" "promoted case is not execution-matching" \
+    validate_evidence_join \
+      "$evidence_mutants/runner-failure/matrix.md" \
+      "$evidence_mutants/runner-failure/custom.json" \
+      "$evidence_mutants/runner-failure/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence runner failure refusal"
   expect_failure "evidence missing record" "promoted case has no evidence record" \
     validate_evidence_join \
       "$evidence_mutants/missing/matrix.md" \
@@ -1356,6 +1436,90 @@ PY_EVIDENCE_MUTANTS
     required role-required-sid \
     "case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching" \
     "evidence role required Sid check"
+
+  publication_pair="$evidence_mutants/publication-pair"
+  if output="$(run_report_renderer \
+    "$IAM_SIM_REPORT_RENDERER" "$CUSTOM_EVIDENCE_REPORT" \
+    "$ROLE_EVIDENCE_REPORT" "$publication_pair" 2>&1)"; then
+    python3 - \
+      "$MATRIX" "$publication_pair/IAM_SIMULATION_REPORT.md" \
+      "$publication_pair/IAM_SIMULATION_PROVENANCE.md" \
+      "$evidence_mutants/publication-metadata" <<'PY_PUBLICATION'
+from pathlib import Path
+import re
+import sys
+
+matrix_path, report_path, provenance_path, output_root = map(Path, sys.argv[1:])
+output_root.mkdir()
+matrix = matrix_path.read_text(encoding="utf-8")
+report = report_path.read_text(encoding="utf-8")
+provenance = provenance_path.read_text(encoding="utf-8")
+recorded_on = re.findall(
+    r"^\| recorded_on \| (\d{4}-\d{2}-\d{2}) \|$", provenance, re.MULTILINE
+)
+generator = re.findall(
+    r"^\| generator commit \| ([0-9a-f]+) \|$", provenance, re.MULTILINE
+)
+if len(recorded_on) != 1 or len(generator) != 1:
+    raise SystemExit("FAIL: publication metadata mutation setup lacks provenance fields")
+current_matrix = re.sub(
+    r"AWS-SIMULATED \d{4}-\d{2}-\d{2} ",
+    f"AWS-SIMULATED {recorded_on[0]} ",
+    matrix,
+)
+(output_root / "matrix.md").write_text(current_matrix, encoding="utf-8")
+(output_root / "report.md").write_text(report, encoding="utf-8")
+(output_root / "provenance-generator.md").write_text(
+    provenance.replace(
+        f"| generator commit | {generator[0]} |",
+        "| generator commit | deadbee |",
+        1,
+    ),
+    encoding="utf-8",
+)
+mutated_date = "2099-12-31"
+(output_root / "matrix-date.md").write_text(
+    current_matrix.replace(
+        f"AWS-SIMULATED {recorded_on[0]} ",
+        f"AWS-SIMULATED {mutated_date} ",
+    ),
+    encoding="utf-8",
+)
+(output_root / "provenance-date.md").write_text(
+    provenance.replace(
+        f"| recorded_on | {recorded_on[0]} |",
+        f"| recorded_on | {mutated_date} |",
+        1,
+    ),
+    encoding="utf-8",
+)
+PY_PUBLICATION
+    metadata_root="$evidence_mutants/publication-metadata"
+    if output="$(validate_evidence_join \
+      "$metadata_root/matrix.md" "$CUSTOM_EVIDENCE_REPORT" \
+      "$ROLE_EVIDENCE_REPORT" "$metadata_root/report.md" \
+      "$publication_pair/IAM_SIMULATION_PROVENANCE.md" 2>&1)"; then
+      pass_case "Evidence publication metadata pair agrees"
+    else
+      fail_case "Evidence publication metadata pair" "$output"
+    fi
+    expect_failure "evidence publication generator binding" \
+      "Evidence publication generator commit mismatch" \
+      validate_evidence_join \
+        "$metadata_root/matrix.md" "$CUSTOM_EVIDENCE_REPORT" \
+        "$ROLE_EVIDENCE_REPORT" "$metadata_root/report.md" \
+        "$metadata_root/provenance-generator.md"
+    restore_evidence_join "evidence publication generator binding"
+    expect_failure "evidence publication date binding" \
+      "Evidence publication recorded_on mismatch" \
+      validate_evidence_join \
+        "$metadata_root/matrix-date.md" "$CUSTOM_EVIDENCE_REPORT" \
+        "$ROLE_EVIDENCE_REPORT" "$metadata_root/report.md" \
+        "$metadata_root/provenance-date.md"
+    restore_evidence_join "evidence publication date binding"
+  else
+    fail_case "Evidence publication metadata mutation setup" "$output"
+  fi
 
 fi
 

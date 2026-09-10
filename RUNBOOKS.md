@@ -324,16 +324,19 @@ A real role-lane run additionally requires the literal environment value
 `IAM_SIM_LANE_CONFIRM=create-real-iam-resources` and the custom-lane report for
 the same vectors. Before the caller check or first role create, each custom
 record's mode and submitted source-policy SHA-256 must match the current vector
-and plan document. That string authorizes only the roles carrying both the run
-tag and a per-invocation `OrbitIamSimulationNonce`: 32 lowercase hexadecimal
-characters read from `/dev/urandom`. The lane verifies both tags on every
-created role before the first policy put and re-reads both immediately before
-each cleanup mutation. It treats `EntityAlreadyExists` as manual cleanup without
-deleting it, removes owned roles in reverse order, and requires `NoSuchEntity`
-afterward. The inline-policy cleanup marker is persisted before the put; an
-unattached policy's `NoSuchEntity` is therefore safe to continue past. TERM and
-INT received during cleanup are recorded until cleanup, absence verification,
-and report writing finish, then returned as their signal-derived status.
+and plan document. The plan-derived account must be the authored
+`000000000000` placeholder or equal `--expect-account`; a third account fails
+before the caller check or any role create. That string authorizes only the
+roles carrying both the run tag and a per-invocation
+`OrbitIamSimulationNonce`: 32 lowercase hexadecimal characters read from
+`/dev/urandom`. The lane verifies both tags on every created role before the
+first policy put and re-reads both immediately before each cleanup mutation. It
+treats `EntityAlreadyExists` as manual cleanup without deleting it, removes
+owned roles in reverse order, and requires `NoSuchEntity` afterward. The
+inline-policy cleanup marker is persisted before the put; an unattached
+policy's `NoSuchEntity` is therefore safe to continue past. TERM and INT
+received during cleanup are recorded until cleanup, absence verification, and
+report writing finish, then returned as their signal-derived status.
 
 The role lane consumes the same `custom` vectors as the custom lane.
 `custom-isolated` cases are excluded because an isolated single-statement
@@ -367,10 +370,12 @@ The role report records each projection's source addresses, source-policy
 SHA-256 hashes, selected and excluded case counts by reason, agreements,
 principal/custom divergences, and Organizations divergences. The AWS-managed
 `ReadOnlyAccess` attachment has no inline equivalent and is always recorded as a
-role-lane exclusion. The live account is replaced with `000000000000`, and the
-ownership nonce is replaced with `<redacted>` so a report cannot replay either
-ownership value. These scripts and their cleanup paths are OFFLINE-VERIFIED only;
-no real role-lane execution is recorded here.
+role-lane exclusion. A single final redaction replaces both the live account and
+any non-placeholder plan account with `000000000000`; the report records
+`plan_account_redacted`, and the ownership nonce is replaced with `<redacted>`
+so a report cannot replay either ownership value. These scripts and their
+cleanup paths are OFFLINE-VERIFIED only; no real role-lane execution is recorded
+here.
 
 Render the publishable Markdown pair from the completed JSON reports. Omit the
 `--role-report` option when only the custom lane was run:
@@ -384,10 +389,13 @@ scripts/iam-simulate-report.sh \
 
 The renderer requires a role report to attest `account_redacted: true`, writes
 both files in a temporary directory, and invokes `scripts/artifact-hygiene.sh`
-on both before publication. Only after both checks pass does it move
-`IAM_SIMULATION_REPORT.md` and `IAM_SIMULATION_PROVENANCE.md` into the output
-directory; a violation leaves the output directory untouched and prints the
-checker's `FAIL:` line.
+on both before publication. Only after both checks pass does it publish the
+report and then the provenance last, rolling the pair back if either move
+fails. Both files record the publication date and generator commit; the
+Evidence join refuses a disagreeing pair. A violation leaves the output
+directory untouched and prints the checker's `FAIL:` line. Custom-lane pass
+cells, counts, and findings are re-derived from observed decisions and
+required/forbidden Sids rather than trusting the stored `pass` field.
 
 ## Front-page evidence
 
