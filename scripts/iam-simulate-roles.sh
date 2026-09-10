@@ -393,7 +393,7 @@ if not dry_run:
     custom_records = custom_payload.get("records") if isinstance(custom_payload, dict) else None
     if not isinstance(custom_records, list):
         fail("custom report records must be an array")
-    for vector in vectors:
+    for vector in supported:
         matches = [
             record for record in custom_records
             if isinstance(record, dict) and record.get("case_id") == vector["case_id"]
@@ -426,6 +426,11 @@ if not dry_run:
                 entry.get("sha256") if isinstance(entry, dict) else None
                 for entry in hash_entries
             ] if isinstance(hash_entries, list) else []
+            if len(custom_hashes) > 1:
+                fail(
+                    f"role lane cannot represent synthetic identity documents for {vector['case_id']}: "
+                    f"custom report submitted {len(custom_hashes)} policy_input_list documents"
+                )
             plan_hash = core.document_sha256(documents[vector["document"]])
             if custom_hashes != [plan_hash]:
                 observed_hash = (

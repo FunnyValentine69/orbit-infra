@@ -883,6 +883,11 @@ mutate_role_only_selection() {
     "$@" "$REPO_ROOT"
 }
 
+mutate_role_custom_preflight_scope() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-custom-preflight-scope \
+    "$1" "$2" "$REPO_ROOT"
+}
+
 validate_role_projection_report() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-projection-report "$@"
 }
@@ -1020,6 +1025,7 @@ run_iam_simulate_role_lane_contracts() {
   local mutant_inventory mutated_full_inventory mutation_fail mutation_output mutation_rc
   local fd_vectors only_case isolated_case duplicate_vectors
   local core_mutant expected_sid expected_hash_failure wrong_hash_report nonce_report fail_line
+  local preflight_scope_mutant expected_scope_failure boundary_case
   local wrong_mode_report wrong_mode_case_id expected_mode_failure
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
@@ -1177,6 +1183,34 @@ run_iam_simulate_role_lane_contracts() {
     else
       fail_case "role-lane selects custom vectors and records custom-isolated exclusion" \
         "rc=$rc output=$output"
+    fi
+
+    boundary_case="case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary"
+    expected_scope_failure="FAIL: role lane cannot represent synthetic identity documents for $boundary_case: custom report submitted 2 policy_input_list documents"
+    preflight_scope_mutant="$phase2_dir/iam-simulate-roles-preflight-scope-mutant.sh"
+    mutate_role_custom_preflight_scope "$IAM_SIM_ROLE_LANE" "$preflight_scope_mutant"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_LANE="$preflight_scope_mutant" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && [ "$fail_line" = "$expected_scope_failure" ] && \
+       [ "$(phase2_call_count iam create-role)" -eq 0 ]; then
+      pass_case "role-lane excluded custom hash preflight scope mutation -> $fail_line"
+    else
+      fail_case "role-lane excluded custom hash preflight scope mutation did not fail before create" \
+        "rc=$rc create_calls=$(phase2_call_count iam create-role) output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      run_phase2_role_lane success 2>&1)" && \
+       validate_role_selection_report "$phase2_dir/role-report.json"; then
+      pass_case "role-lane excluded custom hash preflight scope mutation restored PASS"
+    else
+      fail_case "role-lane excluded custom hash preflight scope mutation restoration" "$output"
     fi
 
     only_case="case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching"

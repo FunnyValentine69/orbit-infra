@@ -39,6 +39,7 @@ VECTOR_FIXTURES = (
     ('role-vectors/role-0.json', 'decision', (('set', ('document',), 'aws_iam_role_policy.plan_reader_state'), ('set', ('sid',), 'ReadStateObjects'), ('set', ('case_id',), ('$case', 0)), ('set', ('resource_arns',), ['arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-fixture-0']))),
     ('role-vectors/role-1.json', 'role-vectors/role-0.json', (('set', ('document',), 'aws_iam_policy.deployer_data'), ('set', ('sid',), 'LogsDescribeStarOnly'), ('set', ('case_id',), ('$case', 0)), ('set', ('resource_arns', 0), 'arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-fixture-1'))),
     ('role-vectors/role-2.json', 'role-vectors/role-0.json', (('set', ('document',), 'aws_iam_role_policy.publisher'), ('set', ('sid',), 'EcrAuth'), ('set', ('case_id',), ('$case', 0)), ('set', ('resource_arns', 0), 'arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-fixture-2'))),
+    ('role-vectors/role-excluded-boundary.json', 'decision', (('set', ('document',), 'aws_iam_policy.task_boundary'), ('set', ('sid',), 'EcrAuth'), ('set', ('case_id',), 'case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary'), ('set', ('synthetic_policy_input_list',), ['{"Version":"2012-10-17","Statement":[{"Sid":"VectorIdentityAllow","Effect":"Allow","Action":["s3:ListAllMyBuckets"],"Resource":["*"]}]}']), ('set', ('permissions_boundary_policy_input_list',), ['aws_iam_policy.task_boundary']), ('set', ('action_names',), ['s3:ListAllMyBuckets']), ('set', ('expect',), {'decision': 'implicitDeny', 'matched_sid_required': [], 'matched_sid_forbidden': ['EcrAuth']}))),
     ('role-vectors/role-isolated.json', 'isolated-source', ()),
     ('role-action-level-vectors/action-level.json', 'role-vectors/role-0.json', (('set', ('resource_arns',), ['*']),)),
     ('role-projection-vectors/projection-0.json', 'decision', (('set', ('document',), 'aws_iam_role_policy.plan_reader_deny'), ('set', ('case_id',), ('$case', 0)), ('set', ('resource_arns',), ['arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-projection-0']))),
@@ -79,7 +80,7 @@ RESPONSE_FIXTURES = (
     ('response-role-action-level.json', 'role-action-level', ()),
 )
 CUSTOM_REPORT_FIXTURES = (
-    ('role-custom-report.json', ('records', (('role-vectors/role-0.json', 'aws_iam_role_policy.plan_reader_state', 'custom'), ('role-vectors/role-1.json', 'aws_iam_policy.deployer_data', 'custom'), ('role-vectors/role-2.json', 'aws_iam_role_policy.publisher', 'custom'), ('role-vectors/role-isolated.json', None, 'custom-isolated'))), ()),
+    ('role-custom-report.json', ('records', (('role-vectors/role-0.json', 'aws_iam_role_policy.plan_reader_state', 'custom'), ('role-vectors/role-1.json', 'aws_iam_policy.deployer_data', 'custom'), ('role-vectors/role-2.json', 'aws_iam_role_policy.publisher', 'custom'), ('role-vectors/role-isolated.json', None, 'custom-isolated'), ('role-vectors/role-excluded-boundary.json', 'aws_iam_policy.task_boundary', 'custom'))), (('set', ('records', 4, 'document_hashes_submitted', 'policy_input_list'), ('$ctx', 'excluded_boundary_policy_hashes')), ('set', ('records', 4, 'document_hashes_submitted', 'permissions_boundary_policy_input_list'), ('$ctx', 'excluded_boundary_boundary_hashes')))),
     ('role-deployer-position-custom-report.json', ('records', (('deployer-position-vectors/position.json', 'real_deployer_policy', 'custom'),)), ()),
     ('role-scanner-string-delimiters-custom-report.json', ('records', (('scanner-string-delimiters-vectors/position.json', 'scanner_position_policy', 'custom'),)), ()),
     ('role-scanner-escaped-quotes-custom-report.json', ('records', (('scanner-escaped-quotes-vectors/position.json', 'scanner_position_policy', 'custom'),)), ()),
@@ -144,7 +145,8 @@ def _context(taxonomy_path, projection_source):
     resources = [{'address': address, 'type': 'aws_iam_policy' if address.startswith('aws_iam_policy.') else 'aws_iam_role_policy', 'values': {'policy': policy_map[address]}} for address in CORE_DOCUMENTS]
     resources += [{'address': f'aws_iam_role.{short}', 'type': 'aws_iam_role', 'values': {'name': f"orbit-infra-79s5rw-{short.replace('_', '-')}"}} for short in ('plan_reader', 'deployer', 'publisher')]
     categories = json.loads(taxonomy_path.read_text(encoding='utf-8'))
-    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer}
+    boundary_hash = hashlib.sha256(ambiguous.encode()).hexdigest()
+    ctx = {'taxonomy_path': taxonomy_path, 'categories': categories, 'projection_plan': projection, 'projection_policies': {r['address']: r['values']['policy'] for r in projection['planned_values']['root_module']['resources'] if isinstance(r.get('values'), dict) and isinstance(r['values'].get('policy'), str)}, 'synthetic_plan': {'planned_values': {'root_module': {'resources': resources}}}, 'policy_map': policy_map, 'real_position_policy': real, 'multiline_position_policy': multiline, 'scanner_position_policy': scanner, 'isolated_missing_policy': json.dumps(isolated_object, separators=(',', ':')), 'isolated_duplicate_policy': json.dumps(duplicate_object, separators=(',', ':')), 'real_deployer_policy': real_deployer, 'excluded_boundary_policy_hashes': [{'sha256': boundary_hash}, {'sha256': '0' * 64}], 'excluded_boundary_boundary_hashes': [{'sha256': boundary_hash}]}
     ctx.update({'mapping_match0': _delimiter_match(mapping, 0), 'mapping_match1': _delimiter_match(mapping, 1), 'unmapped_match': _match(1), 'unknown_source_match': _delimiter_match(mapping, 1, 'UnknownPolicyLabel'), 'real_position_match': _match(38, 271)})
     first = ambiguous.index('{', ambiguous.index('[')) + 1
     second = ambiguous.index('{', first) + 1
@@ -661,12 +663,17 @@ def _command_validate_role_selection_report():
     exclusions = payload.get('exclusions', [])
     summary = payload.get('summary', {})
     reason = 'isolated single-statement simulation has no principal equivalent'
+    boundary_case = 'case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary'
+    boundary_reason = 'document is not an identity-role binding'
     if len(records) != 3: raise SystemExit(f'FAIL: role selection requires three custom-vector records, found {len(records)}')
     if any((record.get('mode') != 'principal' for record in records)): raise SystemExit('FAIL: role selection did not execute every custom vector through principal simulation')
     isolated = [entry for entry in exclusions if entry.get('reason') == reason]
     if len(isolated) != 1 or not isolated[0].get('case_id'): raise SystemExit('FAIL: role selection must record one custom-isolated exclusion with its reason')
+    boundary = [entry for entry in exclusions if entry.get('case_id') == boundary_case and entry.get('reason') == boundary_reason]
+    if len(boundary) != 1: raise SystemExit('FAIL: role selection must record the task-boundary custom case exclusion with its reason')
     if summary.get('cases_selected') != 3: raise SystemExit('FAIL: role selection summary must count three selected cases')
     if summary.get('cases_excluded_by_reason', {}).get(reason) != 1: raise SystemExit('FAIL: role selection summary must count the custom-isolated exclusion reason')
+    if summary.get('cases_excluded_by_reason', {}).get(boundary_reason) != 1: raise SystemExit('FAIL: role selection summary must count the task-boundary exclusion reason')
 def _command_mutate_role_selection_report():
     payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
     reason = 'isolated single-statement simulation has no principal equivalent'
@@ -681,6 +688,15 @@ def _command_mutate_role_only_selection():
     if source.count(root_line) != 1 or source.count(selection) != 1: raise SystemExit('FAIL: role --only selection mutation anchor changed')
     source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
     destination.write_text(source.replace(selection, '    selected = []', 1), encoding='utf-8')
+    destination.chmod(493)
+def _command_mutate_role_custom_preflight_scope():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    scoped_loop = '    for vector in supported:'
+    if source.count(root_line) != 1 or source.count(scoped_loop) != 1: raise SystemExit('FAIL: role custom-report preflight-scope mutation anchor changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
+    destination.write_text(source.replace(scoped_loop, '    for vector in vectors:', 1), encoding='utf-8')
     destination.chmod(493)
 def _command_validate_role_projection_report():
     payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))

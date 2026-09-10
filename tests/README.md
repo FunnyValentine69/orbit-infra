@@ -399,7 +399,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 95 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 96 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
@@ -495,14 +495,18 @@ are added by this suite.
 The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
 store. It proves that `custom` vectors are selected unchanged while
 `custom-isolated` vectors carry the recorded no-principal-equivalent exclusion.
-For each selected role it concatenates every mapped document's `Statement`
-array in sorted address order. The plan-reader and publisher projections fit
-under 10,240 whitespace-stripped characters and use one combined pass; the six
-deployer documents do not fit together and therefore use six separately
-created, simulated, and deleted per-document roles. Report records identify the
-deciding projection with source addresses and SHA-256 hashes. Before report
-serialization, one recursive boundary replaces the live account ID throughout
-the final object with `000000000000`; reports carry that placeholder in
+Custom vectors whose documents are not identity-role bindings are excluded
+before custom-report preflight and retain their specific exclusion reason. The
+task-boundary fixture proves that such an excluded record may legitimately
+contain both the plan-document and synthetic-identity hashes without blocking
+the lane. For each selected role it concatenates every mapped document's
+`Statement` array in sorted address order. The plan-reader and publisher
+projections fit under 10,240 whitespace-stripped characters and use one
+combined pass; the six deployer documents do not fit together and therefore
+use six separately created, simulated, and deleted per-document roles. Report
+records identify the deciding projection with source addresses and SHA-256 hashes.
+Before report serialization, one recursive boundary replaces the live account
+ID throughout the final object with `000000000000`; reports carry that placeholder in
 `account`, replace the per-invocation ownership nonce with `<redacted>`, and set
 both redaction markers to `true`. Fake-recorded API calls prove that role names,
 trust policies, and principal-policy source ARNs retain the live account ID
@@ -526,14 +530,17 @@ strict-containment module mutation must fail both the `RUNNER` and `ROLE-LANE`
 groups, followed by an explicit restored pass in each group.
 
 The group also proves the complete zero-call dry-run inventory, exact opt-in and
-account refusals, custom-report mode and source-hash agreement before the first
-create, both run-id and 32-hex nonce ownership tags before the first policy put,
-collision isolation, cleanup after a midway create failure and TERM, the
-delete-policy barrier, reverse cleanup across all projection passes, and
-post-cleanup `NoSuchEntity` verification. Midway-create and TERM failures run
-against both the three-role fixture and the eight-role projection. Additional
-eight-role cases inject at deployer p4 between a policy put and its marker and
-immediately after policy deletion; cleanup tolerates an unattached policy,
+account refusals, custom-report mode and source-hash agreement for selected
+cases before the first create, and refusal of selected records with synthetic
+identity documents. A mutant that moves this preflight back over every loaded
+vector is killed, while the selected wrong-hash mutation still records zero
+create calls. It also proves both run-id and 32-hex nonce ownership tags before
+the first policy put, collision isolation, cleanup after a midway create failure
+and TERM, the delete-policy barrier, reverse cleanup across all projection
+passes, and post-cleanup `NoSuchEntity` verification. Midway-create and TERM
+failures run against both the three-role fixture and the eight-role projection.
+Additional eight-role cases inject at deployer p4 between a policy put and its
+marker and immediately after policy deletion; cleanup tolerates an unattached policy,
 defers TERM until cleanup, absence verification, and report writing finish, and
 then returns 143. A nonce-tamper case proves zero policy puts and deletes, and a
 nonce-ignoring source mutant is killed. A high-index cleanup mutant still passes
