@@ -1,0 +1,5826 @@
+{
+  "records": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "d1385a503a7a490c85e84009a3c8e63504ab6ac3e8926bfb5222a133403de255"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ClickhouseSecretCreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "ClickhouseSecretCreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "d1385a503a7a490c85e84009a3c8e63504ab6ac3e8926bfb5222a133403de255"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "d1385a503a7a490c85e84009a3c8e63504ab6ac3e8926bfb5222a133403de255"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretReadModifyWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ClickhouseSecretReadModifyWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "ClickhouseSecretReadModifyWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretReadModifyWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretReadModifyWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "c5779af5d8cc658d5e94b3848308dd9c2b8c73b782f8feb066271a6c89d34f6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ClickhouseSecretTagResourceExisting"
+        ]
+      },
+      "matched_sids": [
+        "ClickhouseSecretTagResourceExisting"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "c5779af5d8cc658d5e94b3848308dd9c2b8c73b782f8feb066271a6c89d34f6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "c5779af5d8cc658d5e94b3848308dd9c2b8c73b782f8feb066271a6c89d34f6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ClickhouseSecretTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "CloudwatchAlarmCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "CloudwatchAlarmCreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "CloudwatchAlarmCreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "CloudwatchAlarmCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "CloudwatchAlarmCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "CloudwatchAlarmRestWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "CloudwatchAlarmRestWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "CloudwatchAlarmRestWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "CloudwatchAlarmRestWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "CloudwatchAlarmRestWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcrVerificationAuth"
+        ]
+      },
+      "matched_sids": [
+        "EcrVerificationAuth"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcrVerificationPull"
+        ]
+      },
+      "matched_sids": [
+        "EcrVerificationPull"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcrVerificationPull"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EnvDataBucketLifecycle"
+        ],
+        "resource_decisions": {
+          "arn:aws:s3:::orbit-infra-79s5rw-preview-data": "allowed",
+          "arn:aws:s3:::orbit-infra-79s5rw-preview-data/preview": "allowed"
+        }
+      },
+      "matched_sids": [
+        "EnvDataBucketLifecycle",
+        "S3BucketDescribeReads"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "04534532fd896707a70635610f6dd26a474357093c4c472dbf43cb44b1135412"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvDataBucketLifecycle"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f58f0324513cef3a026e48d430ec39a9502128d2ee3cbd45c19613ed5b3cb732"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "LogsCreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "LogsCreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f58f0324513cef3a026e48d430ec39a9502128d2ee3cbd45c19613ed5b3cb732"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f58f0324513cef3a026e48d430ec39a9502128d2ee3cbd45c19613ed5b3cb732"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "LogsDescribeStarOnly"
+        ]
+      },
+      "matched_sids": [
+        "LogsDescribeStarOnly"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsModifyDeleteWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "LogsModifyDeleteWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "LogsModifyDeleteWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsModifyDeleteWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsModifyDeleteWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "cb9bd58428ed8972e42bcf1a44a5c23a38c2a94afa1febc37cfcb22aaaa0676e"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "LogsTagResourceExisting"
+        ]
+      },
+      "matched_sids": [
+        "LogsTagResourceExisting"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "cb9bd58428ed8972e42bcf1a44a5c23a38c2a94afa1febc37cfcb22aaaa0676e"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "cb9bd58428ed8972e42bcf1a44a5c23a38c2a94afa1febc37cfcb22aaaa0676e"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogsTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "S3BucketDescribeReads"
+        ]
+      },
+      "matched_sids": [
+        "S3BucketDescribeReads"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "b917c7c64675eb8e2909acd45b3b03a3c42da38adc0151345a411171f8965b1b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "S3BucketDescribeReads"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SigningPublicKeyRead"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:none-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SigningPublicKeyRead"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:one-matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "SigningPublicKeyRead"
+        ]
+      },
+      "matched_sids": [
+        "SigningPublicKeyRead"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SigningPublicKeyRead"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SnsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "SnsCreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "SnsCreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SnsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SnsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SnsRestWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "SnsRestWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "SnsRestWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SnsRestWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SnsRestWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "errors": [
+        "decision mismatch for sns:GetSubscriptionAttributes arn:aws:sns:us-east-1:000000000000:orbit-infra-79s5rw-preview:preview: expected allowed, observed implicitDeny",
+        "decision mismatch for sns:SetSubscriptionAttributes arn:aws:sns:us-east-1:000000000000:orbit-infra-79s5rw-preview:preview: expected allowed, observed implicitDeny",
+        "decision mismatch for sns:Unsubscribe arn:aws:sns:us-east-1:000000000000:orbit-infra-79s5rw-preview:preview: expected allowed, observed implicitDeny",
+        "required matched Sid is absent: SnsSubscriptionManage"
+      ],
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "SnsSubscriptionManage"
+        ]
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": false,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SnsSubscriptionManage"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "TagDiscovery"
+        ]
+      },
+      "matched_sids": [
+        "TagDiscovery"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "8951f16ea43f83af2c03e7ceb015bf9872e4eac57c5b7e5cd85da7bb088c4f21"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateTagsForCreateActions"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2CreateTagsForCreateActions"
+        ]
+      },
+      "matched_sids": [
+        "Ec2CreateTagsForCreateActions"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "8951f16ea43f83af2c03e7ceb015bf9872e4eac57c5b7e5cd85da7bb088c4f21"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateTagsForCreateActions"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "8951f16ea43f83af2c03e7ceb015bf9872e4eac57c5b7e5cd85da7bb088c4f21"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateTagsForCreateActions"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2CreateTagsForCreateActions"
+        ]
+      },
+      "matched_sids": [
+        "Ec2CreateTagsForCreateActions"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "8951f16ea43f83af2c03e7ceb015bf9872e4eac57c5b7e5cd85da7bb088c4f21"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateTagsForCreateActions"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForResourceTag:ALL:ec2:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "a05820e1172822cbf276c12dcaa959295797177ea53f0aa9c27881a8e92358fc"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateTagsForResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForResourceTag:ALL:ec2:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2CreateTagsForResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "Ec2CreateTagsForResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForResourceTag:ALL:ec2:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "a05820e1172822cbf276c12dcaa959295797177ea53f0aa9c27881a8e92358fc"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateTagsForResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2CreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "Ec2CreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2CreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2CreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2DeleteTags:ALL:ec2:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2DeleteTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2DeleteTags:ALL:ec2:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2DeleteTags"
+        ]
+      },
+      "matched_sids": [
+        "Ec2DeleteTags"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2DeleteTags:ALL:ec2:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2DeleteTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2DescribeStarOnly:ALL:ec2:Region:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2DescribeStarOnly"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2DescribeStarOnly:ALL:ec2:Region:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2DescribeStarOnly"
+        ]
+      },
+      "matched_sids": [
+        "Ec2DescribeStarOnly"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2DescribeStarOnly:ALL:ec2:Region:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2DescribeStarOnly"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2ModifyDeleteWithResourceTag:ALL:ec2:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "03b80a3f9fc4fe8fb90bd68560b7f82c64b128311abdd936f0366a320c04e3d1"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2ModifyDeleteWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2ModifyDeleteWithResourceTag:ALL:ec2:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2ModifyDeleteWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "Ec2ModifyDeleteWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2ModifyDeleteWithResourceTag:ALL:ec2:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "03b80a3f9fc4fe8fb90bd68560b7f82c64b128311abdd936f0366a320c04e3d1"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2ModifyDeleteWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2SecurityGroupRuleCreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "518fd4c89c419af2d95b7fa9375b11203bf5cf99d13b3fa6bc99c94861d9ec03"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2SecurityGroupRuleCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2SecurityGroupRuleCreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Ec2SecurityGroupRuleCreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "Ec2SecurityGroupRuleCreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_ec2:Ec2SecurityGroupRuleCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "518fd4c89c419af2d95b7fa9375b11203bf5cf99d13b3fa6bc99c94861d9ec03"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "Ec2SecurityGroupRuleCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsCreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsCreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsCreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "EcsCreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListDescribeTasksForProjectClusters:ALL:ecs:cluster:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsListDescribeTasksForProjectClusters"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListDescribeTasksForProjectClusters:ALL:ecs:cluster:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsListDescribeTasksForProjectClusters"
+        ]
+      },
+      "matched_sids": [
+        "EcsListDescribeTasksForProjectClusters"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListDescribeTasksForProjectClusters:ALL:ecs:cluster:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsListDescribeTasksForProjectClusters"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListServicesClusterScoped:ALL:ecs:cluster:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsListServicesClusterScoped"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListServicesClusterScoped:ALL:ecs:cluster:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsListServicesClusterScoped"
+        ]
+      },
+      "matched_sids": [
+        "EcsListServicesClusterScoped"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListServicesClusterScoped:ALL:ecs:cluster:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsListServicesClusterScoped"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsModifyDeleteDescribeWithResourceTag:ALL:ecs:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsModifyDeleteDescribeWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsModifyDeleteDescribeWithResourceTag:ALL:ecs:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsModifyDeleteDescribeWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "EcsModifyDeleteDescribeWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsModifyDeleteDescribeWithResourceTag:ALL:ecs:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsModifyDeleteDescribeWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsStarOnly:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsStarOnly"
+        ]
+      },
+      "matched_sids": [
+        "EcsStarOnly"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "7b79e5a2c8e6c32b3f222d800eae07bc8739c77461cc90f7311866a1a93e46ae"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsTagResource"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsTagResource"
+        ]
+      },
+      "matched_sids": [
+        "EcsTagResource"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:ecs:CreateAction:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "7b79e5a2c8e6c32b3f222d800eae07bc8739c77461cc90f7311866a1a93e46ae"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsTagResource"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:ecs:CreateAction:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "7b79e5a2c8e6c32b3f222d800eae07bc8739c77461cc90f7311866a1a93e46ae"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsTagResource"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:ecs:CreateAction:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsTagResource"
+        ]
+      },
+      "matched_sids": [
+        "EcsTagResource"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:aws:RequestTag/Project:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResource:ALL:ecs:CreateAction:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "7b79e5a2c8e6c32b3f222d800eae07bc8739c77461cc90f7311866a1a93e46ae"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsTagResource"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResourceExisting:ALL:ecs:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f413bb42275ab3c2bc647f5f017dd99f4f60756315e5999fa69c3063dc96d451"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResourceExisting:ALL:ecs:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsTagResourceExisting"
+        ]
+      },
+      "matched_sids": [
+        "EcsTagResourceExisting"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsTagResourceExisting:ALL:ecs:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f413bb42275ab3c2bc647f5f017dd99f4f60756315e5999fa69c3063dc96d451"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsUntabledActions:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsUntabledActions"
+        ]
+      },
+      "matched_sids": [
+        "EcsUntabledActions"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsUntagAndListTags:ALL:ecs:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsUntagAndListTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsUntagAndListTags:ALL:ecs:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsUntagAndListTags"
+        ]
+      },
+      "matched_sids": [
+        "EcsUntagAndListTags"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsUntagAndListTags:ALL:ecs:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsUntagAndListTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "5db90cd7a1e3ec7970661531f4191bcfe3963dd2137986b385eeff59bc88bd15"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbAddTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbAddTags"
+        ]
+      },
+      "matched_sids": [
+        "ElbAddTags"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:elasticloadbalancing:CreateAction:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "5db90cd7a1e3ec7970661531f4191bcfe3963dd2137986b385eeff59bc88bd15"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbAddTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:elasticloadbalancing:CreateAction:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "5db90cd7a1e3ec7970661531f4191bcfe3963dd2137986b385eeff59bc88bd15"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbAddTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:elasticloadbalancing:CreateAction:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbAddTags"
+        ]
+      },
+      "matched_sids": [
+        "ElbAddTags"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:aws:RequestTag/Project:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTags:ALL:elasticloadbalancing:CreateAction:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "5db90cd7a1e3ec7970661531f4191bcfe3963dd2137986b385eeff59bc88bd15"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbAddTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTagsForResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "48d8c5c840ae0b57be2952daa2602080057fd216b03bfda2edcf4d864394443b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbAddTagsForResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTagsForResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbAddTagsForResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "ElbAddTagsForResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbAddTagsForResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "48d8c5c840ae0b57be2952daa2602080057fd216b03bfda2edcf4d864394443b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbAddTagsForResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbCreateWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbCreateWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbCreateWithTag"
+        ]
+      },
+      "matched_sids": [
+        "ElbCreateWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbCreateWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbCreateWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbDescribeStarOnly:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbDescribeStarOnly"
+        ]
+      },
+      "matched_sids": [
+        "ElbDescribeStarOnly"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbDescribeTargetHealth:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbDescribeTargetHealth"
+        ]
+      },
+      "matched_sids": [
+        "ElbDescribeTargetHealth"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbModifyDeleteWithResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbModifyDeleteWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbModifyDeleteWithResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbModifyDeleteWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "ElbModifyDeleteWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbModifyDeleteWithResourceTag:ALL:elasticloadbalancing:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbModifyDeleteWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbRemoveTags:ALL:elasticloadbalancing:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbRemoveTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbRemoveTags:ALL:elasticloadbalancing:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ElbRemoveTags"
+        ]
+      },
+      "matched_sids": [
+        "ElbRemoveTags"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbRemoveTags:ALL:elasticloadbalancing:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ElbRemoveTags"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:Route53HostedZoneRead:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Route53HostedZoneRead"
+        ]
+      },
+      "matched_sids": [
+        "Route53HostedZoneRead"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:Route53HostedZoneStarOnly:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "Route53HostedZoneStarOnly"
+        ]
+      },
+      "matched_sids": [
+        "Route53HostedZoneStarOnly"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateNamespaceWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryCreateNamespaceWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateNamespaceWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryCreateNamespaceWithTag"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryCreateNamespaceWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateNamespaceWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryCreateNamespaceWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateServiceWithTag:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryCreateServiceWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateServiceWithTag:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryCreateServiceWithTag"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryCreateServiceWithTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateServiceWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryCreateServiceWithTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryReadDeleteUpdateWithResourceTag:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryReadDeleteUpdateWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryReadDeleteUpdateWithResourceTag:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryReadDeleteUpdateWithResourceTag"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryReadDeleteUpdateWithResourceTag"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryReadDeleteUpdateWithResourceTag:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryReadDeleteUpdateWithResourceTag"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryStarOnlyNoCondition:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryStarOnlyNoCondition"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryStarOnlyNoCondition"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResource:ALL:aws:RequestTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "9cd0b1b4932c90cb94387865fced8a8662ff3797d93299add23d814c763fb886"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryTagResource"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResource:ALL:aws:RequestTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryTagResource"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryTagResource"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResource:ALL:aws:RequestTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "9cd0b1b4932c90cb94387865fced8a8662ff3797d93299add23d814c763fb886"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryTagResource"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResourceExisting:ALL:aws:ResourceTag/Project:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "cd75bd84075937ee48db83bd1d5f28850df4e7d4c7ca267b2944aeac221593b4"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResourceExisting:ALL:aws:ResourceTag/Project:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryTagResourceExisting"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryTagResourceExisting"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryTagResourceExisting:ALL:aws:ResourceTag/Project:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "cd75bd84075937ee48db83bd1d5f28850df4e7d4c7ca267b2944aeac221593b4"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryTagResourceExisting"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryUntagResource:ALL:aws:TagKeys:absent",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryUntagResource"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryUntagResource"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryUntagResource:ALL:aws:TagKeys:all-matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ServiceDiscoveryUntagResource"
+        ]
+      },
+      "matched_sids": [
+        "ServiceDiscoveryUntagResource"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryUntagResource:ALL:aws:TagKeys:any-non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ServiceDiscoveryUntagResource"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:TagInventoryStarOnly:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "968d308a24d996da4eb875a66a87b28270335a626d61f621e2315e00bdc1d1fe"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "TagInventoryStarOnly"
+        ]
+      },
+      "matched_sids": [
+        "TagInventoryStarOnly"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_guard:DenyMutatingOwnControlRoles:ALL:none:non-protected-resource",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "b1198b2ed182297f09172bf96917ce6a1e18cef2657361a195dfa28765017832"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyMutatingOwnControlRoles"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_guard:DenyMutatingOwnControlRoles:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "b1198b2ed182297f09172bf96917ce6a1e18cef2657361a195dfa28765017832"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyMutatingOwnControlRoles"
+        ]
+      },
+      "matched_sids": [
+        "DenyMutatingOwnControlRoles"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyDeleteRolePermissionsBoundary:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyDeleteRolePermissionsBoundary"
+        ]
+      },
+      "matched_sids": [
+        "DenyDeleteRolePermissionsBoundary"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:absent",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyRoleMutationMissingBoundary"
+        ]
+      },
+      "matched_sids": [
+        "DenyRoleMutationMissingBoundary",
+        "DenyRoleMutationWrongBoundary"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:none:protected-resource"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:present",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyRoleMutationMissingBoundary"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [
+        "DenyRoleMutationWrongBoundary"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyRoleMutationMissingBoundary"
+        ]
+      },
+      "matched_sids": [
+        "DenyRoleMutationMissingBoundary",
+        "DenyRoleMutationWrongBoundary"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:absent"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationWrongBoundary:ALL:iam:PermissionsBoundary:absent",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "2b2d4308c60b970b9b4c406873b64007545c3910a6d2029851cd5abdbabade7b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyRoleMutationWrongBoundary"
+        ]
+      },
+      "matched_sids": [
+        "DenyRoleMutationWrongBoundary"
+      ],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationWrongBoundary:ALL:iam:PermissionsBoundary:different",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyRoleMutationWrongBoundary"
+        ]
+      },
+      "matched_sids": [
+        "DenyRoleMutationWrongBoundary"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_iam:DenyRoleMutationWrongBoundary:ALL:none:protected-resource"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationWrongBoundary:ALL:iam:PermissionsBoundary:equal",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyRoleMutationWrongBoundary"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationWrongBoundary:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyRoleMutationWrongBoundary"
+        ]
+      },
+      "matched_sids": [
+        "DenyRoleMutationWrongBoundary"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_iam:DenyRoleMutationWrongBoundary:ALL:iam:PermissionsBoundary:different"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PermissionsBoundary:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "394ee0c62bb3c8f1667c1aa74e7168fb637938e71af649c0debbf94ed7709c7b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleAttachPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PermissionsBoundary:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EnvServiceRoleAttachPolicy"
+        ]
+      },
+      "matched_sids": [
+        "EnvServiceRoleAttachPolicy"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PolicyARN:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PermissionsBoundary:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "394ee0c62bb3c8f1667c1aa74e7168fb637938e71af649c0debbf94ed7709c7b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleAttachPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PolicyARN:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "394ee0c62bb3c8f1667c1aa74e7168fb637938e71af649c0debbf94ed7709c7b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleAttachPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PolicyARN:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EnvServiceRoleAttachPolicy"
+        ]
+      },
+      "matched_sids": [
+        "EnvServiceRoleAttachPolicy"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PermissionsBoundary:matching"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:iam:PolicyARN:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "394ee0c62bb3c8f1667c1aa74e7168fb637938e71af649c0debbf94ed7709c7b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleAttachPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleAttachPolicy:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "394ee0c62bb3c8f1667c1aa74e7168fb637938e71af649c0debbf94ed7709c7b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleAttachPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleCreateWithBoundary:ALL:iam:PermissionsBoundary:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "ad68d8e44222e72d0e379772d566659a24495207c8b94038487c18c0f38c408f"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleCreateWithBoundary"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleCreateWithBoundary:ALL:iam:PermissionsBoundary:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EnvServiceRoleCreateWithBoundary"
+        ]
+      },
+      "matched_sids": [
+        "EnvServiceRoleCreateWithBoundary"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleCreateWithBoundary:ALL:iam:PermissionsBoundary:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "ad68d8e44222e72d0e379772d566659a24495207c8b94038487c18c0f38c408f"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleCreateWithBoundary"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleCreateWithBoundary:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "ad68d8e44222e72d0e379772d566659a24495207c8b94038487c18c0f38c408f"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleCreateWithBoundary"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleLifecycle:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EnvServiceRoleLifecycle"
+        ]
+      },
+      "matched_sids": [
+        "EnvServiceRoleLifecycle"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRoleLifecycle:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "8fc3eeb573b658040f18c07e14a1bd3d4696987bff710d82af091402fe543c3d"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRoleLifecycle"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePermissionsBoundarySet:ALL:iam:PermissionsBoundary:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "1357bf47cf3b5bafc552d011ee41d771c61f00d2df3d16593ed399b388c76cea"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRolePermissionsBoundarySet"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePermissionsBoundarySet:ALL:iam:PermissionsBoundary:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EnvServiceRolePermissionsBoundarySet"
+        ]
+      },
+      "matched_sids": [
+        "EnvServiceRolePermissionsBoundarySet"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePermissionsBoundarySet:ALL:iam:PermissionsBoundary:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "1357bf47cf3b5bafc552d011ee41d771c61f00d2df3d16593ed399b388c76cea"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRolePermissionsBoundarySet"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePermissionsBoundarySet:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "1357bf47cf3b5bafc552d011ee41d771c61f00d2df3d16593ed399b388c76cea"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRolePermissionsBoundarySet"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:iam:PermissionsBoundary:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "0ae5710dd6d1fdb3f93a2efcef1a133946d0e3eb264fcc0ad6d97cdad8729677"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRolePutPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:iam:PermissionsBoundary:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EnvServiceRolePutPolicy"
+        ]
+      },
+      "matched_sids": [
+        "EnvServiceRolePutPolicy"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:iam:PermissionsBoundary:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "0ae5710dd6d1fdb3f93a2efcef1a133946d0e3eb264fcc0ad6d97cdad8729677"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRolePutPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:EnvServiceRolePutPolicy:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "0ae5710dd6d1fdb3f93a2efcef1a133946d0e3eb264fcc0ad6d97cdad8729677"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EnvServiceRolePutPolicy"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleEcs:ALL:iam:AWSServiceName:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "IamServiceLinkedRoleEcs"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleEcs:ALL:iam:AWSServiceName:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "IamServiceLinkedRoleEcs"
+        ]
+      },
+      "matched_sids": [
+        "IamServiceLinkedRoleEcs"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleEcs:ALL:iam:AWSServiceName:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "IamServiceLinkedRoleEcs"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleEcs:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "IamServiceLinkedRoleEcs"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleElb:ALL:iam:AWSServiceName:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "IamServiceLinkedRoleElb"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleElb:ALL:iam:AWSServiceName:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "IamServiceLinkedRoleElb"
+        ]
+      },
+      "matched_sids": [
+        "IamServiceLinkedRoleElb"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleElb:ALL:iam:AWSServiceName:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "IamServiceLinkedRoleElb"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:IamServiceLinkedRoleElb:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "IamServiceLinkedRoleElb"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:iam:PassedToService:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "c642a43c6104be34aa846771b514112701d77520de4c3a31910fd5494289bdf9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "PassEnvRolesOnly"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:iam:PassedToService:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "56484064fff8cb8fa0e54b089173808533cb365e2adcfeac9b8c2aa561258203"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "PassEnvRolesOnly"
+        ]
+      },
+      "matched_sids": [
+        "PassEnvRolesOnly"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:iam:PassedToService:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "c642a43c6104be34aa846771b514112701d77520de4c3a31910fd5494289bdf9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "PassEnvRolesOnly"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "c642a43c6104be34aa846771b514112701d77520de4c3a31910fd5494289bdf9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "PassEnvRolesOnly"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_state:ListStateBucket:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "74b1d9ac80423e8c930e688bae3ef8c212a3bf44ba3256402d870538fff19f93"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ListStateBucket"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_state:ListStateBucket:ALL:s3:prefix:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "74b1d9ac80423e8c930e688bae3ef8c212a3bf44ba3256402d870538fff19f93"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ListStateBucket"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_state:ListStateBucket:ALL:s3:prefix:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "d00c754a8dfc3e1bbfc88aef122a1036e2d8a4be0ef7aa536c6ab37f26693340"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ListStateBucket"
+        ]
+      },
+      "matched_sids": [
+        "ListStateBucket"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_state:ListStateBucket:ALL:s3:prefix:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "74b1d9ac80423e8c930e688bae3ef8c212a3bf44ba3256402d870538fff19f93"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ListStateBucket"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_state:StateAndLeaseObjects:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "d00c754a8dfc3e1bbfc88aef122a1036e2d8a4be0ef7aa536c6ab37f26693340"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "StateAndLeaseObjects"
+        ]
+      },
+      "matched_sids": [
+        "StateAndLeaseObjects"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_state:StateAndLeaseObjects:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "feaa178b880d11ab9e072da1db5fa823e7801fc4028b3d6b0d39e68c2a702d51"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "StateAndLeaseObjects"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:in-boundary",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcrAuth"
+        ]
+      },
+      "matched_sids": [
+        "EcrAuth"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          },
+          {
+            "sha256": "8b24b4ac0409893ffcfce5f12b7e11e8c06309abc400b51dd8c5218649c16be9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcrAuth"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcrPull:ALL:none:in-boundary",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcrPull"
+        ]
+      },
+      "matched_sids": [
+        "EcrPull"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcrPull:ALL:none:outside-boundary",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          },
+          {
+            "sha256": "8b24b4ac0409893ffcfce5f12b7e11e8c06309abc400b51dd8c5218649c16be9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcrPull"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcrPull:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcrPull"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcsExec:ALL:none:in-boundary",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcsExec"
+        ]
+      },
+      "matched_sids": [
+        "EcsExec"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:EcsExec:ALL:none:outside-boundary",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          },
+          {
+            "sha256": "8b24b4ac0409893ffcfce5f12b7e11e8c06309abc400b51dd8c5218649c16be9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcsExec"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:LogStreams:ALL:none:in-boundary",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "LogStreams"
+        ]
+      },
+      "matched_sids": [
+        "LogStreams"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:LogStreams:ALL:none:outside-boundary",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          },
+          {
+            "sha256": "8b24b4ac0409893ffcfce5f12b7e11e8c06309abc400b51dd8c5218649c16be9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogStreams"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:LogStreams:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "LogStreams"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectDataBucket:ALL:none:in-boundary",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ProjectDataBucket"
+        ]
+      },
+      "matched_sids": [
+        "ProjectDataBucket"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectDataBucket:ALL:none:outside-boundary",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          },
+          {
+            "sha256": "8b24b4ac0409893ffcfce5f12b7e11e8c06309abc400b51dd8c5218649c16be9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ProjectDataBucket"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectDataBucket:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ProjectDataBucket"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectSecrets:ALL:none:in-boundary",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ProjectSecrets"
+        ]
+      },
+      "matched_sids": [
+        "ProjectSecrets"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectSecrets:ALL:none:outside-boundary",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          },
+          {
+            "sha256": "8b24b4ac0409893ffcfce5f12b7e11e8c06309abc400b51dd8c5218649c16be9"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ProjectSecrets"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_policy.task_boundary:ProjectSecrets:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ],
+        "policy_input_list": [
+          {
+            "sha256": "136c75e891ca322af096e5ec1ed1cee81f07c447fb8dda5d0b4dd40b22c11597"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ProjectSecrets"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:none:non-protected-resource",
+      "decision_observed": {
+        "s3:ListBucketVersions|arn:aws:s3:::outside-79s5rw-resource": "implicitDeny",
+        "s3:ListBucket|arn:aws:s3:::outside-79s5rw-resource": "explicitDeny"
+      },
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyListBucketMissingPrefix"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [
+        "DenyListBucketOutsideScope"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyListBucketMissingPrefix"
+        ]
+      },
+      "matched_sids": [
+        "DenyListBucketMissingPrefix",
+        "DenyListBucketOutsideScopePrefix"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:s3:prefix:absent"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:s3:prefix:absent",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyListBucketMissingPrefix"
+        ]
+      },
+      "matched_sids": [
+        "DenyListBucketMissingPrefix",
+        "DenyListBucketOutsideScopePrefix"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:none:protected-resource"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:s3:prefix:present",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyListBucketMissingPrefix"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "errors": [
+        "decision mismatch for s3:ListBucket arn:aws:s3:::orbit-infra-79s5rw-tfstate: expected allowed, observed implicitDeny"
+      ],
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [
+          "DenyListBucketOutsideScope"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": false,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyListBucketOutsideScope"
+        ]
+      },
+      "matched_sids": [
+        "DenyListBucketOutsideScope"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:none:non-protected-resource",
+      "decision_observed": {
+        "s3:ListBucketVersions|arn:aws:s3:::outside-79s5rw-resource": "implicitDeny",
+        "s3:ListBucket|arn:aws:s3:::outside-79s5rw-resource": "explicitDeny"
+      },
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyListBucketOutsideScopePrefix"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [
+        "DenyListBucketOutsideScope"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyListBucketOutsideScopePrefix"
+        ]
+      },
+      "matched_sids": [
+        "DenyListBucketOutsideScopePrefix"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:s3:prefix:outside-set"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:s3:prefix:absent",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyListBucketOutsideScopePrefix"
+        ]
+      },
+      "matched_sids": [
+        "DenyListBucketMissingPrefix",
+        "DenyListBucketOutsideScopePrefix"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:s3:prefix:inside-set",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyListBucketOutsideScopePrefix"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:s3:prefix:outside-set",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyListBucketOutsideScopePrefix"
+        ]
+      },
+      "matched_sids": [
+        "DenyListBucketOutsideScopePrefix"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": [
+        "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScopePrefix:ALL:none:protected-resource"
+      ]
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:non-protected-resource",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "matched_sid_forbidden": [
+          "DenyReadStateObjectsOutsideScope"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenyReadStateObjectsOutsideScope"
+        ]
+      },
+      "matched_sids": [
+        "DenyReadStateObjectsOutsideScope"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenySecretsAndParams:ALL:none:protected-resource",
+      "decision_observed": "explicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "DenySecretsAndParams"
+        ]
+      },
+      "matched_sids": [
+        "DenySecretsAndParams"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "94d0cab8496c3c28370263aeebd7c4243103a3e8735ea3ea61b43719d606c120"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ListStatePrefixes"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:s3:prefix:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "94d0cab8496c3c28370263aeebd7c4243103a3e8735ea3ea61b43719d606c120"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ListStatePrefixes"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:s3:prefix:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "60a7119c9bbda9dd260d5af0e017346b6a8c9fca0137f85795a73e646c4a0dd7"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ListStatePrefixes"
+        ]
+      },
+      "matched_sids": [
+        "ListStatePrefixes"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_state:ListStatePrefixes:ALL:s3:prefix:non-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "94d0cab8496c3c28370263aeebd7c4243103a3e8735ea3ea61b43719d606c120"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ListStatePrefixes"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "60a7119c9bbda9dd260d5af0e017346b6a8c9fca0137f85795a73e646c4a0dd7"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "ReadStateObjects"
+        ]
+      },
+      "matched_sids": [
+        "ReadStateObjects"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "f7421adfd5fbdd724ff75a8cddfe31b1711d75fdc035a6d3a3050c01adaddd1e"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "ReadStateObjects"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom-isolated",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.publisher:EcrAuth:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcrAuth"
+        ]
+      },
+      "matched_sids": [
+        "EcrAuth"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.publisher:EcrPushPull:ALL:none:matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "EcrPushPull"
+        ]
+      },
+      "matched_sids": [
+        "EcrPushPull"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.publisher:EcrPushPull:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "EcrPushPull"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.publisher:SigningKey:ALL:kms:ResourceAliases:absent",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SigningKey"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.publisher:SigningKey:ALL:kms:ResourceAliases:none-matching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SigningKey"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.publisher:SigningKey:ALL:kms:ResourceAliases:one-matching",
+      "decision_observed": "allowed",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "allowed",
+        "matched_sid_forbidden": [],
+        "matched_sid_required": [
+          "SigningKey"
+        ]
+      },
+      "matched_sids": [
+        "SigningKey"
+      ],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    },
+    {
+      "case_id": "case:aws_iam_role_policy.publisher:SigningKey:ALL:resource:nonmatching",
+      "decision_observed": "implicitDeny",
+      "document_hashes_submitted": {
+        "permissions_boundary_policy_input_list": [],
+        "policy_input_list": [
+          {
+            "sha256": "42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"
+          }
+        ]
+      },
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_forbidden": [
+          "SigningKey"
+        ],
+        "matched_sid_required": []
+      },
+      "matched_sids": [],
+      "mode": "custom",
+      "pass": true,
+      "shared_call_case_ids": []
+    }
+  ],
+  "summary": {
+    "failed": 2,
+    "passed": 237,
+    "runner_failures": 0,
+    "total": 239
+  }
+}

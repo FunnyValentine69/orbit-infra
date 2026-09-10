@@ -387,9 +387,9 @@ status and cleanup. It runs from `make test`.
 
 ## IAM simulator contracts
 
-Run all seven taxonomy, case-ID, vector-schema, completeness, custom-runner,
-role-lane, and report-renderer contract groups without AWS, Terraform, Docker,
-or LocalStack:
+Run all eight taxonomy, case-ID, vector-schema, completeness, custom-runner,
+role-lane, report-renderer, and Evidence-join contract groups without AWS,
+Terraform, Docker, or LocalStack:
 
 ```bash
 bash tests/iam-simulate-contracts.sh
@@ -399,7 +399,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 96 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 104 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
@@ -414,6 +414,16 @@ The group also refuses a role report without `account_redacted: true`, kills
 mutants that remove either that guard or the renderer's hygiene call, and checks
 the Makefile wiring. The root `make test` recipe runs
 `tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
+
+The `EVIDENCE` group joins every `AWS-SIMULATED` matrix label to a unique
+passing custom-policy record or, when needed, a unique matching SCP-excluded
+role-policy record. It re-evaluates role
+decisions and required/forbidden Sids against the vector, and enforces the row
+minimum. It verifies the provenance date and exact report pointer, prints the
+computed custom, role, and Markdown SHA-256 digests, and will compare them once
+P5-52 makes the renderer record the complete digest set. Six registered mutants
+cover failed promotion, missing and duplicate records, stale pointer, wrong date,
+and a row promoted above its least-supported case; every restored join must pass.
 
 The `TAXONOMY` group runs
 `scripts/iam-simulate-categories.py --check`, independently compares the 288

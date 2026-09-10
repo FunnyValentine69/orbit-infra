@@ -1877,11 +1877,11 @@ elif mutation == "na-resource-not-wildcard":
         cells[7],
         count=1,
     )
-    old_evidence = f"{case_id}=CODE-ONLY"
+    old_evidence = re.findall(rf"{re.escape(case_id)}=[^;]+", cells[9])
     new_evidence = f"{case_id}=N/A(non-wildcard resource mislabeled)"
-    if case_count != 1 or cells[9].count(old_evidence) != 1:
+    if case_count != 1 or len(old_evidence) != 1:
         raise SystemExit("na-resource-not-wildcard mutation anchor mismatch")
-    cells[9] = cells[9].replace(old_evidence, new_evidence, 1)
+    cells[9] = cells[9].replace(old_evidence[0], new_evidence, 1)
     replacement = "| " + " | ".join(f"`{cell}`" for cell in cells) + " |"
     source = source.replace(line, replacement, 1)
 elif mutation == "na-with-trailing-instructions":

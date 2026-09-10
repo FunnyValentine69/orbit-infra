@@ -25,6 +25,12 @@ completeness-duplicate-case-across-envelopes	validate_completeness	FAIL: case id
 completeness-filename-derivation	validate_completeness	FAIL: vector filename mismatch for aws_iam_policy.deployer_data ClickhouseSecretCreateWithTag: expected aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json
 completeness-schema-validation	validate_completeness	FAIL: vector validation failed for aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json: FAIL: case is missing required field: expect
 completeness-envelope-header-mismatch	validate_completeness	FAIL: case_id prefix does not match envelope header: case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource expected case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:
+evidence-failed-case-promoted	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching
+evidence-missing-record	validate_evidence_join	FAIL: promoted case has no evidence record:
+evidence-duplicate-record	validate_evidence_join	FAIL: promoted case appears more than once in an evidence lane:
+evidence-stale-pointer	validate_evidence_join	FAIL: Evidence pointer mismatch for
+evidence-wrong-date	validate_evidence_join	FAIL: Evidence date mismatch for
+evidence-row-above-minimum	validate_evidence_join	FAIL: Evidence row is above its computed minimum at line
 runner-per-resource-mapper	run_phase2_runner	FAIL: decision mismatch for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-good/example: expected allowed, observed explicitDeny
 runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent: DenyReadStateObjectsOutsideScope
 runner-real-deployer-data-two-statement-overlap-refusal	run_phase2_runner	FAIL: ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5682 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle

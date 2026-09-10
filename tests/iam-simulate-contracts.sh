@@ -13,6 +13,11 @@ UNRESOLVED="$VECTOR_FIXTURES/unresolved.json"
 SCHEMA_DOC="$REPO_ROOT/docs/iam-simulate-vector-schema.md"
 PHASE2_CONTRACTS="$REPO_ROOT/tests/lib/iam-simulate-phase2.sh"
 MUTATION_REGISTRY="$REPO_ROOT/tests/lib/iam-simulate-mutations.txt"
+CUSTOM_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/iam-simulation-custom-report.json"
+ROLE_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/iam-simulation-role-report.json"
+RENDERED_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/IAM_SIMULATION_REPORT.md"
+EVIDENCE_PROVENANCE="$REPO_ROOT/docs/assets/IAM_SIMULATION_PROVENANCE.md"
+EVIDENCE_POINTER="docs/assets/IAM_SIMULATION_REPORT.md"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-simulate.XXXXXX")"
 results="$tmp_dir/results.txt"
 mutation_observations="$tmp_dir/mutation-observations.txt"
@@ -129,6 +134,211 @@ PY_REGISTRY
 }
 
 validate_mutation_registry
+
+validate_evidence_join() {
+  local matrix=$1 custom_report=$2 role_report=$3 rendered_report=$4 provenance=$5
+  python3 - \
+    "$matrix" "$VECTORS" "$custom_report" "$role_report" \
+    "$rendered_report" "$provenance" "$EVIDENCE_POINTER" <<'PY_EVIDENCE'
+from __future__ import annotations
+
+from collections import defaultdict
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"FAIL: {message}")
+
+
+def load_json(path: Path, description: str):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"cannot read {description}: {exc}")
+
+
+def load_records(path: Path, description: str) -> dict[str, list[dict]]:
+    payload = load_json(path, description)
+    if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
+        fail(f"{description} must contain a records array")
+    records: dict[str, list[dict]] = defaultdict(list)
+    for index, record in enumerate(payload["records"]):
+        if not isinstance(record, dict) or not isinstance(record.get("case_id"), str):
+            fail(f"{description} record {index} lacks a case_id")
+        records[record["case_id"]].append(record)
+    return records
+
+
+def load_vectors(root: Path) -> dict[str, dict]:
+    vectors = {}
+    for path in sorted(root.glob("*.json")):
+        payload = load_json(path, f"vector envelope {path.name}")
+        cases = payload.get("cases")
+        if not isinstance(cases, list):
+            fail(f"vector envelope {path.name} lacks a cases array")
+        for vector in cases:
+            case_id = vector.get("case_id") if isinstance(vector, dict) else None
+            if not isinstance(case_id, str) or case_id in vectors:
+                fail(f"Evidence join found an invalid or duplicate vector case_id: {case_id}")
+            vectors[case_id] = vector
+    return vectors
+
+
+def role_matches(vector: dict, record: dict) -> bool:
+    evidence = record.get("scp_excluded")
+    if not isinstance(evidence, dict):
+        return False
+    expectation = vector.get("expect")
+    if not isinstance(expectation, dict):
+        return False
+    expected_decision = expectation.get("decision")
+    if expected_decision is not None:
+        observed = evidence.get("decision_observed")
+        decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
+        if not decisions or any(decision != expected_decision for decision in decisions):
+            return False
+    matched = evidence.get("matched_sids")
+    if not isinstance(matched, list) or any(not isinstance(sid, str) for sid in matched):
+        return False
+    matched_set = set(matched)
+    required = expectation.get("matched_sid_required", [])
+    forbidden = expectation.get("matched_sid_forbidden", [])
+    return set(required) <= matched_set and not (set(forbidden) & matched_set)
+
+
+matrix_path = Path(sys.argv[1])
+vectors = load_vectors(Path(sys.argv[2]))
+custom_path = Path(sys.argv[3])
+role_path = Path(sys.argv[4])
+rendered_path = Path(sys.argv[5])
+provenance_path = Path(sys.argv[6])
+expected_pointer = sys.argv[7]
+custom_records = load_records(custom_path, "custom evidence report")
+role_records = load_records(role_path, "role evidence report")
+try:
+    matrix_text = matrix_path.read_text(encoding="utf-8")
+    provenance_text = provenance_path.read_text(encoding="utf-8")
+except OSError as exc:
+    fail(f"cannot read Evidence input: {exc}")
+recorded_on_matches = re.findall(
+    r"^\| recorded_on \| (\d{4}-\d{2}-\d{2}) \|$", provenance_text, re.MULTILINE
+)
+if len(recorded_on_matches) != 1:
+    fail("provenance must contain exactly one recorded_on date")
+recorded_on = recorded_on_matches[0]
+expected_label = f"AWS-SIMULATED {recorded_on} {expected_pointer}"
+
+digest_paths = {
+    "custom report sha256": custom_path,
+    "role report sha256": role_path,
+    "Markdown report sha256": rendered_path,
+}
+computed_digests = {}
+for name, digest_path in digest_paths.items():
+    try:
+        computed_digests[name] = hashlib.sha256(digest_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        fail(f"cannot digest {name}: {exc}")
+provenance_digests = {}
+for name in digest_paths:
+    matches = re.findall(
+        rf"^\| {re.escape(name)} \| `?([0-9a-f]{{64}})`? \|$",
+        provenance_text,
+        re.MULTILINE,
+    )
+    if len(matches) > 1:
+        fail(f"provenance repeats {name}")
+    if matches:
+        provenance_digests[name] = matches[0]
+if provenance_digests and set(provenance_digests) != set(digest_paths):
+    missing = sorted(set(digest_paths) - set(provenance_digests))[0]
+    fail(f"provenance digest set is incomplete: missing {missing}")
+for name, recorded_digest in provenance_digests.items():
+    if recorded_digest != computed_digests[name]:
+        fail(
+            f"provenance digest mismatch for {name}: "
+            f"recorded={recorded_digest} computed={computed_digests[name]}"
+        )
+
+case_entry = re.compile(r"(case:[^ ;=)]+) => (.*?)(?=; case:|$)")
+evidence_entry = re.compile(r"(case:[^ ;=)]+)=(.*?)(?=; case:|$)")
+rows = []
+for line_number, line in enumerate(matrix_text.splitlines(), 1):
+    if not line.startswith("| `"):
+        continue
+    cells = re.findall(r"`([^`]*)`", line.replace(r"; \| case:", "; case:"))
+    if len(cells) != 10 or not cells[0].startswith(("aws_", "trust:")):
+        continue
+    case_ids = [case_id for case_id, _ in case_entry.findall(cells[7])]
+    labels = dict(evidence_entry.findall(cells[9]))
+    rows.append((line_number, cells[0], cells[1], case_ids, labels))
+
+
+def matching_path(case_id: str) -> str | None:
+    vector = vectors.get(case_id)
+    if vector is None:
+        return None
+    custom = custom_records.get(case_id, [])
+    role = role_records.get(case_id, [])
+    if len(custom) == 1 and custom[0].get("pass") is True:
+        return "custom"
+    if len(role) == 1 and role_matches(vector, role[0]):
+        return "role"
+    return None
+
+
+promoted_cases = 0
+promoted_rows = 0
+kept_rows = 0
+for line_number, document, sid, case_ids, labels in rows:
+    for case_id in case_ids:
+        label = labels.get(case_id, "")
+        if not label.startswith("AWS-SIMULATED "):
+            continue
+        parts = label.split(" ", 2)
+        if len(parts) != 3 or parts[2] != expected_pointer:
+            pointer = parts[2] if len(parts) == 3 else "<missing>"
+            fail(f"Evidence pointer mismatch for {case_id}: {pointer}")
+        if parts[1] != recorded_on:
+            fail(
+                f"Evidence date mismatch for {case_id}: "
+                f"matrix={parts[1]} provenance={recorded_on}"
+            )
+        if len(custom_records.get(case_id, [])) > 1 or len(role_records.get(case_id, [])) > 1:
+            fail(f"promoted case appears more than once in an evidence lane: {case_id}")
+        if not custom_records.get(case_id) and not role_records.get(case_id):
+            fail(f"promoted case has no evidence record: {case_id}")
+        if matching_path(case_id) is None:
+            fail(f"promoted case is not execution-matching: {case_id}")
+        promoted_cases += 1
+
+    row_is_promotable = bool(case_ids) and all(matching_path(case_id) for case_id in case_ids)
+    row_labels = [labels.get(case_id, "") for case_id in case_ids]
+    if row_is_promotable:
+        if any(label != expected_label for label in row_labels):
+            fail(f"Evidence row is below its computed minimum at line {line_number}: {document} {sid}")
+        promoted_rows += 1
+    else:
+        if any(label.startswith("AWS-SIMULATED ") for label in row_labels):
+            fail(f"Evidence row is above its computed minimum at line {line_number}: {document} {sid}")
+        kept_rows += 1
+
+digest_status = "verified" if provenance_digests else "deferred-to-P5-52"
+print(
+    "PASS: IAM simulation Evidence join "
+    f"({len(rows)} rows: {promoted_rows} promoted, {kept_rows} kept; "
+    f"{promoted_cases} promoted cases; "
+    f"custom_sha256={computed_digests['custom report sha256']} "
+    f"role_sha256={computed_digests['role report sha256']} "
+    f"markdown_sha256={computed_digests['Markdown report sha256']}; "
+    f"provenance_digests={digest_status})"
+)
+PY_EVIDENCE
+}
 
 validate_taxonomy() {
   local taxonomy=$1
@@ -849,6 +1059,183 @@ if [ -f "$PHASE2_CONTRACTS" ]; then
   run_iam_simulate_report_contracts
 else
   fail_case "IAM simulate phase-2 contract library exists" "$PHASE2_CONTRACTS is missing"
+fi
+
+echo "== iam simulate contracts: EVIDENCE =="
+group_failures=$failures
+if output="$(
+  validate_evidence_join \
+    "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+    "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1
+)"; then
+  pass_case "${output#PASS: }"
+else
+  fail_case "IAM simulation Evidence join" "$output"
+fi
+
+if [ "$failures" -eq "$group_failures" ]; then
+  evidence_mutants="$tmp_dir/evidence-mutants"
+  python3 - \
+    "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+    "$EVIDENCE_PROVENANCE" "$evidence_mutants" "$EVIDENCE_POINTER" <<'PY_EVIDENCE_MUTANTS'
+from copy import deepcopy
+import json
+from pathlib import Path
+import re
+import sys
+
+
+matrix_path = Path(sys.argv[1])
+custom_path = Path(sys.argv[2])
+role_path = Path(sys.argv[3])
+provenance_path = Path(sys.argv[4])
+mutants_root = Path(sys.argv[5])
+pointer = sys.argv[6]
+matrix = matrix_path.read_text(encoding="utf-8")
+custom = json.loads(custom_path.read_text(encoding="utf-8"))
+role = json.loads(role_path.read_text(encoding="utf-8"))
+provenance = provenance_path.read_text(encoding="utf-8")
+dates = re.findall(
+    r"^\| recorded_on \| (\d{4}-\d{2}-\d{2}) \|$", provenance, re.MULTILINE
+)
+if len(dates) != 1:
+    raise SystemExit("FAIL: Evidence mutation setup requires one recorded_on date")
+label = f"AWS-SIMULATED {dates[0]} {pointer}"
+promoted = re.findall(
+    rf"(case:[^ ;=)]+)={re.escape(label)}(?=; case:|`)", matrix
+)
+if not promoted:
+    raise SystemExit("FAIL: Evidence mutation setup found no promoted cases")
+custom_by_id = {record["case_id"]: record for record in custom["records"]}
+role_ids = {record["case_id"] for record in role["records"]}
+
+
+def write_mutant(name, matrix_text=None, custom_payload=None, role_payload=None):
+    root = mutants_root / name
+    root.mkdir(parents=True)
+    (root / "matrix.md").write_text(matrix if matrix_text is None else matrix_text, encoding="utf-8")
+    (root / "custom.json").write_text(
+        json.dumps(custom if custom_payload is None else custom_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (root / "role.json").write_text(
+        json.dumps(role if role_payload is None else role_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+failed_case = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+failed_anchor = f"{failed_case}=CODE-ONLY"
+if matrix.count(failed_anchor) != 1:
+    raise SystemExit("FAIL: failed-case Evidence mutation anchor changed")
+write_mutant("failed", matrix.replace(failed_anchor, f"{failed_case}={label}", 1))
+
+missing_case = next(
+    (case_id for case_id in promoted if case_id not in role_ids and case_id in custom_by_id),
+    None,
+)
+if missing_case is None:
+    raise SystemExit("FAIL: missing-record Evidence mutation lacks a custom-only promoted case")
+missing_custom = deepcopy(custom)
+missing_custom["records"] = [
+    record for record in missing_custom["records"] if record["case_id"] != missing_case
+]
+write_mutant("missing", custom_payload=missing_custom)
+
+duplicate_case = next((case_id for case_id in promoted if case_id in custom_by_id), None)
+if duplicate_case is None:
+    raise SystemExit("FAIL: duplicate Evidence mutation lacks a custom report record")
+duplicate_custom = deepcopy(custom)
+duplicate_custom["records"].append(deepcopy(custom_by_id[duplicate_case]))
+write_mutant("duplicate", custom_payload=duplicate_custom)
+
+first_case = promoted[0]
+first_anchor = f"{first_case}={label}"
+if matrix.count(first_anchor) != 1:
+    raise SystemExit("FAIL: pointer/date Evidence mutation anchor changed")
+stale_label = f"AWS-SIMULATED {dates[0]} docs/assets/stale-IAM_SIMULATION_REPORT.md"
+write_mutant("pointer", matrix.replace(first_anchor, f"{first_case}={stale_label}", 1))
+wrong_label = f"AWS-SIMULATED 2026-09-08 {pointer}"
+write_mutant("date", matrix.replace(first_anchor, f"{first_case}={wrong_label}", 1))
+
+above_case = "case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching"
+excluded_case = "case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:non-resource"
+above_anchor = f"{above_case}=CODE-ONLY"
+if matrix.count(above_anchor) != 1 or custom_by_id.get(above_case, {}).get("pass") is not True:
+    raise SystemExit("FAIL: row-minimum Evidence mutation anchor changed")
+row_custom = deepcopy(custom)
+forged_excluded = deepcopy(custom_by_id[above_case])
+forged_excluded["case_id"] = excluded_case
+forged_excluded["pass"] = True
+row_custom["records"].append(forged_excluded)
+write_mutant(
+    "row",
+    matrix.replace(above_anchor, f"{above_case}={label}", 1),
+    custom_payload=row_custom,
+)
+PY_EVIDENCE_MUTANTS
+
+  restore_evidence_join() {
+    local label=$1 output
+    if output="$(
+      validate_evidence_join \
+        "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+        "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1
+    )"; then
+      pass_case "$label restored PASS"
+    else
+      fail_case "$label did not restore" "$output"
+    fi
+  }
+
+  expect_failure "evidence failed case promoted" "promoted case is not execution-matching" \
+    validate_evidence_join \
+      "$evidence_mutants/failed/matrix.md" \
+      "$evidence_mutants/failed/custom.json" \
+      "$evidence_mutants/failed/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence failed case promoted"
+  expect_failure "evidence missing record" "promoted case has no evidence record" \
+    validate_evidence_join \
+      "$evidence_mutants/missing/matrix.md" \
+      "$evidence_mutants/missing/custom.json" \
+      "$evidence_mutants/missing/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence missing record"
+  expect_failure "evidence duplicate record" "promoted case appears more than once" \
+    validate_evidence_join \
+      "$evidence_mutants/duplicate/matrix.md" \
+      "$evidence_mutants/duplicate/custom.json" \
+      "$evidence_mutants/duplicate/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence duplicate record"
+  expect_failure "evidence stale pointer" "Evidence pointer mismatch" \
+    validate_evidence_join \
+      "$evidence_mutants/pointer/matrix.md" \
+      "$evidence_mutants/pointer/custom.json" \
+      "$evidence_mutants/pointer/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence stale pointer"
+  expect_failure "evidence wrong date" "Evidence date mismatch" \
+    validate_evidence_join \
+      "$evidence_mutants/date/matrix.md" \
+      "$evidence_mutants/date/custom.json" \
+      "$evidence_mutants/date/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence wrong date"
+  expect_failure "evidence row above minimum" "Evidence row is above its computed minimum" \
+    validate_evidence_join \
+      "$evidence_mutants/row/matrix.md" \
+      "$evidence_mutants/row/custom.json" \
+      "$evidence_mutants/row/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  restore_evidence_join "evidence row above minimum"
+fi
+
+if [ "$failures" -eq "$group_failures" ]; then
+  echo "PASS: IAM simulate EVIDENCE group"
+else
+  echo "FAIL: IAM simulate EVIDENCE group" >&2
 fi
 
 if output="$(validate_mutation_registry "$mutation_observations" 2>&1)"; then
