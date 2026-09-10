@@ -188,10 +188,44 @@ def load_vectors(root: Path) -> dict[str, dict]:
     return vectors
 
 
+def load_report_suffix(path: Path) -> str:
+    payload = load_json(path, "role evidence report")
+    suffixes = set()
+
+    def visit(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, str):
+            prefix = "arn:aws:iam::000000000000:role/"
+            if value.startswith(prefix):
+                role_name = value.removeprefix(prefix)
+                match = re.fullmatch(r"orbit-infra-(.+)-plan-reader", role_name)
+                if match is not None:
+                    suffixes.add(match.group(1))
+            if value.startswith("{"):
+                try:
+                    nested = json.loads(value)
+                except json.JSONDecodeError:
+                    return
+                visit(nested)
+
+    visit(payload)
+    if len(suffixes) != 1:
+        fail(
+            "role evidence report must record exactly one plan-reader suffix, "
+            f"found {sorted(suffixes)}"
+        )
+    return next(iter(suffixes))
+
+
 def rendered_resource_matches(template: str, observed: str) -> bool:
     pattern = re.escape(template)
     pattern = pattern.replace(re.escape("${ACCOUNT_ID}"), "000000000000")
-    pattern = pattern.replace(re.escape("${SUFFIX}"), r"[a-z0-9]+")
+    pattern = pattern.replace(re.escape("${SUFFIX}"), re.escape(report_suffix))
     return re.fullmatch(pattern, observed) is not None
 
 
@@ -304,6 +338,7 @@ provenance_path = Path(sys.argv[6])
 expected_pointer = sys.argv[7]
 custom_records = load_records(custom_path, "custom evidence report")
 role_records = load_records(role_path, "role evidence report")
+report_suffix = load_report_suffix(role_path)
 try:
     matrix_text = matrix_path.read_text(encoding="utf-8")
     rendered_text = rendered_path.read_text(encoding="utf-8")
@@ -1244,6 +1279,26 @@ def write_mutant(name, matrix_text=None, custom_payload=None, role_payload=None)
     )
 
 
+def replace_suffix(value, old, new):
+    if isinstance(value, str):
+        return value.replace(old, new)
+    if isinstance(value, list):
+        return [replace_suffix(item, old, new) for item in value]
+    if isinstance(value, dict):
+        return {
+            replace_suffix(key, old, new): replace_suffix(item, old, new)
+            for key, item in value.items()
+        }
+    return value
+
+
+write_mutant(
+    "hyphenated-suffix",
+    custom_payload=replace_suffix(custom, "79s5rw", "team-a"),
+    role_payload=replace_suffix(role, "79s5rw", "team-a"),
+)
+
+
 failed_case = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
 failed_anchor = f"{failed_case}=CODE-ONLY"
 failed_source = custom_by_id.get(failed_case)
@@ -1500,6 +1555,42 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/per-pair-sid/role.json" \
       "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
   restore_evidence_join "evidence per-pair required Sid"
+
+  evidence_suffix_original="$evidence_mutants/suffix-original.sh"
+  evidence_suffix_mutant="$evidence_mutants/suffix-mutant.sh"
+  if output="$(validate_evidence_join \
+    "$evidence_mutants/hyphenated-suffix/matrix.md" \
+    "$evidence_mutants/hyphenated-suffix/custom.json" \
+    "$evidence_mutants/hyphenated-suffix/role.json" \
+    "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+    pass_case "evidence join accepts the recorded hyphenated suffix team-a"
+  else
+    fail_case "evidence join hyphenated suffix" "$output"
+  fi
+  declare -f validate_evidence_join >"$evidence_suffix_original"
+  python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+    mutate-evidence-suffix-check \
+    "$evidence_suffix_original" "$evidence_suffix_mutant"
+  # shellcheck disable=SC1090
+  source "$evidence_suffix_mutant"
+  expect_failure "evidence hyphenated suffix" \
+    "promoted case is not execution-matching" \
+    validate_evidence_join \
+      "$evidence_mutants/hyphenated-suffix/matrix.md" \
+      "$evidence_mutants/hyphenated-suffix/custom.json" \
+      "$evidence_mutants/hyphenated-suffix/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+  # shellcheck disable=SC1090
+  source "$evidence_suffix_original"
+  if output="$(validate_evidence_join \
+    "$evidence_mutants/hyphenated-suffix/matrix.md" \
+    "$evidence_mutants/hyphenated-suffix/custom.json" \
+    "$evidence_mutants/hyphenated-suffix/role.json" \
+    "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+    pass_case "evidence hyphenated suffix mutation restored PASS"
+  else
+    fail_case "evidence hyphenated suffix mutation restoration" "$output"
+  fi
 
   set +e
   output="$(

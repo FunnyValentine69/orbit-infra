@@ -1076,6 +1076,18 @@ def observation_matches(case, details):
             continue
         action = detail.get("action_name")
         resource = detail.get("resource_arn")
+        if case["assertion_kind"] == "decision":
+            expected_decision = (
+                per_resource.get(resource)
+                if isinstance(per_resource, dict)
+                else expect.get("decision")
+            )
+            observed_decision = detail.get("decision_observed")
+            if observed_decision != expected_decision:
+                errors.append(
+                    f"decision differs from expectation for {action} {resource}: "
+                    f"expected {expected_decision}, observed {observed_decision}"
+                )
         matched = detail.get("matched_sids")
         if not isinstance(matched, list):
             errors.append(f"matched Sids are invalid for {action} {resource}")
@@ -1257,6 +1269,14 @@ if [ "$simulation_failed" -eq 0 ]; then
     simulation_failed=1
   elif ! evaluate_all_cases "$excluded_mapping" "$organizations_mapping" >"$records"; then
     simulation_failed=1
+  else
+    if ! failed_record_count="$(jq -s '[.[] | select(.pass != true)] | length' "$records")"; then
+      echo "FAIL: role lane could not count expectation-mismatching records" >&2
+      simulation_failed=1
+    elif [ "$failed_record_count" -ne 0 ]; then
+      echo "FAIL: role lane recorded $failed_record_count case(s) that do not match vector expectations" >&2
+      simulation_failed=1
+    fi
   fi
 fi
 

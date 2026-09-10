@@ -247,6 +247,23 @@ def document_sha256(document: str) -> str:
 
 REPORT_PLACEHOLDER_ACCOUNT = "000000000000"
 REPORT_REDACTED = "<redacted>"
+REPORT_REDACTED_PRINCIPAL = "arn:aws:iam::000000000000:<redacted-principal>"
+REPORT_RESOURCE_FIELDS = frozenset(
+    {
+        "NotResource",
+        "Resource",
+        "policy_document",
+        "resource_arn",
+        "resource_arns",
+        "resource_decisions",
+    }
+)
+REPORT_PRINCIPAL_ARN = re.compile(
+    r"arn:aws:(?:"
+    r"iam::[0-9]{12}:(?:user|role|assumed-role|group|federated-user)"
+    r"|sts::[0-9]{12}:assumed-role"
+    r")/[A-Za-z0-9+=,.@_/-]+"
+)
 REPORT_DIGEST = re.compile(
     r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{64}|[0-9A-Fa-f]{40})(?![0-9A-Fa-f])"
 )
@@ -289,7 +306,9 @@ def _redact_report_fragment(value: str) -> str:
     )
 
 
-def _redact_report_text(value: str) -> str:
+def _redact_report_text(value: str, *, redact_principal: bool = True) -> str:
+    if redact_principal:
+        value = REPORT_PRINCIPAL_ARN.sub(REPORT_REDACTED_PRINCIPAL, value)
     redacted: list[str] = []
     start = 0
     for digest in REPORT_DIGEST.finditer(value):
@@ -300,23 +319,25 @@ def _redact_report_text(value: str) -> str:
     return "".join(redacted)
 
 
-def redact_report(value: Any) -> Any:
+def redact_report(value: Any, field: str | None = None) -> Any:
     """Redact report identifiers recursively while preserving digest tokens."""
     if isinstance(value, str):
-        return _redact_report_text(value)
+        return _redact_report_text(
+            value, redact_principal=field not in REPORT_RESOURCE_FIELDS
+        )
     if isinstance(value, list):
-        return [redact_report(item) for item in value]
+        return [redact_report(item, field) for item in value]
     if isinstance(value, tuple):
-        return tuple(redact_report(item) for item in value)
+        return tuple(redact_report(item, field) for item in value)
     if isinstance(value, dict):
         redacted = {}
         for key, item in value.items():
             request_id_key = isinstance(key, str) and REPORT_REQUEST_ID.search(key)
-            redacted_key = redact_report(key)
+            redacted_key = redact_report(key, field)
             if redacted_key in redacted:
                 raise RunnerFailure("report redaction creates a duplicate key")
             redacted[redacted_key] = (
-                REPORT_REDACTED if request_id_key else redact_report(item)
+                REPORT_REDACTED if request_id_key else redact_report(item, key)
             )
         return redacted
     return value

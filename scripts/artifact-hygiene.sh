@@ -35,6 +35,7 @@ fi
 
 for artifact in "${files[@]}"; do
   if ! python3 - "$artifact" "$forbid_file" <<'PY'
+import json
 import re
 import sys
 
@@ -45,6 +46,15 @@ HEX40 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])")
 ACCOUNT_ID = re.compile(r"[0-9]{12}")
 IAM_ARN = re.compile(r"arn:aws:iam::([0-9]{12})")
 PRINCIPAL_ID = re.compile(r"(?:AIDA|AROA|ASIA|AKIA|ANPA|AGPA|AIPA)[A-Z0-9]{12,}")
+PRINCIPAL_ARN = re.compile(
+    r"arn:aws:(?:iam|sts)::[0-9]{12}:"
+    r"(?P<identity_path>"
+    r"<redacted-principal>|"
+    r"(?:user|role|assumed-role|group|federated-user)/[A-Za-z0-9+=,.@_/-]+"
+    r")"
+)
+REDACTED_PRINCIPAL = "<redacted-principal>"
+RESOURCE_FIELDS = {"resource_arn", "Resource", "NotResource"}
 ASSUMED_ROLE = re.compile(r"assumed-role/")
 REQUEST_ID_KEY = re.compile(r"(?:x-amzn-)?RequestId")
 BARE_UUID = re.compile(
@@ -63,6 +73,62 @@ if forbid_file:
 
 with open(artifact, encoding="utf-8") as handle:
     lines = handle.readlines()
+
+
+def unredacted_principal(value):
+    for match in PRINCIPAL_ARN.finditer(value):
+        identity_path = match.group("identity_path")
+        if identity_path != REDACTED_PRINCIPAL:  # principal-arn-guard
+            return match.group(0)
+    return None
+
+
+def find_unredacted_principal(value, field=None):
+    if field in RESOURCE_FIELDS:
+        return None
+    if isinstance(value, dict):
+        for key, item in value.items():
+            found = find_unredacted_principal(item, key)
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, list):
+        for item in value:
+            found = find_unredacted_principal(item, field)
+            if found is not None:
+                return found
+        return None
+    if not isinstance(value, str):
+        return None
+    if value.lstrip().startswith("{"):
+        try:
+            nested = json.loads(value)
+        except json.JSONDecodeError:
+            pass
+        else:
+            return find_unredacted_principal(nested)
+    return unredacted_principal(value)
+
+
+serialized = "".join(lines)
+try:
+    json_payload = json.loads(serialized)
+except json.JSONDecodeError:
+    json_payload = None
+if json_payload is not None:
+    leaked_principal = find_unredacted_principal(json_payload)
+    if leaked_principal is not None:
+        line_no = next(
+            (index for index, line in enumerate(lines, 1) if leaked_principal in line),
+            1,
+        )
+        print(
+            f"FAIL: {artifact}:{line_no}: principal-arn - "
+            "IAM/STS principal identity path is not <redacted-principal>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
 
 for line_no, line in enumerate(lines, 1):
     content = line.rstrip("\n")
@@ -86,6 +152,15 @@ for line_no, line in enumerate(lines, 1):
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    leaked_principal = unredacted_principal(content) if json_payload is None else None
+    if leaked_principal is not None:
+        print(
+            f"FAIL: {artifact}:{line_no}: principal-arn - "
+            "IAM/STS principal identity path is not <redacted-principal>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if PRINCIPAL_ID.search(content):
         print(

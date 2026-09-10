@@ -98,6 +98,10 @@ check_suite() {
   echo "principal-id fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
 
+  verdict="$(run_one "$script" fail "principal-arn" "$FIXTURES/bad-principal-arn.md")"
+  echo "principal-arn fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
   verdict="$(run_one "$script" fail "request-id" "$FIXTURES/bad-request-id.md")"
   echo "request-id fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
@@ -164,6 +168,11 @@ run_mutation_proof \
   "principal-id" \
   "if PRINCIPAL_ID.search(content):" \
   "if False:"
+
+run_mutation_proof \
+  "principal-arn" \
+  "if identity_path != REDACTED_PRINCIPAL:  # principal-arn-guard" \
+  "if False:  # principal-arn-guard"
 
 run_mutation_proof \
   "request-id" \

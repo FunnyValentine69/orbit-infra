@@ -108,6 +108,7 @@ role-lane-account-mismatch-refusal	run_phase2_role_lane	FAIL: caller account mis
 role-lane-root-trust-refusal	mutate_role_trust_root	FAIL: temporary role trust must name exactly the invoking identity
 role-lane-caller-principal-report	mutate_role_principal_redaction	FAIL: role report contains caller principal identity
 role-lane-per-pair-required-sid	validate_role_per_pair	FAIL: role comparison required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope
+role-lane-decision-expectation	run_phase2_role_lane	FAIL: role lane recorded 1 case(s) that do not match vector expectations
 role-lane-tag-mismatch-pre-mutation-refusal	run_phase2_role_lane	FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-plan-reader
 role-lane-nonce-tamper-at-deployer-p4	run_phase2_role_lane	FAIL: ownership tag mismatch for orbit-iam-sim-fixture-run-deployer-p4
 role-lane-nonce-ignoring-mutant	mutate_role_nonce_check	FAIL: nonce tamper reached policy or role mutations: put=8 delete-policy=8 delete-role=8
@@ -137,6 +138,9 @@ report-destination-directory-atomic-replacement	mutate_report_temp_directory	FAI
 renderer-role-expectation-binding	set-role-expectation-different-from-vector	FAIL: role record case:fixture.policy:DenyRead:ALL:none:non-matching expectation differs from custom vector expectation
 renderer-mixed-resource-decisions	mutate_report_renderer:resource-decisions	FAIL: matching resource_decisions rendered as a failure
 report-whole-object-redaction	mutate_report_redaction	FAIL: shared report writer retained live identifiers
+report-principal-path-redaction	mutate_report_principal_redaction	FAIL: shared report writer retained principal identity path
+artifact-hygiene-principal-arn-guard	mutate_artifact_hygiene_principal_arn	FAIL: artifact hygiene principal ARN guard mutant accepted an identity path
+evidence-hyphenated-suffix	mutate_evidence_suffix_check	FAIL: promoted case is not execution-matching:
 renderer-account-id-case-refusal	doctor custom report case id	FAIL: rendered IAM simulation report contains a non-placeholder account id
 renderer-role-redaction-marker-refusal	remove account_redacted from role report	FAIL: role report must set account_redacted to true
 renderer-hygiene-call-removal	sed:remove-renderer-hygiene-call	FAIL: published renderer mutant is rejected by artifact hygiene: account-id

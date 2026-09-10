@@ -1184,6 +1184,19 @@ validate_role_principal_redaction() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-principal-redaction "$@"
 }
 
+mutate_report_principal_redaction() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-principal-redaction "$@"
+}
+
+validate_report_principal_redaction() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-principal-redaction "$@"
+}
+
+mutate_artifact_hygiene_principal_arn() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-artifact-hygiene-principal-arn "$@"
+  chmod +x "$2"
+}
+
 validate_role_per_pair() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-per-pair "$@"
 }
@@ -1417,7 +1430,7 @@ run_iam_simulate_role_lane_contracts() {
   local preflight_scope_mutant expected_scope_failure boundary_case authorization_report
   local wrong_mode_report wrong_mode_case_id expected_mode_failure
   local context_mutant plan_account_report trust_mutant principal_mutant principal_report
-  local per_pair_report trust_restored_report
+  local per_pair_report role_decision_report trust_restored_report
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
@@ -1653,18 +1666,23 @@ run_iam_simulate_role_lane_contracts() {
 
     per_pair_report="$phase2_dir/role-per-pair-mutant-report.json"
     reset_phase2_fake
-    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
       IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-per-pair-sid.json" \
       IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/per-pair-sid-vectors" \
       IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-per-pair-custom-report.json" \
       IAM_SIM_TEST_ROLE_REPORT="$per_pair_report" \
       IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-per-pair-sid-mutant.json" \
-      run_phase2_role_lane success 2>&1)"; then
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && [ -f "$per_pair_report" ]; then
       expect_failure "role-lane per-pair required Sid" \
         "role comparison required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope" \
         validate_role_per_pair "$per_pair_report"
     else
-      fail_case "role-lane per-pair required Sid mutation setup" "$output"
+      fail_case "role-lane per-pair required Sid mutation setup" \
+        "rc=$rc output=$output"
     fi
 
     per_pair_report="$phase2_dir/role-per-pair-restored-report.json"
@@ -1680,6 +1698,48 @@ run_iam_simulate_role_lane_contracts() {
       pass_case "role-lane per-pair required Sid mutation restored PASS"
     else
       fail_case "role-lane per-pair required Sid mutation restoration" "$output"
+    fi
+
+    role_decision_report="$phase2_dir/role-decision-mutant-report.json"
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-per-pair-sid.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/per-pair-sid-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-per-pair-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$role_decision_report" \
+      IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-per-pair-decision-mutant.json" \
+      run_phase2_role_lane success 2>&1)"
+    rc=$?
+    set -e
+    fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+    if [ "$rc" -ne 0 ] && \
+       [ "$fail_line" = "FAIL: role lane recorded 1 case(s) that do not match vector expectations" ] && \
+       jq -e '
+         .summary.failed == 1
+         and .records[0].pass == false
+         and .records[0].scp_excluded.matches_expectation == false
+         and any(.records[0].errors[]; contains("decision differs from expectation"))
+       ' "$role_decision_report" >/dev/null; then
+      pass_case "role-lane decision expectation mutation -> $fail_line"
+    else
+      fail_case "role-lane decision expectation mutation did not fail the lane" \
+        "rc=$rc output=$output"
+    fi
+
+    per_pair_report="$phase2_dir/role-decision-restored-report.json"
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/plan-per-pair-sid.json" \
+      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/per-pair-sid-vectors" \
+      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-per-pair-custom-report.json" \
+      IAM_SIM_TEST_ROLE_REPORT="$per_pair_report" \
+      IAM_SIM_TEST_PRINCIPAL_RESPONSE="$phase2_dir/response-per-pair-sid-restored.json" \
+      run_phase2_role_lane success 2>&1)" && \
+       validate_role_per_pair "$per_pair_report"; then
+      pass_case "role-lane decision expectation mutation restored PASS"
+    else
+      fail_case "role-lane decision expectation mutation restoration" "$output"
     fi
 
     account=123456
@@ -2515,6 +2575,10 @@ run_iam_simulate_report_contracts() {
   local compact_report="$phase2_dir/compact-writer-report.json"
   local compact_writer_mutant="$phase2_dir/iam-simulate-core-pretty-report.py"
   local redaction_writer_mutant="$phase2_dir/iam-simulate-core-no-redaction.py"
+  local principal_redaction_mutant="$phase2_dir/iam-simulate-core-principal-redaction-mutant.py"
+  local principal_redaction_report="$phase2_dir/principal-redaction-report.json"
+  local hygiene_principal_mutant="$phase2_dir/artifact-hygiene-principal-mutant.sh"
+  local bad_principal_fixture="$IAM_SIM_REPORT_FIXTURES/bad-principal-arn.md"
   local atomic_writer_mutant="$phase2_dir/iam-simulate-core-cross-directory.py"
   local role_expectation_mismatch="$phase2_dir/role-expectation-mismatch.json"
   local role_expectation_out="$phase2_dir/rendered-role-expectation-mismatch"
@@ -2580,6 +2644,56 @@ run_iam_simulate_report_contracts() {
     pass_case "report whole-object redaction mutation restored PASS"
   else
     fail_case "report whole-object redaction mutation restoration" "$output"
+  fi
+
+  if output="$(validate_report_principal_redaction \
+    "$IAM_SIM_CORE" "$principal_redaction_report" 2>&1)"; then
+    pass_case "shared report writer fully redacts principal identity paths"
+  else
+    fail_case "shared report writer principal identity-path redaction" "$output"
+  fi
+  mutate_report_principal_redaction "$IAM_SIM_CORE" "$principal_redaction_mutant"
+  expect_failure "report principal path redaction" \
+    "shared report writer retained principal identity path" \
+    validate_report_principal_redaction \
+      "$principal_redaction_mutant" "$principal_redaction_report"
+  if output="$(validate_report_principal_redaction \
+    "$IAM_SIM_CORE" "$principal_redaction_report" 2>&1)"; then
+    pass_case "report principal path redaction mutation restored PASS"
+  else
+    fail_case "report principal path redaction mutation restoration" "$output"
+  fi
+
+  set +e
+  output="$(bash "$IAM_SIM_ARTIFACT_HYGIENE" "$bad_principal_fixture" 2>&1)"
+  rc=$?
+  set -e
+  fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+  if [ "$rc" -ne 0 ] && grep -Fq ': principal-arn -' <<<"$fail_line"; then
+    pass_case "artifact hygiene rejects an unredacted principal ARN"
+  else
+    fail_case "artifact hygiene unredacted principal ARN refusal" \
+      "rc=$rc output=$output"
+  fi
+  mutate_artifact_hygiene_principal_arn \
+    "$IAM_SIM_ARTIFACT_HYGIENE" "$hygiene_principal_mutant"
+  expect_failure "artifact hygiene principal ARN guard" \
+    "artifact hygiene principal ARN guard mutant accepted an identity path" \
+    bash -c '
+      if bash "$1" "$2" >/dev/null 2>&1; then
+        echo "FAIL: artifact hygiene principal ARN guard mutant accepted an identity path" >&2
+        exit 1
+      fi
+    ' _ "$hygiene_principal_mutant" "$bad_principal_fixture"
+  set +e
+  output="$(bash "$IAM_SIM_ARTIFACT_HYGIENE" "$bad_principal_fixture" 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ] && grep -Fq ': principal-arn -' <<<"$output"; then
+    pass_case "artifact hygiene principal ARN guard mutation restored PASS"
+  else
+    fail_case "artifact hygiene principal ARN guard mutation restoration" \
+      "rc=$rc output=$output"
   fi
 
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-writer \

@@ -88,6 +88,7 @@ RESPONSE_FIXTURES = (
     ('response-position-mutant.json', 'response-baseline.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 1, 'MatchedStatements'), [('$ctx', 'mapping_match0')]),)),
     ('response-per-pair-sid-mutant.json', 'per-pair-sid-mutant', ()),
     ('response-per-pair-sid-restored.json', 'per-pair-sid-restored', ()),
+    ('response-per-pair-decision-mutant.json', 'response-per-pair-sid-restored.json', (("set", ("EvaluationResults", 1, "EvalDecision"), "explicitDeny"), ("set", ("EvaluationResults", 1, "ResourceSpecificResults", 0, "EvalResourceDecision"), "explicitDeny"))),
     ('response-missing-arn.json', 'response-baseline.json', (('delete', ('EvaluationResults', 0, 'ResourceSpecificResults', -1)),)),
     ('response-unmapped.json', 'response-baseline.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 1, 'MatchedStatements'), [('$ctx', 'unmapped_match')]),)),
     ('response-unknown-source.json', 'response-baseline.json', (('set', ('EvaluationResults', 0, 'ResourceSpecificResults', 1, 'MatchedStatements'), [('$ctx', 'unknown_source_match')]),)),
@@ -167,24 +168,12 @@ def _context(taxonomy_path, projection_source):
     authorization_envelope = json.loads((taxonomy_path.parent / 'vectors' / 'aws_iam_policy.deployer_data__EnvDataBucketLifecycle.json').read_text(encoding='utf-8'))
     authorization_case = next((case for case in authorization_envelope['cases'] if case['case_id'] == 'case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching'))
     authorization_resources = [resource.replace('${SUFFIX}', '79s5rw') for resource in authorization_case['resource_arns']]
-    role_authorization_decision = {
-        f'{action}|{resource}': ('implicitDeny' if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed')
-        for action in authorization_case['action_names']
-        for resource in authorization_resources
-    }
+    role_authorization_decision = 'allowed'
     authorization_casefold_actions = [
         's3:deletebucketpublicaccessblock' if action == 's3:DeleteBucketPublicAccessBlock' else action
         for action in authorization_case['action_names']
     ]
-    role_authorization_casefold_decision = {
-        f'{action}|{resource}': (
-            'implicitDeny'
-            if action.casefold() in {item.casefold() for item in S3_DIFFERENT_AUTHORIZATION_ACTIONS}
-            else 'allowed'
-        )
-        for action in authorization_casefold_actions
-        for resource in authorization_resources
-    }
+    role_authorization_casefold_decision = 'allowed'
     if len(real) != 1163 or hashlib.sha256(real.encode()).hexdigest() != 'f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b': raise SystemExit('FAIL: real position policy fixture bytes changed')
     if len(real_deployer) != 5682 or len([_span(real_deployer, i) for i in range(18)]) != 18 or hashlib.sha256(real_deployer.encode()).hexdigest() != 'dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40': raise SystemExit('FAIL: real deployer_data position fixture changed')
     if not _span(real_deployer, 7)[0] <= 1779 < _span(real_deployer, 7)[1] or _span(real_deployer, 7)[2] != 'ClickhouseSecretCreateWithTag': raise SystemExit('FAIL: real deployer_data offset 1779 owner changed')
@@ -457,7 +446,7 @@ def _fake_authorization_split(args, operation):
         operation_name = ''.join((part.title() for part in operation.split('-')))
         print(f"An error occurred (InvalidInput) when calling the {operation_name} operation: Invalid Input Actions: [{','.join(direct)}] and [{','.join(aliased)}] require different authorization information.", file=sys.stderr)
         raise SystemExit(254)
-    _json_print({'EvaluationResults': [{'EvalActionName': action, 'EvalDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action.casefold() in special else 'allowed', 'MatchedStatements': [], 'ResourceSpecificResults': [{'EvalResourceName': resource, 'EvalResourceDecision': 'implicitDeny' if operation == 'simulate-principal-policy' and action.casefold() in special else 'allowed', 'MatchedStatements': [], 'MissingContextValues': []} for resource in resources]} for action in actions]})
+    _json_print({'EvaluationResults': [{'EvalActionName': action, 'EvalDecision': 'allowed', 'MatchedStatements': [], 'ResourceSpecificResults': [{'EvalResourceName': resource, 'EvalResourceDecision': 'allowed', 'MatchedStatements': [], 'MissingContextValues': []} for resource in resources]} for action in actions]})
 def _validate_fake_context(args, scenario, operation):
     expected = scenario.get('expected_context_entries')
     if expected is None: return
@@ -734,11 +723,7 @@ def _command_validate_role_authorization_split():
         exclusions = _option(call, '--policy-exclusion-list')
         if exclusions != ([exclusion] if excluded else []):
             raise SystemExit('FAIL: role authorization partition changed the principal run shape')
-    expected_decision = {
-        f'{action}|{resource}': ('implicitDeny' if action in S3_DIFFERENT_AUTHORIZATION_ACTIONS else 'allowed')
-        for action in vector['action_names']
-        for resource in resources
-    }
+    expected_decision = 'allowed'
     payload = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
     records = payload.get('records', [])
     if len(records) != 1:
@@ -1518,6 +1503,78 @@ def _command_mutate_report_redaction():
     destination.write_text(source.replace(strict, '    payload = dict(payload)\n', 1), encoding='utf-8')
 
 
+def _command_mutate_report_principal_redaction():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    strict = '        value = REPORT_PRINCIPAL_ARN.sub(REPORT_REDACTED_PRINCIPAL, value)\n'
+    if source.count(strict) != 1:
+        raise SystemExit('FAIL: shared report principal-redaction mutation anchor changed')
+    destination.write_text(source.replace(strict, '        value = value\n', 1), encoding='utf-8')
+
+
+def _command_validate_report_principal_redaction():
+    core_path = Path(sys.argv[1])
+    output_path = Path(sys.argv[2])
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location('iam_simulate_core_principal', core_path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f'FAIL: cannot load IAM simulator core: {core_path}')
+    core = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = core
+    spec.loader.exec_module(core)
+    principals = [
+        'arn:aws:iam::123456789012:user/Alice',
+        'arn:aws:iam::123456789012:role/team/DeployRole',
+        'arn:aws:iam::123456789012:assumed-role/DeployRole/session',
+        'arn:aws:iam::123456789012:group/team/Admins',
+        'arn:aws:iam::123456789012:federated-user/Alice',
+        'arn:aws:sts::123456789012:assumed-role/DeployRole/session',
+    ]
+    payload = {
+        'records': [{
+            'case_id': 'case:principal-redaction',
+            'runner_failure': ' | '.join(principals),
+        }],
+        'summary': {'total': 1},
+    }
+    core.write_report(output_path, payload)
+    actual = json.loads(output_path.read_text(encoding='utf-8'))
+    expected = ' | '.join(
+        ['arn:aws:iam::000000000000:<redacted-principal>'] * len(principals)
+    )
+    if actual['records'][0].get('runner_failure') != expected:
+        raise SystemExit('FAIL: shared report writer retained principal identity path')
+    print('PASS: shared report writer fully redacts IAM and STS principal paths')
+
+
+def _command_mutate_artifact_hygiene_principal_arn():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    strict = '        if identity_path != REDACTED_PRINCIPAL:  # principal-arn-guard\n'
+    if source.count(strict) != 1:
+        raise SystemExit('FAIL: artifact hygiene principal-ARN mutation anchor changed')
+    destination.write_text(
+        source.replace(strict, '        if False:  # principal-arn-guard\n', 1),
+        encoding='utf-8',
+    )
+
+
+def _command_mutate_evidence_suffix_check():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    strict = '    pattern = pattern.replace(re.escape("${SUFFIX}"), re.escape(report_suffix))\n'
+    if source.count(strict) != 1:
+        raise SystemExit('FAIL: Evidence suffix-check mutation anchor changed')
+    destination.write_text(
+        source.replace(
+            strict,
+            '    pattern = pattern.replace(re.escape("${SUFFIX}"), r"[a-z0-9]+")\n',
+            1,
+        ),
+        encoding='utf-8',
+    )
+
+
 def _command_validate_report_atomic_replace():
     core_path = Path(sys.argv[1])
     output_path = Path(sys.argv[2])
@@ -1596,7 +1653,7 @@ def _command_validate_report_writer():
     }
     expected_payload = deepcopy(payload)
     expected_payload['records'][0]['errors'] = [
-        'live 000000000000 arn:aws:iam::000000000000:role/example <redacted>'
+        'live 000000000000 arn:aws:iam::000000000000:<redacted-principal> <redacted>'
     ]
     expected_payload['records'][0]['response'] = {'<redacted>': '<redacted>'}
     expected_payload['records'][0]['trace_id'] = '<redacted>'

@@ -407,7 +407,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 143 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 147 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
@@ -420,8 +420,11 @@ object per line. SHA-256 and Git-SHA tokens remain byte-preserved. The writer
 creates its temporary file beside the destination, so the final `os.replace` is
 atomic even when the configured scratch directory is on another filesystem. The
 `REPORT` group round-trips this form against the equivalent pretty JSON and kills
-redaction-removal, cross-directory-temporary-file, and `indent=2` writer mutants
-before proving the restored paths. Both simulator lanes use the same writer.
+redaction-removal, principal-path-redaction, cross-directory-temporary-file, and
+`indent=2` writer mutants before proving the restored paths. IAM and STS principal
+ARNs in diagnostics become `arn:aws:iam::000000000000:<redacted-principal>`;
+semantic policy and simulated-resource ARN fields retain their identity paths. Both
+simulator lanes use the same writer.
 
 The `REPORT` group executes `scripts/iam-simulate-report.sh` against clean
 custom- and role-report fixtures and checks the rendered case table, findings,
@@ -453,10 +456,12 @@ failure never matches. It enforces the row minimum, verifies the provenance
 date and exact report pointer, and refuses publication date or generator-commit
 disagreement between the Markdown report and provenance. It prints the computed
 custom, role, and Markdown SHA-256 digests and will compare them once P5-52
-makes the renderer record the complete digest set. Fourteen registered mutants
-cover those joins and bindings, including a doctored SNS pass, a per-pair Sid
-miss, an empty promoted hash list, and a runner
-failure. Every restored join must pass.
+makes the renderer record the complete digest set. The join derives `${SUFFIX}`
+from the plan-reader role name recorded in the role report, so suffixes such as
+`team-a` remain valid. Fifteen registered mutants cover those joins and bindings,
+including a doctored SNS pass, a per-pair Sid miss, an empty promoted hash list, a
+hyphenated-suffix matcher regression, and a runner failure. Every restored join
+must pass.
 
 The `TAXONOMY` group runs
 `scripts/iam-simulate-categories.py --check`, independently compares the 288
@@ -633,7 +638,9 @@ explicitly names macOS Bash 3.2 and Linux Bash 5. Duplicate Sids across
 combined role documents and any loaded vector case ID missing from the custom
 report fail before a role is created.
 Every selected case is simulated first with the exact SCP exclusion and then
-with the default effective-policy request. The SCP-excluded decision is compared
+with the default effective-policy request. Every detail decision must first match
+the vector's scalar or per-resource expectation; a mismatch marks the record
+failed and makes the lane exit non-zero. The SCP-excluded decision is then compared
 to the custom lane's observed decision: disagreement is reportable divergence
 evidence, not a failed run. Default-versus-SCP differences are separately
 reported per action and resource with Organizations attribution. Every new
