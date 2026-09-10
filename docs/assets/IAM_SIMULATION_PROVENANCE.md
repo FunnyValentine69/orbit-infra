@@ -5,8 +5,8 @@ The IAM simulation artifacts are generated from the JSON lane reports and are ne
 | Field | Value |
 | --- | --- |
 | recorded_from | custom-policy report and temporary-role principal-policy report |
-| recorded_on | 2026-09-09 |
-| generator commit | a52406b |
+| recorded_on | 2026-09-10 |
+| generator commit | 4323353 |
 | commands | `TARGET=aws scripts/iam-simulate.sh --plan &lt;terraform-plan.json&gt; --vectors tests/fixtures/iam-simulate/vectors --report &lt;custom-report.json&gt;`<br>`IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws scripts/iam-simulate-roles.sh --plan &lt;terraform-plan.json&gt; --vectors tests/fixtures/iam-simulate/vectors --custom-report &lt;custom-report.json&gt; --report &lt;role-report.json&gt; --expect-account &lt;account&gt;`<br>`scripts/iam-simulate-report.sh --custom-report &lt;custom-report.json&gt; --role-report &lt;role-report.json&gt; --out-dir docs/assets` |
 | account and region | Free Plan account in `us-east-1`; the rendered account identifier is always `000000000000`. |
 | case counts by outcome | custom: 237 passed, 2 failed, 0 runner failures; role: 156 passed, 0 failed, 0 runner failures |

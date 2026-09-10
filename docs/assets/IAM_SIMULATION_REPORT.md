@@ -2,6 +2,13 @@
 
 This publication renders account `000000000000` only.
 
+## Publication metadata
+
+| Field | Value |
+| --- | --- |
+| recorded_on | 2026-09-10 |
+| generator commit | 4323353 |
+
 ## Case results
 
 | Case ID | Mode | Expected | Observed | Matched Sids | Pass |
