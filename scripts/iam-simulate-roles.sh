@@ -637,18 +637,29 @@ cleanup_roles() {
 }
 
 write_report() {
-  python3 - "$role_plan" "$records" "$manual_notes" "$report" "$nonce_value" <<'PY'
+  python3 - "$IAM_SIM_CORE" "$role_plan" "$records" "$manual_notes" "$report" "$nonce_value" <<'PY'
+import importlib.util
 import json
 from pathlib import Path
 import sys
 
-role_plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-records_path = Path(sys.argv[2])
-notes_path = Path(sys.argv[3])
-report_path = Path(sys.argv[4])
+sys.dont_write_bytecode = True
+
+core_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("iam_simulate_core", core_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"FAIL: cannot load IAM simulator core: {core_path}")
+core = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = core
+spec.loader.exec_module(core)
+
+role_plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+records_path = Path(sys.argv[3])
+notes_path = Path(sys.argv[4])
+report_path = Path(sys.argv[5])
 records = [json.loads(line) for line in records_path.read_text(encoding="utf-8").splitlines() if line]
 notes = notes_path.read_text(encoding="utf-8").splitlines()
-nonce = sys.argv[5]
+nonce = sys.argv[6]
 
 
 def redact_sensitive(value, replacements):
@@ -708,7 +719,7 @@ payload = redact_sensitive(payload, [
     (nonce, "<redacted>"),
 ])
 report_path.parent.mkdir(parents=True, exist_ok=True)
-report_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+core.write_report(report_path, payload)
 PY
 }
 

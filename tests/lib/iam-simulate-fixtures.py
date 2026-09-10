@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from copy import deepcopy
 import hashlib
+import importlib.util
 import json
 import os
 import re, shlex, shutil, subprocess
@@ -826,9 +827,9 @@ def _command_validate_role_projection_report():
             for field in ('projection_id', 'name', 'policy_name', 'policy_character_count', 'source_character_count'):
                 if projection.get(field) != expected[field]: raise SystemExit(f"FAIL: role projection {field} differs: {projection.get('projection_id')}")
     records = payload.get('records', [])
-    expected_case_ids = [vector['case_id'] for vector in vectors_in_order]
+    expected_case_ids = sorted(vector['case_id'] for vector in vectors_in_order)
     actual_case_ids = [record.get('case_id') for record in records]
-    if actual_case_ids != expected_case_ids: raise SystemExit('FAIL: role projection case membership or ordering differs from vector envelopes')
+    if actual_case_ids != expected_case_ids: raise SystemExit('FAIL: role projection report records are not sorted by case_id')
     for record in records:
         case_id = record['case_id']
         projection = record.get('projection', {})
@@ -1064,6 +1065,74 @@ def _command_mutate_core_counter():
     instrumentation = 'def main() -> int:\n    import os\n\n    call_log = os.environ.get("IAM_SIM_TEST_CORE_CALL_LOG")\n    if call_log and len(sys.argv) > 1:\n        with Path(call_log).open("a", encoding="utf-8") as handle:\n            handle.write(sys.argv[1] + "\\n")\n'
     if source.count(anchor) != 1: raise SystemExit('FAIL: shared-core counter mutation anchor changed')
     destination.write_text(source.replace(anchor, instrumentation, 1), encoding='utf-8')
+def _command_mutate_report_writer():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    start_marker = 'def write_report(path: Path, payload: dict[str, Any]) -> None:\n'
+    end_marker = '\n\ndef document_hashes('
+    if source.count(start_marker) != 1 or source.count(end_marker) != 1: raise SystemExit('FAIL: compact report writer mutation anchors changed')
+    start = source.index(start_marker)
+    end = source.index(end_marker, start)
+    pretty_writer = """def write_report(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8"
+    )
+"""
+    destination.write_text(source[:start] + pretty_writer + source[end:], encoding='utf-8')
+
+
+def _command_validate_report_writer():
+    core_path = Path(sys.argv[1])
+    output_path = Path(sys.argv[2])
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location('iam_simulate_core', core_path)
+    if spec is None or spec.loader is None: raise SystemExit(f'FAIL: cannot load IAM simulator core: {core_path}')
+    core = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = core
+    spec.loader.exec_module(core)
+    payload = {
+        'account': '000000000000',
+        'exclusions': [
+            {'binding': 'fixture.binding', 'reason': 'no case id'},
+            {'case_id': 'case:a', 'reason': 'first'},
+            {'case_id': 'case:z', 'reason': 'last'},
+        ],
+        'records': [
+            {'case_id': 'case:a', 'nested': {'z': 4, 'a': 3}, 'pass': True},
+            {'case_id': 'case:z', 'nested': {'z': 2, 'a': 1}, 'pass': True},
+        ],
+        'summary': {'total': 2, 'passed': 2, 'failed': 0},
+    }
+    pretty = json.dumps(payload, indent=2, sort_keys=True) + '\n'
+    core.write_report(output_path, payload)
+    rendered = output_path.read_text(encoding='utf-8')
+    lines = rendered.splitlines()
+    keys = sorted(payload)
+    for key in ('records', 'exclusions'):
+        diagnostic = f'FAIL: compact report {key} must contain exactly one record per line'
+        opener = f'  {json.dumps(key)}:['
+        if opener not in lines: raise SystemExit(diagnostic)
+        start = lines.index(opener) + 1
+        try: end = lines.index('  ]' + (',' if keys.index(key) < len(keys) - 1 else ''), start)
+        except ValueError: raise SystemExit(diagnostic) from None
+        values = sorted(payload[key], key=lambda item: item.get('case_id', ''))
+        expected = [
+            '    ' + json.dumps(item, sort_keys=True, separators=(',', ':')) +
+            (',' if index < len(values) - 1 else '')
+            for index, item in enumerate(values)
+        ]
+        if lines[start:end] != expected: raise SystemExit(diagnostic)
+    for key in set(keys) - {'records', 'exclusions'}:
+        expected = (
+            f'  {json.dumps(key)}:' +
+            json.dumps(payload[key], sort_keys=True, separators=(',', ':')) +
+            (',' if keys.index(key) < len(keys) - 1 else '')
+        )
+        if lines.count(expected) != 1: raise SystemExit(f'FAIL: compact report top-level key is not on one line: {key}')
+    if json.loads(rendered) != json.loads(pretty): raise SystemExit('FAIL: compact report changes JSON content')
+    print('PASS: compact report writer preserves content and renders sorted one-record lines')
 COMMANDS = {
     'build': build_fixtures, 'fake-aws': _fake_aws, 'table-counts': _table_counts,
     **{name.removeprefix('_command_').replace('_', '-'): value for name, value in tuple(globals().items()) if name.startswith('_command_')},

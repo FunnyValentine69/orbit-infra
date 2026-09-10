@@ -488,7 +488,7 @@ def write_report(
     payload = {"records": sorted(records, key=lambda record: record["case_id"]), "summary": summary}
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = scratch / "report.json"
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    core.write_report(temporary, payload)
     os.replace(temporary, path)
 
 

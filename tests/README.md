@@ -399,11 +399,17 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 104 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 105 stable mutation case
 IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
 diagnostic prefixes. The suite records each executed failure, rejects missing,
 unregistered, duplicate, or diagnostic-drifting observations, and prints its
 executed/registered count only after all restored paths pass.
+
+The shared report writer keeps each top-level summary or scalar on one line and
+renders sorted `records` and role-lane `exclusions` with one compact JSON object
+per line. The `REPORT` group round-trips this form against the equivalent pretty
+JSON and kills an `indent=2` writer mutant before proving the restored path.
+Both simulator lanes use the same writer.
 
 The `REPORT` group executes `scripts/iam-simulate-report.sh` against clean
 custom- and role-report fixtures and checks the rendered case table, findings,

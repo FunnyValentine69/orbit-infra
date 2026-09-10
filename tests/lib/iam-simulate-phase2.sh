@@ -228,7 +228,7 @@ run_authorization_split_runner() {
 
 
 run_iam_simulate_runner_contracts() {
-  local census disagreement_vectors expected_inputs isolated_policy output real_rc report report_mutant
+  local census disagreement_vectors expected_inputs isolated_policy output real_rc report report_mutant report_sha
   echo "== iam simulate contracts: RUNNER =="
   group_failures=$failures
   phase2_setup
@@ -245,6 +245,14 @@ run_iam_simulate_runner_contracts() {
     reset_phase2_fake
     report="$phase2_dir/runner-report.json"
     if output="$(run_phase2_runner success "$phase2_dir/response-baseline.json" "$phase2_dir/runner-vectors" "$report" 2>&1)" && \
+       report_sha="$(python3 - "$report" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)" && \
+       [ "$report_sha" = "927e6b605aa92fc066684f32260495281cc3d1f05d65ddab177e408bc39239ec" ] && \
        jq -e '
          .records | length == 1
          and .[0].decision_observed == {"arn:aws:s3:::orbit-infra-79s5rw-bad/example":"explicitDeny","arn:aws:s3:::orbit-infra-79s5rw-good/example":"allowed"}
@@ -252,9 +260,10 @@ run_iam_simulate_runner_contracts() {
          and .[0].pass == true
          and (.[0].document_hashes_submitted.policy_input_list | length) == 1
        ' "$report" >/dev/null; then
-      pass_case "runner maps nested per-resource decisions and source positions"
+      pass_case "runner maps nested per-resource decisions and source positions (custom fake report sha256=$report_sha)"
     else
-      fail_case "runner maps nested per-resource decisions and source positions" "$output"
+      fail_case "runner maps nested per-resource decisions and source positions" \
+        "custom fake report sha256=$report_sha output=$output"
     fi
 
     expect_runner_failure "runner per-resource mapper" "decision mismatch" \
@@ -1938,7 +1947,33 @@ run_iam_simulate_report_contracts() {
   local bad_case_out="$phase2_dir/rendered-bad-case"
   local unmarked_role="$phase2_dir/role-report-without-account-redacted.json"
   local unmarked_out="$phase2_dir/rendered-unmarked-role"
+  local compact_report="$phase2_dir/compact-writer-report.json"
+  local compact_writer_mutant="$phase2_dir/iam-simulate-core-pretty-report.py"
   local output rc fail_line checker_output
+
+  if output="$(
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-writer \
+      "$IAM_SIM_CORE" "$compact_report" 2>&1
+  )"; then
+    pass_case "shared report writer preserves JSON content and compact sorted record lines"
+  else
+    fail_case "shared report writer compact rendering" "$output"
+  fi
+
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-report-writer \
+    "$IAM_SIM_CORE" "$compact_writer_mutant"
+  expect_failure "report compact writer" \
+    "compact report records must contain exactly one record per line" \
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-writer \
+      "$compact_writer_mutant" "$compact_report"
+  if output="$(
+    python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-writer \
+      "$IAM_SIM_CORE" "$compact_report" 2>&1
+  )"; then
+    pass_case "report compact writer mutation restored PASS"
+  else
+    fail_case "report compact writer mutation restoration" "$output"
+  fi
 
   if [ ! -x "$IAM_SIM_REPORT_RENDERER" ]; then
     fail_case "IAM simulation report renderer exists" \

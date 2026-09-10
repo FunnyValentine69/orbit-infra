@@ -226,6 +226,39 @@ def document_sha256(document: str) -> str:
     return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
 
+def write_report(path: Path, payload: dict[str, Any]) -> None:
+    """Write a stable report with one compact record or exclusion per line."""
+    keys = sorted(payload)
+    lines = ["{"]
+    for key_index, key in enumerate(keys):
+        suffix = "," if key_index < len(keys) - 1 else ""
+        value = payload[key]
+        if key not in {"records", "exclusions"}:
+            rendered = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            lines.append(f"  {json.dumps(key)}:{rendered}{suffix}")
+            continue
+        if not isinstance(value, list) or any(
+            not isinstance(item, dict) for item in value
+        ):
+            raise RunnerFailure(f"report {key} must be an array of objects")
+        rows = sorted(
+            value,
+            key=lambda item: (
+                item.get("case_id", ""),
+                json.dumps(item, sort_keys=True, separators=(",", ":")),
+            ),
+        )
+        lines.append(f"  {json.dumps(key)}:[")
+        for row_index, row in enumerate(rows):
+            rendered = json.dumps(row, sort_keys=True, separators=(",", ":"))
+            row_suffix = "," if row_index < len(rows) - 1 else ""
+            lines.append(f"    {rendered}{row_suffix}")
+        lines.append(f"  ]{suffix}")
+    lines.append("}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def document_hashes(
     policy_inputs: list[str], boundaries: list[str]
 ) -> dict[str, list[dict[str, str]]]:
