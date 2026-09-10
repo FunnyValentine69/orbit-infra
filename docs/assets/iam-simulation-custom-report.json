@@ -240,5 +240,6 @@
     {"case_id":"case:aws_iam_role_policy.publisher:SigningKey:ALL:kms:ResourceAliases:one-matching","decision_observed":"allowed","document_hashes_submitted":{"permissions_boundary_policy_input_list":[],"policy_input_list":[{"sha256":"42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"}]},"expect":{"decision":"allowed","matched_sid_forbidden":[],"matched_sid_required":["SigningKey"]},"matched_sids":["SigningKey"],"mode":"custom","pass":true,"shared_call_case_ids":[]},
     {"case_id":"case:aws_iam_role_policy.publisher:SigningKey:ALL:resource:nonmatching","decision_observed":"implicitDeny","document_hashes_submitted":{"permissions_boundary_policy_input_list":[],"policy_input_list":[{"sha256":"42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977"}]},"expect":{"decision":"implicitDeny","matched_sid_forbidden":["SigningKey"],"matched_sid_required":[]},"matched_sids":[],"mode":"custom","pass":true,"shared_call_case_ids":[]}
   ],
+  "redaction_applied":true,
   "summary":{"failed":2,"passed":237,"runner_failures":0,"total":239}
 }
