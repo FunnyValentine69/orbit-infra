@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_data",
+  "sid": "EcrVerificationAuth",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecr:GetAuthorizationToken"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["EcrVerificationAuth"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "DenyDeleteRolePermissionsBoundary",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyDeleteRolePermissionsBoundary:ALL:none:protected-resource",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:DeleteRolePermissionsBoundary"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"explicitDeny","matched_sid_required":["DenyDeleteRolePermissionsBoundary"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

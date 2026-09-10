@@ -1,91 +1,95 @@
 # IAM simulator vector schema
 
-This document specifies schema version 1 for IAM simulator vectors. A vector
-file contains one JSON object. Synthetic contract fixtures live directly under
-`tests/fixtures/iam-simulate/`; authored execution vectors live under its
-`vectors/` directory.
+This document specifies schema version 1 for IAM simulator vector envelopes.
+Synthetic contract envelopes live directly under
+`tests/fixtures/iam-simulate/`; authored execution envelopes live under its
+`vectors/` directory. Each authored file groups all cases for one exact
+`(document, Sid)` pair and is named `<document>__<sid>.json`, with every
+character outside `[A-Za-z0-9._-]` replaced by `_`.
 
-The validator is:
+Validate an envelope with:
 
 ```bash
-python3 scripts/iam-simulate-validate.py <vector.json>
+python3 scripts/iam-simulate-validate.py <envelope.json>
 ```
 
-The vector's `case_id`, `document`, `sid`, and assertion kind must agree with
-`tests/fixtures/iam-simulate/categories.json`. Only
+Add `--jsonl` to emit one flattened JSON object per validated case. Each
+flattened object materializes `schema_version`, `document`, and `sid` from the
+envelope before the case fields; both runners use that output before `--only`,
+batching, and counting.
+
+Each case's `case_id` and assertion kind must agree with the envelope header
+and `tests/fixtures/iam-simulate/categories.json`. The required prefix is the
+exact string `case:<document>:<sid>:`; case IDs are never split on colons. Only
 `simulator-decision` and `simulator-attribution-only` taxonomy entries may have
-simulator vectors. `live-call-only` and `not-simulatable` entries have no
-simulator vector.
+simulator cases. `live-call-only` and `not-simulatable` entries have no
+simulator case.
 
-## Top-level fields
+## Envelope and case fields
 
-Unknown fields are invalid. Arrays described as non-empty must contain unique,
-non-empty strings.
+Unknown envelope and case fields are invalid. Arrays described as non-empty
+must contain unique, non-empty strings. `cases` must be non-empty, and a
+`case_id` may occur only once in an envelope.
+
+### Envelope fields
 
 | Field | Type | Requirement |
 |---|---|---|
-| `schema_version` | integer | Required in every mode; exactly `1`. |
-| `case_id` | string | Required; must occur in `categories.json`. Do not parse it by splitting on colons. |
-| `document` | string | Required; must exactly equal the taxonomy entry's `document` and names the Terraform resource address whose raw `.values.policy` is resolved from the plan. |
-| `sid` | string | Required; must exactly equal the taxonomy entry's `sid`. |
-| `simulation_mode` | string enum | Required; `custom`, `custom-isolated`, or `principal`. |
+| `schema_version` | integer | Required; exactly `1`. |
+| `document` | string | Required; the Terraform resource address whose raw `.values.policy` is resolved from the plan. |
+| `sid` | string | Required; the exact statement Sid shared by every case in the envelope. |
+| `cases` | non-empty array of objects | Required; cases are sorted by `case_id` in authored envelopes. |
+
+### Case fields
+
+| Field | Type | Requirement |
+|---|---|---|
+| `case_id` | string | Required; must occur in `categories.json` and start with the envelope's exact `case:<document>:<sid>:` prefix. |
+| `simulation_mode` | string enum | Required; `custom` or `custom-isolated`. |
 | `assertion_kind` | string enum | Required; `decision` or `attribution-only`, matching the taxonomy category. |
-| `policy_source_arn` | string | Required only for `principal`; the IAM role, user, or group ARN passed as `PolicySourceArn`. |
 | `permissions_boundary_policy_input_list` | non-empty array of strings | Optional only for `custom`; at most one Terraform resource address. The runner resolves its raw `.values.policy` from the plan. |
-| `synthetic_policy_input_list` | non-empty array of strings | Optional only for an `outside-boundary` custom vector; exactly one complete synthetic identity-policy string. |
+| `synthetic_policy_input_list` | non-empty array of strings | Optional only for an `outside-boundary` custom case; exactly one complete synthetic identity-policy string. |
 | `action_names` | non-empty array of strings | Required; concrete `service:Action` names with no wildcard. |
 | `resource_arns` | array of strings | Required; the exact resources submitted to the simulator, `*`, or an empty array to omit `--resource-arns`. |
 | `context_entries` | array of objects | Optional; omit it or use `[]` when no context is submitted. |
-| `policy_exclusion_list` | non-empty array of objects | Optional only for `principal`; each object is exactly `{"PolicyType":"<type>"}`. |
 | `expect` | object | Required; the assertion described below. |
-| `notes` | string | Optional. Real vectors under `tests/fixtures/iam-simulate/vectors/` require a non-empty matrix-prose fragment through the completeness contract. It is exact except for the mandatory account and suffix template substitutions described below. |
 
 ### Requirements by simulation mode
 
-All modes require the common fields `schema_version`, `case_id`, `document`,
-`sid`, `simulation_mode`, `assertion_kind`, `action_names`, `resource_arns`,
-and `expect`. `context_entries` is optional in every mode.
+Both modes require `case_id`, `simulation_mode`, `assertion_kind`,
+`action_names`, `resource_arns`, and `expect`. `context_entries` is optional.
 
-| Mode | Additional required fields | Optional mode fields | Forbidden mode fields |
+| Mode | Additional required fields | Optional mode fields | Forbidden repository-policy snapshots |
 |---|---|---|---|
-| `custom` | none | `permissions_boundary_policy_input_list`, `synthetic_policy_input_list` for `outside-boundary` only | `policy_source_arn`, `policy_input_list`, `isolated_statement`, `policy_exclusion_list` |
-| `custom-isolated` | none | none | `policy_source_arn`, `policy_input_list`, `permissions_boundary_policy_input_list`, `synthetic_policy_input_list`, `isolated_statement`, `policy_exclusion_list` |
-| `principal` | `policy_source_arn` | `policy_exclusion_list` | `policy_input_list`, `permissions_boundary_policy_input_list`, `synthetic_policy_input_list`, `isolated_statement` |
+| `custom` | none | `permissions_boundary_policy_input_list`, `synthetic_policy_input_list` for `outside-boundary` only | `policy_input_list`, `isolated_statement` |
+| `custom-isolated` | none | none | `policy_input_list`, `permissions_boundary_policy_input_list`, `synthetic_policy_input_list`, `isolated_statement` |
 
-For `custom`, `scripts/iam-simulate.sh` submits the `document` address's full,
-byte-exact rendered policy from the plan. No authored vector currently needs
-more than one repository document. `policy_input_list` is invalid because an
-inline copy could drift from that plan.
+For `custom`, `scripts/iam-simulate.sh` submits the envelope `document`'s full,
+byte-exact rendered policy from the plan. No authored case currently needs more
+than one repository document. `policy_input_list` is invalid because an inline
+copy could drift from that plan.
 
 For `custom-isolated`, the runner parses the same plan-resolved `document`,
-selects the only statement whose `Sid` equals the vector `sid`, and wraps it as
-a one-statement policy in `PolicyInputList`. An absent Sid or more than one
+selects the only statement whose `Sid` equals the envelope `sid`, and wraps it
+as a one-statement policy in `PolicyInputList`. An absent Sid or more than one
 matching statement is a hard failure. `isolated_statement` is invalid. This
 mode is reserved for masked negative cases and may not expect `allowed`.
 
-The role lane deliberately reuses these same `custom` vectors rather than
-maintaining a second set of `principal` vectors. It projects the mapped role
-documents and submits each selected vector's existing actions, resources, and
-context entries to `simulate-principal-policy`. A `custom-isolated` vector is
-recorded as excluded because an isolated single-statement simulation has no
-principal equivalent. A `custom` vector whose document is not an identity-role
+The role lane reuses these same `custom` cases. It projects the mapped role
+documents and submits each selected case's actions, resources, and context
+entries to `simulate-principal-policy`. A `custom-isolated` case is recorded as
+excluded because an isolated single-statement simulation has no role
+projection equivalent. A `custom` case whose document is not an identity-role
 binding, including `aws_iam_policy.task_boundary`, is also recorded as excluded.
-The schema's `principal` mode remains available to other direct-principal
-fixtures; it is not the role lane's authored-vector input mode.
 
 `permissions_boundary_policy_input_list` contains plan document addresses, not
-policy JSON. All 16 boundary vectors name `aws_iam_policy.task_boundary`, whose
+policy JSON. All 16 boundary cases name `aws_iam_policy.task_boundary`, whose
 raw plan policy is submitted as the permissions boundary. The six
-`ALL:none:outside-boundary` vectors additionally carry one small inline
+`ALL:none:outside-boundary` cases additionally carry one small inline
 `synthetic_policy_input_list` identity Allow for `s3:ListAllMyBuckets`; this is
 the sole synthetic-policy exception because that identity policy is not a
 repository policy. The IAM request still receives JSON policy strings after
 the runner resolves the addresses.
-
-For `policy_exclusion_list`, `PolicyType` is lower case and is one of `inline`,
-`aws-managed`, `user-managed`, `permission-boundary`, `scp`, or `rcp`. The
-measured service-control-policy exclusion is exactly `{"PolicyType":"scp"}`;
-the lower-case enum is significant.
 
 ## Context entries
 
@@ -169,15 +173,11 @@ rendered. An unknown `${...}` token is invalid. Any literal 12-digit number
 anywhere in a vector file is invalid,
 including `000000000000`; use `${ACCOUNT_ID}`. The measured custom-policy
 simulator accepts `000000000000`, but committed vectors remain account-neutral.
-A real vector's `notes` field quotes its exact matrix case fragment after only
-these required normalizations: `000000000000` becomes `${ACCOUNT_ID}` and
-`79s5rw` becomes `${SUFFIX}`.
-
 ## Worked matrix examples
 
 These examples use real case IDs, actions, resources, and expectations from
-`docs/iam-matrix.md`; concrete resource names replace the row's prose
-placeholders.
+`docs/iam-matrix.md`. Each is a valid one-case envelope; authored envelopes may
+hold multiple cases with the same document and Sid.
 
 ### Protected-resource deny
 
@@ -187,44 +187,50 @@ The `DenyReadStateObjectsOutsideScope` row selects an object outside its
 ```json
 {
   "schema_version": 1,
-  "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource",
   "document": "aws_iam_role_policy.plan_reader_deny",
   "sid": "DenyReadStateObjectsOutsideScope",
-  "simulation_mode": "principal",
-  "assertion_kind": "decision",
-  "policy_source_arn": "arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-plan-reader",
-  "action_names": ["s3:GetObject", "s3:GetObjectVersion"],
-  "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-outside/example.tfstate"],
-  "context_entries": [],
-  "expect": {
-    "decision": "explicitDeny",
-    "matched_sid_required": ["DenyReadStateObjectsOutsideScope"],
-    "matched_sid_forbidden": []
-  }
+  "cases": [
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["s3:GetObject", "s3:GetObjectVersion"],
+      "resource_arns": ["arn:aws:s3:::outside-${SUFFIX}-resource/example"],
+      "context_entries": [],
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_required": ["DenyReadStateObjectsOutsideScope"],
+        "matched_sid_forbidden": []
+      }
+    }
+  ]
 }
 ```
 
 ### `NotResource` exception
 
-The same row's `non-protected-resource` case selects an object inside the
-`envs/preview/*` exception. Its assertion is Sid absence, not a decision.
+The same row's `non-protected-resource` case selects an object inside an
+exception. Its assertion is Sid absence, not a decision.
 
 ```json
 {
   "schema_version": 1,
-  "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:non-protected-resource",
   "document": "aws_iam_role_policy.plan_reader_deny",
   "sid": "DenyReadStateObjectsOutsideScope",
-  "simulation_mode": "principal",
-  "assertion_kind": "attribution-only",
-  "policy_source_arn": "arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-plan-reader",
-  "action_names": ["s3:GetObject", "s3:GetObjectVersion"],
-  "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate/envs/preview/example.tfstate"],
-  "context_entries": [],
-  "expect": {
-    "matched_sid_required": [],
-    "matched_sid_forbidden": ["DenyReadStateObjectsOutsideScope"]
-  }
+  "cases": [
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:non-protected-resource",
+      "simulation_mode": "custom",
+      "assertion_kind": "attribution-only",
+      "action_names": ["s3:GetObject", "s3:GetObjectVersion"],
+      "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate/bootstrap/preview"],
+      "context_entries": [],
+      "expect": {
+        "matched_sid_required": [],
+        "matched_sid_forbidden": ["DenyReadStateObjectsOutsideScope"]
+      }
+    }
+  ]
 }
 ```
 
@@ -236,19 +242,22 @@ context entry and expects an explicit deny.
 ```json
 {
   "schema_version": 1,
-  "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:s3:prefix:absent",
   "document": "aws_iam_role_policy.plan_reader_deny",
   "sid": "DenyListBucketMissingPrefix",
-  "simulation_mode": "principal",
-  "assertion_kind": "decision",
-  "policy_source_arn": "arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-plan-reader",
-  "action_names": ["s3:ListBucket", "s3:ListBucketVersions"],
-  "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate"],
-  "context_entries": [],
-  "expect": {
-    "decision": "explicitDeny",
-    "matched_sid_required": ["DenyListBucketMissingPrefix"],
-    "matched_sid_forbidden": []
-  }
+  "cases": [
+    {
+      "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:s3:prefix:absent",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["s3:ListBucket", "s3:ListBucketVersions"],
+      "resource_arns": ["arn:aws:s3:::orbit-infra-${SUFFIX}-tfstate"],
+      "context_entries": [],
+      "expect": {
+        "decision": "explicitDeny",
+        "matched_sid_required": ["DenyListBucketMissingPrefix"],
+        "matched_sid_forbidden": []
+      }
+    }
+  ]
 }
 ```

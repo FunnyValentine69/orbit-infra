@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "EcsUntabledActions",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsUntabledActions:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecs:ListTaskDefinitions"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["EcsUntabledActions"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

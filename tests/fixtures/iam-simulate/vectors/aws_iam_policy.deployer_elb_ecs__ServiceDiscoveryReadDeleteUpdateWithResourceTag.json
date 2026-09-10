@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "ServiceDiscoveryReadDeleteUpdateWithResourceTag",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryReadDeleteUpdateWithResourceTag:ALL:aws:ResourceTag/Project:absent",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:DeleteNamespace","servicediscovery:DeleteService","servicediscovery:GetNamespace","servicediscovery:GetService","servicediscovery:UpdateService"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ServiceDiscoveryReadDeleteUpdateWithResourceTag"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryReadDeleteUpdateWithResourceTag:ALL:aws:ResourceTag/Project:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:DeleteNamespace","servicediscovery:DeleteService","servicediscovery:GetNamespace","servicediscovery:GetService","servicediscovery:UpdateService"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:ResourceTag/Project","ContextKeyValues":["orbit-infra"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["ServiceDiscoveryReadDeleteUpdateWithResourceTag"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryReadDeleteUpdateWithResourceTag:ALL:aws:ResourceTag/Project:non-matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:DeleteNamespace","servicediscovery:DeleteService","servicediscovery:GetNamespace","servicediscovery:GetService","servicediscovery:UpdateService"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:ResourceTag/Project","ContextKeyValues":["other-project"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ServiceDiscoveryReadDeleteUpdateWithResourceTag"]}
+    }
+  ]
+}

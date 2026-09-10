@@ -123,7 +123,11 @@ def generate(matrix_path: Path) -> list[dict[str, str]]:
 
 
 def render(taxonomy: list[dict[str, str]]) -> bytes:
-    return (json.dumps(taxonomy, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    entries = [
+        json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+        for entry in taxonomy
+    ]
+    return ("[\n" + ",\n".join(entries) + "\n]\n").encode("utf-8")
 
 
 def report_counts(taxonomy: list[dict[str, str]]) -> None:

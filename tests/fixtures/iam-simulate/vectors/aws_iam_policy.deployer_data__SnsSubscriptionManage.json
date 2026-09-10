@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_data",
+  "sid": "SnsSubscriptionManage",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:Unsubscribe"],
+      "resource_arns": ["arn:aws:sns:us-east-1:${ACCOUNT_ID}:orbit-infra-${SUFFIX}-preview:preview"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["SnsSubscriptionManage"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:nonmatching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["sns:GetSubscriptionAttributes","sns:SetSubscriptionAttributes","sns:Unsubscribe"],
+      "resource_arns": ["arn:aws:sns:us-east-1:${ACCOUNT_ID}:outside-${SUFFIX}-topic:outside-subscription"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["SnsSubscriptionManage"]}
+    }
+  ]
+}

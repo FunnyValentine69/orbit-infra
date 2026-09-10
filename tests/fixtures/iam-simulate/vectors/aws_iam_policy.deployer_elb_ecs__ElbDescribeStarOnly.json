@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "ElbDescribeStarOnly",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ElbDescribeStarOnly:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["elasticloadbalancing:DescribeListenerAttributes","elasticloadbalancing:DescribeListeners","elasticloadbalancing:DescribeLoadBalancerAttributes","elasticloadbalancing:DescribeLoadBalancers","elasticloadbalancing:DescribeTags","elasticloadbalancing:DescribeTargetGroupAttributes","elasticloadbalancing:DescribeTargetGroups"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["ElbDescribeStarOnly"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

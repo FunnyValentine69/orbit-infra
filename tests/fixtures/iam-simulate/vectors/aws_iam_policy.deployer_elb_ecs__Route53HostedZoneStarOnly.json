@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "Route53HostedZoneStarOnly",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:Route53HostedZoneStarOnly:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["route53:CreateHostedZone","route53:ListHostedZonesByName"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["Route53HostedZoneStarOnly"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate one offline IAM simulator vector against the phase-1 schema."""
+"""Validate one offline IAM simulator vector envelope."""
 
 from __future__ import annotations
 
@@ -14,30 +14,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATEGORIES = (
     REPO_ROOT / "tests" / "fixtures" / "iam-simulate" / "categories.json"
 )
+ENVELOPE_FIELDS = {"schema_version", "document", "sid", "cases"}
 COMMON_FIELDS = {
-    "schema_version",
     "case_id",
-    "document",
-    "sid",
     "simulation_mode",
     "assertion_kind",
     "action_names",
     "resource_arns",
     "context_entries",
     "expect",
-    "notes",
 }
 MODE_FIELDS = {
-    "principal": {"policy_source_arn", "policy_exclusion_list"},
     "custom": {
         "permissions_boundary_policy_input_list",
         "synthetic_policy_input_list",
     },
-    "custom-isolated": set(),
-}
-MODE_REQUIRED = {
-    "principal": {"policy_source_arn"},
-    "custom": set(),
     "custom-isolated": set(),
 }
 ASSERTION_KINDS = {"decision", "attribution-only"}
@@ -55,14 +46,6 @@ CONTEXT_KEY_TYPES = {
     "binaryList",
     "date",
     "dateList",
-}
-POLICY_EXCLUSION_TYPES = {
-    "inline",
-    "aws-managed",
-    "user-managed",
-    "permission-boundary",
-    "scp",
-    "rcp",
 }
 ACCOUNT_ID = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")
 TEMPLATE = re.compile(r"\$\{([^}]+)\}")
@@ -169,20 +152,6 @@ def validate_context_entries(value: Any) -> None:
             fail(f"unknown ContextKeyType: {context_type}")
 
 
-def validate_exclusions(value: Any) -> None:
-    if not isinstance(value, list) or not value:
-        fail("policy_exclusion_list must be a non-empty array")
-    for index, raw_entry in enumerate(value):
-        entry = require_object(raw_entry, f"policy_exclusion_list[{index}]")
-        if set(entry) != {"PolicyType"}:
-            fail(f"policy_exclusion_list[{index}] must contain exactly PolicyType")
-        policy_type = entry["PolicyType"]
-        if not isinstance(policy_type, str) or policy_type not in POLICY_EXCLUSION_TYPES:
-            fail(
-                f"policy_exclusion_list[{index}].PolicyType is unknown or not lower case"
-            )
-
-
 def validate_expect(
     raw_expect: Any,
     assertion_kind: str,
@@ -250,21 +219,23 @@ def validate_expect(
         fail("multi-resource decision vectors require expect.resource_decisions")
 
 
-def validate_vector(vector_path: Path, categories_path: Path) -> None:
-    raw_vector, raw_text = read_json(vector_path, "vector")
-    validate_templates(raw_text)
-    vector = require_object(raw_vector, "vector top level")
-    categories = load_categories(categories_path)
-
-    common_required = COMMON_FIELDS - {"context_entries", "notes"}
+def validate_case(
+    raw_case: Any,
+    document: str,
+    sid: str,
+    categories: dict[str, dict[str, Any]],
+    index: int,
+) -> dict[str, Any]:
+    vector = require_object(raw_case, f"cases[{index}]")
+    common_required = COMMON_FIELDS - {"context_entries"}
     missing_common = sorted(common_required - set(vector))
     if missing_common:
-        fail(f"vector is missing required field: {missing_common[0]}")
+        fail(f"case is missing required field: {missing_common[0]}")
     simulation_mode = vector.get("simulation_mode")
     if not isinstance(simulation_mode, str) or simulation_mode not in MODE_FIELDS:
         fail(f"unknown simulation_mode: {simulation_mode}")
     for embedded_field in ("policy_input_list", "isolated_statement"):
-        if embedded_field in vector and simulation_mode in {"custom", "custom-isolated"}:
+        if embedded_field in vector:
             fail(
                 f"{embedded_field} is forbidden for {simulation_mode} vectors; "
                 "resolve repository policies from the plan"
@@ -273,17 +244,13 @@ def validate_vector(vector_path: Path, categories_path: Path) -> None:
     unknown_fields = sorted(set(vector) - allowed_fields)
     if unknown_fields:
         fail(f"{unknown_fields[0]} is forbidden for {simulation_mode} vectors")
-    missing_mode = sorted(MODE_REQUIRED[simulation_mode] - set(vector))
-    if missing_mode:
-        fail(f"{missing_mode[0]} is required for {simulation_mode} vectors")
-
-    if type(vector["schema_version"]) is not int or vector["schema_version"] != 1:
-        fail("schema_version must be integer 1")
     case_id = require_string(vector["case_id"], "case_id")
-    document = require_string(vector["document"], "document")
-    sid = require_string(vector["sid"], "sid")
-    if "notes" in vector and not isinstance(vector["notes"], str):
-        fail("notes must be a string")
+    prefix = f"case:{document}:{sid}:"
+    if not case_id.startswith(prefix) or case_id == prefix:
+        fail(
+            "case_id prefix does not match envelope header: "
+            f"{case_id} expected {prefix}"
+        )
     category = categories.get(case_id)
     if category is None:
         fail(f"case_id is absent from categories.json: {case_id}")
@@ -308,21 +275,22 @@ def validate_vector(vector_path: Path, categories_path: Path) -> None:
         vector["resource_arns"], "resource_arns", nonempty=False
     )
     invalid_resource = next(
-        (resource for resource in resource_arns if resource != "*" and not resource.startswith("arn:")),
+        (
+            resource
+            for resource in resource_arns
+            if resource != "*" and not resource.startswith("arn:")
+        ),
         None,
     )
     if invalid_resource is not None:
-        fail(f"resource_arns contains a value that is neither an ARN nor *: {invalid_resource}")
+        fail(
+            "resource_arns contains a value that is neither an ARN nor *: "
+            f"{invalid_resource}"
+        )
     if "context_entries" in vector:
         validate_context_entries(vector["context_entries"])
 
-    if simulation_mode == "principal":
-        policy_source_arn = require_string(vector["policy_source_arn"], "policy_source_arn")
-        if not policy_source_arn.startswith("arn:"):
-            fail("policy_source_arn must be an ARN")
-        if "policy_exclusion_list" in vector:
-            validate_exclusions(vector["policy_exclusion_list"])
-    elif simulation_mode == "custom":
+    if simulation_mode == "custom":
         if "permissions_boundary_policy_input_list" in vector:
             boundaries = require_string_list(
                 vector["permissions_boundary_policy_input_list"],
@@ -346,19 +314,64 @@ def validate_vector(vector_path: Path, categories_path: Path) -> None:
             )
 
     validate_expect(vector["expect"], assertion_kind, simulation_mode, resource_arns)
+    flattened = {
+        "schema_version": 1,
+        "case_id": case_id,
+        "document": document,
+        "sid": sid,
+    }
+    flattened.update({key: value for key, value in vector.items() if key != "case_id"})
+    return flattened
+
+
+def validate_envelope(
+    vector_path: Path, categories_path: Path
+) -> list[dict[str, Any]]:
+    raw_envelope, raw_text = read_json(vector_path, "vector envelope")
+    validate_templates(raw_text)
+    envelope = require_object(raw_envelope, "vector envelope top level")
+    missing = sorted(ENVELOPE_FIELDS - set(envelope))
+    if missing:
+        fail(f"envelope is missing required field: {missing[0]}")
+    unknown = sorted(set(envelope) - ENVELOPE_FIELDS)
+    if unknown:
+        fail(f"envelope contains unknown field: {unknown[0]}")
+    if type(envelope["schema_version"]) is not int or envelope["schema_version"] != 1:
+        fail("schema_version must be integer 1")
+    document = require_string(envelope["document"], "document")
+    sid = require_string(envelope["sid"], "sid")
+    raw_cases = envelope["cases"]
+    if not isinstance(raw_cases, list) or not raw_cases:
+        fail("cases must be a non-empty array")
+    categories = load_categories(categories_path)
+    flattened = []
+    seen_case_ids = set()
+    for index, raw_case in enumerate(raw_cases):
+        vector = validate_case(raw_case, document, sid, categories, index)
+        case_id = vector["case_id"]
+        if case_id in seen_case_ids:
+            fail(f"envelope repeats case_id: {case_id}")
+        seen_case_ids.add(case_id)
+        flattened.append(vector)
+    return flattened
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("vector", type=Path)
     parser.add_argument("--categories", type=Path, default=DEFAULT_CATEGORIES)
+    parser.add_argument("--jsonl", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    validate_vector(args.vector, args.categories)
-    print(f"PASS: IAM simulate vector schema: {args.vector}")
+    vectors = validate_envelope(args.vector, args.categories)
+    if args.jsonl:
+        for vector in vectors:
+            print(json.dumps(vector, ensure_ascii=False, separators=(",", ":")))
+    else:
+        print(f"PASS: IAM simulate vector envelope schema: {args.vector}")
 
 
 if __name__ == "__main__":

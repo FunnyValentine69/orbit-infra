@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "Route53HostedZoneRead",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:Route53HostedZoneRead:ALL:none:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["route53:GetHostedZone"],
+      "resource_arns": ["arn:aws:route53:::hostedzone/preview"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["Route53HostedZoneRead"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

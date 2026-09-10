@@ -212,13 +212,15 @@ def normalize_context(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(normalized, key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
 
 
-def load_vectors(vector_dir: Path, only: str | None, account_id: str, suffix: str) -> list[dict[str, Any]]:
+def load_vectors(
+    vector_dir: Path, only: str | None, account_id: str, suffix: str
+) -> list[dict[str, Any]]:
     if not vector_dir.is_dir():
         fail(f"vector directory not found: {vector_dir}")
     loaded = []
     for path in sorted(vector_dir.rglob("*.json")):
         checked = subprocess.run(
-            [sys.executable, str(validator), str(path)],
+            [sys.executable, str(validator), str(path), "--jsonl"],
             text=True,
             capture_output=True,
             check=False,
@@ -226,12 +228,18 @@ def load_vectors(vector_dir: Path, only: str | None, account_id: str, suffix: st
         if checked.returncode != 0:
             detail = checked.stderr.strip() or checked.stdout.strip()
             fail(f"vector validation failed for {path}: {detail}")
-        vector = read_json(path, "vector")
-        prefix = f"case:{vector['document']}:{vector['sid']}:"
-        if not vector["case_id"].startswith(prefix) or vector["case_id"] == prefix:
-            fail(f"case id exact prefix mismatch: expected {prefix}")
-        if only is None or vector["case_id"] == only:
-            loaded.append(render(vector, account_id, suffix))
+        try:
+            flattened = [json.loads(line) for line in checked.stdout.splitlines()]
+        except json.JSONDecodeError as exc:
+            fail(f"vector validator emitted invalid JSONL for {path}: {exc}")
+        if not flattened:
+            fail(f"vector validator emitted no cases for {path}")
+        for vector in flattened:
+            prefix = f"case:{vector['document']}:{vector['sid']}:"
+            if not vector["case_id"].startswith(prefix) or vector["case_id"] == prefix:
+                fail(f"case id exact prefix mismatch: expected {prefix}")
+            if only is None or vector["case_id"] == only:
+                loaded.append(render(vector, account_id, suffix))
     if not loaded:
         fail(f"no vectors selected{f' for --only {only}' if only else ''}")
     if only is not None and len(loaded) != 1:

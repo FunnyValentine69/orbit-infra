@@ -31,6 +31,44 @@ root = Path(sys.argv[2])
 role_projection_plan_source = Path(sys.argv[3])
 categories = json.loads(taxonomy_path.read_text(encoding="utf-8"))
 
+
+def vector_envelope(vector):
+    case = deepcopy(vector)
+    envelope = {
+        "schema_version": case.pop("schema_version"),
+        "document": case.pop("document"),
+        "sid": case.pop("sid"),
+        "cases": [case],
+    }
+    return envelope
+
+
+def flatten_envelope(envelope):
+    return [
+        {
+            "schema_version": envelope["schema_version"],
+            "case_id": case["case_id"],
+            "document": envelope["document"],
+            "sid": envelope["sid"],
+            **{key: value for key, value in case.items() if key != "case_id"},
+        }
+        for case in envelope["cases"]
+    ]
+
+
+def write_vector(path, vector):
+    path.write_text(
+        json.dumps(vector_envelope(vector), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def read_single_vector(path):
+    vectors = flatten_envelope(json.loads(path.read_text(encoding="utf-8")))
+    if len(vectors) != 1:
+        raise SystemExit(f"FAIL: expected one synthetic case in {path}")
+    return vectors[0]
+
 core_documents = [
     "aws_iam_role_policy.plan_reader_deny",
     "aws_iam_role_policy.plan_reader_state",
@@ -250,9 +288,8 @@ runner_vector = {
     "case_id": "case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource",
     "document": "aws_iam_role_policy.plan_reader_deny",
     "sid": "DenyReadStateObjectsOutsideScope",
-    "simulation_mode": "principal",
+    "simulation_mode": "custom",
     "assertion_kind": "decision",
-    "policy_source_arn": "arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-plan-reader",
     "action_names": ["s3:GetObject"],
     "resource_arns": [
         "arn:aws:s3:::orbit-infra-${SUFFIX}-good/example",
@@ -271,7 +308,7 @@ runner_vector = {
 }
 runner_dir = root / "runner-vectors"
 runner_dir.mkdir()
-(runner_dir / "mapping.json").write_text(json.dumps(runner_vector, indent=2) + "\n", encoding="utf-8")
+write_vector(runner_dir / "mapping.json", runner_vector)
 
 real_position_vector = {
     "schema_version": 1,
@@ -292,10 +329,7 @@ real_position_vector = {
 for name in ("real-position", "multiline-position"):
     position_dir = root / f"{name}-vectors"
     position_dir.mkdir()
-    (position_dir / "position.json").write_text(
-        json.dumps(real_position_vector, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_vector(position_dir / "position.json", real_position_vector)
 
 scanner_vectors = (
     (
@@ -323,10 +357,7 @@ for name, sid, case_id, resource_arn in scanner_vectors:
         "matched_sid_required": [sid],
         "matched_sid_forbidden": [],
     }
-    (scanner_dir / "position.json").write_text(
-        json.dumps(scanner_vector, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_vector(scanner_dir / "position.json", scanner_vector)
 
 decoder = json.JSONDecoder()
 
@@ -516,10 +547,7 @@ deployer_position_vector = {
         "matched_sid_forbidden": [],
     },
 }
-(deployer_position_dir / "position.json").write_text(
-    json.dumps(deployer_position_vector, indent=2) + "\n",
-    encoding="utf-8",
-)
+write_vector(deployer_position_dir / "position.json", deployer_position_vector)
 deployer_resource = (
     "arn:aws:secretsmanager:us-east-1:000000000000:"
     "secret:orbit-infra-79s5rw-x"
@@ -593,7 +621,7 @@ ambiguous_vector = {
         "matched_sid_forbidden": [],
     },
 }
-(ambiguous_dir / "ambiguous.json").write_text(json.dumps(ambiguous_vector, indent=2) + "\n", encoding="utf-8")
+write_vector(ambiguous_dir / "ambiguous.json", ambiguous_vector)
 ambiguous_first = ambiguous_policy.index('{', ambiguous_policy.index('[')) + 1
 ambiguous_second = ambiguous_policy.index('{', ambiguous_first) + 1
 ambiguous_response = {
@@ -646,10 +674,7 @@ no_resource_dir = root / "no-resource-vectors"
 no_resource_dir.mkdir()
 no_resource_vector = deepcopy(ambiguous_vector)
 no_resource_vector["resource_arns"] = []
-(no_resource_dir / "no-resource.json").write_text(
-    json.dumps(no_resource_vector, indent=2) + "\n",
-    encoding="utf-8",
-)
+write_vector(no_resource_dir / "no-resource.json", no_resource_vector)
 
 missing_concrete_arn = deepcopy(position_response(position(38), position(271)))
 missing_concrete_arn["EvaluationResults"][0]["ResourceSpecificResults"][0][
@@ -663,15 +688,22 @@ missing_concrete_arn["EvaluationResults"][0]["ResourceSpecificResults"][0][
 authorization_source = (
     taxonomy_path.parent
     / "vectors"
-    / "aws_iam_policy.deployer_data__EnvDataBucketLifecycle__ALL_none_matching.json"
+    / "aws_iam_policy.deployer_data__EnvDataBucketLifecycle.json"
 )
 authorization_split_dir = root / "authorization-split-vectors"
 authorization_split_dir.mkdir()
-authorization_split_vector = json.loads(authorization_source.read_text(encoding="utf-8"))
+authorization_split_vector = next(
+    vector
+    for vector in flatten_envelope(
+        json.loads(authorization_source.read_text(encoding="utf-8"))
+    )
+    if vector["case_id"]
+    == "case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching"
+)
 authorization_split_vector["expect"]["matched_sid_required"] = []
-(authorization_split_dir / "authorization-split.json").write_text(
-    json.dumps(authorization_split_vector, indent=2) + "\n",
-    encoding="utf-8",
+write_vector(
+    authorization_split_dir / "authorization-split.json",
+    authorization_split_vector,
 )
 authorization_aliases = {
     "s3:DeleteBucketOwnershipControls",
@@ -714,9 +746,8 @@ for index, category in enumerate(duplicate_cases):
         "case_id": category["case_id"],
         "document": category["document"],
         "sid": category["sid"],
-        "simulation_mode": "principal",
+        "simulation_mode": "custom",
         "assertion_kind": "decision",
-        "policy_source_arn": "arn:aws:iam::${ACCOUNT_ID}:role/orbit-infra-${SUFFIX}-deployer",
         "action_names": ["secretsmanager:CreateSecret"],
         "resource_arns": ["arn:aws:secretsmanager:us-east-1:${ACCOUNT_ID}:secret:duplicate"],
         "context_entries": [],
@@ -726,7 +757,7 @@ for index, category in enumerate(duplicate_cases):
             "matched_sid_forbidden": [],
         },
     }
-    (duplicate_dir / f"duplicate-{index}.json").write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
+    write_vector(duplicate_dir / f"duplicate-{index}.json", vector)
 
 duplicate_resource = "arn:aws:secretsmanager:us-east-1:000000000000:secret:duplicate"
 duplicate_response = {
@@ -750,9 +781,9 @@ duplicate_response = {
 
 isolated_dir = root / "isolated-vectors"
 isolated_dir.mkdir()
-isolated = json.loads((taxonomy_path.parent / "valid-custom-isolated.json").read_text(encoding="utf-8"))
+isolated = read_single_vector(taxonomy_path.parent / "valid-custom-isolated.json")
 isolated["expect"]["matched_sid_forbidden"] = ["LogsCreateWithTag"]
-(isolated_dir / "isolated.json").write_text(json.dumps(isolated, indent=2) + "\n", encoding="utf-8")
+write_vector(isolated_dir / "isolated.json", isolated)
 isolated_resource = "arn:aws:logs:us-east-1:000000000000:log-group:/orbit/79s5rw/example"
 isolated_response = {
     "EvaluationResults": [{
@@ -808,15 +839,12 @@ for index, (document, sid, role) in enumerate(role_specs):
         },
     }
     role_vectors.append(vector)
-    (role_dir / f"role-{index}.json").write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
+    write_vector(role_dir / f"role-{index}.json", vector)
 
-isolated_role_vector = json.loads(
-    (taxonomy_path.parent / "valid-custom-isolated.json").read_text(encoding="utf-8")
+isolated_role_vector = read_single_vector(
+    taxonomy_path.parent / "valid-custom-isolated.json"
 )
-(role_dir / "role-isolated.json").write_text(
-    json.dumps(isolated_role_vector, indent=2) + "\n",
-    encoding="utf-8",
-)
+write_vector(role_dir / "role-isolated.json", isolated_role_vector)
 
 custom_records = []
 for vector in role_vectors:
@@ -852,7 +880,7 @@ custom_records.append({
 
 
 def write_single_custom_report(name, vector_path, policy):
-    vector = json.loads(vector_path.read_text(encoding="utf-8"))
+    vector = read_single_vector(vector_path)
     record = {
         "case_id": vector["case_id"],
         "decision_observed": vector["expect"]["decision"],
@@ -897,10 +925,7 @@ role_action_level_dir = root / "role-action-level-vectors"
 role_action_level_dir.mkdir()
 role_action_level_vector = deepcopy(role_vectors[0])
 role_action_level_vector["resource_arns"] = ["*"]
-(role_action_level_dir / "action-level.json").write_text(
-    json.dumps(role_action_level_vector, indent=2) + "\n",
-    encoding="utf-8",
-)
+write_vector(role_action_level_dir / "action-level.json", role_action_level_vector)
 write_single_custom_report(
     "action-level",
     role_action_level_dir / "action-level.json",
@@ -987,10 +1012,7 @@ for index, document in enumerate(role_projection_documents):
             "matched_sid_forbidden": [],
         },
     }
-    (projection_vector_dir / f"projection-{index}.json").write_text(
-        json.dumps(vector, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_vector(projection_vector_dir / f"projection-{index}.json", vector)
     projection_records.append({
         "case_id": vector["case_id"],
         "decision_observed": "allowed",
@@ -1032,7 +1054,7 @@ wrong_hash_payload = {
 wrong_hash_case_id = next(
     vector["case_id"]
     for vector in (
-        json.loads(path.read_text(encoding="utf-8"))
+        read_single_vector(path)
         for path in projection_vector_dir.glob("*.json")
     )
     if vector["document"] == "aws_iam_policy.deployer_guard"
@@ -1486,8 +1508,15 @@ output_path = Path(sys.argv[2])
 remaining = sys.argv[3:]
 only = remaining[remaining.index("--only") + 1] if "--only" in remaining else None
 vectors = [
-    json.loads(path.read_text(encoding="utf-8"))
+    {
+        "schema_version": envelope["schema_version"],
+        "document": envelope["document"],
+        "sid": envelope["sid"],
+        **case,
+    }
     for path in sorted(vector_dir.rglob("*.json"))
+    for envelope in [json.loads(path.read_text(encoding="utf-8"))]
+    for case in envelope["cases"]
 ]
 if only is not None:
     vectors = [vector for vector in vectors if vector["case_id"] == only]
@@ -1572,8 +1601,10 @@ vector_dir = Path(sys.argv[1])
 report_path = Path(sys.argv[2])
 try:
     expected = [
-        json.loads(path.read_text(encoding="utf-8"))["case_id"]
+        case["case_id"]
         for path in sorted(vector_dir.rglob("*.json"))
+        for envelope in [json.loads(path.read_text(encoding="utf-8"))]
+        for case in envelope["cases"]
     ]
     payload = json.loads(report_path.read_text(encoding="utf-8"))
 except (OSError, json.JSONDecodeError, KeyError) as exc:
@@ -1977,15 +2008,20 @@ PY
 
     disagreement_vectors="$phase2_dir/real-disagreement-vectors"
     cp -R "$VECTORS" "$disagreement_vectors"
-    python3 - "$disagreement_vectors/aws_iam_policy.deployer_iam__DenyRoleMutationMissingBoundary__ALL_none_protected-resource.json" <<'PY'
+    python3 - "$disagreement_vectors/aws_iam_policy.deployer_iam__DenyRoleMutationMissingBoundary.json" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
-vector = json.loads(path.read_text(encoding="utf-8"))
-vector["expect"]["decision"] = "implicitDeny"
-path.write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
+envelope = json.loads(path.read_text(encoding="utf-8"))
+case = next(
+    item for item in envelope["cases"]
+    if item["case_id"]
+    == "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:none:protected-resource"
+)
+case["expect"]["decision"] = "implicitDeny"
+path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 PY
     IAM_SIM_TEST_PLAN="${IAM_SIM_CONTRACT_PLAN:-$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json}" \
       expect_runner_failure "real colliding-case expectation disagreement" \
@@ -2376,8 +2412,15 @@ import sys
 
 plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 vectors = [
-    json.loads(path.read_text(encoding="utf-8"))
+    {
+        "schema_version": envelope["schema_version"],
+        "document": envelope["document"],
+        "sid": envelope["sid"],
+        **case,
+    }
     for path in Path(sys.argv[2]).glob("*.json")
+    for envelope in [json.loads(path.read_text(encoding="utf-8"))]
+    for case in envelope["cases"]
 ]
 report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 policies = {
@@ -2728,9 +2771,15 @@ import sys
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 vectors = {
-    vector["case_id"]: vector
+    case["case_id"]: {
+        "schema_version": envelope["schema_version"],
+        "document": envelope["document"],
+        "sid": envelope["sid"],
+        **case,
+    }
     for path in Path(sys.argv[2]).glob("*.json")
-    for vector in [json.loads(path.read_text(encoding="utf-8"))]
+    for envelope in [json.loads(path.read_text(encoding="utf-8"))]
+    for case in envelope["cases"]
 }
 plan = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 policies = {
@@ -3117,8 +3166,15 @@ documents = {
     if resource.get("address") in role_for_document
 }
 vectors = [
-    json.loads(path.read_text(encoding="utf-8"))
+    {
+        "schema_version": envelope["schema_version"],
+        "document": envelope["document"],
+        "sid": envelope["sid"],
+        **case,
+    }
     for path in sorted(vectors_path.rglob("*.json"))
+    for envelope in [json.loads(path.read_text(encoding="utf-8"))]
+    for case in envelope["cases"]
 ]
 selected = [
     vector for vector in vectors

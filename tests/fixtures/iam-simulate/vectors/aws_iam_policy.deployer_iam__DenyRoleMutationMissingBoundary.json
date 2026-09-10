@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "DenyRoleMutationMissingBoundary",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:absent",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy","iam:CreateRole","iam:PutRolePolicy"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"explicitDeny","matched_sid_required":["DenyRoleMutationMissingBoundary"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:iam:PermissionsBoundary:present",
+      "simulation_mode": "custom",
+      "assertion_kind": "attribution-only",
+      "action_names": ["iam:AttachRolePolicy","iam:CreateRole","iam:PutRolePolicy"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"iam:PermissionsBoundary","ContextKeyValues":["arn:aws:iam::${ACCOUNT_ID}:policy/orbit-infra-${SUFFIX}-deployer-iam"],"ContextKeyType":"string"}],
+      "expect": {"matched_sid_required":[],"matched_sid_forbidden":["DenyRoleMutationMissingBoundary"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:DenyRoleMutationMissingBoundary:ALL:none:protected-resource",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:AttachRolePolicy","iam:CreateRole","iam:PutRolePolicy"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"explicitDeny","matched_sid_required":["DenyRoleMutationMissingBoundary"],"matched_sid_forbidden":[]}
+    }
+  ]
+}

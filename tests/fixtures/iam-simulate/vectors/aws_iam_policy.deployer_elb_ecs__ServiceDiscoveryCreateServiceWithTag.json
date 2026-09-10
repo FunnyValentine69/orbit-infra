@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "ServiceDiscoveryCreateServiceWithTag",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateServiceWithTag:ALL:aws:RequestTag/Project:absent",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:CreateService"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ServiceDiscoveryCreateServiceWithTag"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateServiceWithTag:ALL:aws:RequestTag/Project:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:CreateService"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:RequestTag/Project","ContextKeyValues":["orbit-infra"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["ServiceDiscoveryCreateServiceWithTag"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryCreateServiceWithTag:ALL:aws:RequestTag/Project:non-matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:CreateService"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:RequestTag/Project","ContextKeyValues":["other-project"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ServiceDiscoveryCreateServiceWithTag"]}
+    }
+  ]
+}

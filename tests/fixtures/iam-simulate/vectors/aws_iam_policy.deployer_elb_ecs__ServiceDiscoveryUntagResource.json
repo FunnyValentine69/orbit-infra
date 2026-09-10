@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "ServiceDiscoveryUntagResource",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryUntagResource:ALL:aws:TagKeys:absent",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:UntagResource"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"allowed","matched_sid_required":["ServiceDiscoveryUntagResource"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryUntagResource:ALL:aws:TagKeys:all-matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:UntagResource"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:TagKeys","ContextKeyValues":["Project","ManagedBy","env_id"],"ContextKeyType":"stringList"}],
+      "expect": {"decision":"allowed","matched_sid_required":["ServiceDiscoveryUntagResource"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:ServiceDiscoveryUntagResource:ALL:aws:TagKeys:any-non-matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["servicediscovery:UntagResource"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"aws:TagKeys","ContextKeyValues":["Project","Name"],"ContextKeyType":"stringList"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["ServiceDiscoveryUntagResource"]}
+    }
+  ]
+}

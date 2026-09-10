@@ -321,13 +321,26 @@ fi
 echo "== iam simulate contracts: SCHEMA =="
 group_failures=$failures
 if [ -f "$VALIDATOR" ]; then
-  for fixture in valid-decision.json valid-attribution-only.json valid-custom.json valid-custom-isolated.json valid-notes.json; do
+  for fixture in valid-decision.json valid-attribution-only.json valid-custom.json valid-custom-isolated.json; do
     if output="$(python3 "$VALIDATOR" "$VECTOR_FIXTURES/$fixture" 2>&1)"; then
       pass_case "schema accepts $fixture"
     else
       fail_case "schema accepts $fixture" "$output"
     fi
   done
+
+  if output="$(python3 "$VALIDATOR" "$VECTOR_FIXTURES/valid-decision.json" --jsonl 2>&1)" && \
+     jq -s -e '
+       length == 1
+       and .[0].schema_version == 1
+       and .[0].document == "aws_iam_role_policy.plan_reader_deny"
+       and .[0].sid == "DenyReadStateObjectsOutsideScope"
+       and (.[0] | has("cases") | not)
+     ' <<<"$output" >/dev/null; then
+    pass_case "schema validator emits flattened cases as JSONL"
+  else
+    fail_case "schema validator emits flattened cases as JSONL" "$output"
+  fi
 
   examples_dir="$tmp_dir/schema-examples"
   if output="$(python3 - "$SCHEMA_DOC" "$examples_dir" 2>&1 <<'PY'
@@ -371,7 +384,7 @@ PY
     "expect.decision is forbidden for attribution-only" \
     python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-attribution-decision.json"
   expect_failure "schema isolated statement on non-isolated mode" \
-    "isolated_statement is forbidden for principal" \
+    "isolated_statement is forbidden for custom" \
     python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-isolated-nonisolated.json"
   expect_failure "schema isolated allowed decision" \
     "custom-isolated vectors cannot expect allowed" \
@@ -388,8 +401,12 @@ PY
     python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-context-key-type.json"
   expect_failure "schema unknown case id" "case_id is absent from categories.json" \
     python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-unknown-case.json"
-  expect_failure "schema unknown field with notes" "unexpected is forbidden for principal vectors" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-unknown-field-with-notes.json"
+  expect_failure "schema unknown custom field" "unexpected is forbidden for custom vectors" \
+    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-unknown-field.json"
+  expect_failure "schema envelope header mismatch" "case_id prefix does not match envelope header" \
+    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-header-mismatch.json"
+  expect_failure "schema duplicate case" "envelope repeats case_id" \
+    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-duplicate-case.json"
 else
   fail_case "IAM simulate vector validator exists" "$VALIDATOR is missing"
 fi
@@ -404,7 +421,7 @@ validate_completeness() {
   local taxonomy=$1
   local vectors=$2
   local unresolved=$3
-  python3 - "$taxonomy" "$vectors" "$unresolved" "$VALIDATOR" <<'PY'
+  python3 - "$taxonomy" "$vectors" "$unresolved" "$VALIDATOR" <<'PY_INNER'
 from __future__ import annotations
 
 import json
@@ -452,13 +469,14 @@ if unresolved_path.exists():
         unresolved_ids.add(case_id)
 
 files = sorted(vectors_path.rglob("*.json")) if vectors_path.is_dir() else []
-vectors_by_id = {}
+vectors_by_id: dict[str, list[Path]] = {}
+filename_checks: list[tuple[Path, str, str, str]] = []
 for path in files:
     try:
-        vector = json.loads(path.read_text(encoding="utf-8"))
+        envelope = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         fail(f"cannot read vector {path}: {exc}")
-    if not isinstance(vector, dict) or not isinstance(vector.get("case_id"), str):
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("cases"), list):
         checked = subprocess.run(
             [sys.executable, str(validator), str(path), "--categories", str(taxonomy_path)],
             text=True,
@@ -466,30 +484,57 @@ for path in files:
             check=False,
         )
         fail(checked.stderr.strip() or checked.stdout.strip() or f"invalid vector: {path}")
-    case_id = vector["case_id"]
-    notes = vector.get("notes")
-    if not isinstance(notes, str) or not notes.strip():
-        fail(f"real vector notes must be a non-empty string: {path.name}")
-    vectors_by_id.setdefault(case_id, []).append(path)
+    document = envelope.get("document")
+    sid = envelope.get("sid")
+    if not isinstance(document, str) or not document or not isinstance(sid, str) or not sid:
+        checked = subprocess.run(
+            [sys.executable, str(validator), str(path), "--categories", str(taxonomy_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        fail(checked.stderr.strip() or checked.stdout.strip() or f"invalid vector: {path}")
+    prefix = f"case:{document}:{sid}:"
+    for case in envelope["cases"]:
+        case_id = case.get("case_id") if isinstance(case, dict) else None
+        if not isinstance(case_id, str):
+            checked = subprocess.run(
+                [sys.executable, str(validator), str(path), "--categories", str(taxonomy_path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            fail(checked.stderr.strip() or checked.stdout.strip() or f"invalid vector: {path}")
+        if not case_id.startswith(prefix) or case_id == prefix:
+            fail(
+                "case_id prefix does not match envelope header: "
+                f"{case_id} expected {prefix}"
+            )
+        vectors_by_id.setdefault(case_id, []).append(path)
+    expected = "__".join(
+        re.sub(r"[^A-Za-z0-9._-]", "_", value)
+        for value in (document, sid)
+    ) + ".json"
+    filename_checks.append((path, expected, document, sid))
 
-duplicates = sorted(case_id for case_id, paths in vectors_by_id.items() if len(paths) != 1)
+duplicates = sorted(
+    case_id
+    for case_id, paths in vectors_by_id.items()
+    if len(set(paths)) > 1
+)
 if duplicates:
-    fail(f"case id has more than one vector: {duplicates[0]}")
+    fail(f"case id appears in two envelopes: {duplicates[0]}")
 
-for case_id, paths in sorted(vectors_by_id.items()):
-    path = paths[0]
+for path, expected, document, sid in filename_checks:
+    if path.relative_to(vectors_path).as_posix() != expected:
+        fail(f"vector filename mismatch for {document} {sid}: expected {expected}")
+
+for case_id in sorted(vectors_by_id):
     entry = by_id.get(case_id)
     if entry is None:
         fail(f"vector case id is absent from taxonomy: {case_id}")
     if entry["category"] not in ELIGIBLE:
         fail(f"vector exists for non-simulator category: {case_id}")
-    sanitized = [
-        re.sub(r"[^A-Za-z0-9._-]", "_", entry[field])
-        for field in ("document", "sid", "suffix")
-    ]
-    expected = "__".join(sanitized) + ".json"
-    if path.relative_to(vectors_path).as_posix() != expected:
-        fail(f"vector filename mismatch for {case_id}: expected {expected}")
     if case_id in unresolved_ids:
         fail(f"case id appears in both vectors and unresolved.json: {case_id}")
 
@@ -513,9 +558,10 @@ for path in files:
 
 print(
     f"PASS: IAM simulate vector completeness "
-    f"({len(files)} vector(s), {len(unresolved_ids)} unresolved)"
+    f"({len(vectors_by_id)} case(s) in {len(files)} envelope(s), "
+    f"{len(unresolved_ids)} unresolved)"
 )
-PY
+PY_INNER
 }
 
 echo "== iam simulate contracts: COMPLETENESS =="
@@ -527,7 +573,7 @@ else
 fi
 
 completeness_mutants="$tmp_dir/completeness-mutants"
-python3 - "$TAXONOMY" "$VECTORS" "$UNRESOLVED" "$completeness_mutants" <<'PY'
+python3 - "$TAXONOMY" "$VECTORS" "$UNRESOLVED" "$completeness_mutants" <<'PY_INNER'
 from __future__ import annotations
 
 from copy import deepcopy
@@ -546,15 +592,21 @@ taxonomy = json.loads(taxonomy_path.read_text(encoding="utf-8"))
 source_files = sorted(vectors_source.glob("*.json"))
 if not source_files:
     raise SystemExit("FAIL: completeness mutation setup found no real vectors")
-source_vector = json.loads(source_files[0].read_text(encoding="utf-8"))
+source_path = next(
+    path
+    for path in source_files
+    if len(json.loads(path.read_text(encoding="utf-8"))["cases"]) > 1
+)
+source_envelope = json.loads(source_path.read_text(encoding="utf-8"))
+source_case = deepcopy(source_envelope["cases"][0])
 
 
 def sanitize(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", value)
 
 
-def filename(entry: dict[str, str]) -> str:
-    return "__".join(sanitize(entry[field]) for field in ("document", "sid", "suffix")) + ".json"
+def filename(document: str, sid: str) -> str:
+    return "__".join(sanitize(value) for value in (document, sid)) + ".json"
 
 
 def clone(name: str) -> tuple[Path, Path]:
@@ -569,24 +621,40 @@ def clone(name: str) -> tuple[Path, Path]:
     return vectors, unresolved
 
 
-def write_vector(vectors: Path, entry: dict[str, str], vector: dict) -> None:
-    (vectors / filename(entry)).write_text(
-        json.dumps(vector, indent=2, sort_keys=False) + "\n",
+def write_envelope(vectors: Path, envelope: dict) -> None:
+    (vectors / filename(envelope["document"], envelope["sid"])).write_text(
+        json.dumps(envelope, indent=2, sort_keys=False) + "\n",
         encoding="utf-8",
     )
 
 
 def add_taxonomy_vector(name: str, category: str) -> None:
     vectors, _ = clone(name)
-    entry = next(item for item in taxonomy if item["category"] == category)
-    vector = deepcopy(source_vector)
-    for field in ("case_id", "document", "sid"):
-        vector[field] = entry[field]
-    write_vector(vectors, entry, vector)
+    existing_headers = {
+        (envelope["document"], envelope["sid"])
+        for path in vectors.glob("*.json")
+        for envelope in [json.loads(path.read_text(encoding="utf-8"))]
+    }
+    entry = next(
+        item for item in taxonomy
+        if item["category"] == category
+        and (item["document"], item["sid"]) not in existing_headers
+    )
+    case = deepcopy(source_case)
+    case["case_id"] = entry["case_id"]
+    write_envelope(vectors, {
+        "schema_version": 1,
+        "document": entry["document"],
+        "sid": entry["sid"],
+        "cases": [case],
+    })
 
 
 vectors, _ = clone("missing")
-(vectors / source_files[0].name).unlink()
+path = vectors / source_path.name
+envelope = json.loads(path.read_text(encoding="utf-8"))
+envelope["cases"].pop(0)
+path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 
 add_taxonomy_vector("live", "live-call-only")
 add_taxonomy_vector("not-simulatable", "not-simulatable")
@@ -596,44 +664,55 @@ unknown_entry = {
     "case_id": "case:unknown.document:UnknownSid:ALL:none:example",
     "document": "unknown.document",
     "sid": "UnknownSid",
-    "suffix": "ALL:none:example",
 }
-vector = deepcopy(source_vector)
-for field in ("case_id", "document", "sid"):
-    vector[field] = unknown_entry[field]
-write_vector(vectors, unknown_entry, vector)
+case = deepcopy(source_case)
+case["case_id"] = unknown_entry["case_id"]
+write_envelope(vectors, {
+    "schema_version": 1,
+    "document": unknown_entry["document"],
+    "sid": unknown_entry["sid"],
+    "cases": [case],
+})
 
 vectors, _ = clone("duplicate")
 nested = vectors / "nested"
 nested.mkdir()
-shutil.copy2(vectors / source_files[0].name, nested / source_files[0].name)
+shutil.copy2(vectors / source_path.name, nested / source_path.name)
 
 vectors, _ = clone("filename")
-(vectors / source_files[0].name).rename(vectors / f"drift__{source_files[0].name}")
+(vectors / source_path.name).rename(vectors / f"drift__{source_path.name}")
 
 vectors, _ = clone("invalid-schema")
-path = vectors / source_files[0].name
-vector = json.loads(path.read_text(encoding="utf-8"))
-vector.pop("expect")
-path.write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
+path = vectors / source_path.name
+envelope = json.loads(path.read_text(encoding="utf-8"))
+envelope["cases"][0].pop("expect")
+path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 
-vectors, _ = clone("notes")
-path = vectors / source_files[0].name
-vector = json.loads(path.read_text(encoding="utf-8"))
-vector["notes"] = " "
-path.write_text(json.dumps(vector, indent=2) + "\n", encoding="utf-8")
+vectors, _ = clone("header-mismatch")
+path = vectors / source_path.name
+envelope = json.loads(path.read_text(encoding="utf-8"))
+envelope["cases"][0]["case_id"] = next(
+    item["case_id"]
+    for item in taxonomy
+    if item["category"] in {"simulator-decision", "simulator-attribution-only"}
+    and (item["document"], item["sid"]) != (envelope["document"], envelope["sid"])
+)
+path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 
 vectors, unresolved = clone("unresolved-exemption")
-(vectors / source_files[0].name).unlink()
+path = vectors / source_path.name
+envelope = json.loads(path.read_text(encoding="utf-8"))
+removed_case = envelope["cases"].pop(0)
+path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
 entries = json.loads(unresolved.read_text(encoding="utf-8"))
 entries.append({
-    "case_id": source_vector["case_id"],
+    "case_id": removed_case["case_id"],
     "question": "Mutation: can this otherwise resolved case be exempted explicitly?",
 })
 unresolved.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
-PY
+PY_INNER
 
-expect_failure "completeness missing eligible case" "simulator-eligible case lacks a vector or unresolved entry" \
+expect_failure "completeness missing array member" "simulator-eligible case lacks a vector or unresolved entry" \
   validate_completeness "$TAXONOMY" "$completeness_mutants/missing/vectors" "$completeness_mutants/missing/unresolved.json"
 expect_failure "completeness live-call vector" "vector exists for non-simulator category" \
   validate_completeness "$TAXONOMY" "$completeness_mutants/live/vectors" "$completeness_mutants/live/unresolved.json"
@@ -641,20 +720,20 @@ expect_failure "completeness not-simulatable vector" "vector exists for non-simu
   validate_completeness "$TAXONOMY" "$completeness_mutants/not-simulatable/vectors" "$completeness_mutants/not-simulatable/unresolved.json"
 expect_failure "completeness unknown case id" "vector case id is absent from taxonomy" \
   validate_completeness "$TAXONOMY" "$completeness_mutants/unknown/vectors" "$completeness_mutants/unknown/unresolved.json"
-expect_failure "completeness duplicate case id" "case id has more than one vector" \
+expect_failure "completeness duplicate case across envelopes" "case id appears in two envelopes" \
   validate_completeness "$TAXONOMY" "$completeness_mutants/duplicate/vectors" "$completeness_mutants/duplicate/unresolved.json"
 expect_failure "completeness filename derivation" "vector filename mismatch" \
   validate_completeness "$TAXONOMY" "$completeness_mutants/filename/vectors" "$completeness_mutants/filename/unresolved.json"
 expect_failure "completeness schema validation" "vector validation failed" \
   validate_completeness "$TAXONOMY" "$completeness_mutants/invalid-schema/vectors" "$completeness_mutants/invalid-schema/unresolved.json"
-expect_failure "completeness non-empty notes" "real vector notes must be a non-empty string" \
-  validate_completeness "$TAXONOMY" "$completeness_mutants/notes/vectors" "$completeness_mutants/notes/unresolved.json"
+expect_failure "completeness envelope header mismatch" "case_id prefix does not match envelope header" \
+  validate_completeness "$TAXONOMY" "$completeness_mutants/header-mismatch/vectors" "$completeness_mutants/header-mismatch/unresolved.json"
 
 if output="$(
   validate_completeness "$TAXONOMY" \
     "$completeness_mutants/unresolved-exemption/vectors" \
     "$completeness_mutants/unresolved-exemption/unresolved.json" 2>&1
-)" && grep -Fq "(238 vector(s), 1 unresolved)" <<< "$output"; then
+)" && grep -Fq "(238 case(s) in 81 envelope(s), 1 unresolved)" <<< "$output"; then
   pass_case "completeness unresolved exemption mutation -> $output"
 else
   fail_case "completeness unresolved exemption mutation did not pass as required" "$output"

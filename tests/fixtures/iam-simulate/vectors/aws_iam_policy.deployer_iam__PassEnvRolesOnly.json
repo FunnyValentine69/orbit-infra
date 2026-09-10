@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_iam",
+  "sid": "PassEnvRolesOnly",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:iam:PassedToService:absent",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PassRole"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["PassEnvRolesOnly"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:iam:PassedToService:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PassRole"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PassedToService","ContextKeyValues":["ecs-tasks.amazonaws.com"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["PassEnvRolesOnly"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:iam:PassedToService:non-matching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PassRole"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/previeworbit-infra-${SUFFIX}preview"],
+      "context_entries": [{"ContextKeyName":"iam:PassedToService","ContextKeyValues":["lambda.amazonaws.com"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["PassEnvRolesOnly"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_iam:PassEnvRolesOnly:ALL:resource:nonmatching",
+      "simulation_mode": "custom-isolated",
+      "assertion_kind": "decision",
+      "action_names": ["iam:PassRole"],
+      "resource_arns": ["arn:aws:iam::${ACCOUNT_ID}:role/outside-${SUFFIX}-example"],
+      "context_entries": [{"ContextKeyName":"iam:PassedToService","ContextKeyValues":["ecs-tasks.amazonaws.com"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["PassEnvRolesOnly"]}
+    }
+  ]
+}

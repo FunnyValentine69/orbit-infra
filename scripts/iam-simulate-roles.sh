@@ -201,23 +201,32 @@ if not vectors_path.is_dir():
 vectors = []
 for path in sorted(vectors_path.rglob("*.json")):
     checked = subprocess.run(
-        [sys.executable, str(validator), str(path)],
+        [sys.executable, str(validator), str(path), "--jsonl"],
         text=True,
         capture_output=True,
         check=False,
     )
     if checked.returncode != 0:
         fail(f"vector validation failed for {path}: {checked.stderr.strip() or checked.stdout.strip()}")
-    vector = json.loads(path.read_text(encoding="utf-8"))
-    prefix = f"case:{vector['document']}:{vector['sid']}:"
-    if not vector["case_id"].startswith(prefix) or vector["case_id"] == prefix:
-        fail(f"case id exact prefix mismatch: expected {prefix}")
-    if only is None or vector["case_id"] == only:
-        vectors.append(render(vector))
+    try:
+        flattened = [json.loads(line) for line in checked.stdout.splitlines()]
+    except json.JSONDecodeError as exc:
+        fail(f"vector validator emitted invalid JSONL for {path}: {exc}")
+    if not flattened:
+        fail(f"vector validator emitted no cases for {path}")
+    for vector in flattened:
+        prefix = f"case:{vector['document']}:{vector['sid']}:"
+        if not vector["case_id"].startswith(prefix) or vector["case_id"] == prefix:
+            fail(f"case id exact prefix mismatch: expected {prefix}")
+        if only is None or vector["case_id"] == only:
+            vectors.append(render(vector))
 if not vectors:
     fail(f"no vectors selected{f' for --only {only}' if only else ''}")
 if only is not None and len(vectors) != 1:
     fail(f"--only selected {len(vectors)} vectors")
+case_ids = [vector["case_id"] for vector in vectors]
+if len(case_ids) != len(set(case_ids)):
+    fail("vector directory repeats a case_id")
 
 role_for_document = {
     "aws_iam_role_policy.plan_reader_deny": "plan-reader",

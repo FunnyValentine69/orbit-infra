@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "EcsModifyDeleteDescribeWithResourceTag",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsModifyDeleteDescribeWithResourceTag:ALL:ecs:ResourceTag/Project:absent",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecs:DeleteCluster","ecs:DeleteService","ecs:DeleteTaskDefinitions","ecs:DescribeClusters","ecs:DescribeServices","ecs:UpdateService"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EcsModifyDeleteDescribeWithResourceTag"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsModifyDeleteDescribeWithResourceTag:ALL:ecs:ResourceTag/Project:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecs:DeleteCluster","ecs:DeleteService","ecs:DeleteTaskDefinitions","ecs:DescribeClusters","ecs:DescribeServices","ecs:UpdateService"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"ecs:ResourceTag/Project","ContextKeyValues":["orbit-infra"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["EcsModifyDeleteDescribeWithResourceTag"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsModifyDeleteDescribeWithResourceTag:ALL:ecs:ResourceTag/Project:non-matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecs:DeleteCluster","ecs:DeleteService","ecs:DeleteTaskDefinitions","ecs:DescribeClusters","ecs:DescribeServices","ecs:UpdateService"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"ecs:ResourceTag/Project","ContextKeyValues":["other-project"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EcsModifyDeleteDescribeWithResourceTag"]}
+    }
+  ]
+}

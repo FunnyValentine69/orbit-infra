@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "document": "aws_iam_policy.deployer_elb_ecs",
+  "sid": "EcsListServicesClusterScoped",
+  "cases": [
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListServicesClusterScoped:ALL:ecs:cluster:absent",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecs:ListServices"],
+      "resource_arns": ["*"],
+      "context_entries": [],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EcsListServicesClusterScoped"]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListServicesClusterScoped:ALL:ecs:cluster:matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecs:ListServices"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"ecs:cluster","ContextKeyValues":["arn:aws:ecs:us-east-1:${ACCOUNT_ID}:cluster/orbit-infra-${SUFFIX}-preview"],"ContextKeyType":"string"}],
+      "expect": {"decision":"allowed","matched_sid_required":["EcsListServicesClusterScoped"],"matched_sid_forbidden":[]}
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_elb_ecs:EcsListServicesClusterScoped:ALL:ecs:cluster:non-matching",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": ["ecs:ListServices"],
+      "resource_arns": ["*"],
+      "context_entries": [{"ContextKeyName":"ecs:cluster","ContextKeyValues":["arn:aws:ecs:us-east-1:${ACCOUNT_ID}:cluster/outside-${SUFFIX}"],"ContextKeyType":"string"}],
+      "expect": {"decision":"implicitDeny","matched_sid_required":[],"matched_sid_forbidden":["EcsListServicesClusterScoped"]}
+    }
+  ]
+}

@@ -401,7 +401,8 @@ four categories to be disjoint with non-empty reasons, and executes added,
 removed, duplicate-category, and empty-reason mutations. Regenerate the file
 with `python3 scripts/iam-simulate-categories.py`; the stdlib-only generator
 parses each row's explicit document and Sid prefix and writes deterministic LF
-JSON with a trailing newline.
+JSON with array brackets around one compact object per line and a trailing
+newline.
 
 The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 288
 taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
@@ -409,32 +410,35 @@ taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
 refusal. Both runners enforce the same exact-prefix rule instead of splitting
 case IDs on colons.
 
-The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against five
-positive fixtures covering all three simulation modes, both assertion kinds,
-and optional `notes`, plus ten single-defect fixtures for the required failure
-branches. The files are synthetic schema fixtures, not authored execution
-vectors. Their names are `valid-*.json` and `invalid-*.json`; every invalid
-fixture is passed to the real validator and its `FAIL:` diagnostic is asserted.
-Dedicated mutants prove that embedded `policy_input_list` and
-`isolated_statement` repository-policy snapshots are rejected. The schema is
-specified in `docs/iam-simulate-vector-schema.md`. This suite runs near the
-start of `make test` and makes no external-service calls.
+The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against four
+positive envelopes covering both simulation modes and assertion kinds, plus
+single-defect envelopes for the required failure branches. The files are
+synthetic schema fixtures, not authored execution vectors. Their names are
+`valid-*.json` and `invalid-*.json`; every invalid fixture is passed to the real
+validator and its `FAIL:` diagnostic is asserted. Dedicated cases prove header
+prefix and within-envelope duplicate rejection, while `--jsonl` must flatten a
+validated envelope by materializing its schema version, document, and Sid.
+Embedded `policy_input_list` and `isolated_statement` repository-policy
+snapshots remain invalid. The schema is specified in
+`docs/iam-simulate-vector-schema.md`. This suite makes no external-service
+calls.
 
-The `COMPLETENESS` group reads one real vector per file from the flat
-`tests/fixtures/iam-simulate/vectors/` directory. Filenames are
-`<document>__<sid>__<case-suffix>.json`, with every character outside
-`[A-Za-z0-9._-]` replaced by `_`; the document and Sid therefore remain the
-first two filename components. It requires unique taxonomy case IDs, exact
-filename derivation, a non-empty `notes` string, and successful real-validator
-execution for every vector. Simulator-eligible cases must have exactly one
-vector unless `tests/fixtures/iam-simulate/unresolved.json` records the case ID
-and a non-empty precise question. Vectors for either non-simulator category and
-unknown case IDs are rejected. Independent mutants prove missing coverage,
-both forbidden categories, unknown and duplicate IDs, filename drift, invalid
-schema, empty notes, and the counted unresolved exemption.
+The `COMPLETENESS` group reads the 81 real `(document, Sid)` envelopes from
+`tests/fixtures/iam-simulate/vectors/`. Filenames are
+`<document>__<sid>.json`, with every character outside `[A-Za-z0-9._-]`
+replaced by `_`. It counts the 239 case IDs globally, requires every case prefix
+to match its envelope header, rejects a case ID appearing in two envelopes,
+checks exact filename derivation, and runs the real validator over every
+envelope. Simulator-eligible cases must occur exactly once unless
+`tests/fixtures/iam-simulate/unresolved.json` records the case ID and a
+non-empty precise question. Vectors for either non-simulator category and
+unknown case IDs are rejected. Independent mutants remove one `cases` member,
+add both forbidden categories, add an unknown ID, duplicate a case across two
+envelopes, drift a filename, invalidate one case, mismatch a header, and prove
+the counted unresolved exemption.
 
-The `RUNNER` group creates a synthetic plan and vectors in its temporary
-workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
+The `RUNNER` group creates a synthetic plan and vector envelopes in its
+temporary workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
 through `scripts/aws-cli.sh`. It proves exact-ARN per-resource mapping
 when those results exist, action-level decision and attribution for explicit
 `*` or an omitted resource list, refusal of missing concrete resource results,
