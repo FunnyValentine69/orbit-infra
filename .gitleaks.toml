@@ -1,0 +1,9 @@
+# Repository gitleaks configuration. Extends the default ruleset; the only
+# allowance is the IAM matrix Evidence label, which the generic-api-key rule
+# mistakes for a key=value secret because a case token ends in "=LABEL".
+[extend]
+useDefault = true
+
+[allowlist]
+description = "IAM matrix Evidence labels: <case suffix>=AWS-SIMULATED <date> <pointer>"
+regexes = ['''^[A-Za-z0-9:/_.-]+=AWS-SIMULATED$''']
