@@ -1402,6 +1402,27 @@ plan_index = one_index(
 if not bootstrap_index < plan_index:
     raise SystemExit("terraform-plan must bootstrap LocalStack state before planning")
 PY
+# shellcheck disable=SC2016 # Workflow expression must remain literal.
+sweeper_sweep_literal='run: scripts/sweep.sh env "$ENV_ID"'
+sweeper_sweep_expected="        $sweeper_sweep_literal"
+sweeper_sweep_call="$(grep -F "$sweeper_sweep_literal" \
+  "$sweeper_workflow" || true)"
+if [ "$sweeper_sweep_call" != "$sweeper_sweep_expected" ]; then
+  echo 'sweeper sweep.sh env call must remain byte-identical' >&2
+  exit 1
+fi
+
+sweeper_exact_mutant="$tmp_dir/sweeper-extra-argument.yml"
+sed "s#        ${sweeper_sweep_literal}\$#        ${sweeper_sweep_literal} extra#" \
+  "$sweeper_workflow" > "$sweeper_exact_mutant"
+sweeper_mutant_call="$(grep -F "$sweeper_sweep_literal" \
+  "$sweeper_exact_mutant" || true)"
+if [ "$sweeper_mutant_call" = "$sweeper_sweep_expected" ]; then
+  echo 'FAIL: sweeper exact string mutant survived' >&2
+  exit 1
+fi
+echo 'PASS: sweeper sweep.sh env call remains byte-identical'
+
 workflow_sweep_call="$(grep -F \
   "SWEEP_IN_JOB=true scripts/sweep.sh env \"\$ENV_ID\"" \
   "$apply_workflow" || true)"

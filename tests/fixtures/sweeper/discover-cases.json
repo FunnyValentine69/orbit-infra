@@ -10,7 +10,8 @@
       "cleanup_attempt": 0,
       "next_retry_at": null,
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "fresh-open",
@@ -20,7 +21,8 @@
       "cleanup_attempt": 0,
       "next_retry_at": null,
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "retry-due",
@@ -30,7 +32,8 @@
       "cleanup_attempt": 2,
       "next_retry_at": "2033-05-18T03:33:20Z",
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "retry-future",
@@ -40,7 +43,8 @@
       "cleanup_attempt": 2,
       "next_retry_at": "2033-05-18T03:33:21Z",
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "retry-manual",
@@ -50,7 +54,8 @@
       "cleanup_attempt": 3,
       "next_retry_at": null,
       "manual_intervention_required": true,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "retry-max",
@@ -60,7 +65,8 @@
       "cleanup_attempt": 3,
       "next_retry_at": "2033-05-18T03:33:19Z",
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "stage-two",
@@ -70,7 +76,8 @@
       "cleanup_attempt": 1,
       "next_retry_at": null,
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "prune-old",
@@ -80,7 +87,8 @@
       "cleanup_attempt": 1,
       "next_retry_at": null,
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "closed-seven",
@@ -90,7 +98,8 @@
       "cleanup_attempt": 1,
       "next_retry_at": null,
       "manual_intervention_required": false,
-      "manifest": null
+      "manifest": null,
+      "owner": "test-owner"
     },
     {
       "env_id": "stage2-claim",
@@ -145,7 +154,8 @@
             ]
           }
         ]
-      }
+      },
+      "owner": "test-owner"
     }
   ],
   "expected": {

@@ -32,6 +32,18 @@ field_value() {
   field_line "$field" "$doc" | sed -E 's/^\| [^|]+ \| (.*) \|$/\1/'
 }
 
+sbom_fixture_names() {
+  local fixture
+  for fixture in "$REPO_ROOT"/tests/fixtures/sbom/*.spdx.json; do
+    [ -f "$fixture" ] || continue
+    printf '%s\n' "${fixture##*/}"
+  done | LC_ALL=C sort | awk '
+    BEGIN { separator="" }
+    { printf "%s%s", separator, $0; separator=", " }
+    END { print "" }
+  '
+}
+
 all_generator_paths() {
   for recording_kind in lifecycle lease verify; do
     demo_generator_paths "$recording_kind"
@@ -288,6 +300,14 @@ else
     "$(diff -u "$lease_scripts_expected" "$lease_scripts_actual" || true)"
 fi
 
+verify_closure_expected="$DEMO_GENERATOR_SHARED demo/demo-supplychain.tape demo/provenance/supply.md scripts/sbom-canon.sh tests/sbom-canon.sh tests/fixtures/sbom"
+verify_closure_actual="$(demo_generator_paths verify)"
+if [ "$verify_closure_actual" = "$verify_closure_expected" ]; then
+  pass_case "verify generator closure exact membership"
+else
+  fail_case "verify generator closure exact membership" "$verify_closure_actual"
+fi
+
 workflow_bound="$(sed -n 's/.*sweep_attempt <= \([0-9][0-9]*\).*/\1/p' \
   "$REPO_ROOT/.github/workflows/session-apply.yml")"
 workflow_sleep="$(sed -n 's/.*SWEEP_LOOP_SLEEP_SECONDS:-\([0-9][0-9]*\).*/\1/p' \
@@ -416,7 +436,8 @@ provenance_mappings() {
         'recorded_from|recorded_from' \
         'generator_commit|generator commit' \
         'canonicalizer_sha256|canonicalizer sha256' \
-        'fixtures_used|fixtures used' \
+        'comparison_fixtures_used|comparison fixtures used' \
+        'contract_suite_fixtures_used|contract suite fixtures used' \
         'timestamp_result|timestamp-variant result' \
         'checksum_result|checksum-variant result' \
         'contracts_result|contracts result' \
@@ -429,13 +450,221 @@ provenance_mappings() {
   esac
 }
 
+gif_metadata_matches() {
+  local gif=$1
+  local expected_duration=$2
+  local expected_frames=$3
+  python3 - "$gif" "$expected_duration" "$expected_frames" <<'PY_GIF_METADATA'
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+import sys
+
+
+data = Path(sys.argv[1]).read_bytes()
+try:
+    expected_duration = Decimal(sys.argv[2])
+    expected_frames = int(sys.argv[3])
+except (InvalidOperation, ValueError):
+    raise SystemExit("invalid expected GIF metadata")
+
+
+def require(position, length):
+    if position + length > len(data):
+        raise SystemExit("truncated GIF")
+
+
+def skip_subblocks(position):
+    while True:
+        require(position, 1)
+        size = data[position]
+        position += 1
+        if size == 0:
+            return position
+        require(position, size)
+        position += size
+
+
+if len(data) < 13 or data[:6] not in (b"GIF87a", b"GIF89a"):
+    raise SystemExit("invalid GIF header")
+packed = data[10]
+position = 13
+if packed & 0x80:
+    position += 3 * (2 ** ((packed & 0x07) + 1))
+    require(position, 0)
+
+frames = 0
+delay_centiseconds = 0
+while True:
+    require(position, 1)
+    marker = data[position]
+    position += 1
+    if marker == 0x3B:
+        break
+    if marker == 0x21:
+        require(position, 1)
+        label = data[position]
+        position += 1
+        if label == 0xF9:
+            require(position, 6)
+            if data[position] != 4 or data[position + 5] != 0:
+                raise SystemExit("invalid GIF graphic-control extension")
+            delay_centiseconds += int.from_bytes(
+                data[position + 2 : position + 4], "little"
+            )
+            position += 6
+        else:
+            position = skip_subblocks(position)
+        continue
+    if marker != 0x2C:
+        raise SystemExit(f"unexpected GIF marker 0x{marker:02x}")
+    frames += 1
+    require(position, 9)
+    image_packed = data[position + 8]
+    position += 9
+    if image_packed & 0x80:
+        position += 3 * (2 ** ((image_packed & 0x07) + 1))
+        require(position, 0)
+    require(position, 1)
+    position += 1
+    position = skip_subblocks(position)
+
+expected_centiseconds = expected_duration * 100
+if expected_centiseconds != expected_centiseconds.to_integral_value():
+    raise SystemExit("expected GIF duration is not centisecond-aligned")
+if frames != expected_frames or delay_centiseconds != int(expected_centiseconds):
+    raise SystemExit(
+        "GIF metadata mismatch: "
+        f"expected {expected_frames} frames/{expected_centiseconds} cs, "
+        f"found {frames} frames/{delay_centiseconds} cs"
+    )
+PY_GIF_METADATA
+}
+
+validate_common_provenance_artifact() {
+  local kind=$1
+  local doc=$2
+  local gif=$3
+  local artifact sha expected_size expected_sha
+  local artifact_size artifact_duration artifact_frames
+
+  if [ "$kind" = lifecycle ]; then
+    artifact="$(field_value artifact "$doc")"
+    sha="$(field_value 'artifact sha256' "$doc")"
+    if [[ ! "$artifact" =~ ^([0-9]+)[[:space:]]bytes,[[:space:]]([0-9]+([.][0-9]+)?)[[:space:]]s,[[:space:]]([0-9]+)[[:space:]]frames$ ]]; then
+      echo "artifact metadata format mismatch" >&2
+      return 1
+    fi
+    artifact_size=${BASH_REMATCH[1]}
+    artifact_duration=${BASH_REMATCH[2]}
+    artifact_frames=${BASH_REMATCH[4]}
+  else
+    artifact="$(field_value size "$doc")"
+    sha="$(field_value 'gif sha256' "$doc")"
+    if [[ ! "$artifact" =~ ^([0-9]+)[[:space:]]bytes$ ]]; then
+      echo "artifact byte count format mismatch" >&2
+      return 1
+    fi
+    artifact_size=${BASH_REMATCH[1]}
+    artifact="$(field_value duration "$doc")"
+    if [[ ! "$artifact" =~ ^([0-9]+([.][0-9]+)?)[[:space:]]s$ ]]; then
+      echo "artifact duration format mismatch" >&2
+      return 1
+    fi
+    artifact_duration=${BASH_REMATCH[1]}
+    artifact_frames="$(field_value frames "$doc")"
+    [[ "$artifact_frames" =~ ^[1-9][0-9]*$ ]] || {
+      echo "artifact frame count format mismatch" >&2
+      return 1
+    }
+  fi
+
+  expected_size="$(wc -c < "$gif" | tr -d ' ')"
+  if [ "$artifact_size" != "$expected_size" ]; then
+    echo "artifact byte count mismatch" >&2
+    return 1
+  fi
+  expected_sha="$(shasum -a 256 "$gif" | awk '{print $1}')"
+  if [ "$sha" != "$expected_sha" ]; then
+    echo "artifact sha256 mismatch" >&2
+    return 1
+  fi
+  if ! gif_metadata_matches "$gif" "$artifact_duration" "$artifact_frames"; then
+    echo "artifact GIF metadata mismatch" >&2
+    return 1
+  fi
+}
+
+validate_provenance_semantics() {
+  local kind=$1
+  local doc=$2
+  local recorded_on command environment command_cidr environment_cidr value
+  local expected_canonicalizer expected_contract_suite_fixtures
+
+  case "$kind" in
+    lease)
+      value="$(field_value 'pre-open lease status' "$doc")"
+      [[ "$value" =~ ^(absent|closed|deleted)$ ]] || return 1
+      value="$(field_value 'opened generation' "$doc")"
+      [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+      [ "$(field_value 'apply resource count' "$doc")" = 61 ] || return 1
+      [ "$(field_value 'final lease status' "$doc")" = closed ] || return 1
+      [ "$(field_value 'state and lock versions remaining' "$doc")" = 0 ] || return 1
+      [ "$(field_value 'close result' "$doc")" = \
+        "close-env.sh: demo-lease stage 1 complete; lease remains 'closing' for the sweeper" ] || return 1
+      ;;
+    verify)
+      expected_canonicalizer="$(shasum -a 256 "$REPO_ROOT/scripts/sbom-canon.sh" | awk '{print $1}')"
+      [ "$(field_value 'canonicalizer sha256' "$doc")" = "$expected_canonicalizer" ] || return 1
+      [ "$(field_value recorded_from "$doc")" = 'demo/demo-supplychain.tape' ] || return 1
+      [ "$(field_value 'comparison fixtures used' "$doc")" = \
+        'base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json' ] || return 1
+      expected_contract_suite_fixtures="$(sbom_fixture_names)"
+      [ "$(field_value 'contract suite fixtures used' "$doc")" = \
+        "$expected_contract_suite_fixtures" ] || return 1
+      [ "$(field_value 'timestamp-variant result' "$doc")" = PASS ] || return 1
+      [ "$(field_value 'checksum-variant result' "$doc")" = PASS ] || return 1
+      [ "$(field_value 'contracts result' "$doc")" = PASS ] || return 1
+      ;;
+    lifecycle)
+      recorded_on="$(field_value recorded_on "$doc")"
+      [[ "$recorded_on" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+        echo "recorded_on is not YYYY-MM-DD" >&2
+        return 1
+      }
+      if ! awk '/^\| plan \/ apply \/ destroy \|/ {
+          count=0
+          rest=$0
+          while (match(rest, /Resources: [0-9]+|Plan: [0-9]+/)) {
+            value=substr(rest, RSTART, RLENGTH)
+            sub(/^.* /, "", value)
+            counts[++count]=value
+            rest=substr(rest, RSTART + RLENGTH)
+          }
+          if (count != 3 || counts[1] != counts[2] || counts[1] != counts[3]) exit 1
+          found=1
+        } END { if (!found) exit 1 }' "$doc"; then
+        echo "plan/apply/destroy counts differ" >&2
+        return 1
+      fi
+      command="$(field_value command "$doc")"
+      environment="$(field_value environment "$doc")"
+      command_cidr="$(sed -E 's/.*OPERATOR_CIDR=([^ `]+).*/\1/' <<< "$command")"
+      environment_cidr="$(sed -E 's/.*operator CIDR `?([^ `,(]+).*/\1/' <<< "$environment")"
+      if [ "$command_cidr" != "$environment_cidr" ] || \
+         ! cidr_in_test_net_3 "$command_cidr"; then
+        echo "command/environment CIDR mismatch or outside TEST-NET-3" >&2
+        return 1
+      fi
+      ;;
+    *) return 2 ;;
+  esac
+}
+
 validate_provenance() {
   local kind=$1
   local doc=$2
   local gif=$3
-  local field count artifact sha commit recorded_on command environment
-  local command_cidr environment_cidr expected_size expected_sha
-  local required_count table_count value
+  local field count commit required_count table_count
   while IFS='|' read -r _ field; do
     count="$(grep -Fc "| $field |" "$doc")"
     if [ "$count" -ne 1 ]; then
@@ -449,72 +678,13 @@ validate_provenance() {
     echo "provenance field set differs for $kind" >&2
     return 1
   }
-  if [ "$kind" = lifecycle ]; then
-    artifact="$(field_value artifact "$doc")"
-    sha="$(field_value 'artifact sha256' "$doc")"
-  else
-    artifact="$(field_value size "$doc")"
-    sha="$(field_value 'gif sha256' "$doc")"
-  fi
-  expected_size="$(wc -c < "$gif" | tr -d ' ')"
-  case "$artifact" in
-    "$expected_size bytes,"*) ;;
-    "$expected_size bytes") ;;
-    *) echo "artifact byte count mismatch" >&2; return 1 ;;
-  esac
-  expected_sha="$(shasum -a 256 "$gif" | awk '{print $1}')"
-  if [ "$sha" != "$expected_sha" ]; then
-    echo "artifact sha256 mismatch" >&2
-    return 1
-  fi
   commit="$(field_value 'generator commit' "$doc" | sed -E 's/^`?([0-9a-f]{7}).*/\1/')"
-  [[ "$commit" =~ ^[0-9a-f]{7}$ ]] || { echo "generator commit is not 7 hex" >&2; return 1; }
-  case "$kind" in
-    lease)
-      value="$(field_value 'pre-open lease status' "$doc")"
-      [[ "$value" =~ ^(absent|closed|deleted)$ ]] || return 1
-      value="$(field_value 'opened generation' "$doc")"
-      [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
-      [ "$(field_value 'apply resource count' "$doc")" = 61 ] || return 1
-      [ "$(field_value 'final lease status' "$doc")" = closed ] || return 1
-      [ "$(field_value 'state and lock versions remaining' "$doc")" = 0 ] || return 1
-      [ "$(field_value 'close result' "$doc")" =         "close-env.sh: demo-lease stage 1 complete; lease remains 'closing' for the sweeper" ] || return 1
-      return 0
-      ;;
-    verify)
-      [[ "$(field_value 'canonicalizer sha256' "$doc")" =~ ^[0-9a-f]{64}$ ]] || return 1
-      [ "$(field_value 'fixtures used' "$doc")" =         'base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json' ] || return 1
-      [ "$(field_value 'timestamp-variant result' "$doc")" = identical ] || return 1
-      [ "$(field_value 'checksum-variant result' "$doc")" = different ] || return 1
-      [ "$(field_value 'contracts result' "$doc")" = '14 assertions' ] || return 1
-      return 0
-      ;;
-  esac
-  recorded_on="$(field_value recorded_on "$doc")"
-  [[ "$recorded_on" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "recorded_on is not YYYY-MM-DD" >&2; return 1; }
-  if ! awk '/^\| plan \/ apply \/ destroy \|/ {
-      count=0
-      rest=$0
-      while (match(rest, /Resources: [0-9]+|Plan: [0-9]+/)) {
-        value=substr(rest, RSTART, RLENGTH)
-        sub(/^.* /, "", value)
-        counts[++count]=value
-        rest=substr(rest, RSTART + RLENGTH)
-      }
-      if (count != 3 || counts[1] != counts[2] || counts[1] != counts[3]) exit 1
-      found=1
-    } END { if (!found) exit 1 }' "$doc"; then
-    echo "plan/apply/destroy counts differ" >&2
+  [[ "$commit" =~ ^[0-9a-f]{7}$ ]] || {
+    echo "generator commit is not 7 hex" >&2
     return 1
-  fi
-  command="$(field_value command "$doc")"
-  environment="$(field_value environment "$doc")"
-  command_cidr="$(sed -E 's/.*OPERATOR_CIDR=([^ `]+).*/\1/' <<< "$command")"
-  environment_cidr="$(sed -E 's/.*operator CIDR `?([^ `,(]+).*/\1/' <<< "$environment")"
-  if [ "$command_cidr" != "$environment_cidr" ] || ! cidr_in_test_net_3 "$command_cidr"; then
-    echo "command/environment CIDR mismatch or outside TEST-NET-3" >&2
-    return 1
-  fi
+  }
+  validate_common_provenance_artifact "$kind" "$doc" "$gif" || return 1
+  validate_provenance_semantics "$kind" "$doc"
 }
 
 provenance_matches_manifest() {
@@ -661,7 +831,8 @@ fi
 
 generator_negative_ok=1
 for generator_case in committed-record committed-module staged-preview uncommitted-preview \
-  ignored-preview-tfvars ignored-module-override ignored-space-input; do
+  ignored-preview-tfvars ignored-module-override ignored-space-input \
+  ignored-sbom-json; do
   clone="$tmp_dir/generator-$generator_case"
   init_generator_clone "$clone"
   base_commit="$(git -C "$clone" rev-parse HEAD)"
@@ -688,8 +859,15 @@ for generator_case in committed-record committed-module staged-preview uncommitt
       printf '%s\n' 'envs/preview/hidden input.tf' >> "$clone/.git/info/exclude"
       printf '%s\n' '# ignored input' > "$clone/envs/preview/hidden input.tf"
       ;;
+    ignored-sbom-json)
+      printf '%s\n' 'tests/fixtures/sbom/extra.spdx.json' >> "$clone/.git/info/exclude"
+      printf '%s\n' '{}' > "$clone/tests/fixtures/sbom/extra.spdx.json"
+      ;;
   esac
-  if generator_clean_check "$clone" "$base_commit" >/dev/null 2>&1; then
+  checked_kind=lifecycle
+  [ "$generator_case" != ignored-sbom-json ] || checked_kind=verify
+  if generator_clean_check "$clone" "$base_commit" "$checked_kind" \
+      >/dev/null 2>&1; then
     generator_negative_ok=0
   fi
 done
@@ -707,6 +885,50 @@ if [ "$generator_negative_ok" -eq 1 ]; then
   pass_case "generator drift negative mutation table and unreachable history"
 else
   fail_case "generator drift negative mutation table and unreachable history"
+fi
+
+default_reject_clone="$tmp_dir/generator-default-reject-mutant"
+init_generator_clone "$default_reject_clone"
+default_reject_commit="$(git -C "$default_reject_clone" rev-parse HEAD)"
+printf '%s\n' 'tests/fixtures/sbom/extra.spdx.json' >> \
+  "$default_reject_clone/.git/info/exclude"
+printf '%s\n' '{}' > \
+  "$default_reject_clone/tests/fixtures/sbom/extra.spdx.json"
+default_reject_lib="$tmp_dir/default-reject-mutant-lib.sh"
+python3 - "$REPO_ROOT/demo/lib.sh" "$default_reject_lib" <<'PY'
+from pathlib import Path
+import sys
+
+
+source_path = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+source = source_path.read_text(encoding="utf-8")
+default_reject = '''            *)
+              echo "ignored generator input present: $path" >&2
+              failed=1
+              ;;
+'''
+if source.count(default_reject) == 1:
+    source = source.replace(default_reject, '''            *)
+              ;;
+''')
+elif "ignored generator input present: $path" in source:
+    raise SystemExit("could not build drop-ignored-default-reject mutant")
+destination.write_text(source, encoding="utf-8")
+PY
+set +e
+(
+  # shellcheck disable=SC1090
+  source "$default_reject_lib"
+  generator_clean_check "$default_reject_clone" "$default_reject_commit" verify \
+    >/dev/null 2>&1
+)
+default_reject_mutant_rc=$?
+set -e
+if [ "$default_reject_mutant_rc" -eq 0 ]; then
+  pass_case "mutant drop-ignored-default-reject killed"
+else
+  fail_case "mutant drop-ignored-default-reject killed"
 fi
 
 kind_drift_ok=1
@@ -1038,8 +1260,40 @@ cp "$REPO_ROOT/docs/assets/DEMO_PROVENANCE.md" "$REPO_ROOT/docs/assets/demo.gif"
 find "$REPO_ROOT/envs/preview" -maxdepth 1 -type f \
   -exec cp {} "$lifecycle_template/envs/preview/" \;
 
+gif_fixture_writer="$tmp_dir/write-test-gif"
+cat > "$gif_fixture_writer" <<'PY_GIF_FIXTURE'
+#!/usr/bin/env python3
+from decimal import Decimal
+from pathlib import Path
+import sys
+
+
+output = Path(sys.argv[1])
+duration_centiseconds = Decimal(sys.argv[2]) * 100
+frames = int(sys.argv[3])
+if duration_centiseconds != duration_centiseconds.to_integral_value() or frames < 1:
+    raise SystemExit("invalid test GIF metadata")
+total_delay = int(duration_centiseconds)
+base_delay, remainder = divmod(total_delay, frames)
+if base_delay > 65535:
+    raise SystemExit("test GIF frame delay exceeds GIF limit")
+
+data = bytearray(b"GIF89a\x01\x00\x01\x00\x00\x00\x00")
+for index in range(frames):
+    delay = base_delay + (1 if index < remainder else 0)
+    data.extend(b"\x21\xf9\x04\x00")
+    data.extend(delay.to_bytes(2, "little"))
+    data.extend(b"\x00\x00")
+    data.extend(b"\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00")
+    data.extend(b"\x02\x02\x44\x01\x00")
+data.append(0x3B)
+output.write_bytes(data)
+PY_GIF_FIXTURE
+chmod +x "$gif_fixture_writer"
+
 fake_bin="$tmp_dir/fake-bin"
 mkdir -p "$fake_bin"
+cp "$gif_fixture_writer" "$fake_bin/write-test-gif"
 # General lifecycle cases model an empty Git result; the real-Git case below
 # exercises the shipped generator predicate against an actual scratch clone.
 for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum date; do
@@ -1074,7 +1328,7 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
     '    printf "%s\n" 1 > "$RUN/env.ok"' \
     '    printf "%s\n" "localstack | s3 | running" "Plan: 3 to add, 0 to change, 0 to destroy." "PASS: conftest-gate suite" "Apply complete! Resources: 3 added, 0 changed, 0 destroyed." "aws_ecs_cluster.this" "Destroy complete! Resources: 3 destroyed." > "$RUN/demo.txt"' \
     '    [ "$FAKE_VHS_MODE" != hygiene_path ] || printf "/%s/example\n" Users >> "$RUN/demo.txt"' \
-    '    printf "%s\n" DISTINCTIVE_FAKE_GIF_PAYLOAD_20260906 > "$RUN/demo.gif"' \
+    '    "${0%/*}/write-test-gif" "$RUN/demo.gif" "$FAKE_DURATION" "$FAKE_FRAMES"' \
     '    touch -t "20300101""0000" "$RUN/demo.gif"' \
     '    if [ "$FAKE_VHS_MODE" = stale ]; then touch -t "20000101""0000" "$RUN/demo.gif"; fi' \
     '    if [ "$FAKE_TF_STATE" = post_apply ]; then touch .fake-live; fi' \
@@ -1196,6 +1450,22 @@ for tool in vhs ffprobe ffmpeg ttyd curl jq make terraform docker aws git shasum
   chmod +x "$fake_bin/$tool"
 done
 
+real_grep=$(command -v grep)
+cat > "$fake_bin/grep" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+fail_pattern=
+[ ! -f .fake-grep-fail-pattern ] || fail_pattern=$(cat .fake-grep-fail-pattern)
+for argument in "$@"; do
+  if [ -n "$fail_pattern" ] && [ "$argument" = "$fail_pattern" ]; then
+    exit 2
+  fi
+done
+real_grep=$(cat .fake-real-grep)
+exec "$real_grep" "$@"
+EOF
+chmod +x "$fake_bin/grep"
+
 
 run_lifecycle() {
   local name=$1
@@ -1206,11 +1476,12 @@ run_lifecycle() {
   local mutation=$6
   local recording=${7:-demo}
   if [ "$recording" != demo ]; then
-    run_recording_case "$name" "$vhs_mode" "$recording"
+    run_recording_case "$name" "$vhs_mode" "$recording" "$mutation"
     return
   fi
   local case_root repo call_log before after output rc run_dir
   local fake_duration fake_frames fake_frame_rate fake_ls_version rewrite_key record_next
+  local fake_grep_fail_pattern
   case_root="$tmp_dir/lifecycle-$name"
   repo="$case_root/repo"
   mkdir -p "$case_root"
@@ -1220,6 +1491,7 @@ run_lifecycle() {
   fake_frames=${FAKE_CASE_FRAMES:-987}
   fake_frame_rate=${FAKE_CASE_FRAME_RATE:-25/1}
   fake_ls_version=${FAKE_CASE_LS_VERSION:-ok}
+  fake_grep_fail_pattern=${FAKE_CASE_GREP_FAIL_PATTERN:-}
   : > "$call_log"
   printf '%s\n' "$fake_fail" > "$repo/.fake-fail"
   printf '%s\n' "$vhs_mode" > "$repo/.fake-vhs-mode"
@@ -1228,6 +1500,10 @@ run_lifecycle() {
   printf '%s\n' "$fake_frames" > "$repo/.fake-frames"
   printf '%s\n' "$fake_frame_rate" > "$repo/.fake-frame-rate"
   printf '%s\n' "$fake_ls_version" > "$repo/.fake-ls-version"
+  printf '%s\n' "$real_grep" > "$repo/.fake-real-grep"
+  if [ -n "$fake_grep_fail_pattern" ]; then
+    printf '%s\n' "$fake_grep_fail_pattern" > "$repo/.fake-grep-fail-pattern"
+  fi
   printf '%s\n' 0 > "$repo/.fake-health-calls"
   case "$mutation" in
     stale-symlink)
@@ -1288,6 +1564,72 @@ run_lifecycle() {
         END { if (deleting || changed != 1) exit 1 }
       ' "$repo/demo/record.sh" > "$case_root/record.next"
       mv "$case_root/record.next" "$repo/demo/record.sh"
+      ;;
+    restore-hygiene-single-grep|restore-hygiene-account-pipeline|restore-hygiene-ipv4-pipeline)
+      python3 - "$repo/demo/record.sh" "$mutation" <<'PY'
+from pathlib import Path
+import sys
+
+
+path = Path(sys.argv[1])
+mutation = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+fixed = {
+    "restore-hygiene-single-grep": r'''  set +e
+  grep -qE '/Users/|/home/|AKIA|@' "$RUN/demo.txt"
+  grep_rc=$?
+  set -e
+  if [ "$grep_rc" -eq 0 ]; then
+    die "demo.txt contains environment-specific text (path/access-key/email pattern); not publishing"
+  elif [ "$grep_rc" -ne 1 ]; then
+    die "grep failed on demo.txt"
+  fi
+''',
+    "restore-hygiene-account-pipeline": r'''  set +e
+  grep -oE '[0-9]{12}' "$RUN/demo.txt" | grep -vq 000000000000
+  grep_rc=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${grep_rc[0]}" -gt 1 ] || [ "${grep_rc[1]}" -gt 1 ]; then
+    die "grep failed on demo.txt"
+  elif [ "${grep_rc[1]}" -eq 0 ]; then
+    die "demo.txt contains environment-specific text (12-digit account number); not publishing"
+  fi
+''',
+    "restore-hygiene-ipv4-pipeline": r'''  set +e
+  grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$RUN/demo.txt" | \
+    grep -vqE '^203\.0\.113\.|^127\.0\.0\.1$|^10\.|^0\.0\.0\.0$'
+  grep_rc=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${grep_rc[0]}" -gt 1 ] || [ "${grep_rc[1]}" -gt 1 ]; then
+    die "grep failed on demo.txt"
+  elif [ "${grep_rc[1]}" -eq 0 ]; then
+    die "demo.txt contains environment-specific text (non-allowlisted IP address); not publishing"
+  fi
+''',
+}
+original = {
+    "restore-hygiene-single-grep": r'''  if grep -qE '/Users/|/home/|AKIA|@' "$RUN/demo.txt"; then
+    die "demo.txt contains environment-specific text (path/access-key/email pattern); not publishing"
+  fi
+''',
+    "restore-hygiene-account-pipeline": r'''  if grep -oE '[0-9]{12}' "$RUN/demo.txt" | grep -vq 000000000000; then
+    die "demo.txt contains environment-specific text (12-digit account number); not publishing"
+  fi
+''',
+    "restore-hygiene-ipv4-pipeline": r'''  if grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$RUN/demo.txt" | \
+    grep -vqE '^203\.0\.113\.|^127\.0\.0\.1$|^10\.|^0\.0\.0\.0$'; then
+    die "demo.txt contains environment-specific text (non-allowlisted IP address); not publishing"
+  fi
+''',
+}
+fixed_block = fixed[mutation]
+original_block = original[mutation]
+if source.count(fixed_block) == 1:
+    source = source.replace(fixed_block, original_block)
+elif source.count(original_block) != 1:
+    raise SystemExit(f"could not build named mutant {mutation}")
+path.write_text(source, encoding="utf-8")
+PY
       ;;
   esac
   before="$(shasum -a 256 "$repo/docs/assets/demo.gif" "$repo/docs/assets/DEMO_PROVENANCE.md")"
@@ -1483,7 +1825,7 @@ real_git_rego_after="$(shasum -a 256 \
   "$real_git_rego_repo/docs/assets/DEMO_PROVENANCE.md")"
 if [ "$real_git_rego_rc" -ne 0 ] && \
    [ "$real_git_rego_before" = "$real_git_rego_after" ] && \
-   grep -Fq 'ignored Rego input present: policy/ignored-recording.rego' \
+   grep -Fq 'ignored generator input present: policy/ignored-recording.rego' \
      <<< "$real_git_rego_output" && \
    ! grep -Eq '^(make|terraform) ' "$real_git_rego_calls"; then
   pass_case "lifecycle real git rejects ignored Rego before make or terraform"
@@ -1716,6 +2058,47 @@ else
     "$LIFECYCLE_OUTPUT"
 fi
 
+grep_failure_cases_ok=1
+for grep_case in \
+  'single|/Users/|/home/|AKIA|@' \
+  'account|[0-9]{12}' \
+  'ipv4|([0-9]{1,3}\.){3}[0-9]{1,3}'; do
+  grep_name=${grep_case%%|*}
+  FAKE_CASE_GREP_FAIL_PATTERN=${grep_case#*|}
+  export FAKE_CASE_GREP_FAIL_PATTERN
+  run_lifecycle "grep-failure-$grep_name" '' normal empty '' none
+  unset FAKE_CASE_GREP_FAIL_PATTERN
+  if [ "$LIFECYCLE_RC" -eq 0 ] || \
+     ! grep -Fq 'grep failed on demo.txt' <<< "$LIFECYCLE_OUTPUT" || \
+     grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
+    grep_failure_cases_ok=0
+  fi
+done
+if [ "$grep_failure_cases_ok" -eq 1 ]; then
+  pass_case "grep exit-code failures stop publication"
+else
+  lifecycle_failures_ok=0
+  fail_case "grep exit-code failures stop publication"
+fi
+
+for mutant_case in \
+  'restore-hygiene-single-grep|/Users/|/home/|AKIA|@' \
+  'restore-hygiene-account-pipeline|[0-9]{12}' \
+  'restore-hygiene-ipv4-pipeline|([0-9]{1,3}\.){3}[0-9]{1,3}'; do
+  mutant=${mutant_case%%|*}
+  FAKE_CASE_GREP_FAIL_PATTERN=${mutant_case#*|}
+  export FAKE_CASE_GREP_FAIL_PATTERN
+  run_lifecycle "mutant-$mutant" '' normal empty '' "$mutant"
+  unset FAKE_CASE_GREP_FAIL_PATTERN
+  if [ "$LIFECYCLE_RC" -eq 0 ] && \
+     grep -Fq 'publish:ok' "$LIFECYCLE_RUN/lifecycle.log"; then
+    pass_case "mutant $mutant killed"
+  else
+    lifecycle_failures_ok=0
+    fail_case "mutant $mutant killed" "$LIFECYCLE_OUTPUT"
+  fi
+done
+
 if [ "$lifecycle_failures_ok" -eq 1 ]; then
   echo "PASS: demo contract group lifecycle"
 else
@@ -1877,8 +2260,17 @@ if [ -f .fake-final-inventory-observed ]; then
   echo "after-final backend $*" >> .fake-calls.log
 fi
 echo "backend $*" >> .fake-calls.log
-echo '{"IsTruncated":false,"Versions":[],"DeleteMarkers":[]}'
-if [ "$(cat .record-mode)" = post-inventory-display-failure ]; then
+mode=$(cat .record-mode)
+case "$mode" in
+  inventory-siblings)
+    echo '{"IsTruncated":false,"Versions":[{"Key":"envs/preview/demo-lease2.tfstate"}],"DeleteMarkers":[{"Key":"envs/preview/demo-lease2.tfstate"}]}'
+    ;;
+  inventory-matching-delete)
+    echo '{"IsTruncated":false,"Versions":[],"DeleteMarkers":[{"Key":"envs/preview/demo-lease.tfstate"}]}'
+    ;;
+  *) echo '{"IsTruncated":false,"Versions":[],"DeleteMarkers":[]}' ;;
+esac
+if [ "$mode" = post-inventory-display-failure ]; then
   mv "$RUN/close.log" "$RUN/close.log.removed"
 fi
 touch .fake-final-inventory-observed
@@ -1887,6 +2279,7 @@ chmod +x "$recording_template/scripts/"*.sh
 
 recording_bin="$tmp_dir/recording-bin"
 mkdir -p "$recording_bin"
+cp "$gif_fixture_writer" "$recording_bin/write-test-gif"
 real_jq=$(command -v jq)
 ln -s "$real_jq" "$recording_bin/jq"
 cat > "$recording_bin/sleep" <<'EOF'
@@ -1986,7 +2379,7 @@ if [[ "$mode" == drift:* ]]; then
   printf '\n# post-preflight drift\n' >> "$drift_path"
   printf '%s\n' "$drift_path" > .generator-drift-path
 fi
-printf '%s\n' DISTINCTIVE_RECORDING_GIF_PAYLOAD > "$RUN/demo.gif"
+"${0%/*}/write-test-gif" "$RUN/demo.gif" 44.44 1200
 touch -t '2030''01010000' "$RUN/demo.gif"
 EOF
 
@@ -2057,10 +2450,43 @@ run_recording_case() {
   local name=$1
   local mode=$2
   local recording=$3
+  local mutation=${4:-none}
   local case_root="$tmp_dir/recording-$name"
   local repo="$case_root/repo"
   mkdir -p "$case_root"
   cp -R "$recording_template" "$repo"
+  case "$mutation" in
+    restore-inventory-version-prefix-count|restore-inventory-marker-prefix-count)
+      python3 - "$repo/demo/record.sh" "$mutation" <<'PY'
+from pathlib import Path
+import sys
+
+
+path = Path(sys.argv[1])
+mutation = sys.argv[2]
+source = path.read_text(encoding="utf-8")
+fixed = {
+    "restore-inventory-version-prefix-count": '''      version_count="$(jq --arg key "$state_key" '[(.Versions // [])[] | select(.Key == $key or .Key == ($key + ".tflock"))] | length' <<< "$inventory")"
+''',
+    "restore-inventory-marker-prefix-count": '''      marker_count="$(jq --arg key "$state_key" '[(.DeleteMarkers // [])[] | select(.Key == $key or .Key == ($key + ".tflock"))] | length' <<< "$inventory")"
+''',
+}
+original = {
+    "restore-inventory-version-prefix-count": '''      version_count="$(jq '(.Versions // []) | length' <<< "$inventory")"
+''',
+    "restore-inventory-marker-prefix-count": '''      marker_count="$(jq '(.DeleteMarkers // []) | length' <<< "$inventory")"
+''',
+}
+fixed_block = fixed[mutation]
+original_block = original[mutation]
+if source.count(fixed_block) == 1:
+    source = source.replace(fixed_block, original_block)
+elif source.count(original_block) != 1:
+    raise SystemExit(f"could not build named mutant {mutation}")
+path.write_text(source, encoding="utf-8")
+PY
+      ;;
+  esac
   : > "$repo/.fake-calls.log"
   printf '%s\n' "$mode" > "$repo/.record-mode"
   printf '%s\n' 0 > "$repo/.sweep-count"
@@ -2161,8 +2587,67 @@ if [ "$LIFECYCLE_RC" -ne 0 ] || \
 else
   pass_case "supply recording positive transaction avoids environment tools"
 fi
+expected_contract_suite_fixtures="$(sbom_fixture_names)"
+if [ "$(field_value 'comparison fixtures used' \
+      "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md")" = \
+     'base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json' ] && \
+   [ "$(field_value 'contract suite fixtures used' \
+      "$LIFECYCLE_REPO/docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md")" = \
+     "$expected_contract_suite_fixtures" ]; then
+  pass_case "supply fixture rows match comparison and sorted contract suite"
+else
+  recording_contract_ok=0
+  fail_case "supply fixture rows match comparison and sorted contract suite"
+fi
+
+supply_preflight_body="$(sed -n \
+  '/if \[ "$RECORDING_KIND" = verify \]; then/,/    return/p' \
+  "$REPO_ROOT/demo/record.sh")"
+if [ "$(grep -c . "$LIFECYCLE_RUN/versions.txt")" -eq 3 ] && \
+   ! grep -q '^tesseract ' "$LIFECYCLE_CALLS" && \
+   ! grep -Fq tesseract <<< "$supply_preflight_body" && \
+   grep -Fq '"$RUN/versions.txt")" -eq 3' <<< "$supply_preflight_body"; then
+  pass_case "supply preflight excludes tesseract and captures three versions"
+else
+  recording_contract_ok=0
+  fail_case "supply preflight excludes tesseract and captures three versions"
+fi
 supply_success_repo=$LIFECYCLE_REPO
 supply_success_run=$LIFECYCLE_RUN
+
+run_lifecycle lease-inventory-siblings '' inventory-siblings empty '' none lease
+if [ "$LIFECYCLE_RC" -eq 0 ] && \
+   [ -f "$LIFECYCLE_RUN/final-inventory.complete" ]; then
+  pass_case "lease final inventory ignores sibling key prefixes"
+else
+  recording_contract_ok=0
+  fail_case "lease final inventory ignores sibling key prefixes" "$LIFECYCLE_OUTPUT"
+fi
+
+run_lifecycle lease-inventory-matching-delete '' inventory-matching-delete \
+  empty '' none lease
+if [ "$LIFECYCLE_RC" -ne 0 ] && \
+   grep -Fq 'state or lock versions remain after Stage 2' <<< "$LIFECYCLE_OUTPUT" && \
+   [ ! -f "$LIFECYCLE_RUN/final-inventory.complete" ]; then
+  pass_case "lease final inventory counts an exact-key delete marker"
+else
+  recording_contract_ok=0
+  fail_case "lease final inventory counts an exact-key delete marker" \
+    "$LIFECYCLE_OUTPUT"
+fi
+
+for inventory_mutant in restore-inventory-version-prefix-count \
+  restore-inventory-marker-prefix-count; do
+  run_lifecycle "mutant-$inventory_mutant" '' inventory-siblings empty '' \
+    "$inventory_mutant" lease
+  if [ "$LIFECYCLE_RC" -ne 0 ] && \
+     grep -Fq 'state or lock versions remain after Stage 2' <<< "$LIFECYCLE_OUTPUT"; then
+    pass_case "mutant $inventory_mutant killed"
+  else
+    recording_contract_ok=0
+    fail_case "mutant $inventory_mutant killed" "$LIFECYCLE_OUTPUT"
+  fi
+done
 
 run_lifecycle lease-teardown-generation-race '' teardown-generation-race \
   empty '' none lease
@@ -2261,6 +2746,35 @@ if [ "$provenance_field_mutants_ok" -eq 1 ]; then
 else
   recording_contract_ok=0
   fail_case "lease and supply provenance required-field deletion mutants"
+fi
+
+supply_value_mutants_ok=1
+for value_case in \
+  'recorded_from|demo/other-supplychain.tape' \
+  'canonicalizer sha256|0000000000000000000000000000000000000000000000000000000000000000' \
+  'comparison fixtures used|base.spdx.json, timestamp-only-difference.spdx.json' \
+  'contract suite fixtures used|base.spdx.json' \
+  'timestamp-variant result|FAIL' \
+  'checksum-variant result|FAIL' \
+  'contracts result|FAIL' \
+  'duration|44.450000 s' \
+  'frames|1199'; do
+  IFS='|' read -r validation_field replacement_value <<< "$value_case"
+  mutated_doc="$tmp_dir/verify-value-${validation_field// /-}.md"
+  awk -v prefix="| $validation_field |" -v replacement="$replacement_value" '
+    index($0, prefix) == 1 { print prefix " " replacement " |"; next }
+    { print }
+  ' "$supply_success_repo/docs/assets/DEMO_PROVENANCE_SUPPLYCHAIN.md" > "$mutated_doc"
+  if validate_provenance verify "$mutated_doc" \
+       "$supply_success_repo/docs/assets/demo-supplychain.gif" >/dev/null 2>&1; then
+    supply_value_mutants_ok=0
+  fi
+done
+if [ "$supply_value_mutants_ok" -eq 1 ]; then
+  pass_case "supply provenance value replacement mutants"
+else
+  recording_contract_ok=0
+  fail_case "supply provenance value replacement mutants"
 fi
 
 temporal_drift_ok=1

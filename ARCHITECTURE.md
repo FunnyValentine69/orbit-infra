@@ -279,8 +279,12 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   schedule. Its asset provenance is independent of the recordings. The shared
   `demo/env.sh` and `demo/record.sh` transaction records lifecycle, lease, or
   supply-chain evidence from a closed per-kind configuration in `demo/lib.sh`.
-  Each kind has its own tape, immutable provenance template, required output
-  patterns, and transitive generator closure. Validation, teardown, provenance
+  `.gitignore` is shared by every generator closure, and ignored closure inputs
+  fail closed outside the declared runtime/cache exemptions. The verify closure
+  contains only those shared files, its tape and provenance template, the SBOM
+  canonicalizer and contract, and the SBOM fixture directory; it excludes the
+  infrastructure bundle. Each kind has its own required output patterns.
+  Validation, teardown, provenance
   rendering, and publication run as one guarded sequence; publication uses two
   independent renames, so interruption can leave a mixed pair that the
   provenance contract exposes and a rerun repairs.
@@ -303,13 +307,13 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   close path, never cross-run lease semantics.
 - **Phase 5:** the stage-2 sweeper closes a stage-1 lease in the same
   LocalStack job (LOCALSTACK-VERIFIED in CI, run 33825140591) and its
-  27-case fixture suite covers the pending, hand-back, prune, and
+  40-case fixture suite covers the pending, hand-back, prune, and
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
   -> `policy-size` -> `no-nat-gateway` -> `conftest`; the final gate evaluates
   `policy/main.rego`, runs its 91 Rego unit tests from `policy/main_test.rego`,
-  and defines an 18-case shell suite against fixtures that are
+  and defines a 19-case shell suite against fixtures that are
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The added IPv6
   bad-root case's recorded bad-root plan is denied for
   `aws_vpc_security_group_ingress_rule.ipv6_open`, and the gate passes with all
@@ -350,8 +354,9 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   `preview-source-contracts.sh` invariant requires exactly two direct ALB-group
   references: the ALB attachment and the service group's ingress source. It also
   requires every workload module to receive only the service group, forbids
-  group/list/rule read-back and group data lookups, and checks the exact
-  multiplicity of every allowlisted security-group-shaped root argument,
+  protected group/list/rule read-back, requires the exact root data-source
+  multiset, and checks the exact multiplicity of every allowlisted
+  security-group-shaped root argument,
   including the service egress to the network endpoint group. Its scanner fails
   closed on heredocs or `.tf.json` configuration. A standalone
   ingress rule, including an indexed instance, must also plan a known

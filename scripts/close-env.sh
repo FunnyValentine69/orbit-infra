@@ -376,7 +376,7 @@ case "$current_status" in
   *) echo "close-env.sh: unexpected lease status '$current_status'" >&2; exit 2 ;;
 esac
 
-claim_args=(begin-cleanup "$ENV_ID" --generation "$lease_generation" --from "$current_status" --claim "$STAGE1_CLAIM")
+claim_args=(begin-cleanup "$ENV_ID" --expect-owner "$lease_owner" --generation "$lease_generation" --from "$current_status" --claim "$STAGE1_CLAIM")
 [ "$FORCE_RETRY" != true ] || claim_args+=(--force-retry)
 "$LEASE_SH" "${claim_args[@]}" >/dev/null
 

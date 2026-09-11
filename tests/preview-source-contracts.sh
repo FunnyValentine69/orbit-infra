@@ -260,11 +260,19 @@ workload_security_groups = (
     and not unexpected_module_arguments
 )
 
-forbidden_patterns = (
-    r'\bdata\s+"aws_security_groups?"\s+"',
-    r'\bdata\s+"aws_(?:lb|lbs|alb)"\s+"',
-    r"\bdata\.aws_(?:lb|alb)\b",
+root_data_source_records = [
+    tuple(block["labels"])
+    for block in root_blocks
+    if block["kind"] == "data" and len(block["labels"]) == 2
+]
+expected_root_data_source_records = [
+    ("aws_caller_identity", "current"),
+    ("aws_partition", "current"),
+]
+root_data_source_allowlist = Counter(root_data_source_records) == Counter(
+    expected_root_data_source_records
 )
+
 protected_attribute_allowlist = {
     "aws_lb.this": {"arn", "dns_name", "zone_id", "id", "arn_suffix"},
     "aws_security_group.alb": {"id"},
@@ -292,8 +300,7 @@ def protected_traversal_violations(text):
 
 protected_traversals = protected_traversal_violations(combined)
 no_indirection = (
-    not any(re.search(pattern, combined) for pattern in forbidden_patterns)
-    and not protected_traversals
+    not protected_traversals
     and bool(resources)
     and "aws_lb.this" in resources
 )
@@ -462,6 +469,7 @@ checks = (
     ("alb-reference-set", alb_reference_set),
     ("workload-security-groups", workload_security_groups),
     ("no-indirection", no_indirection),
+    ("root-data-source-allowlist", root_data_source_allowlist),
     ("root-resource-allowlist", root_resource_allowlist),
     ("policy-partition-source", policy_partition_source),
 )
@@ -539,6 +547,15 @@ run_mutant() {
       ;;
     data-lb-readback)
       printf '\ndata "aws_lb" "mutant" {\n  name = aws_lb.this.name\n}\nlocals {\n  mutant_lb_groups = data.aws_lb.mutant.security_groups\n}\n' >> "$mutant_root/main.tf"
+      ;;
+    data-lb-by-arn)
+      printf '\ndata "aws_lb" "mutant" {\n  arn = aws_lb.this.arn\n}\n' >> "$mutant_root/main.tf"
+      ;;
+    data-resourcegroupstaggingapi)
+      printf '\ndata "aws_resourcegroupstaggingapi_resources" "mutant" {}\n' >> "$mutant_root/main.tf"
+      ;;
+    data-extra-caller-identity)
+      printf '\ndata "aws_caller_identity" "mutant" {}\n' >> "$mutant_root/main.tf"
       ;;
     third-alb-reference)
       printf '\nresource "aws_instance" "mutant" {\n  vpc_security_group_ids = [aws_security_group.alb.id]\n}\n' >> "$mutant_root/main.tf"
@@ -627,8 +644,11 @@ run_mutant spaced-bracket-lb no-indirection
 run_mutant computed-index-service no-indirection
 run_mutant module-alb-group workload-security-groups
 run_mutant module-second-group workload-security-groups
-run_mutant data-security-group-lookup no-indirection
-run_mutant data-lb-readback no-indirection
+run_mutant data-security-group-lookup root-data-source-allowlist
+run_mutant data-lb-readback root-data-source-allowlist
+run_mutant data-lb-by-arn root-data-source-allowlist
+run_mutant data-resourcegroupstaggingapi root-data-source-allowlist
+run_mutant data-extra-caller-identity root-data-source-allowlist
 run_mutant third-alb-reference alb-reference-set
 run_mutant unallowlisted-service-reference root-resource-allowlist
 run_mutant lb-reference-removed alb-reference-set
@@ -644,6 +664,12 @@ run_mutant unconsumed-service-egress-readback no-indirection
 run_mutant legacy-splat-lb-readback no-indirection
 run_mutant wrapped-lb-readback no-indirection
 run_mutant wrapped-service-readback no-indirection
+
+if [ "$mutant_count" -ne 29 ]; then
+  printf 'FAIL: preview source mutation registry (expected 29, found %d)\n' \
+    "$mutant_count" >&2
+  exit 1
+fi
 
 if [ "$runner_failures" -ne 0 ]; then
   printf 'FAIL: preview source mutations (%d of %d mutants not killed)\n' \

@@ -3,7 +3,7 @@
 
 DEMO_ENV_PASSTHROUGH="PATH HOME TMPDIR TERM OPERATOR_CIDR DEMO_INJECT_FAIL DEMO_NAME"
 DEMO_ENV_FIXED="LANG=C LC_ALL=C TZ=UTC AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_EC2_METADATA_DISABLED=true TF_CLI_ARGS_plan=-no-color TF_CLI_ARGS_apply=-no-color TF_CLI_ARGS_destroy=-no-color TF_CLI_CONFIG_FILE=/dev/null TF_WORKSPACE=default TARGET=localstack DEMO_BOUNDARY=1"
-DEMO_GENERATOR_SHARED="demo/lib.sh demo/env.sh demo/record.sh"
+DEMO_GENERATOR_SHARED=".gitignore demo/lib.sh demo/env.sh demo/record.sh"
 DEMO_GENERATOR_INFRA="Makefile envs/preview modules policy tests/conftest-gate.sh tests/fixtures/conftest scripts/fixture-hygiene.sh"
 
 demo_recording_config() {
@@ -78,7 +78,7 @@ demo_generator_paths() {
       printf '%s\n' "$DEMO_GENERATOR_SHARED demo/demo-lease.tape demo/provenance/lease.md $DEMO_GENERATOR_INFRA scripts/lease.sh scripts/close-env.sh scripts/cleanup-verifier.sh scripts/sweep.sh scripts/aws-cli.sh scripts/lease-sweep-until-closed.sh"
       ;;
     verify)
-      printf '%s\n' "$DEMO_GENERATOR_SHARED demo/demo-supplychain.tape demo/provenance/supply.md $DEMO_GENERATOR_INFRA scripts/sbom-canon.sh tests/sbom-canon.sh tests/fixtures/sbom"
+      printf '%s\n' "$DEMO_GENERATOR_SHARED demo/demo-supplychain.tape demo/provenance/supply.md scripts/sbom-canon.sh tests/sbom-canon.sh tests/fixtures/sbom"
       ;;
     *) return 2 ;;
   esac
@@ -113,19 +113,13 @@ generator_clean_check() {
       if git ls-files --others --ignored --exclude-standard -z -- $paths > "$ignored_file" 2>/dev/null; then
         while IFS= read -r -d '' path; do
           case "$path" in
-            demo/out/*|*/.terraform/*|*/.terraform-localstack/*|*/.terraform-localstack-*/*)
+            demo/out/*|*/.terraform/*|*/.terraform-localstack/*|*/.terraform-localstack-*/*|\
+              envs/preview/backend_override.tf|envs/preview/backend.aws.hcl|\
+              envs/preview/terraform.localstack*|__pycache__/*|.preview-runs/*)
               continue
               ;;
-          esac
-          case "$path" in
-            *.tfvars|*.tfvars.json|*.tf|*.tf.json)
-              if [ "$path" != "envs/preview/backend_override.tf" ]; then
-                echo "ignored terraform input present: $path" >&2
-                failed=1
-              fi
-              ;;
-            *.rego)
-              echo "ignored Rego input present: $path" >&2
+            *)
+              echo "ignored generator input present: $path" >&2
               failed=1
               ;;
           esac

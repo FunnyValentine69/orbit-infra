@@ -430,10 +430,11 @@ stage2() {
   local env_id="$1"
   local initial_lease="$2"
   local expected_generation="${3:-}"
-  local generation claim manifest_target arns arn describe_out describe_rc status claim_rc
+  local generation lease_owner claim manifest_target arns arn describe_out describe_rc status claim_rc
   local pending=false allowance_recorded=false lease latest_run state_key entries remaining rc
   local deleted_arns='[]' verified_empty_at proof_file
   generation="$(jq -r '.generation' <<< "$initial_lease")"
+  lease_owner="$(jq -r 'if (.owner | type) == "string" then .owner else "" end' <<< "$initial_lease")"
   if [ -n "$expected_generation" ]; then
     generation=$expected_generation
   fi
@@ -447,6 +448,7 @@ stage2() {
   : > "$STAGE2_CLAIM_OUT"
   stage2_arm_claim_handlers
   if "$LEASE_SH" claim-stage2 "$env_id" \
+      --expect-owner "$lease_owner" \
       --generation "$generation" --token "$STAGE2_ACTIVE_CLAIM" \
       --takeover-stale "$STAGE2_CLAIM_STALE_SECONDS" > "$STAGE2_CLAIM_OUT"; then
     initial_lease="$(cat "$STAGE2_CLAIM_OUT")"
@@ -700,12 +702,8 @@ cmd_env() {
       generation="$(jq -r '.generation' <<< "$lease")"
       status="$(jq -r '.status' <<< "$lease")"
       echo "sweep.sh: running stage 1 for $env_id ($CLASSIFICATION)"
-      if [ -n "$expected_owner" ]; then
-        "$CLOSE_ENV_SH" --owner "$expected_owner" --generation "$generation" \
-          --from "$status" "$env_id"
-      else
-        "$CLOSE_ENV_SH" --generation "$generation" --from "$status" "$env_id"
-      fi
+      "$CLOSE_ENV_SH" --owner "$lease_owner" --generation "$generation" \
+        --from "$status" "$env_id"
       ;;
     stage2)
       stage2 "$env_id" "$lease" "$expected_generation"

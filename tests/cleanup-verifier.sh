@@ -370,14 +370,76 @@ if [ "$second_open_rc" -ne 3 ] || \
 fi
 pass "a second open on the same environment is refused without another PUT"
 
+owner_contracts_ok=1
+owner_required_log="$tmp_dir/owner-required-open-aws-calls.log"
+: > "$owner_required_log"
+set +e
+owner_required_out="$(env "${lease_env[@]}" FAKE_AWS_CALL_LOG="$owner_required_log" \
+  "$LEASE" open owner-required-open 2>&1)"
+owner_required_rc=$?
+set -e
+if [ "$owner_required_rc" -ne 2 ] || \
+   ! grep -Fq 'open requires --owner <nonempty>' <<< "$owner_required_out" || \
+   [ -s "$owner_required_log" ]; then
+  owner_contracts_ok=0
+fi
+
+for owner_command in begin-cleanup claim-stage2; do
+  for owner_case in missing empty mismatch; do
+    owner_env="owner-${owner_command}-${owner_case}"
+    env "${lease_env[@]}" "$LEASE" open "$owner_env" --owner run-owner-a >/dev/null
+    if [ "$owner_command" = claim-stage2 ]; then
+      owner_store="$tmp_dir/fake-s3/leases_${owner_env}.json"
+      jq '.status = "closing"' "$owner_store" > "$owner_store.next"
+      mv "$owner_store.next" "$owner_store"
+    fi
+    owner_before="$(env "${lease_env[@]}" "$LEASE" get "$owner_env")"
+    owner_args=(--generation 1)
+    if [ "$owner_command" = begin-cleanup ]; then
+      owner_args+=(--from open --claim "claim-${owner_case}")
+    else
+      owner_args+=(--claim "claim-${owner_case}")
+    fi
+    expected_owner_rc=2
+    case "$owner_case" in
+      missing) ;;
+      empty) owner_args+=(--expect-owner "") ;;
+      mismatch)
+        owner_args+=(--expect-owner run-owner-b)
+        expected_owner_rc=3
+        ;;
+    esac
+    set +e
+    owner_out="$(env "${lease_env[@]}" "$LEASE" "$owner_command" "$owner_env" \
+      "${owner_args[@]}" 2>&1)"
+    owner_rc=$?
+    set -e
+    owner_after="$(env "${lease_env[@]}" "$LEASE" get "$owner_env")"
+    if [ "$owner_rc" -ne "$expected_owner_rc" ] || \
+       [ "$owner_after" != "$owner_before" ]; then
+      owner_contracts_ok=0
+    fi
+    if [ "$owner_case" = empty ] && \
+       ! grep -Fq -- '--expect-owner requires a nonempty token' <<< "$owner_out"; then
+      owner_contracts_ok=0
+    fi
+  done
+done
+if [ "$owner_contracts_ok" -eq 1 ]; then
+  pass "open, begin-cleanup, and claim-stage2 require matching nonempty owners"
+else
+  echo "FAIL: open, begin-cleanup, and claim-stage2 owner predicates" >&2
+  exit 1
+fi
+
 # An active Stage-1 claim excludes Stage 2 and owns every Stage-1 manifest
 # write until completion or failure releases it.
 stage1_claim_env=stage1-claim
 stage1_claim_token=stage1-claim-token
 stage1_manifest="$tmp_dir/stage1-claim-manifest.json"
 jq -n '{target:"localstack",stage1_write:true}' > "$stage1_manifest"
-env "${lease_env[@]}" "$LEASE" open "$stage1_claim_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage1_claim_env" \
+env "${lease_env[@]}" "$LEASE" open "$stage1_claim_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage1_claim_env" --expect-owner test-owner \
   --generation 1 --from open --claim "$stage1_claim_token" >/dev/null
 stage1_claim_lease="$(env "${lease_env[@]}" "$LEASE" get "$stage1_claim_env")"
 if ! jq -e --arg claim "$stage1_claim_token" '
@@ -388,7 +450,7 @@ if ! jq -e --arg claim "$stage1_claim_token" '
   exit 1
 fi
 set +e
-stage2_during_stage1_out="$(env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage1_claim_env" \
+stage2_during_stage1_out="$(env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage1_claim_env" --expect-owner test-owner \
   --generation 1 --claim stage2-claim 2>&1)"
 stage2_during_stage1_rc=$?
 set -e
@@ -420,10 +482,10 @@ contract_stage1_claim=stage1-contract-claim
 contract_claim=stage2-contract-claim
 contract_manifest="$tmp_dir/stage2-contract-manifest.json"
 contract_proof="$tmp_dir/stage2-contract-proof.json"
-env "${lease_env[@]}" "$LEASE" open "$contract_env_id" >/dev/null
+env "${lease_env[@]}" "$LEASE" open "$contract_env_id" --owner test-owner >/dev/null
 contract_before="$(env "${lease_env[@]}" "$LEASE" get "$contract_env_id")"
 set +e
-contract_bad_generation_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$contract_env_id" \
+contract_bad_generation_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$contract_env_id" --expect-owner test-owner \
   --generation 2 --from open --claim "$contract_stage1_claim" 2>&1)"
 contract_bad_generation_rc=$?
 set -e
@@ -434,7 +496,7 @@ if [ "$contract_bad_generation_rc" -ne 3 ] || \
   echo "rc=$contract_bad_generation_rc output=$contract_bad_generation_out" >&2
   exit 1
 fi
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$contract_env_id" \
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$contract_env_id" --expect-owner test-owner \
   --generation 1 --from open --claim "$contract_stage1_claim" >/dev/null
 set +e
 generic_closed_out="$(env "${lease_env[@]}" "$LEASE" transition "$contract_env_id" \
@@ -447,10 +509,10 @@ if [ "$generic_closed_rc" -ne 2 ]; then
 fi
 env "${lease_env[@]}" "$LEASE" complete-stage1 "$contract_env_id" \
   --generation 1 --claim "$contract_stage1_claim" >/dev/null
-env "${lease_env[@]}" "$LEASE" claim-stage2 "$contract_env_id" \
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$contract_env_id" --expect-owner test-owner \
   --generation 1 --claim "$contract_claim" >/dev/null
 set +e
-second_claim_out="$(env "${lease_env[@]}" "$LEASE" claim-stage2 "$contract_env_id" \
+second_claim_out="$(env "${lease_env[@]}" "$LEASE" claim-stage2 "$contract_env_id" --expect-owner test-owner \
   --generation 1 --claim another-claim 2>&1)"
 second_claim_rc=$?
 set -e
@@ -495,8 +557,8 @@ pass "generation-bound Stage 1 and claimed atomic Stage 2 enforce the lease inte
 stage2_failure_env=stage2-failure-counter
 stage2_failure_claim=stage2-failure-1
 stage2_failure_store="$tmp_dir/fake-s3/leases_${stage2_failure_env}.json"
-env "${lease_env[@]}" "$LEASE" open "$stage2_failure_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage2_failure_env" \
+env "${lease_env[@]}" "$LEASE" open "$stage2_failure_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage2_failure_env" --expect-owner test-owner \
   --generation 1 --from open --claim stage1-before-stage2-failure >/dev/null
 env "${lease_env[@]}" "$LEASE" complete-stage1 "$stage2_failure_env" \
   --generation 1 --claim stage1-before-stage2-failure >/dev/null
@@ -505,7 +567,7 @@ jq '.cleanup_attempt = 3
   | .updated_at = "2033-05-18T03:00:00Z"' \
   "$stage2_failure_store" > "$stage2_failure_store.next"
 mv "$stage2_failure_store.next" "$stage2_failure_store"
-env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_failure_env" \
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_failure_env" --expect-owner test-owner \
   --generation 1 --claim "$stage2_failure_claim" >/dev/null
 env "${lease_env[@]}" "$LEASE" fail-stage2 "$stage2_failure_env" \
   --generation 1 --claim "$stage2_failure_claim" --error "Stage 2 failed once" >/dev/null
@@ -522,7 +584,7 @@ assert_jq "$stage2_failure_once" '
 ' "first Stage-2 failure must preserve the Stage-1 budget and release its claim"
 for stage2_failure_index in 2 3; do
   stage2_failure_claim="stage2-failure-$stage2_failure_index"
-  env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_failure_env" \
+  env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_failure_env" --expect-owner test-owner \
     --generation 1 --claim "$stage2_failure_claim" >/dev/null
   env "${lease_env[@]}" "$LEASE" fail-stage2 "$stage2_failure_env" \
     --generation 1 --claim "$stage2_failure_claim" --error "Stage 2 failed $stage2_failure_index" >/dev/null
@@ -541,12 +603,12 @@ pass "Stage-2 failures use an independent three-attempt budget"
 stage2_guard_env=stage2-failure-guard
 stage2_guard_claim=stage2-guard-claim
 stage2_guard_store="$tmp_dir/fake-s3/leases_${stage2_guard_env}.json"
-env "${lease_env[@]}" "$LEASE" open "$stage2_guard_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage2_guard_env" \
+env "${lease_env[@]}" "$LEASE" open "$stage2_guard_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$stage2_guard_env" --expect-owner test-owner \
   --generation 1 --from open --claim stage1-before-stage2-guard >/dev/null
 env "${lease_env[@]}" "$LEASE" complete-stage1 "$stage2_guard_env" \
   --generation 1 --claim stage1-before-stage2-guard >/dev/null
-env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_guard_env" \
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$stage2_guard_env" --expect-owner test-owner \
   --generation 1 --claim "$stage2_guard_claim" >/dev/null
 stage2_guard_before="$(env "${lease_env[@]}" "$LEASE" get "$stage2_guard_env")"
 for bad_stage2_args in \
@@ -597,8 +659,8 @@ pass "fail-stage2 preserves an existing manual-intervention flag"
 # the fresh ETag while leaving every status, counter, and claim field intact.
 cap_env=closing-budget-cap
 cap_store="$tmp_dir/fake-s3/leases_${cap_env}.json"
-env "${lease_env[@]}" "$LEASE" open "$cap_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_env" \
+env "${lease_env[@]}" "$LEASE" open "$cap_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_env" --expect-owner test-owner \
   --generation 1 --from open --claim cap-stage1 >/dev/null
 env "${lease_env[@]}" "$LEASE" complete-stage1 "$cap_env" \
   --generation 1 --claim cap-stage1 >/dev/null
@@ -607,7 +669,7 @@ jq '.cleanup_attempt = 3
 mv "$cap_store.next" "$cap_store"
 cap_before="$(env "${lease_env[@]}" "$LEASE" get "$cap_env")"
 set +e
-cap_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_env" \
+cap_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_env" --expect-owner test-owner \
   --generation 1 --from closing --claim refused-cap-stage1 2>&1)"
 cap_rc=$?
 set -e
@@ -628,8 +690,8 @@ pass "closing Stage-1 cap publishes a minimal manual-intervention escalation"
 
 cap_race_env=closing-budget-race
 cap_race_store="$tmp_dir/fake-s3/leases_${cap_race_env}.json"
-env "${lease_env[@]}" "$LEASE" open "$cap_race_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_race_env" \
+env "${lease_env[@]}" "$LEASE" open "$cap_race_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$cap_race_env" --expect-owner test-owner \
   --generation 1 --from open --claim cap-race-stage1 >/dev/null
 env "${lease_env[@]}" "$LEASE" complete-stage1 "$cap_race_env" \
   --generation 1 --claim cap-race-stage1 >/dev/null
@@ -637,7 +699,7 @@ jq '.cleanup_attempt = 3' "$cap_race_store" > "$cap_race_store.next"
 mv "$cap_race_store.next" "$cap_race_store"
 cap_race_before="$(env "${lease_env[@]}" "$LEASE" get "$cap_race_env")"
 set +e
-cap_race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup "$cap_race_env" \
+cap_race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup "$cap_race_env" --expect-owner test-owner \
   --generation 1 --from closing --claim refused-cap-race 2>&1)"
 cap_race_rc=$?
 set -e
@@ -677,7 +739,7 @@ if [ "$contract_redelete_rc" -ne 3 ] || \
   echo "FAIL: delete-closed must refuse an existing generation tombstone" >&2
   exit 1
 fi
-contract_reopened="$(env "${lease_env[@]}" "$LEASE" open "$contract_env_id")"
+contract_reopened="$(env "${lease_env[@]}" "$LEASE" open "$contract_env_id" --owner test-owner)"
 assert_jq "$contract_reopened" '
   .status == "open" and .generation == 2 and .stage2_attempt == 0
 ' "opening a generation tombstone must continue at generation two"
@@ -687,15 +749,15 @@ force_claim_env=force-claim
 force_claim_token=force-claim-token
 force_stage1_claim=force-stage1-claim
 force_retry_stage1_claim=force-retry-stage1-claim
-env "${lease_env[@]}" "$LEASE" open "$force_claim_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" \
+env "${lease_env[@]}" "$LEASE" open "$force_claim_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" --expect-owner test-owner \
   --generation 1 --from open --claim "$force_stage1_claim" >/dev/null
 env "${lease_env[@]}" "$LEASE" complete-stage1 "$force_claim_env" \
   --generation 1 --claim "$force_stage1_claim" >/dev/null
-env "${lease_env[@]}" "$LEASE" claim-stage2 "$force_claim_env" \
+env "${lease_env[@]}" "$LEASE" claim-stage2 "$force_claim_env" --expect-owner test-owner \
   --generation 1 --claim "$force_claim_token" >/dev/null
 set +e
-active_claim_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" \
+active_claim_out="$(env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" --expect-owner test-owner \
   --generation 1 --from closing --claim "$force_retry_stage1_claim" 2>&1)"
 active_claim_rc=$?
 set -e
@@ -703,7 +765,7 @@ set -e
   echo "FAIL: unforced Stage 1 must refuse an active Stage 2 claim (rc=$active_claim_rc: $active_claim_out)" >&2
   exit 1
 }
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" \
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_claim_env" --expect-owner test-owner \
   --generation 1 --from closing --claim "$force_retry_stage1_claim" --force-retry >/dev/null
 force_claim_lease="$(env "${lease_env[@]}" "$LEASE" get "$force_claim_env")"
 jq -e --arg token "$force_claim_token" --arg stage1 "$force_retry_stage1_claim" '
@@ -717,19 +779,19 @@ jq -e --arg token "$force_claim_token" --arg stage1 "$force_retry_stage1_claim" 
 }
 pass "force retry clears an active Stage 2 claim and records it in the audit"
 
-env "${lease_env[@]}" "$LEASE" open retry-case >/dev/null
+env "${lease_env[@]}" "$LEASE" open retry-case --owner test-owner >/dev/null
 retry_failures="$(jq -r '.failures' "$FIXTURES/retry-exhaustion.json")"
 retry_from=open
 for retry_index in $(seq 1 "$retry_failures"); do
   retry_claim="retry-stage1-$retry_index"
-  env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case \
+  env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case --expect-owner test-owner \
     --generation 1 --from "$retry_from" --claim "$retry_claim" >/dev/null
   env "${lease_env[@]}" "$LEASE" transition retry-case closing cleanup_failed \
     --generation 1 --claim "$retry_claim" --error "verification failed" >/dev/null
   retry_from=cleanup_failed
 done
 set +e
-env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case \
+env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case --expect-owner test-owner \
   --generation 1 --from cleanup_failed --claim retry-stage1-fourth >"$tmp_dir/fourth.out" 2>"$tmp_dir/fourth.err"
 fourth_rc=$?
 set -e
@@ -748,7 +810,7 @@ if [ "$fourth_rc" -eq 0 ]; then
 fi
 pass "three failed stage-1 executions exhaust the CAS-persisted automatic retry budget"
 
-env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case \
+env "${lease_env[@]}" "$LEASE" begin-cleanup retry-case --expect-owner test-owner \
   --generation 1 --from cleanup_failed --claim retry-stage1-forced --force-retry >/dev/null
 forced_lease="$(env "${lease_env[@]}" "$LEASE" get retry-case)"
 assert_jq "$forced_lease" '.status == "closing" and .cleanup_attempt == 4 and (.cleanup_retry_audit | length) == 1' \
@@ -795,8 +857,8 @@ mkdir -p "$tmp_dir/preview"
 # APIs run, even when it observes the same closing generation.
 second_close_env=stage1-busy
 second_close_claim=existing-stage1-claim
-env "${lease_env[@]}" "$LEASE" open "$second_close_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$second_close_env" \
+env "${lease_env[@]}" "$LEASE" open "$second_close_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$second_close_env" --expect-owner test-owner \
   --generation 1 --from open --claim "$second_close_claim" >/dev/null
 : > "$tmp_dir/terraform-calls.log"
 set +e
@@ -820,10 +882,10 @@ pass "a second close is refused while Stage 1 is claimed"
 force_stage1_takeover_env=force-stage1-takeover
 force_stage1_old_claim=stale-stage1-claim
 force_stage1_new_claim=force-retry-stage1-new-claim
-env "${lease_env[@]}" "$LEASE" open "$force_stage1_takeover_env" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_stage1_takeover_env" \
+env "${lease_env[@]}" "$LEASE" open "$force_stage1_takeover_env" --owner test-owner >/dev/null
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_stage1_takeover_env" --expect-owner test-owner \
   --generation 1 --from open --claim "$force_stage1_old_claim" >/dev/null
-env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_stage1_takeover_env" \
+env "${lease_env[@]}" "$LEASE" begin-cleanup "$force_stage1_takeover_env" --expect-owner test-owner \
   --generation 1 --from closing --claim "$force_stage1_new_claim" --force-retry >/dev/null
 force_stage1_takeover_lease="$(env "${lease_env[@]}" "$LEASE" get "$force_stage1_takeover_env")"
 jq -e --arg new "$force_stage1_new_claim" --arg old "$force_stage1_old_claim" '
@@ -838,7 +900,7 @@ pass "force-retry takes over a stale Stage-1 claim and records it in the forced 
 
 state_marker="$tmp_dir/preview/terraform.localstack.close-case.tfstate.retained"
 touch "$state_marker"
-env "${lease_env[@]}" "$LEASE" open close-case >/dev/null
+env "${lease_env[@]}" "$LEASE" open close-case --owner test-owner >/dev/null
 env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" \
   PREVIEW_ROOT="$tmp_dir/preview" \
@@ -871,7 +933,7 @@ pass "end-to-end close retains state and leaves the lease closing, never closed"
 
 # Terraform's explicit no-state result is an empty candidate set; `show -json`
 # is invalid in that case and must not be attempted.
-env "${lease_env[@]}" "$LEASE" open no-state-case >/dev/null
+env "${lease_env[@]}" "$LEASE" open no-state-case --owner test-owner >/dev/null
 : > "$tmp_dir/terraform-calls.log"
 env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
@@ -887,7 +949,7 @@ pass "an explicit Terraform no-state result skips show and uses empty resources"
 
 # ECS's services-stable waiter can consume its full 40x15-second retry window,
 # so only that call receives a process timeout with room for the waiter itself.
-env "${lease_env[@]}" "$LEASE" open waiter-case >/dev/null
+env "${lease_env[@]}" "$LEASE" open waiter-case --owner test-owner >/dev/null
 jq -n '{candidates:[{
   resource_type:"ecs:cluster",
   id:"cluster-waiter",
@@ -923,7 +985,7 @@ local delete_fixture="$1" delete_expected_message="$2" delete_pass_text="$3"
 local delete_env_id delete_task_definition_arn delete_out delete_rc delete_lease delete_expected delete_actual
 delete_env_id="$(jq -r '.env_id' "$delete_fixture")"
 delete_task_definition_arn="$(jq -r '.task_definition_arn' "$delete_fixture")"
-env "${lease_env[@]}" "$LEASE" open "$delete_env_id" >/dev/null
+env "${lease_env[@]}" "$LEASE" open "$delete_env_id" --owner test-owner >/dev/null
 jq -n --arg arn "$delete_task_definition_arn" '
   {candidates:[{
     resource_type:"ecs:task-definition",
@@ -980,7 +1042,7 @@ if [ ! -e "$REPO_ROOT/envs/preview/backend.aws.hcl" ]; then
   created_backend_hcl=true
 fi
 printf '{"mode":"public"}\n' > "$tmp_dir/missing-images-manifest.json"
-env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open aws-missing-images >/dev/null
+env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open aws-missing-images --owner test-owner >/dev/null
 env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
   "$LEASE" set-manifest aws-missing-images "$tmp_dir/missing-images-manifest.json" \
   --generation 1 >/dev/null
@@ -1014,7 +1076,7 @@ aws_lease_env=(
   "LEASE_BUCKET=test-state"
   "CLEANUP_RETRY_DELAY_SECONDS=0"
 )
-env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open "$aws_images_env_id" >/dev/null
+env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" "$LEASE" open "$aws_images_env_id" --owner test-owner >/dev/null
 jq -c '.manifest' "$aws_images_fixture" > "$tmp_dir/aws-images-manifest.json"
 env -u AWS_ENDPOINT_URL -u AWS_PROFILE "${aws_lease_env[@]}" \
   "$LEASE" set-manifest "$aws_images_env_id" "$tmp_dir/aws-images-manifest.json" \
@@ -1058,7 +1120,7 @@ run_tag_schema_fixture_case() {
   tag_schema_offsets="$(jq -r '.tag_requery_offsets // "0"' "$tag_schema_fixture")"
   tag_schema_calls="$tmp_dir/tag-schema-calls-$tag_schema_env_id"
   rm -f "$tag_schema_calls"
-  env "${lease_env[@]}" "$LEASE" open "$tag_schema_env_id" >/dev/null
+  env "${lease_env[@]}" "$LEASE" open "$tag_schema_env_id" --owner test-owner >/dev/null
   set +e
   tag_schema_out="$(env "${lease_env[@]}" \
     PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
@@ -1116,7 +1178,7 @@ run_verifier_fixture_case() {
   local verifier_env_id verifier_out verifier_rc verifier_lease
   local verifier_expected verifier_actual
   verifier_env_id="$(jq -r '.env_id' "$verifier_fixture")"
-  env "${lease_env[@]}" "$LEASE" open "$verifier_env_id" >/dev/null
+  env "${lease_env[@]}" "$LEASE" open "$verifier_env_id" --owner test-owner >/dev/null
   set +e
   verifier_out="$(env "${lease_env[@]}" \
     PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
@@ -1151,7 +1213,7 @@ done
 # zero-second verification deadline records cleanup_failed.
 live_deadline_fixture="$FIXTURES/verifier-live-deadline.json"
 live_deadline_env_id="$(jq -r '.env_id' "$live_deadline_fixture")"
-env "${lease_env[@]}" "$LEASE" open "$live_deadline_env_id" >/dev/null
+env "${lease_env[@]}" "$LEASE" open "$live_deadline_env_id" --owner test-owner >/dev/null
 set +e
 live_deadline_out="$(env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
@@ -1190,7 +1252,7 @@ tag_fixture="$FIXTURES/tag-requery-incomplete.json"
 tag_env_id="$(jq -r '.env_id' "$tag_fixture")"
 tag_offsets="$(jq -r '.tag_requery_offsets' "$tag_fixture")"
 tag_fail_call="$(jq -r '.fail_on_tag_call' "$tag_fixture")"
-env "${lease_env[@]}" "$LEASE" open "$tag_env_id" >/dev/null
+env "${lease_env[@]}" "$LEASE" open "$tag_env_id" --owner test-owner >/dev/null
 set +e
 tag_out="$(env "${lease_env[@]}" \
   PATH="$tmp_dir/fake-bin:$PATH" PREVIEW_ROOT="$tmp_dir/preview" OPERATOR_CIDR=test-cidr \
@@ -1221,7 +1283,7 @@ pass "a failed later tag re-query retains an indeterminate discovery candidate"
 generation_fixture="$FIXTURES/lease-generation-mismatch.json"
 generation_env_id="$(jq -r '.env_id' "$generation_fixture")"
 supplied_generation="$(jq -r '.supplied_generation' "$generation_fixture")"
-env "${lease_env[@]}" "$LEASE" open "$generation_env_id" >/dev/null
+env "${lease_env[@]}" "$LEASE" open "$generation_env_id" --owner test-owner >/dev/null
 set +e
 generation_out="$(env "${lease_env[@]}" \
   ENV_ID="$generation_env_id" PATH="$tmp_dir/fake-bin:$PATH" \
@@ -1270,9 +1332,9 @@ pass "owner mismatch exits 4 without claiming or transitioning cleanup"
 
 # CAS race: a second writer bumps the object's ETag between read and write;
 # the stale writer must lose loudly (exit 3), never overwrite.
-env "${lease_env[@]}" "$LEASE" open cas-race >/dev/null
+env "${lease_env[@]}" "$LEASE" open cas-race --owner test-owner >/dev/null
 set +e
-race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup cas-race \
+race_out="$(env "${lease_env[@]}" FAKE_S3_RACE=1 "$LEASE" begin-cleanup cas-race --expect-owner test-owner \
   --generation 1 --from open --claim cas-race-stage1 2>&1)"
 race_rc=$?
 set -e

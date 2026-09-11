@@ -57,9 +57,16 @@ bootstrap-plan:
 	if [ -e "$$dst" ] || [ -L "$$dst" ]; then \
 		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
 	fi; \
-	if ! ( set -C; : > "$$dst" ) 2>/dev/null; then \
-		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
+	noclobber_err="$$(mktemp "$${TMPDIR:-/tmp}/orbit-bootstrap-noclobber.XXXXXX")" || exit 1; \
+	if ! ( set -C; : > "$$dst" ) 2>"$$noclobber_err"; then \
+		if [ -e "$$dst" ] || [ -L "$$dst" ]; then \
+			echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; \
+		else \
+			cat "$$noclobber_err" >&2; \
+		fi; \
+		rm -f "$$noclobber_err"; exit 1; \
 	fi; \
+	rm -f "$$noclobber_err"; \
 	override_created=1; \
 	cleanup() { if [ "$$override_created" = 1 ]; then rm -f "$$dst"; fi; }; \
 	trap cleanup EXIT; \
@@ -75,9 +82,16 @@ bootstrap-apply:
 	if [ -e "$$dst" ] || [ -L "$$dst" ]; then \
 		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
 	fi; \
-	if ! ( set -C; : > "$$dst" ) 2>/dev/null; then \
-		echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; exit 1; \
+	noclobber_err="$$(mktemp "$${TMPDIR:-/tmp}/orbit-bootstrap-noclobber.XXXXXX")" || exit 1; \
+	if ! ( set -C; : > "$$dst" ) 2>"$$noclobber_err"; then \
+		if [ -e "$$dst" ] || [ -L "$$dst" ]; then \
+			echo "FAIL: bootstrap/backend_override.tf already exists; refusing to overwrite or remove it" >&2; \
+		else \
+			cat "$$noclobber_err" >&2; \
+		fi; \
+		rm -f "$$noclobber_err"; exit 1; \
 	fi; \
+	rm -f "$$noclobber_err"; \
 	override_created=1; \
 	cleanup() { if [ "$$override_created" = 1 ]; then rm -f "$$dst"; fi; }; \
 	trap cleanup EXIT; \

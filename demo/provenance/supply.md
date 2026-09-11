@@ -7,7 +7,8 @@
 | recorded_from | pending |
 | generator commit | pending |
 | canonicalizer sha256 | pending |
-| fixtures used | pending |
+| comparison fixtures used | pending |
+| contract suite fixtures used | pending |
 | timestamp-variant result | pending |
 | checksum-variant result | pending |
 | contracts result | pending |

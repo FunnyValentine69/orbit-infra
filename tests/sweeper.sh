@@ -306,14 +306,17 @@ fi
 if [ "${FAKE_CLOSE_BEGIN_CLEANUP:-0}" = 1 ]; then
   generation=""
   from=""
+  owner=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --generation) generation="$2"; shift 2 ;;
       --from) from="$2"; shift 2 ;;
+      --owner) owner="$2"; shift 2 ;;
       *) env_id="$1"; shift ;;
     esac
   done
   exec "$LEASE_SH" begin-cleanup "$env_id" \
+    --expect-owner "$owner" \
     --generation "$generation" --from "$from" --claim closing-budget-cap
 fi
 if [ "${FAKE_REOPEN_BEFORE_CLOSE:-0}" = 1 ]; then
@@ -436,6 +439,7 @@ store_fixture() {
       env_id:$env_id,
       status:"closing",
       generation:1,
+      owner:"test-owner",
       updated_at:"2033-05-18T03:32:20Z",
       cleanup_attempt:1,
       next_retry_at:null,
@@ -566,7 +570,7 @@ run_stage1_case() {
   store_lease "$lease"
   output="$(run_aws "$SWEEPER" env "$env_id")"
   grep -Fq "$expected_fragment" <<< "$output" || fail "missing Stage-1 action output for $env_id"
-  [ "$(cat "$tmp_dir/close-calls.log")" = "--generation $generation --from $status $env_id" ] || \
+  [ "$(cat "$tmp_dir/close-calls.log")" = "--owner test-owner --generation $generation --from $status $env_id" ] || \
     fail "Stage 1 must pass its classified generation and status without --force-retry"
 }
 run_stage1_case stale-open "stage 1"
@@ -621,7 +625,7 @@ non_task_pending_output="$(FAKE_SCENARIO_FILE="$non_task_pending_fixture" \
 non_task_pending_lease="$(run_aws "$LEASE" get non-task)"
 grep -Fq 'running stage 1 for non-task (stage1-retry)' <<< "$non_task_pending_output" || \
   fail "pending non-task resource did not classify the closing lease for Stage 1 retry"
-[ "$(cat "$tmp_dir/close-calls.log")" = "--generation 1 --from closing non-task" ] || \
+[ "$(cat "$tmp_dir/close-calls.log")" = "--owner test-owner --generation 1 --from closing non-task" ] || \
   fail "pending non-task Stage 1 retry did not preserve generation and closing status"
 jq -e '.status == "closing" and .stage2_claim == null' <<< "$non_task_pending_lease" >/dev/null || \
   fail "pending non-task classification mutated the lease"
@@ -722,7 +726,7 @@ set -e
 young_claim_before="$(cat "$fake_s3/leases_aws-pending.json.body")"
 set +e
 missing_takeover_output="$(run_aws "$LEASE" claim-stage2 aws-pending \
-  --generation 1 --token prospective-without-takeover 2>&1)"
+  --expect-owner test-owner --generation 1 --token prospective-without-takeover 2>&1)"
 missing_takeover_rc=$?
 set -e
 if [ "$missing_takeover_rc" -ne 3 ] || \
@@ -759,7 +763,7 @@ store_lease "$same_token_seed"
 same_token_before="$(cat "$fake_s3/leases_aws-pending.json.body")"
 set +e
 same_token_output="$(run_aws "$LEASE" claim-stage2 aws-pending \
-  --generation 1 --token same-token --takeover-stale 7200 2>&1)"
+  --expect-owner test-owner --generation 1 --token same-token --takeover-stale 7200 2>&1)"
 same_token_rc=$?
 set -e
 [ "$same_token_rc" -eq 3 ] || fail "same-token Stage-2 takeover must exit 3"
@@ -800,7 +804,7 @@ FAKE_SCENARIO_FILE="$happy_fixture" run_aws_with_recording_lease "$SWEEPER" \
   env aws-happy --expect-owner generation-bound-owner \
   --expect-generation 1 >/dev/null
 if ! grep -Eq \
-    '^claim-stage2 aws-happy --generation 1 --token [^ ]+ --takeover-stale [0-9]+$' \
+    '^claim-stage2 aws-happy --expect-owner [^ ]+ --generation 1 --token [^ ]+ --takeover-stale [0-9]+$' \
     "$tmp_dir/lease-argv.log"; then
   fail "generation-bound sweep did not pass expected generation 1 to claim-stage2"
 fi
@@ -826,13 +830,13 @@ set +e
     fail "sweep.sh library seam SCRIPT_DIR does not end in /scripts: $SCRIPT_DIR"
   [ -f "$SCRIPT_DIR/close-env.sh" ] || \
     fail "sweep.sh library seam close-env.sh is missing: $SCRIPT_DIR/close-env.sh"
-  stage2 aws-happy '{"generation":2}' 1 >/dev/null 2>&1
+  stage2 aws-happy '{"generation":2,"owner":"probe-owner"}' 1 >/dev/null 2>&1
 )
 stage2_probe_rc=$?
 set -e
 if [ "$stage2_probe_rc" -ne 3 ] || \
    ! grep -Eq \
-     '^claim-stage2 aws-happy --generation 1 --token [^ ]+ --takeover-stale [0-9]+$' \
+     '^claim-stage2 aws-happy --expect-owner [^ ]+ --generation 1 --token [^ ]+ --takeover-stale [0-9]+$' \
      "$tmp_dir/stage2-probe.log"; then
   fail "Stage 2 did not override the initial lease generation with expected generation 1"
 fi
@@ -1455,7 +1459,7 @@ grep -Fq 'generation tombstone' <<< "$tombstone_output" || \
 if grep -q '^s3api put-object ' "$tmp_dir/aws-calls.log"; then
   fail "generation tombstone skip attempted a write"
 fi
-reopened_after_prune="$(run_aws "$LEASE" open prune-old)"
+reopened_after_prune="$(run_aws "$LEASE" open prune-old --owner test-owner)"
 jq -e '.status == "open" and .generation == 2' <<< "$reopened_after_prune" >/dev/null || \
   fail "prune tombstone did not reopen at generation two"
 run_aws "$SWEEPER" env closed-seven >/dev/null

@@ -9,7 +9,11 @@ cp "$REPO_ROOT/Makefile" "$isolated_repo/Makefile"
 cp "$REPO_ROOT/bootstrap/localstack.backend_override.tf.example" "$isolated_repo/bootstrap/"
 override_file="$isolated_repo/bootstrap/backend_override.tf"
 terraform_log="$tmp_dir/terraform-calls.log"
-trap 'rm -rf -- "$tmp_dir"' EXIT
+cleanup() {
+  chmod 700 "$isolated_repo/bootstrap" 2>/dev/null || true
+  rm -rf -- "$tmp_dir"
+}
+trap cleanup EXIT
 
 cat > "$tmp_dir/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
@@ -36,11 +40,13 @@ pass() {
 }
 
 run_make() {
+  local make_args=(-s -C "$isolated_repo" "$3" TARGET=localstack OPERATOR_CIDR=203.0.113.0/24)
+  [ -z "${MAKE_SHELL:-}" ] || make_args+=("SHELL=$MAKE_SHELL")
   PATH="$tmp_dir/bin:$PATH" \
     FAKE_TERRAFORM_CALL_LOG="$terraform_log" \
     FAKE_TERRAFORM_FAIL_STAGE="$1" \
     FAKE_TERRAFORM_FAIL_RC="$2" \
-    make -s -C "$isolated_repo" "$3" TARGET=localstack OPERATOR_CIDR=203.0.113.0/24
+    make "${make_args[@]}"
 }
 
 sentinel="$tmp_dir/operator-owned-override.tf"
@@ -83,6 +89,63 @@ for target in bootstrap-plan bootstrap-apply; do
     exit 1
   fi
   pass "$target dangling override refusal"
+  rm -f "$override_file"
+done
+
+for target in bootstrap-plan bootstrap-apply; do
+  : > "$terraform_log"
+  chmod 500 "$isolated_repo/bootstrap"
+  set +e
+  output="$(run_make none 41 "$target" 2>&1)"
+  rc=$?
+  set -e
+  chmod 700 "$isolated_repo/bootstrap"
+  if [ "$rc" -eq 0 ] || ! grep -Fq 'Permission denied' <<< "$output" || \
+     grep -Fq 'already exists' <<< "$output"; then
+    echo "$target must surface the noclobber permission error: $output" >&2
+    exit 1
+  fi
+  if [ -s "$terraform_log" ] || [ -e "$override_file" ] || [ -L "$override_file" ]; then
+    echo "$target permission failure must make zero Terraform calls and leave no override" >&2
+    exit 1
+  fi
+  pass "$target noclobber permission failure"
+done
+
+race_shell="$tmp_dir/race-shell"
+cat > "$race_shell" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = -c ] || exec /bin/sh "$@"
+script=$2
+needle='if ! ( set -C; : > "$dst" ) 2>"$noclobber_err"; then'
+replacement=': > "$RACE_OVERRIDE_FILE"; if ! ( set -C; : > "$dst" ) 2>"$noclobber_err"; then'
+mutated=${script/"$needle"/"$replacement"}
+[ "$mutated" = "$script" ] || : > "$RACE_MARKER_FILE"
+exec /bin/sh -c "$mutated"
+EOF
+chmod +x "$race_shell"
+
+for target in bootstrap-plan bootstrap-apply; do
+  : > "$terraform_log"
+  race_marker="$tmp_dir/$target-race-marker"
+  set +e
+  output="$(RACE_OVERRIDE_FILE="$override_file" RACE_MARKER_FILE="$race_marker" \
+    MAKE_SHELL="$race_shell" \
+    run_make none 41 "$target" 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] || \
+     ! grep -Fq 'bootstrap/backend_override.tf already exists; refusing to overwrite or remove it' \
+       <<< "$output"; then
+    echo "$target must classify a noclobber create race as already existing: $output" >&2
+    exit 1
+  fi
+  if [ -s "$terraform_log" ] || [ ! -f "$override_file" ] || [ ! -f "$race_marker" ]; then
+    echo "$target create race must hit the noclobber guard, preserve the raced-in override, and make zero Terraform calls" >&2
+    exit 1
+  fi
+  pass "$target noclobber create race"
   rm -f "$override_file"
 done
 
