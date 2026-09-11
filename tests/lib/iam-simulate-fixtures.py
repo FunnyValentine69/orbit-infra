@@ -656,7 +656,13 @@ def _fake_aws():
         _save_state(path, state)
         if not state['policy'] or state['readback_attempts'] <= scenario.get('propagation_delay_calls', 0):
             _fake_error({'error': 'NoSuchEntity', 'exit': 254}, operation)
-        sys.stdout.write(state['policy_document'] + '\n')
+        response = {'PolicyDocument': json.loads(state['policy_document'])}
+        if _option(options, '--query') == ['PolicyDocument']:
+            response = response['PolicyDocument']
+        if _option(options, '--output') == ['json']:
+            print(json.dumps(response, sort_keys=True, separators=(',', ':')))
+        else:
+            print(str(response))
     elif (service, operation) == ('iam', 'simulate-principal-policy'):
         if '--resource-arns' in options and not _option(options, '--resource-arns'):
             raise SystemExit('FAIL: fake simulate-principal-policy received --resource-arns with zero values')
@@ -1423,11 +1429,19 @@ def _command_mutate_role_source_logic():
     root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
     if source.count(root_line) != 1: raise SystemExit('FAIL: role source mutation root anchor changed')
     source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[4])}', 1)
-    anchors = {'partition': ('"aws_iam_role_policy.plan_reader_state": "plan-reader",', '"aws_iam_role_policy.plan_reader_state": "publisher",'), 'concatenation': ('            statements.append(statement)', '            statements.insert(0, statement)'), 'hash': ('            "policy_sha256": core.document_sha256(policy),', '            "policy_sha256": "0" * 64,')}
-    if mutation not in anchors: raise SystemExit(f'FAIL: unknown role source mutation: {mutation}')
-    old, new = anchors[mutation]
-    if source.count(old) != 1: raise SystemExit(f'FAIL: role source {mutation} mutation anchor changed')
-    destination.write_text(source.replace(old, new, 1), encoding='utf-8')
+    builder_call = '    projection_specs = core.build_role_projections(documents, selected_roles)'
+    insertions = {
+        'partition': '    projection_specs[0]["source_documents"].reverse()',
+        'concatenation': '''    mutated_policy = json.loads(projection_specs[0]["policy_document"])
+    mutated_policy["Statement"].reverse()
+    projection_specs[0]["policy_document"] = json.dumps(mutated_policy, separators=(",", ":"))
+    projection_specs[0]["policy_sha256"] = core.document_sha256(projection_specs[0]["policy_document"])''',
+        'hash': '    projection_specs[0]["policy_sha256"] = "0" * 64',
+    }
+    if mutation not in insertions: raise SystemExit(f'FAIL: unknown role source mutation: {mutation}')
+    if source.count(builder_call) != 1: raise SystemExit(f'FAIL: role source {mutation} mutation anchor changed')
+    replacement = f'{builder_call}\n{insertions[mutation]}'
+    destination.write_text(source.replace(builder_call, replacement, 1), encoding='utf-8')
     destination.chmod(493)
 def _command_mutate_role_divergence_report():
     payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
@@ -1955,6 +1969,9 @@ def _command_mutate_renderer_role_outcome():
         details.append(deepcopy(details[0]))
     elif mutation == 'malformed-details':
         details[0] = 'not-an-object'
+    elif mutation == 'empty-pairs':
+        details.clear()
+        record['custom_lane']['details'] = []
     elif mutation == 'substituted-resource':
         details[0]['resource_arn'] = 'arn:aws:s3:::orbit-infra-fixture-substituted'
     else:
@@ -2109,6 +2126,37 @@ def _command_mutate_evidence_hash_chain():
         provenance_path, 'role report sha256', hashlib.sha256(role_out.read_bytes()).hexdigest()
     )
     print(case_id)
+
+
+def _command_mutate_role_projection_source_binding():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    payload = json.loads(source_path.read_text(encoding='utf-8'))
+    projection = next(
+        item for item in payload['projection']['roles']
+        if item.get('projection_id') == 'plan-reader:combined'
+    )
+    policy = json.loads(projection['policy_document'])
+    statements = policy['Statement']
+    if isinstance(statements, dict):
+        statements = [statements]
+    statements[0]['Effect'] = 'Allow' if statements[0].get('Effect') != 'Allow' else 'Deny'
+    policy['Statement'] = statements
+    policy_document = json.dumps(policy, separators=(',', ':'))
+    policy_sha256 = hashlib.sha256(policy_document.encode('utf-8')).hexdigest()
+    projection['policy_document'] = policy_document
+    projection['policy_sha256'] = policy_sha256
+    for record in payload['records']:
+        if record.get('projection', {}).get('projection_id') != projection['projection_id']:
+            continue
+        record['projection']['policy_sha256'] = policy_sha256
+        put_hashes = record.get('document_hashes_submitted', {}).get('put_role_policy', [])
+        for entry in put_hashes:
+            entry['sha256'] = policy_sha256
+    destination.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+    )
+    print(projection['projection_id'])
 
 
 def _command_mutate_renderer_recording():
@@ -2305,7 +2353,7 @@ def _command_validate_role_propagation():
             call = calls[cursor]
             if call[:2] != ['iam', 'get-role-policy'] or _option(call, '--role-name') != [name]:
                 raise SystemExit(f'FAIL: propagation readback ordering differs: {projection_id}')
-            if _option(call, '--policy-name') != [role['policy_name']] or _option(call, '--query') != ['PolicyDocument'] or _option(call, '--output') != ['text']:
+            if _option(call, '--policy-name') != [role['policy_name']] or _option(call, '--query') != ['PolicyDocument'] or _option(call, '--output') != ['json']:
                 raise SystemExit(f'FAIL: propagation readback call shape differs: {projection_id}')
             cursor += 1
         expected_actions = readiness['action_names']
@@ -2386,6 +2434,87 @@ def _command_mutate_role_propagation_retry():
     source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
     destination.write_text(source.replace(retry_loop, 'for ((attempt = 1; attempt <= 1; attempt++)); do', 1), encoding='utf-8')
     destination.chmod(493)
+
+
+def _command_mutate_role_readback_raw():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    output_json = '--policy-name "$POLICY_NAME" --query PolicyDocument --output json'
+    output_text = '--policy-name "$POLICY_NAME" --query PolicyDocument --output text'
+    strict = """compare_readback_policy() {
+  python3 - "$1" "$2" <<'PY_READBACK'
+import json
+import sys
+
+try:
+    observed = json.loads(sys.argv[1])
+    submitted = json.loads(sys.argv[2])
+except json.JSONDecodeError as exc:
+    print(f"inline policy readback is not valid JSON: {exc}")
+    raise SystemExit(1)
+if observed != submitted:
+    print("inline policy readback differs from submitted document")
+    raise SystemExit(1)
+PY_READBACK
+}"""
+    mutant = """compare_readback_policy() {
+  if [ "$1" = "$2" ]; then
+    return 0
+  fi
+  echo "inline policy readback differs from submitted document"
+  return 1
+}"""
+    current = """    call_capture iam get-role-policy --role-name "$ROLE_NAME" \
+      --policy-name "$POLICY_NAME" --query PolicyDocument --output text
+    if [ "$CALL_RC" -eq 0 ] && [ "$CALL_OUTPUT" = "$POLICY_DOCUMENT" ]; then
+      return 0
+    fi
+    READBACK_LAST_ERROR=$CALL_ERROR"""
+    current_mutant = """    call_capture iam get-role-policy --role-name "$ROLE_NAME" \
+      --policy-name "$POLICY_NAME" --query PolicyDocument --output text
+    if [ "$CALL_RC" -eq 0 ]; then
+      if [ "$CALL_OUTPUT" = "$POLICY_DOCUMENT" ]; then
+        return 0
+      fi
+      READBACK_LAST_ERROR="inline policy readback differs from submitted document"
+    else
+      READBACK_LAST_ERROR=$CALL_ERROR
+    fi"""
+    if source.count(root_line) != 1:
+        raise SystemExit('FAIL: role readback root anchor changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
+    if source.count(output_json) == 1 and source.count(strict) == 1:
+        source = source.replace(output_json, output_text, 1).replace(strict, mutant, 1)
+    elif source.count(current) == 1:
+        source = source.replace(current, current_mutant, 1)
+    else:
+        raise SystemExit('FAIL: role readback mutation anchor changed')
+    destination.write_text(source, encoding='utf-8')
+    destination.chmod(0o755)
+
+
+def _command_mutate_role_retry_base_cap():
+    source = Path(sys.argv[1]).read_text(encoding='utf-8')
+    destination = Path(sys.argv[2])
+    root_line = 'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"'
+    strict = """if ! [[ "$retry_base_seconds" =~ ^[0-9]+$ ]] || [ "$retry_base_seconds" -gt 30 ]; then
+  echo "FAIL: IAM_SIM_RETRY_BASE_SECONDS must be an integer from 0 through 30" >&2
+  exit 2
+fi"""
+    mutant = """if ! [[ "$retry_base_seconds" =~ ^[0-9]+$ ]]; then
+  echo "FAIL: IAM_SIM_RETRY_BASE_SECONDS must be a non-negative integer" >&2
+  exit 2
+fi"""
+    if source.count(root_line) != 1:
+        raise SystemExit('FAIL: role retry-base root anchor changed')
+    source = source.replace(root_line, f'REPO_ROOT={shlex.quote(sys.argv[3])}', 1)
+    if source.count(strict) == 1:
+        source = source.replace(strict, mutant, 1)
+    elif source.count(mutant) != 1:
+        raise SystemExit('FAIL: role retry-base mutation anchor changed')
+    destination.write_text(source, encoding='utf-8')
+    destination.chmod(0o755)
 
 
 COMMANDS = {

@@ -172,10 +172,16 @@ evidence-role-hash-custom-to-role	mutate_evidence_hash_chain:custom-to-role	FAIL
 evidence-role-hash-source-document	mutate_evidence_hash_chain:source-document	FAIL: Evidence role hash chain source-document mismatch for case:
 evidence-role-hash-projection-policy	mutate_evidence_hash_chain:projection-policy	FAIL: Evidence role hash chain projection-policy mismatch for case:
 evidence-role-hash-put-role-policy	mutate_evidence_hash_chain:put-role-policy	FAIL: Evidence role hash chain put-role-policy mismatch for case:
+evidence-role-projection-source-binding	mutate_role_projection_source_binding	FAIL: role projection source policy differs for plan-reader:combined
+evidence-generator-runner-drift-scope	mutate_generator_drift_scope	FAIL: Evidence generator drift scope omits scripts/iam-simulate.sh
 role-lane-empty-resource-list	mutate_role_empty_resources	FAIL: SCP-excluded principal simulation failed for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching: FAIL: fake simulate-principal-policy received --resource-arns with zero values
 role-lane-propagation-retry	mutate_role_propagation_retry	FAIL: inline policy readback propagation exhausted for
+role-lane-readback-canonical-json	mutate_role_readback_raw	FAIL: inline policy readback propagation exhausted for orbit-iam-sim-fixture-run-plan-reader after 5 attempts: inline policy readback differs from submitted document
 role-lane-readback-exhaustion-reason	run_role_propagation_exhaustion:readback	FAIL: inline policy readback propagation exhausted for orbit-iam-sim-fixture-run-plan-reader after 5 attempts: An error occurred (NoSuchEntity) when calling the GetRolePolicy operation
 role-lane-readiness-exhaustion-reason	run_role_propagation_exhaustion:readiness	FAIL: inline policy readiness probe propagation exhausted for orbit-iam-sim-fixture-run-plan-reader after 5 attempts: FAIL: readiness decision does not match the selected case
+role-lane-retry-base-cap	mutate_role_retry_base_cap	FAIL: role lane retry-base mutant accepted 31 seconds
 artifact-hygiene-field-scoped-hex	mutate_artifact_hygiene_field_scope	FAIL: artifact hygiene field-scoped hex mutant accepted non-digest value
 evidence-generator-commit-unknown	mutate_generator_commit:unknown	FAIL: Evidence generator commit is unknown:
 evidence-generator-commit-stale	mutate_generator_commit:stale	FAIL: Evidence generator drift since generator commit:
+renderer-present-malformed-recorded-at	mutate_report_renderer:legacy-recorded-at	FAIL: renderer accepted present non-string recorded_at as legacy
+renderer-role-outcome-empty-pairs	mutate_renderer_role_outcome:empty-pairs	FAIL: role record

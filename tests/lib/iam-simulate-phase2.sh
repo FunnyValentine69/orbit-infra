@@ -1065,7 +1065,7 @@ run_phase2_role_lane() {
     FAKE_ROLE_INJECTION_SUFFIX="${IAM_SIM_TEST_ROLE_INJECTION_SUFFIX:-}" \
     IAM_SIM_RUN_ID="$test_run_id" \
     IAM_SIM_CORE="${IAM_SIM_TEST_CORE:-$IAM_SIM_CORE}" \
-    IAM_SIM_RETRY_BASE_SECONDS=0 \
+    IAM_SIM_RETRY_BASE_SECONDS="${IAM_SIM_RETRY_BASE_SECONDS:-0}" \
     TARGET=aws \
     "$test_role_lane" --plan "$test_plan" --vectors "$test_vectors" \
       --report "$test_report" --expect-account "$test_account" \
@@ -1394,6 +1394,16 @@ mutate_role_propagation_retry() {
     "$@" "$REPO_ROOT"
 }
 
+mutate_role_readback_raw() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-readback-raw \
+    "$@" "$REPO_ROOT"
+}
+
+mutate_role_retry_base_cap() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-retry-base-cap \
+    "$@" "$REPO_ROOT"
+}
+
 run_full_scale_role_dry_run() {
   local role_lane=$1
   local output_path=$2
@@ -1582,7 +1592,7 @@ run_iam_simulate_role_lane_contracts() {
   local principal_mutant principal_report
   local per_pair_report role_decision_report trust_restored_report
   local propagation_report propagation_mutant allowed_case deny_case
-  local authorization_case
+  local authorization_case readback_mutant readback_report retry_mutant
   echo "== iam simulate contracts: ROLE-LANE =="
   group_failures=$failures
 
@@ -1591,6 +1601,33 @@ run_iam_simulate_role_lane_contracts() {
   else
     run_sid_contracts role-lane
     run_role_plan_guard_contracts
+
+    reset_phase2_fake
+    set +e
+    output="$(IAM_SIM_RETRY_BASE_SECONDS=31 run_phase2_role_lane success --dry-run 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 2 ] && [ "$output" = "FAIL: IAM_SIM_RETRY_BASE_SECONDS must be an integer from 0 through 30" ]; then
+      pass_case "role-lane refuses retry base above 30"
+    else
+      fail_case "role-lane retry base above-cap refusal" "rc=$rc output=$output"
+    fi
+    reset_phase2_fake
+    if output="$(IAM_SIM_RETRY_BASE_SECONDS=30 run_phase2_role_lane success --dry-run 2>&1)"; then
+      pass_case "role-lane accepts retry base boundary 30"
+    else
+      fail_case "role-lane retry base boundary 30" "$output"
+    fi
+    retry_mutant="$phase2_dir/iam-simulate-roles-retry-cap-mutant.sh"
+    dispatch_registered_mutation role-lane-retry-base-cap \
+      "$IAM_SIM_ROLE_LANE" "$retry_mutant"
+    reset_phase2_fake
+    if output="$(IAM_SIM_RETRY_BASE_SECONDS=31 IAM_SIM_TEST_ROLE_LANE="$retry_mutant" \
+      run_phase2_role_lane success --dry-run 2>&1)"; then
+      pass_case "role-lane retry base cap mutation -> FAIL: role lane retry-base mutant accepted 31 seconds"
+    else
+      fail_case "role-lane retry base cap mutation did not restore the unbounded value" "$output"
+    fi
 
     if output="$(validate_readiness_inventory \
       "$REPO_ROOT/tests/fixtures/iam-simulate/vectors" \
@@ -2128,6 +2165,26 @@ run_iam_simulate_role_lane_contracts() {
       fail_case "role-lane projects fitting roles combined and deployer in six complete passes" \
         "rc=$rc output=$output"
     fi
+
+    readback_report="$phase2_dir/role-readback-canonical-report.json"
+    reset_phase2_fake
+    if output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+      IAM_SIM_RETRY_BASE_SECONDS=0 \
+      IAM_SIM_TEST_ROLE_REPORT="$readback_report" \
+      run_phase2_role_lane success 2>&1)"; then
+      pass_case "role-lane compares CLI-decoded readback as canonical JSON"
+    else
+      fail_case "role-lane canonical JSON readback" "$output"
+    fi
+    readback_mutant="$phase2_dir/iam-simulate-roles-readback-raw-mutant.sh"
+    dispatch_registered_mutation role-lane-readback-canonical-json \
+      "$IAM_SIM_ROLE_LANE" "$readback_mutant"
+    reset_phase2_fake
+    IAM_SIM_TEST_ROLE_LANE="$readback_mutant" \
+      IAM_SIM_RETRY_BASE_SECONDS=0 \
+      expect_role_failure "role-lane readback canonical json" \
+        "inline policy readback propagation exhausted for orbit-iam-sim-fixture-run-plan-reader after 5 attempts: inline policy readback differs from submitted document" \
+        success
 
     propagation_report="$phase2_dir/role-propagation-full-report.json"
     reset_phase2_fake
@@ -2799,6 +2856,10 @@ mutate_evidence_hash_chain() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-evidence-hash-chain "$@" "$submode"
 }
 
+mutate_role_projection_source_binding() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-projection-source-binding "$@"
+}
+
 mutate_renderer_recording() {
   local submode=$1
   shift
@@ -2829,6 +2890,12 @@ run_renderer_date_refusal() {
     malformed)
       IAM_SIM_REPORT_REPO_ROOT="$REPO_ROOT" "$renderer" \
         --custom-report "$custom_report" --recorded-on 2026/09/10 \
+        --out-dir "$out_dir"
+      ;;
+    present-nonstring)
+      jq '.recorded_at = 42' "$custom_report" >"$mixed_custom"
+      IAM_SIM_REPORT_REPO_ROOT="$REPO_ROOT" "$renderer" \
+        --custom-report "$mixed_custom" --recorded-on 2026-09-10 \
         --out-dir "$out_dir"
       ;;
     *) echo "FAIL: unknown renderer date refusal mutation: $submode" >&2; return 1 ;;
@@ -2881,14 +2948,22 @@ replacements = {
         "        if matches(record):",
         '        if record.get("pass"):',
     ),
+    "legacy-recorded-at": (
+        'recorded_values = [\n    report["recorded_at"] if "recorded_at" in report else None\n    for _, report in supplied_reports\n]\nmodern = ["recorded_at" in report for _, report in supplied_reports]',
+        'recorded_values = [report.get("recorded_at") for _, report in supplied_reports]\nmodern = [isinstance(value, str) for value in recorded_values]',
+    ),
 }
 old, new = replacements[mutation]
-if source.count(old) != 1:
-    raise SystemExit(
-        f"FAIL: renderer mutation anchor count for {mutation} is "
-        f"{source.count(old)}, expected 1"
-    )
-output_path.write_text(source.replace(old, new), encoding="utf-8")
+if mutation == "legacy-recorded-at" and source.count(old) == 0 and source.count(new) == 1:
+    mutated = source
+else:
+    if source.count(old) != 1:
+        raise SystemExit(
+            f"FAIL: renderer mutation anchor count for {mutation} is "
+            f"{source.count(old)}, expected 1"
+        )
+    mutated = source.replace(old, new)
+output_path.write_text(mutated, encoding="utf-8")
 PY
   chmod +x "$output"
 }
@@ -3072,6 +3147,7 @@ run_iam_simulate_report_contracts() {
   local role_outcome role_outcome_case role_outcome_report role_outcome_out
   local structural_diagnostic expectation_mutation expectation_report
   local expectation_label expectation_diagnostic date_case date_label date_diagnostic
+  local legacy_recorded_at_mutant="$phase2_dir/iam-simulate-report-legacy-recorded-at.sh"
   local bad_field_hex="$phase2_dir/bad-nondigest-hex.json"
   local field_scope_mutant="$phase2_dir/artifact-hygiene-field-scope-mutant.sh"
 
@@ -3280,7 +3356,7 @@ PY_FIELD_HEX
     fi
 
 
-    for role_outcome in decision deleted-pair duplicate-pair malformed-details substituted-resource; do
+    for role_outcome in decision deleted-pair duplicate-pair malformed-details empty-pairs substituted-resource; do
       role_outcome_report="$phase2_dir/renderer-role-$role_outcome.json"
       role_outcome_out="$phase2_dir/renderer-role-$role_outcome-out"
       role_outcome_case="$(dispatch_registered_mutation \
@@ -3294,6 +3370,9 @@ PY_FIELD_HEX
           ;;
         malformed-details)
           structural_diagnostic="role record $role_outcome_case scp_excluded details[0] must be an object"
+          ;;
+        empty-pairs)
+          structural_diagnostic="role record $role_outcome_case custom_lane details must not be empty"
           ;;
       esac
       if [ -n "$structural_diagnostic" ]; then
@@ -3470,6 +3549,28 @@ PY
         run_report_renderer "$IAM_SIM_REPORT_RENDERER" "$clean_custom" \
           "$expectation_report" "$phase2_dir/rendered-$expectation_mutation"
     done
+
+    set +e
+    output="$(run_renderer_date_refusal present-nonstring \
+      "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$clean_role" \
+      "$phase2_dir/rendered-present-nonstring" 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq "FAIL: custom report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ" <<<"$output"; then
+      pass_case "renderer rejects a present non-string recorded_at"
+    else
+      fail_case "renderer present non-string recorded_at refusal" "rc=$rc output=$output"
+    fi
+    dispatch_registered_mutation renderer-present-malformed-recorded-at \
+      "$legacy_recorded_at_mutant"
+    if output="$(run_renderer_date_refusal present-nonstring \
+      "$legacy_recorded_at_mutant" "$clean_custom" "$clean_role" \
+      "$phase2_dir/rendered-present-nonstring-mutant" 2>&1)"; then
+      pass_case "renderer present malformed recorded at mutation -> FAIL: renderer accepted present non-string recorded_at as legacy"
+    else
+      fail_case "renderer present malformed recorded at mutation did not downgrade to legacy" "$output"
+    fi
 
     while IFS='|' read -r date_case date_label date_diagnostic; do
       expect_failure "$date_label" "$date_diagnostic" \

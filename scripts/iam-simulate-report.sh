@@ -338,6 +338,8 @@ def custom_matches(record):
 def detail_pairs(details, label):
     if not isinstance(details, list):
         fail(f"{label} details must be an array")
+    if not details:
+        fail(f"{label} details must not be empty")
     pairs = set()
     for index, detail in enumerate(details):
         if not isinstance(detail, dict):
@@ -425,19 +427,22 @@ if role is not None:
 supplied_reports = [("custom", custom)]
 if role is not None:
     supplied_reports.append(("role", role))
-recorded_values = [report.get("recorded_at") for _, report in supplied_reports]
-modern = [isinstance(value, str) for value in recorded_values]
+recorded_values = [
+    report["recorded_at"] if "recorded_at" in report else None
+    for _, report in supplied_reports
+]
+modern = ["recorded_at" in report for _, report in supplied_reports]
 if any(modern):
     if not all(modern):
         fail("all supplied reports must carry recorded_at or all must be legacy")
-    if recorded_on_override:
-        fail("--recorded-on is only valid for legacy reports without recorded_at")
     parsed = []
     for (label, _), value in zip(supplied_reports, recorded_values):
         try:
             parsed.append(datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
         except (TypeError, ValueError):
             fail(f"{label} report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ")
+    if recorded_on_override:
+        fail("--recorded-on is only valid for legacy reports without recorded_at")
     if role is not None:
         if parsed[1] < parsed[0]:
             fail("role report recorded_at precedes custom report recorded_at")

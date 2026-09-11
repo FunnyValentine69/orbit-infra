@@ -18,6 +18,14 @@ ROLE_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/iam-simulation-role-report.json"
 RENDERED_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/IAM_SIMULATION_REPORT.md"
 EVIDENCE_PROVENANCE="$REPO_ROOT/docs/assets/IAM_SIMULATION_PROVENANCE.md"
 EVIDENCE_POINTER="docs/assets/IAM_SIMULATION_REPORT.md"
+IAM_SIM_CORE="$REPO_ROOT/scripts/iam_simulate_core.py"
+EVIDENCE_GENERATOR_FILES=(
+  "scripts/iam-simulate.sh"
+  "scripts/iam-simulate-roles.sh"
+  "scripts/iam-simulate-report.sh"
+  "scripts/iam_simulate_core.py"
+  "scripts/artifact-hygiene.sh"
+)
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-simulate.XXXXXX")"
 results="$tmp_dir/results.txt"
 mutation_observations="$tmp_dir/mutation-observations.txt"
@@ -289,6 +297,51 @@ mutate_evidence_role_check() {
     mutate-evidence-role-check "$1" "$2" "$submode"
 }
 
+validate_generator_drift_scope() {
+  local required candidate
+  for required in scripts/iam-simulate.sh scripts/iam-simulate-roles.sh; do
+    for candidate in "$@"; do
+      if [ "$candidate" = "$required" ]; then
+        continue 2
+      fi
+    done
+    echo "FAIL: Evidence generator drift scope omits $required" >&2
+    return 1
+  done
+}
+
+mutate_generator_drift_scope() {
+  validate_generator_drift_scope \
+    scripts/iam-simulate-report.sh \
+    scripts/iam_simulate_core.py \
+    scripts/artifact-hygiene.sh
+}
+
+validate_plan_role_projections() {
+  python3 - "$IAM_SIM_CORE" "$1" "$2" <<'PY_ROLE_PROJECTIONS'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+core_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("iam_simulate_core_projection_contract", core_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"FAIL: cannot load IAM simulator core: {core_path}")
+core = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = core
+spec.loader.exec_module(core)
+plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+role_report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+try:
+    count = core.validate_role_report_projections(plan, role_report)
+except core.RunnerFailure as exc:
+    raise SystemExit(f"FAIL: {exc}") from exc
+print(f"PASS: IAM simulation role projections bind to plan source bytes ({count} projections)")
+PY_ROLE_PROJECTIONS
+}
+
 run_iam_matrix_evidence_mutation() {
   local submode=$1 custom_report=$2
   case "$submode" in
@@ -313,7 +366,8 @@ validate_evidence_join() {
   local matrix=$1 custom_report=$2 role_report=$3 rendered_report=$4 provenance=$5
   python3 - \
     "$matrix" "$VECTORS" "$custom_report" "$role_report" \
-    "$rendered_report" "$provenance" "$EVIDENCE_POINTER" "$REPO_ROOT" <<'PY_EVIDENCE'
+    "$rendered_report" "$provenance" "$EVIDENCE_POINTER" "$REPO_ROOT" \
+    "${EVIDENCE_GENERATOR_FILES[@]}" <<'PY_EVIDENCE'
 from __future__ import annotations
 
 from collections import defaultdict
@@ -568,6 +622,7 @@ rendered_path = Path(sys.argv[5])
 provenance_path = Path(sys.argv[6])
 expected_pointer = sys.argv[7]
 repo_root = Path(sys.argv[8])
+generator_files = sys.argv[9:]
 custom_records = load_records(custom_path, "custom evidence report")
 role_records = load_records(role_path, "role evidence report")
 role_payload = load_json(role_path, "role evidence report")
@@ -660,9 +715,7 @@ for name, recorded_digest in provenance_digests.items():
 if provenance_digests and subprocess.run(
     [
         "git", "diff", "--quiet", generator_commit, "HEAD", "--",
-        "scripts/iam-simulate-report.sh",
-        "scripts/iam_simulate_core.py",
-        "scripts/artifact-hygiene.sh",
+        *generator_files,
     ],
     cwd=repo_root,
 ).returncode != 0:
@@ -1472,6 +1525,38 @@ fi
 
 echo "== iam simulate contracts: EVIDENCE =="
 group_failures=$failures
+if output="$(validate_generator_drift_scope "${EVIDENCE_GENERATOR_FILES[@]}" 2>&1)"; then
+  pass_case "Evidence generator drift scope includes both simulator runners"
+else
+  fail_case "Evidence generator runner drift scope" "$output"
+fi
+expect_failure "evidence generator runner drift scope" \
+  "Evidence generator drift scope omits scripts/iam-simulate.sh" \
+  dispatch_registered_mutation evidence-generator-runner-drift-scope
+
+if output="$(validate_plan_role_projections \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
+  pass_case "${output#PASS: }"
+else
+  fail_case "IAM simulation role projections bind to plan source bytes" "$output"
+fi
+projection_mutant="$tmp_dir/role-projection-source-binding-mutant.json"
+projection_id="$(dispatch_registered_mutation \
+  evidence-role-projection-source-binding \
+  "$ROLE_EVIDENCE_REPORT" "$projection_mutant")"
+expect_failure "evidence role projection source binding" \
+  "role projection source policy differs for $projection_id" \
+  validate_plan_role_projections \
+    "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$projection_mutant"
+if output="$(validate_plan_role_projections \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
+  pass_case "evidence role projection source binding mutation restored PASS"
+else
+  fail_case "evidence role projection source binding mutation restoration" "$output"
+fi
+
 if output="$(
   validate_evidence_join \
     "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \

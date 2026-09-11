@@ -62,8 +62,8 @@ if ! [[ "$run_id" =~ ^[A-Za-z0-9+=,.@_-]{1,32}$ ]]; then
   exit 2
 fi
 retry_base_seconds="${IAM_SIM_RETRY_BASE_SECONDS:-1}"
-if ! [[ "$retry_base_seconds" =~ ^[0-9]+$ ]]; then
-  echo "FAIL: IAM_SIM_RETRY_BASE_SECONDS must be a non-negative integer" >&2
+if ! [[ "$retry_base_seconds" =~ ^[0-9]+$ ]] || [ "$retry_base_seconds" -gt 30 ]; then
+  echo "FAIL: IAM_SIM_RETRY_BASE_SECONDS must be an integer from 0 through 30" >&2
   exit 2
 fi
 tag_key=OrbitIamSimulationRun
@@ -270,22 +270,12 @@ case_ids = [vector["case_id"] for vector in vectors]
 if len(case_ids) != len(set(case_ids)):
     fail("vector directory repeats a case_id")
 
-role_for_document = {
-    "aws_iam_role_policy.plan_reader_deny": "plan-reader",
-    "aws_iam_role_policy.plan_reader_state": "plan-reader",
-    "aws_iam_policy.deployer_state": "deployer",
-    "aws_iam_policy.deployer_ec2": "deployer",
-    "aws_iam_policy.deployer_elb_ecs": "deployer",
-    "aws_iam_policy.deployer_data": "deployer",
-    "aws_iam_policy.deployer_iam": "deployer",
-    "aws_iam_policy.deployer_guard": "deployer",
-    "aws_iam_role_policy.publisher": "publisher",
-}
+role_for_document = core.ROLE_FOR_DOCUMENT
 exclusions = [{
     "binding": "aws_iam_role_policy_attachment.plan_reader_readonly",
     "reason": "AWS-managed ReadOnlyAccess cannot be represented by the inline role-lane projection",
 }]
-candidate_cases = {role: [] for role in ("plan-reader", "deployer", "publisher")}
+candidate_cases = {role: [] for role in core.ROLE_KINDS}
 for vector in vectors:
     if vector["simulation_mode"] == "custom-isolated":
         exclusions.append({
@@ -305,107 +295,35 @@ for vector in vectors:
         continue
     candidate_cases[role].append(vector)
 
-def combine_documents(role, addresses):
-    versions = set()
-    statements = []
-    seen_sids = {}
-    for address in addresses:
-        try:
-            core.statement_spans(documents[address])
-        except core.RunnerFailure as exc:
-            fail(str(exc))
-        policy = json.loads(documents[address])
-        version = policy.get("Version")
-        if not isinstance(version, str) or not version:
-            fail(f"projected policy document lacks Version: {address}")
-        versions.add(version)
-        raw_statements = policy.get("Statement")
-        if isinstance(raw_statements, dict):
-            raw_statements = [raw_statements]
-        if not isinstance(raw_statements, list) or not raw_statements:
-            fail(f"projected policy document has no statements: {address}")
-        for statement in raw_statements:
-            sid = statement["Sid"]
-            if sid in seen_sids and seen_sids[sid] != address:
-                fail(
-                    f"duplicate Sid {sid} across {seen_sids[sid]} and {address}"
-                )
-            seen_sids[sid] = address
-            statements.append(statement)
-    if len(versions) != 1:
-        fail(f"role {role} policy documents disagree on Version: {sorted(versions)}")
-    return json.dumps(
-        {"Version": next(iter(versions)), "Statement": statements},
-        separators=(",", ":"),
-    )
-
-
-def source_entries(addresses):
-    return [
-        {
-            "address": address,
-            "sha256": core.document_sha256(documents[address]),
-        }
-        for address in addresses
-    ]
-
-
+selected_roles = {role for role in core.ROLE_KINDS if candidate_cases[role]}
+try:
+    projection_specs = core.build_role_projections(documents, selected_roles)
+except core.RunnerFailure as exc:
+    fail(str(exc))
+pass_counts = {
+    role: sum(spec["role_kind"] == role for spec in projection_specs)
+    for role in core.ROLE_KINDS
+}
+pass_indices = {role: 0 for role in core.ROLE_KINDS}
+projection_for_document = {}
 roles = []
-supported = []
-for role in ("plan-reader", "deployer", "publisher"):
-    cases = candidate_cases[role]
-    if not cases:
-        continue
-    role_documents = sorted(
-        address for address, mapped_role in role_for_document.items()
-        if mapped_role == role
-    )
-    combined_policy = combine_documents(role, role_documents)
-    combined_size = len(re.sub(r"\s", "", combined_policy))
-    source_size = sum(len(re.sub(r"\s", "", documents[address])) for address in role_documents)
-    if combined_size <= 10240:
-        pass_specs = [("combined", role_documents, combined_policy)]
-    else:
-        pass_specs = []
-        for address in role_documents:
-            policy = documents[address]
-            policy_size = len(re.sub(r"\s", "", policy))
-            if policy_size > 10240:
-                fail(
-                    f"per-document projection exceeds 10240 characters for {address}: {policy_size}"
-                )
-            pass_specs.append(("per-document", [address], policy))
+for spec in projection_specs:
+    role = spec["role_kind"]
+    pass_indices[role] += 1
+    role_name = f"orbit-iam-sim-{run_id}-{role}"
+    policy_name = f"orbit-iam-sim-{role}"
+    if pass_counts[role] > 1:
+        role_name += f"-p{pass_indices[role]}"
+        policy_name += f"-p{pass_indices[role]}"
+    projection = dict(spec)
+    projection.update({"name": role_name, "policy_name": policy_name})
+    roles.append(projection)
+    for source in projection["source_documents"]:
+        projection_for_document[source["address"]] = projection["projection_id"]
 
-    projection_for_document = {}
-    for pass_index, (projection_kind, source_addresses, policy) in enumerate(pass_specs, 1):
-        projection_id = (
-            f"{role}:combined"
-            if projection_kind == "combined"
-            else f"{role}:{source_addresses[0]}"
-        )
-        role_name = f"orbit-iam-sim-{run_id}-{role}"
-        policy_name = f"orbit-iam-sim-{role}"
-        if len(pass_specs) > 1:
-            role_name += f"-p{pass_index}"
-            policy_name += f"-p{pass_index}"
-        entries = source_entries(source_addresses)
-        roles.append({
-            "role_kind": role,
-            "projection_id": projection_id,
-            "projection_kind": projection_kind,
-            "name": role_name,
-            "policy_name": policy_name,
-            "policy_document": policy,
-            "policy_sha256": core.document_sha256(policy),
-            "policy_character_count": len(re.sub(r"\s", "", policy)),
-            "source_character_count": (
-                source_size if projection_kind == "combined"
-                else len(re.sub(r"\s", "", documents[source_addresses[0]]))
-            ),
-            "source_documents": entries,
-        })
-        for address in source_addresses:
-            projection_for_document[address] = projection_id
+supported = []
+for role in core.ROLE_KINDS:
+    cases = candidate_cases[role]
     for vector in cases:
         vector["temporary_projection_id"] = projection_for_document[vector["document"]]
     supported.extend(cases)
@@ -1014,6 +932,24 @@ PY_READINESS
 }
 
 
+compare_readback_policy() {
+  python3 - "$1" "$2" <<'PY_READBACK'
+import json
+import sys
+
+try:
+    observed = json.loads(sys.argv[1])
+    submitted = json.loads(sys.argv[2])
+except json.JSONDecodeError as exc:
+    print(f"inline policy readback is not valid JSON: {exc}")
+    raise SystemExit(1)
+if observed != submitted:
+    print("inline policy readback differs from submitted document")
+    raise SystemExit(1)
+PY_READBACK
+}
+
+
 wait_for_policy_readback() {
   local attempt delay
   READBACK_ATTEMPTS=0
@@ -1021,11 +957,16 @@ wait_for_policy_readback() {
   for ((attempt = 1; attempt <= 5; attempt++)); do
     READBACK_ATTEMPTS=$attempt
     call_capture iam get-role-policy --role-name "$ROLE_NAME" \
-      --policy-name "$POLICY_NAME" --query PolicyDocument --output text
-    if [ "$CALL_RC" -eq 0 ] && [ "$CALL_OUTPUT" = "$POLICY_DOCUMENT" ]; then
-      return 0
+      --policy-name "$POLICY_NAME" --query PolicyDocument --output json
+    if [ "$CALL_RC" -eq 0 ]; then
+      if READBACK_LAST_ERROR="$(
+        compare_readback_policy "$CALL_OUTPUT" "$POLICY_DOCUMENT" 2>&1
+      )"; then
+        return 0
+      fi
+    else
+      READBACK_LAST_ERROR=$CALL_ERROR
     fi
-    READBACK_LAST_ERROR=$CALL_ERROR
     if [ "$attempt" -lt 5 ]; then
       delay=$((retry_base_seconds * (1 << (attempt - 1))))
       sleep "$delay"

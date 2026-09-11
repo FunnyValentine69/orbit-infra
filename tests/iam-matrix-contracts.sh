@@ -8,7 +8,9 @@ DOC="${IAM_MATRIX_DOC:-$DEFAULT_REPO_ROOT/docs/iam-matrix.md}"
 GENERATOR="$DEFAULT_REPO_ROOT/scripts/iam-matrix-inventory.sh"
 FIXTURES="${IAM_MATRIX_FIXTURES:-$DEFAULT_REPO_ROOT/tests/fixtures/iam-matrix}"
 CUSTOM_EVIDENCE_REPORT="${IAM_MATRIX_CUSTOM_EVIDENCE_REPORT:-$DEFAULT_REPO_ROOT/docs/assets/iam-simulation-custom-report.json}"
+ROLE_EVIDENCE_REPORT="${IAM_MATRIX_ROLE_EVIDENCE_REPORT:-$DEFAULT_REPO_ROOT/docs/assets/iam-simulation-role-report.json}"
 SIMULATOR_VECTORS="${IAM_MATRIX_SIMULATOR_VECTORS:-$DEFAULT_REPO_ROOT/tests/fixtures/iam-simulate/vectors}"
+IAM_SIM_CORE="$DEFAULT_REPO_ROOT/scripts/iam_simulate_core.py"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -1336,6 +1338,28 @@ print(
     f"plan/vector bytes ({len(promoted)} cases)"
 )
 PY_PROMOTED_HASH_PLAN
+    python3 - "$IAM_SIM_CORE" "$plan_json" "$ROLE_EVIDENCE_REPORT" <<'PY_ROLE_PROJECTION_PLAN'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+core_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("iam_simulate_core_projection_plan", core_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"FAIL: cannot load IAM simulator core: {core_path}")
+core = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = core
+spec.loader.exec_module(core)
+plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+role_report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+try:
+    count = core.validate_role_report_projections(plan, role_report)
+except core.RunnerFailure as exc:
+    raise SystemExit(f"FAIL: {exc}") from exc
+print(f"PASS: IAM matrix role projections bind to plan source bytes ({count} projections)")
+PY_ROLE_PROJECTION_PLAN
   fi
   exit 0
 fi
