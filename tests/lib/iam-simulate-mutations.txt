@@ -25,8 +25,8 @@ completeness-duplicate-case-across-envelopes	validate_completeness	FAIL: case id
 completeness-filename-derivation	validate_completeness	FAIL: vector filename mismatch for aws_iam_policy.deployer_data ClickhouseSecretCreateWithTag: expected aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json
 completeness-schema-validation	validate_completeness	FAIL: vector validation failed for aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json: FAIL: case is missing required field: expect
 completeness-envelope-header-mismatch	validate_completeness	FAIL: case_id prefix does not match envelope header: case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource expected case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:
-evidence-failed-case-promoted	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching
-evidence-doctored-pass-refusal	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching
+evidence-failed-case-promoted	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching
+evidence-doctored-pass-refusal	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching
 evidence-runner-failure-refusal	validate_evidence_join	FAIL: promoted case is not execution-matching:
 evidence-missing-record	validate_evidence_join	FAIL: promoted case has no evidence record:
 evidence-duplicate-record	validate_evidence_join	FAIL: promoted case appears more than once in an evidence lane:
@@ -43,7 +43,7 @@ evidence-promoted-second-policy-hash	run_iam_matrix_evidence_mutation:second-has
 runner-per-resource-mapper	run_phase2_runner	FAIL: decision mismatch for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-good/example: expected allowed, observed explicitDeny
 runner-per-pair-required-sid	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope
 runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-bad/example: DenyReadStateObjectsOutsideScope
-runner-real-deployer-data-two-statement-overlap-refusal	run_phase2_runner	FAIL: ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5682 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
+runner-real-deployer-data-two-statement-overlap-refusal	run_phase2_runner	FAIL: ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5697 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4824,5672):EnvDataBucketLifecycle
 runner-plan-policy-byte-equality	mutate_submitted_document:policy-input-list	FAIL: submitted --policy-input-list document differs from plan text for aws_iam_policy.task_boundary
 runner-boundary-policy-byte-equality	mutate_submitted_document:permissions-boundary-policy-input-list	FAIL: submitted --permissions-boundary-policy-input-list document differs from plan text for aws_iam_policy.task_boundary
 runner-action-level-explicit-star-decision	run_phase2_runner	FAIL: decision mismatch for ecr:GetAuthorizationToken *: expected allowed, observed implicitDeny
@@ -65,7 +65,7 @@ runner-target-refusal	run_runner_target_refusal	FAIL: TARGET must be exactly aws
 runner-isolated-one-statement-decision	run_phase2_runner	FAIL: decision mismatch for logs:CreateLogGroup arn:aws:logs:us-east-1:000000000000:log-group:/orbit/79s5rw/example: expected implicitDeny, observed allowed
 runner-isolated-wrapper-position-attribution	run_phase2_runner	FAIL: forbidden matched Sid is present: LogsCreateWithTag
 runner-two-statement-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=37 document_length=288 statement_span_count=2 returned_range=[37,152) first_span=[37,152):FixtureAllow last_span=[153,286):DenyReadStateObjectsOutsideScope
-runner-real-deployer-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5682 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
+runner-real-deployer-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5697 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4824,5672):EnvDataBucketLifecycle
 runner-string-delimiters-shared-core-scanner	mutate_shared_core_scanner:string-delimiters	FAIL: cannot scan submitted statement: Unterminated string starting at: line 1 column 184 (char 183)
 runner-escaped-quotes-shared-core-scanner	mutate_shared_core_scanner:escaped-quotes	FAIL: cannot scan submitted statement: Expecting ',' delimiter: line 1 column 459 (char 458)
 runner-fake-resource-set-enforcement	run_phase2_runner	FAIL: AWS simulator call failed with exit 1: FAIL: fake simulate-custom-policy resource ARNs mismatch: expected ["arn:aws:s3:::orbit-infra-79s5rw-bad/example","arn:aws:s3:::orbit-infra-79s5rw-good/example"], submitted ["arn:aws:s3:::orbit-infra-wrong/example"]
@@ -79,7 +79,7 @@ runner-plan-nonempty-policy-guard	mutate_plan_guard:runner.nonempty-policy	FAIL:
 runner-plan-role-name-guard	mutate_plan_guard:runner.role-name	FAIL: runner plan role name guard did not enforce expected refusal
 runner-plan-suffix-guard	mutate_plan_guard:runner.suffix	FAIL: runner plan suffix guard did not enforce expected refusal
 runner-plan-account-id-uniqueness-guard	mutate_plan_guard:runner.account-id-uniqueness	FAIL: runner plan account id uniqueness guard did not enforce expected refusal
-role-lane-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5682 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle
+role-lane-shared-core-unique-overlap	mutate_shared_core_overlap	FAIL: unmapped matched statement position from PolicyInputList.1: unmapped_offset=1778 document_length=5697 statement_span_count=18 returned_range=[1778,2054) first_span=[14,112):EcrVerificationAuth last_span=[4824,5672):EnvDataBucketLifecycle
 role-lane-shared-authorization-partition	run_phase2_role_lane	FAIL: SCP-excluded principal simulation failed for case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching: An error occurred (InvalidInput) when calling the SimulatePrincipalPolicy operation: Invalid Input Actions:
 role-lane-report-account-redaction	mutate_role_account_redaction	FAIL: role report contains unredacted 12-digit account id:
 role-lane-plan-account-binding	run_phase2_role_lane	FAIL: plan account mismatch:
@@ -95,7 +95,7 @@ role-lane-divergence-evidence	mutate_role_divergence_report	FAIL: role divergenc
 role-lane-missing-custom-case	run_phase2_role_lane	FAIL: custom report lacks exactly one record for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching
 role-lane-two-run-call-shape	mutate_role_two_run_calls	FAIL: two-run contract requires one exact scp-excluded call and one default call per case
 role-lane-dry-run-inventory	mutate_role_dry_run_inventory	FAIL: dry-run inventory requires three iam delete-role-policy calls
-role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 378, expected 1 + 8*8 + 2*157 = 379
+role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 380, expected 1 + 8*8 + 2*158 = 381
 role-lane-portable-deterministic-descriptor-leak	mutate_role_deterministic_fd_leak:macOS-bash-3.2+Linux-bash-5	FAIL: role-lane deterministic descriptor count grew by at least 1 per case
 role-lane-empty-sid-shared-core-guard	mutate_core_sid_validation	FAIL: role lane empty Sid shared core guard did not enforce expected refusal
 role-lane-plan-resources-array-guard	mutate_plan_guard:role-lane.resources-array	FAIL: role lane plan resources array guard did not enforce expected refusal

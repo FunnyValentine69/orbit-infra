@@ -1710,14 +1710,15 @@ source_rows = []
 for document_match, document_block in documents:
     document = document_match.group(1)
     for _, statement in blocks(document_block, r"^\s*statement\s*\{"):
-        if re.search(r"^\s*condition\s*\{", statement, re.MULTILINE):
-            continue
         sid_match = re.search(r'^\s*sid\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
-        effect_match = re.search(r'^\s*effect\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
-        actions_match = re.search(r"^\s*actions\s*=\s*\[(.*?)\]", statement, re.MULTILINE | re.DOTALL)
         if sid_match is None:
             continue
         sid = sid_match.group(1)
+        has_condition = re.search(r"^\s*condition\s*\{", statement, re.MULTILINE)
+        if has_condition and (document, sid) != ("deployer_data", "SnsSubscriptionManage"):
+            continue
+        effect_match = re.search(r'^\s*effect\s*=\s*"([^\"]+)"', statement, re.MULTILINE)
+        actions_match = re.search(r"^\s*actions\s*=\s*\[(.*?)\]", statement, re.MULTILINE | re.DOTALL)
         resource_attributes = resource_attributes_by_statement[(document, sid)]
         has_literal_wildcard = any(
             attribute == "resources" and kind == "literal list" and elements == ('"*"',)
@@ -1726,7 +1727,7 @@ for document_match, document_block in documents:
         if not has_literal_wildcard:
             continue
         if effect_match is None or actions_match is None:
-            fail(f"cannot parse unconditioned wildcard statement in {document}")
+            fail(f"cannot parse wildcard statement in {document}")
         actions = re.findall(r'"([^\"]+)"', actions_match.group(1))
         if not actions:
             fail(f"has an empty Action list in {document}/{sid}")
@@ -1772,7 +1773,22 @@ for line in section.splitlines():
             fail(f"possible Allow scope lacks PR scoping or a cited TODO for {document}/{sid}/{action}")
     else:
         fail(f"unsupported effect {effect} for {document}/{sid}/{action}")
-    if "https://docs.aws.amazon.com/service-authorization/" not in reference or "fetched 2026-09-08" not in reference:
+    sns_prb_actions = {
+        "sns:GetSubscriptionAttributes",
+        "sns:SetSubscriptionAttributes",
+        "sns:Unsubscribe",
+    }
+    expected_fetch_date = (
+        "fetched 2026-09-10"
+        if document == "deployer_data"
+        and sid == "SnsSubscriptionManage"
+        and action in sns_prb_actions
+        else "fetched 2026-09-08"
+    )
+    if (
+        "https://docs.aws.amazon.com/service-authorization/" not in reference
+        or expected_fetch_date not in reference
+    ):
         fail(f"reference URL/date missing for {document}/{sid}/{action}")
     table_rows.append((document, sid, effect, action))
 
@@ -1789,12 +1805,12 @@ if missing or extra:
     if extra:
         detail.append("extra " + "/".join(extra[0]))
     fail("tuple-set mismatch: " + "; ".join(detail))
-if len(source_rows) != 37:
-    fail(f"expected 37 evaluated tuples after in-PR scoping, found {len(source_rows)}")
-if len({action for _, _, _, action in source_rows}) != 34:
-    fail("expected 34 distinct evaluated actions")
+if len(source_rows) != 40:
+    fail(f"expected 40 evaluated wildcard tuples, found {len(source_rows)}")
+if len({action for _, _, _, action in source_rows}) != 37:
+    fail("expected 37 distinct evaluated actions")
 
-print("PASS: wildcard evaluation tuple-set equality (37 tuples, 34 distinct actions)")
+print("PASS: wildcard evaluation tuple-set equality (40 tuples, 37 distinct actions)")
 PY_WILDCARD_EVALUATION
 
 run_wildcard_negative_fixtures() {
@@ -2009,7 +2025,7 @@ ecs-cluster|EcsListServicesClusterScoped|variable = "ecs:cluster"|variable = "ec
 cloud-map-tag-keys|ServiceDiscoveryUntagResource|        "env_id",|        "Name",
 SCOPED_MUTATIONS
 
-  echo "PASS: wildcard evaluation negative fixtures (7 unconditioned tuple-set cases, 2 condition-scoped tuple-set cases, 3 scoped-condition cases)"
+  echo "PASS: wildcard evaluation negative fixtures (7 wildcard tuple-set cases, 2 condition-scoped tuple-set cases, 3 scoped-condition cases)"
 }
 
 if [ "${IAM_WILDCARD_SKIP_NEGATIVES:-0}" != 1 ]; then

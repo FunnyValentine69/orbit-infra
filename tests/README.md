@@ -325,13 +325,14 @@ that shape without claiming plan-byte agreement. The
 `uncommented-extra-sid`, and `wrong-audience-bare-na` mutations must print the
 `FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
 
-The wildcard evaluation contract derives every unconditioned
-`Resource = "*"` tuple from comment-stripped `bootstrap/roles.tf` and requires
-exact equality with the 37-row reference table. Six tuple-set mutations add a
-Sid, append an action, remove or fabricate a table row, and alter each duplicate
+The wildcard evaluation contract derives every `Resource = "*"` tuple that
+belongs in the first table from comment-stripped `bootstrap/roles.tf`, including
+the conditioned PR B `SnsSubscriptionManage` exception, and requires exact
+equality with the 40-row reference table. Seven tuple-set mutations add a Sid,
+append an action, remove or fabricate a table row, and alter each duplicate
 `EcrAuth` statement independently; three more break the static condition scopes.
 The authored `base-plan.json` includes the invalid Lambda-action removal plus the
-three conditions and one statement split. Because the bootstrap policy changed,
+four conditions and one statement split. Because the bootstrap policy changed,
 the host worker must run `make bootstrap-apply TARGET=localstack` followed by
 `make iam-matrix-plan` to refresh plan-mode evidence; the fixture was not
 presented as a LocalStack recording. A second equality covers the 14 tuples
@@ -487,11 +488,10 @@ from the plan-reader role name recorded in the role report, so suffixes such as
 `team-a` remain valid. Thirty-two registered mutants cover those joins and bindings,
 including a doctored SNS pass, a per-pair Sid miss, empty and mismatching-second
 promoted hash lists, a hyphenated-suffix matcher regression, and a runner failure.
-Every restored join
-must pass.
+Every restored join must pass. Before replacement lane reports are published, projection mutations reconstruct the immediately prior `SnsSubscriptionManage` statement in a scratch saved plan so the committed report remains byte-bound; the host-owned plan-mode gate binds the new statement after rerunning both lanes.
 
 The `TAXONOMY` group runs
-`scripts/iam-simulate-categories.py --check`, independently compares the 288
+`scripts/iam-simulate-categories.py --check`, independently compares the 289
 matrix case IDs to `tests/fixtures/iam-simulate/categories.json`, requires the
 four categories to be disjoint with non-empty reasons, and executes added,
 removed, duplicate-category, and empty-reason mutations. Regenerate the file
@@ -500,7 +500,7 @@ parses each row's explicit document and Sid prefix and writes deterministic LF
 JSON with array brackets around one compact object per line and a trailing
 newline.
 
-The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 288
+The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 289
 taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
 `aws:`-prefixed condition key, a colon-bearing trust document, and wrong-document
 refusal. Both runners enforce the same exact-prefix rule instead of splitting
@@ -524,7 +524,7 @@ both execution lanes use that directory form.
 The `COMPLETENESS` group reads the 81 real `(document, Sid)` envelopes from
 `tests/fixtures/iam-simulate/vectors/`. Filenames are
 `<document>__<sid>.json`, with every character outside `[A-Za-z0-9._-]`
-replaced by `_`. It counts the 239 case IDs globally, requires every case prefix
+replaced by `_`. It counts the 240 case IDs globally, requires every case prefix
 to match its envelope header, rejects a case ID appearing in two envelopes,
 checks exact filename derivation, and runs the real validator over every
 envelope. Simulator-eligible cases must occur exactly once unless
@@ -546,7 +546,7 @@ case-insensitive, including lower-case
 `s3:deletebucketpublicaccessblock`. It also covers 1-based multiline
 position-to-Sid
 attribution with an exclusive end position and unique overlap against exact
-statement spans. The computed two-statement fixture and the exact 5,682-character,
+statement spans. The computed two-statement fixture and the exact 5,697-character,
 18-statement `deployer_data` plan policy both include the preceding comma in a
 returned range; the real `1:1779`/`1:2055` range maps to
 `ClickhouseSecretCreateWithTag`. A sibling range overlaps two statements and
@@ -568,7 +568,7 @@ missing-address refusal, and absent/duplicate-Sid refusal before a fake AWS call
 Six table-derived doctored plans independently cover non-array resources,
 duplicate addresses, null policies, null role names, invalid suffix names, and
 multiple account IDs; each custom-runner guard has a temporary source mutant.
-A real-vector contract requires exactly 239 report records and currently counts
+A real-vector contract requires exactly 240 report records and currently counts
 8 shared-call batches across 16 cases; mutations make a colliding pair disagree
 and drop one shared case from the report. The isolated statement submitted by
 the runner comes from the named plan document, and its attribution spans are
@@ -611,7 +611,7 @@ check and requires the complete ordered source address/hash list. It does not
 consume the role plan emitted by the lane, and source-partition, concatenation,
 account-redaction, source-byte, and hash mutants must each fail it.
 
-The role-lane mapping cases use the same module for the exact 5,682-character
+The role-lane mapping cases use the same module for the exact 5,697-character
 delimiter-inclusive/exclusive-end range, braces and brackets inside strings,
 escaped quotes, and an action-level response with no
 `ResourceSpecificResults`. The lane prepares its cases once as a NUL-delimited
@@ -652,7 +652,7 @@ full-fixture dry run derives
 the projected-role count `R` and selected-case count `C` from the plan and vector
 fixtures at run time, then requires exactly `1 + 8R + 2G` calls, where `G` is
 the sum of non-empty authorization action groups over the `C` selected cases.
-The current full fixture has `R=8`, `C=156`, `G=157`, and therefore 379 calls.
+The current full fixture has `R=8`, `C=157`, `G=158`, and therefore 381 calls.
 A dropped-call mutant kills the formula check. Its restored path keeps the full
 denominator. The descriptor-leak mutant and instrumented bounded-read lane run
 against the same reduced 24-case fixture with a five-second wall-clock cap. Each

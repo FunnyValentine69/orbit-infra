@@ -605,7 +605,7 @@ run_iam_simulate_runner_contracts() {
     fi
     IAM_SIM_TEST_PLAN="$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
       expect_runner_failure "runner real deployer_data two-statement overlap refusal" \
-        "ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5682 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4809,5657):EnvDataBucketLifecycle" \
+        "ambiguous matched statement position from PolicyInputList.1: overlap_count=2 document_length=5697 statement_span_count=18 returned_range=[1777,2054) first_span=[14,112):EcrVerificationAuth last_span=[4824,5672):EnvDataBucketLifecycle" \
         success "$phase2_dir/response-deployer-ambiguous.json" \
         "$phase2_dir/deployer-position-vectors"
 
@@ -789,7 +789,7 @@ PY
     set -e
     if [ "$real_rc" -ne 0 ] && \
        grep -Fq 'AWS simulator response lacks EvaluationResults array' <<<"$output" && \
-       [ "$(phase2_call_count iam simulate-custom-policy)" -eq 231 ] && \
+       [ "$(phase2_call_count iam simulate-custom-policy)" -eq 232 ] && \
        census="$(validate_real_report "$VECTORS" "$report" 2>&1)"; then
       pass_case "real-vector batch safety and report completeness -> $census"
     else

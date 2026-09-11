@@ -198,7 +198,7 @@ def _context(taxonomy_path, projection_source):
     ]
     role_authorization_casefold_decision = 'allowed'
     if len(real) != 1163 or hashlib.sha256(real.encode()).hexdigest() != 'f8eb92ce799744d4866360a99bcdc75d231292abbd2a6d86d60432651dcfb96b': raise SystemExit('FAIL: real position policy fixture bytes changed')
-    if len(real_deployer) != 5682 or len([_span(real_deployer, i) for i in range(18)]) != 18 or hashlib.sha256(real_deployer.encode()).hexdigest() != 'dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40': raise SystemExit('FAIL: real deployer_data position fixture changed')
+    if len(real_deployer) != 5697 or len([_span(real_deployer, i) for i in range(18)]) != 18 or hashlib.sha256(real_deployer.encode()).hexdigest() != '19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92': raise SystemExit('FAIL: real deployer_data position fixture changed')
     if not _span(real_deployer, 7)[0] <= 1779 < _span(real_deployer, 7)[1] or _span(real_deployer, 7)[2] != 'ClickhouseSecretCreateWithTag': raise SystemExit('FAIL: real deployer_data offset 1779 owner changed')
     isolated_object = json.loads(isolated)
     isolated_object['Statement'] = isolated_object['Statement'][:1]
@@ -758,7 +758,7 @@ def _command_validate_real_report():
         payload = json.loads(report_path.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         fail(f'cannot read real-vector report inputs: {exc}')
-    if len(expected) != 239: fail(f'real vector set has {len(expected)} case ids, expected 239')
+    if len(expected) != 240: fail(f'real vector set has {len(expected)} case ids, expected 240')
     records = payload.get('records') if isinstance(payload, dict) else None
     if not isinstance(records, list): fail('report records must be an array')
     case_ids = [record.get('case_id') for record in records if isinstance(record, dict)]
@@ -770,7 +770,7 @@ def _command_validate_real_report():
     if missing: fail(f'report omits selected case_id: {missing[0]}')
     unexpected = sorted(set(case_ids) - set(expected))
     if unexpected: fail(f'report contains unselected case_id: {unexpected[0]}')
-    if payload.get('summary', {}).get('total') != 239: fail('report summary total must equal 239')
+    if payload.get('summary', {}).get('total') != 240: fail('report summary total must equal 240')
     by_id = {record['case_id']: record for record in records}
     shared_groups = set()
     shared_cases = set()
@@ -788,7 +788,7 @@ def _command_validate_real_report():
             reciprocal = tuple(sorted([peer, *peer_record.get('shared_call_case_ids', [])]))
             if reciprocal != group: fail(f'shared-call peers are not reciprocal: {case_id} and {peer}')
     if len(shared_groups) != 8 or len(shared_cases) != 16: fail(f'shared-call census differs: {len(shared_groups)} batches and {len(shared_cases)} cases')
-    print('PASS: real 239-vector report coverage (239 records, 8 shared-call batches, 16 shared cases)')
+    print('PASS: real 240-vector report coverage (240 records, 8 shared-call batches, 16 shared cases)')
 def _command_mutate_core_authorization_groups():
     source = Path(sys.argv[1]).read_text(encoding='utf-8')
     old = '    for index, action_class in enumerate(normalized_classes, 1):\n'

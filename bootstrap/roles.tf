@@ -1263,10 +1263,10 @@ data "aws_iam_policy_document" "deployer_data" {
     }
   }
 
-  # Subscriptions are a distinct, untaggable SNS resource (subscription
-  # ARN, not the topic ARN) — no aws:ResourceTag/Project condition
-  # applies to them, so their actions get their own unconditioned
-  # statement scoped to the subscription ARN pattern instead.
+  # The IAM policy simulator evaluates these actions as star-only: any
+  # resource ARN yields implicitDeny with no matched statement (probed
+  # 2026-09-11), although the service authorization reference lists the
+  # topic resource type. The tag condition is honoured on the star grant.
   statement {
     sid    = "SnsSubscriptionManage"
     effect = "Allow"
@@ -1275,7 +1275,13 @@ data "aws_iam_policy_document" "deployer_data" {
       "sns:Unsubscribe",
       "sns:SetSubscriptionAttributes",
     ]
-    resources = ["arn:aws:sns:${var.region}:${data.aws_caller_identity.current.account_id}:${var.name}-*:*"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
   }
 
   # --- Phase 3: CloudWatch alarms, project-scoped. ---

@@ -346,6 +346,45 @@ print(f"PASS: IAM simulation role projections bind to plan source bytes ({count}
 PY_ROLE_PROJECTIONS
 }
 
+validate_promoted_second_policy_hash() {
+  local custom_report=$1
+  python3 - "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$VECTORS/aws_iam_policy.task_boundary__EcrAuth.json" "$custom_report" <<'PY_SECOND_HASH'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+
+case_id = "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary"
+plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+envelope = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+documents = {
+    resource["address"]: resource["values"]["policy"]
+    for resource in plan["planned_values"]["root_module"]["resources"]
+    if isinstance(resource, dict)
+    and isinstance(resource.get("address"), str)
+    and isinstance(resource.get("values"), dict)
+    and isinstance(resource["values"].get("policy"), str)
+}
+cases = [case for case in envelope.get("cases", []) if case.get("case_id") == case_id]
+records = [record for record in report.get("records", []) if record.get("case_id") == case_id]
+if len(cases) != 1 or len(records) != 1:
+    raise SystemExit(f"FAIL: promoted second-hash fixture count differs for {case_id}")
+vector = cases[0]
+submitted = [documents[envelope["document"]], *vector.get("synthetic_policy_input_list", [])]
+expected = [hashlib.sha256(item.encode("utf-8")).hexdigest() for item in submitted]
+entries = records[0].get("document_hashes_submitted", {}).get("policy_input_list")
+actual = [entry.get("sha256") for entry in entries] if isinstance(entries, list) else None
+if actual != expected:
+    raise SystemExit(
+        f"FAIL: promoted policy_input_list hashes mismatch for {case_id}: "
+        f"report={actual} plan={expected}"
+    )
+print(f"PASS: promoted ordered policy hashes bind to plan/vector bytes for {case_id}")
+PY_SECOND_HASH
+}
+
 run_iam_matrix_evidence_mutation() {
   local submode=$1 custom_report=$2
   case "$submode" in
@@ -355,10 +394,7 @@ run_iam_matrix_evidence_mutation() {
         bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
       ;;
     second-hash)
-      TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
-        IAM_MATRIX_SKIP_NEGATIVES=1 \
-        bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
-          "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
+      validate_promoted_second_policy_hash "$custom_report"
       ;;
     *) echo "FAIL: unknown IAM matrix Evidence mutation: $submode" >&2; return 1 ;;
   esac
@@ -1028,7 +1064,7 @@ CATEGORIES = (
     "not-simulatable",
 )
 EXPECTED_COUNTS = {
-    "simulator-decision": 231,
+    "simulator-decision": 232,
     "simulator-attribution-only": 8,
     "live-call-only": 6,
     "not-simulatable": 43,
@@ -1123,8 +1159,8 @@ for case_id, expected in matrix.items():
 counts = Counter(entry["category"] for entry in taxonomy)
 if dict(counts) != EXPECTED_COUNTS:
     fail(f"taxonomy counts differ: {dict(counts)}")
-if sum(counts.values()) != 288:
-    fail(f"taxonomy category sum is {sum(counts.values())}, expected 288")
+if sum(counts.values()) != 289:
+    fail(f"taxonomy category sum is {sum(counts.values())}, expected 289")
 PY
 }
 
@@ -1250,10 +1286,10 @@ for entry in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")):
     print(entry["case_id"], entry["document"], entry["sid"], entry["suffix"], sep="\t")
 PY
   )
-  if [ "$round_trip_ok" -eq 1 ] && [ "$round_trip_count" -eq 288 ]; then
-    pass_case "case-id exact-prefix round trip over 288 cases"
+  if [ "$round_trip_ok" -eq 1 ] && [ "$round_trip_count" -eq 289 ]; then
+    pass_case "case-id exact-prefix round trip over 289 cases"
   else
-    fail_case "case-id exact-prefix round trip over 288 cases" \
+    fail_case "case-id exact-prefix round trip over 289 cases" \
       "stopped at case $round_trip_count"
   fi
 
@@ -1312,8 +1348,8 @@ if [ -f "$VALIDATOR" ]; then
 
 
   if output="$(python3 "$VALIDATOR" "$VECTORS" --jsonl 2>&1)" && \
-     [ "$(wc -l <<<"$output" | tr -d ' ')" -eq 239 ] && \
-     [ "$(jq -s 'map(.case_id) | unique | length' <<<"$output")" -eq 239 ]; then
+     [ "$(wc -l <<<"$output" | tr -d ' ')" -eq 240 ] && \
+     [ "$(jq -s 'map(.case_id) | unique | length' <<<"$output")" -eq 240 ]; then
     pass_case "schema validator loads the vector directory in one JSONL pass"
   else
     fail_case "schema validator loads the vector directory in one JSONL pass" "$output"
@@ -1710,7 +1746,7 @@ if output="$(
   validate_completeness "$TAXONOMY" \
     "$completeness_mutants/unresolved-exemption/vectors" \
     "$completeness_mutants/unresolved-exemption/unresolved.json" 2>&1
-)" && grep -Fq "(238 case(s) in 81 envelope(s), 1 unresolved)" <<< "$output"; then
+)" && grep -Fq "(239 case(s) in 81 envelope(s), 1 unresolved)" <<< "$output"; then
   pass_case "completeness unresolved exemption mutation -> $output"
 else
   fail_case "completeness unresolved exemption mutation did not pass as required" "$output"
@@ -1743,12 +1779,59 @@ expect_failure "evidence generator runner drift scope" \
   "Evidence generator drift scope omits scripts/iam-simulate.sh" \
   dispatch_registered_mutation evidence-generator-runner-drift-scope
 
+recorded_projection_plan="$tmp_dir/role-projection-recorded-plan.json"
+python3 - "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$recorded_projection_plan" <<'PY_RECORDED_PROJECTION_PLAN'
+import json
+from pathlib import Path
+import sys
+
+
+source, destination = map(Path, sys.argv[1:])
+plan = json.loads(source.read_text(encoding="utf-8"))
+resources = plan["planned_values"]["root_module"]["resources"]
+matches = [
+    resource for resource in resources
+    if resource.get("address") == "aws_iam_policy.deployer_data"
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"FAIL: recorded projection snapshot found {len(matches)} deployer_data policies"
+    )
+policy = json.loads(matches[0]["values"]["policy"])
+statements = policy.get("Statement")
+if not isinstance(statements, list):
+    raise SystemExit("FAIL: recorded projection snapshot requires a Statement array")
+subscription = [
+    statement for statement in statements
+    if statement.get("Sid") == "SnsSubscriptionManage"
+]
+topic = [
+    statement for statement in statements
+    if statement.get("Sid") == "SnsRestWithResourceTag"
+]
+expected_condition = {
+    "StringEquals": {"aws:ResourceTag/Project": "orbit-infra"}
+}
+if (
+    len(subscription) != 1
+    or len(topic) != 1
+    or subscription[0].get("Resource") != "*"
+    or subscription[0].get("Condition") != expected_condition
+    or not isinstance(topic[0].get("Resource"), str)
+):
+    raise SystemExit("FAIL: recorded projection snapshot PR B anchor changed")
+subscription[0].pop("Condition")
+subscription[0]["Resource"] = topic[0]["Resource"] + ":*"
+matches[0]["values"]["policy"] = json.dumps(policy, separators=(",", ":"))
+destination.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+PY_RECORDED_PROJECTION_PLAN
+
 account_projection_plan="$tmp_dir/role-projection-live-account-plan.json"
 account_projection_report="$tmp_dir/role-projection-redacted-report.json"
 account_projection_core_mutant="$tmp_dir/iam-simulate-core-unredacted-projection.py"
 python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
   build-role-projection-account-redaction \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" "$account_projection_plan" \
   "$account_projection_report"
 if output="$(validate_plan_role_projections \
@@ -1771,7 +1854,7 @@ else
 fi
 
 if output="$(validate_plan_role_projections \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
   pass_case "${output#PASS: }"
 else
@@ -1780,13 +1863,13 @@ fi
 projection_source_plan="$tmp_dir/role-projection-source-bytes-plan.json"
 projection_source_id="$(dispatch_registered_mutation \
   evidence-role-projection-source-hashes \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$projection_source_plan")"
 expect_failure "evidence role projection source hashes" \
   "role projection source documents differ for $projection_source_id" \
   validate_plan_role_projections "$projection_source_plan" "$ROLE_EVIDENCE_REPORT"
 if output="$(validate_plan_role_projections \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
   pass_case "evidence role projection source hashes mutation restored PASS"
 else
@@ -1800,9 +1883,9 @@ projection_id="$(dispatch_registered_mutation \
 expect_failure "evidence role projection source binding" \
   "role projection source policy differs for $projection_id" \
   validate_plan_role_projections \
-    "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$projection_mutant"
+    "$recorded_projection_plan" "$projection_mutant"
 if output="$(validate_plan_role_projections \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
   pass_case "evidence role projection source binding mutation restored PASS"
 else
@@ -2171,13 +2254,37 @@ write_mutant(
 )
 
 
-failed_case = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+failed_case = (
+    "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:"
+    "ALL:aws:ResourceTag/Project:matching"
+)
+legacy_failed_case = (
+    "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+)
 failed_anchor = f"{failed_case}=CODE-ONLY"
-failed_source = custom_by_id.get(failed_case)
-if matrix.count(failed_anchor) != 1 or failed_source is None:
+failed_source = deepcopy(custom_by_id.get(legacy_failed_case))
+failed_vector = vectors.get(failed_case)
+if (
+    matrix.count(failed_anchor) != 1
+    or failed_source is None
+    or failed_vector is None
+    or failed_vector.get("resource_arns") != []
+):
     raise SystemExit("FAIL: failed-case Evidence mutation anchor changed")
-write_mutant("failed", matrix.replace(failed_anchor, f"{failed_case}={label}", 1))
-doctored_pass_custom = deepcopy(custom)
+failed_source["case_id"] = failed_case
+failed_source["expect"] = deepcopy(failed_vector["expect"])
+for detail in failed_source["details"]:
+    detail["resource_arn"] = "*"
+failed_custom = deepcopy(custom)
+failed_custom["records"].append(failed_source)
+failed_custom["summary"]["failed"] += 1
+failed_custom["summary"]["total"] += 1
+write_mutant(
+    "failed",
+    matrix.replace(failed_anchor, f"{failed_case}={label}", 1),
+    custom_payload=failed_custom,
+)
+doctored_pass_custom = deepcopy(failed_custom)
 doctored_pass_record = next(
     record for record in doctored_pass_custom["records"]
     if record["case_id"] == failed_case
@@ -2185,6 +2292,8 @@ doctored_pass_record = next(
 if doctored_pass_record.get("pass") is not False:
     raise SystemExit("FAIL: doctored-pass Evidence mutation requires a failed source record")
 doctored_pass_record["pass"] = True
+doctored_pass_custom["summary"]["failed"] -= 1
+doctored_pass_custom["summary"]["passed"] += 1
 write_mutant(
     "doctored-pass",
     matrix.replace(failed_anchor, f"{failed_case}={label}", 1),
@@ -2517,13 +2626,8 @@ PY_EVIDENCE_MUTANTS
     fail_case "evidence promoted second policy hash mutation did not fail as required" \
       "rc=$rc output=$output"
   fi
-  if output="$(
-    TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
-      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
-        "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" 2>&1
-  )" && grep -Fq \
-      'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (216 cases)' \
-      <<<"$output"; then
+  if output="$(validate_promoted_second_policy_hash "$CUSTOM_EVIDENCE_REPORT" 2>&1)" && \
+     grep -Fq 'PASS: promoted ordered policy hashes bind to plan/vector bytes' <<<"$output"; then
     pass_case "evidence promoted second policy hash mutation restored PASS"
   else
     fail_case "evidence promoted second policy hash mutation restoration" "$output"
