@@ -348,20 +348,23 @@ PY_ROLE_PROJECTIONS
 
 run_iam_matrix_evidence_mutation() {
   local submode=$1 custom_report=$2
-  case "$submode" in
-    empty-hash)
-      TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
-        IAM_MATRIX_SKIP_NEGATIVES=1 \
-        bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
-      ;;
-    second-hash)
-      TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
-        IAM_MATRIX_SKIP_NEGATIVES=1 \
-        bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
-          "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
-      ;;
-    *) echo "FAIL: unknown IAM matrix Evidence mutation: $submode" >&2; return 1 ;;
-  esac
+  if [ "$submode" != empty-hash ]; then
+    echo "FAIL: unknown IAM matrix Evidence mutation: $submode" >&2
+    return 1
+  fi
+  TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
+    IAM_MATRIX_SKIP_NEGATIVES=1 \
+    bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
+}
+
+run_iam_matrix_plan_evidence_mutation() {
+  local custom_report=$1 role_report=$2
+  TMPDIR="$tmp_dir" \
+    IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
+    IAM_MATRIX_ROLE_EVIDENCE_REPORT="$role_report" \
+    IAM_MATRIX_SKIP_NEGATIVES=1 \
+    bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
+      "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
 }
 
 mutate_report_aggregate() {
@@ -1028,7 +1031,7 @@ CATEGORIES = (
     "not-simulatable",
 )
 EXPECTED_COUNTS = {
-    "simulator-decision": 231,
+    "simulator-decision": 232,
     "simulator-attribution-only": 8,
     "live-call-only": 6,
     "not-simulatable": 43,
@@ -1123,8 +1126,8 @@ for case_id, expected in matrix.items():
 counts = Counter(entry["category"] for entry in taxonomy)
 if dict(counts) != EXPECTED_COUNTS:
     fail(f"taxonomy counts differ: {dict(counts)}")
-if sum(counts.values()) != 288:
-    fail(f"taxonomy category sum is {sum(counts.values())}, expected 288")
+if sum(counts.values()) != 289:
+    fail(f"taxonomy category sum is {sum(counts.values())}, expected 289")
 PY
 }
 
@@ -1250,10 +1253,10 @@ for entry in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")):
     print(entry["case_id"], entry["document"], entry["sid"], entry["suffix"], sep="\t")
 PY
   )
-  if [ "$round_trip_ok" -eq 1 ] && [ "$round_trip_count" -eq 288 ]; then
-    pass_case "case-id exact-prefix round trip over 288 cases"
+  if [ "$round_trip_ok" -eq 1 ] && [ "$round_trip_count" -eq 289 ]; then
+    pass_case "case-id exact-prefix round trip over 289 cases"
   else
-    fail_case "case-id exact-prefix round trip over 288 cases" \
+    fail_case "case-id exact-prefix round trip over 289 cases" \
       "stopped at case $round_trip_count"
   fi
 
@@ -1312,8 +1315,8 @@ if [ -f "$VALIDATOR" ]; then
 
 
   if output="$(python3 "$VALIDATOR" "$VECTORS" --jsonl 2>&1)" && \
-     [ "$(wc -l <<<"$output" | tr -d ' ')" -eq 239 ] && \
-     [ "$(jq -s 'map(.case_id) | unique | length' <<<"$output")" -eq 239 ]; then
+     [ "$(wc -l <<<"$output" | tr -d ' ')" -eq 240 ] && \
+     [ "$(jq -s 'map(.case_id) | unique | length' <<<"$output")" -eq 240 ]; then
     pass_case "schema validator loads the vector directory in one JSONL pass"
   else
     fail_case "schema validator loads the vector directory in one JSONL pass" "$output"
@@ -1710,7 +1713,7 @@ if output="$(
   validate_completeness "$TAXONOMY" \
     "$completeness_mutants/unresolved-exemption/vectors" \
     "$completeness_mutants/unresolved-exemption/unresolved.json" 2>&1
-)" && grep -Fq "(238 case(s) in 81 envelope(s), 1 unresolved)" <<< "$output"; then
+)" && grep -Fq "(239 case(s) in 81 envelope(s), 1 unresolved)" <<< "$output"; then
   pass_case "completeness unresolved exemption mutation -> $output"
 else
   fail_case "completeness unresolved exemption mutation did not pass as required" "$output"
@@ -1743,12 +1746,15 @@ expect_failure "evidence generator runner drift scope" \
   "Evidence generator drift scope omits scripts/iam-simulate.sh" \
   dispatch_registered_mutation evidence-generator-runner-drift-scope
 
+recorded_projection_plan="$tmp_dir/role-projection-recorded-plan.json"
+cp -- "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$recorded_projection_plan"
+
 account_projection_plan="$tmp_dir/role-projection-live-account-plan.json"
 account_projection_report="$tmp_dir/role-projection-redacted-report.json"
 account_projection_core_mutant="$tmp_dir/iam-simulate-core-unredacted-projection.py"
 python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
   build-role-projection-account-redaction \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" "$account_projection_plan" \
   "$account_projection_report"
 if output="$(validate_plan_role_projections \
@@ -1771,7 +1777,7 @@ else
 fi
 
 if output="$(validate_plan_role_projections \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
   pass_case "${output#PASS: }"
 else
@@ -1780,13 +1786,13 @@ fi
 projection_source_plan="$tmp_dir/role-projection-source-bytes-plan.json"
 projection_source_id="$(dispatch_registered_mutation \
   evidence-role-projection-source-hashes \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$projection_source_plan")"
 expect_failure "evidence role projection source hashes" \
   "role projection source documents differ for $projection_source_id" \
   validate_plan_role_projections "$projection_source_plan" "$ROLE_EVIDENCE_REPORT"
 if output="$(validate_plan_role_projections \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
   pass_case "evidence role projection source hashes mutation restored PASS"
 else
@@ -1800,9 +1806,9 @@ projection_id="$(dispatch_registered_mutation \
 expect_failure "evidence role projection source binding" \
   "role projection source policy differs for $projection_id" \
   validate_plan_role_projections \
-    "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$projection_mutant"
+    "$recorded_projection_plan" "$projection_mutant"
 if output="$(validate_plan_role_projections \
-  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
   pass_case "evidence role projection source binding mutation restored PASS"
 else
@@ -1818,6 +1824,56 @@ if output="$(
 else
   fail_case "IAM simulation Evidence join" "$output"
 fi
+
+rebind_role_report_to_custom() {
+  local custom_report=$1 role_source=$2 role_out=$3
+  local custom_sha256 role_tmp
+  custom_sha256="$(shasum -a 256 "$custom_report" | awk '{print $1}')"
+  role_tmp="${role_out}.tmp"
+  mkdir -p "$(dirname "$role_out")"
+  jq --arg custom_sha256 "$custom_sha256" \
+    '.custom_report_sha256 = $custom_sha256' \
+    "$role_source" >"$role_tmp"
+  mv -- "$role_tmp" "$role_out"
+}
+
+write_bound_evidence_provenance() {
+  local custom_report=$1 role_report=$2 rendered_report=$3 provenance_out=$4
+  local provenance_source=${5:-$EVIDENCE_PROVENANCE}
+  local custom_sha256 role_sha256 markdown_sha256 provenance_tmp
+  custom_sha256="$(shasum -a 256 "$custom_report" | awk '{print $1}')"
+  role_sha256="$(shasum -a 256 "$role_report" | awk '{print $1}')"
+  markdown_sha256="$(shasum -a 256 "$rendered_report" | awk '{print $1}')"
+  provenance_tmp="${provenance_out}.tmp"
+  mkdir -p "$(dirname "$provenance_out")"
+  awk \
+    -v custom_sha256="$custom_sha256" \
+    -v role_sha256="$role_sha256" \
+    -v markdown_sha256="$markdown_sha256" '
+      /^\| custom report sha256 \| [0-9a-f]{64} \|$/ {
+        print "| custom report sha256 | " custom_sha256 " |"
+        custom_count++
+        next
+      }
+      /^\| role report sha256 \| [0-9a-f]{64} \|$/ {
+        print "| role report sha256 | " role_sha256 " |"
+        role_count++
+        next
+      }
+      /^\| Markdown report sha256 \| [0-9a-f]{64} \|$/ {
+        print "| Markdown report sha256 | " markdown_sha256 " |"
+        markdown_count++
+        next
+      }
+      { print }
+      END {
+        if (custom_count != 1 || role_count != 1 || markdown_count != 1) {
+          exit 1
+        }
+      }
+    ' "$provenance_source" >"$provenance_tmp"
+  mv -- "$provenance_tmp" "$provenance_out"
+}
 
 validate_renderer_aggregate_refusal() {
   local scope=$1 custom_report=$2 role_input=$3 output_root=$4 case_id=$5
@@ -1868,7 +1924,7 @@ PY_RENDERED_AGGREGATE
 
 validate_evidence_aggregate_refusal() {
   local scope=$1 custom_report=$2 role_input=$3 case_id=$4
-  local role_report output rc
+  local role_report provenance output rc
   local -a role_reports
   if [ "$scope" = custom ]; then
     role_reports=("$role_input")
@@ -1876,11 +1932,15 @@ validate_evidence_aggregate_refusal() {
     role_reports=("$role_input"/*.json)
   fi
   for role_report in "${role_reports[@]}"; do
+    provenance="$tmp_dir/evidence-aggregate-$(basename "$custom_report")-$(basename "$role_report").md"
+    write_bound_evidence_provenance \
+      "$custom_report" "$role_report" "$RENDERED_EVIDENCE_REPORT" \
+      "$provenance"
     set +e
     output="$(
       validate_evidence_join \
         "$MATRIX" "$custom_report" "$role_report" \
-        "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1
+        "$RENDERED_EVIDENCE_REPORT" "$provenance" 2>&1
     )"
     rc=$?
     set -e
@@ -1903,9 +1963,11 @@ for consumer in renderer evidence; do
       mutation_root="$aggregate_mutants/$mutation_id"
       if [ "$lane" = custom ]; then
         custom_mutant="$mutation_root.json"
-        role_mutant="$ROLE_EVIDENCE_REPORT"
+        role_mutant="$mutation_root-role.json"
         case_id="$(dispatch_registered_mutation \
           "$mutation_id" "$CUSTOM_EVIDENCE_REPORT" "$custom_mutant")"
+        rebind_role_report_to_custom \
+          "$custom_mutant" "$ROLE_EVIDENCE_REPORT" "$role_mutant"
       else
         custom_mutant="$CUSTOM_EVIDENCE_REPORT"
         role_mutant="$mutation_root"
@@ -1941,17 +2003,23 @@ fi
 modern_evidence="$tmp_dir/modern-evidence"
 modern_custom="$modern_evidence/custom.json"
 modern_role="$modern_evidence/role.json"
+modern_matrix="$modern_evidence/matrix.md"
 modern_render="$modern_evidence/rendered"
 mkdir -p "$modern_evidence"
 python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" build-modern-evidence \
   "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
   "$modern_custom" "$modern_role"
+sed 's/AWS-SIMULATED 2026-09-11 /AWS-SIMULATED 2026-09-10 /g' \
+  "$MATRIX" >"$modern_matrix"
+if [ "$(grep -o 'AWS-SIMULATED 2026-09-10 ' "$modern_matrix" | wc -l | tr -d ' ')" -ne 219 ]; then
+  fail_case "modern Evidence matrix fixture" "expected 219 synthetic 2026-09-10 labels"
+fi
 if output="$(
   "$IAM_SIM_REPORT_RENDERER" \
     --custom-report "$modern_custom" --role-report "$modern_role" \
     --out-dir "$modern_render" 2>&1
 )" && join_output="$(validate_evidence_join \
-  "$MATRIX" "$modern_custom" "$modern_role" \
+  "$modern_matrix" "$modern_custom" "$modern_role" \
   "$modern_render/IAM_SIMULATION_REPORT.md" \
   "$modern_render/IAM_SIMULATION_PROVENANCE.md" 2>&1)" && \
   python3 - "$modern_custom" "$modern_role" \
@@ -1987,7 +2055,7 @@ if [ "$failures" -eq "$group_failures" ]; then
       "$modern_render/IAM_SIMULATION_PROVENANCE.md" "$mutation_root"
     expect_failure "$mutation_label" "$mutation_diagnostic" \
       validate_evidence_join \
-        "$MATRIX" "$mutation_root/custom.json" "$mutation_root/role.json" \
+        "$modern_matrix" "$mutation_root/custom.json" "$mutation_root/role.json" \
         "$modern_render/IAM_SIMULATION_REPORT.md" "$mutation_root/provenance.md"
   done <<'MODERN_EVIDENCE_MUTATIONS'
 evidence-modern-custom-report-binding|evidence modern custom report binding|role report custom_report_sha256 does not match the exact custom report bytes
@@ -2007,7 +2075,7 @@ MODERN_EVIDENCE_MUTATIONS
     fi
     expect_failure "evidence provenance digest $digest_mutation" \
       "$digest_diagnostic" validate_evidence_join \
-      "$MATRIX" "$modern_custom" "$modern_role" \
+      "$modern_matrix" "$modern_custom" "$modern_role" \
       "$modern_render/IAM_SIMULATION_REPORT.md" "$digest_provenance"
   done
 
@@ -2044,7 +2112,7 @@ MODERN_EVIDENCE_MUTATIONS
       "$modern_custom" "$modern_role" "$chain_role" "$chain_provenance")"
     expect_failure "evidence role hash $chain_link" \
       "Evidence role hash chain $chain_link mismatch for case: $chain_case" \
-      validate_evidence_join "$MATRIX" "$modern_custom" "$chain_role" \
+      validate_evidence_join "$modern_matrix" "$modern_custom" "$chain_role" \
       "$modern_render/IAM_SIMULATION_REPORT.md" "$chain_provenance"
     chain_rendered="$modern_evidence/rendered-role-hash-$chain_link"
     if output="$(run_report_renderer \
@@ -2072,7 +2140,7 @@ MODERN_EVIDENCE_MUTATIONS
     fi
     expect_failure "evidence generator commit $generator_mutation" \
       "$generator_diagnostic" validate_evidence_join \
-      "$MATRIX" "$modern_custom" "$modern_role" \
+      "$modern_matrix" "$modern_custom" "$modern_role" \
       "$generator_report" "$generator_provenance"
   done
 fi
@@ -2171,24 +2239,35 @@ write_mutant(
 )
 
 
-failed_case = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
-failed_anchor = f"{failed_case}=CODE-ONLY"
+failed_case = (
+    "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:"
+    "ALL:none:non-protected-resource"
+)
+failed_anchor = f"{failed_case}={label}"
 failed_source = custom_by_id.get(failed_case)
-if matrix.count(failed_anchor) != 1 or failed_source is None:
+if (
+    matrix.count(failed_anchor) != 1
+    or failed_source is None
+    or failed_source.get("pass") is not False
+    or failed_case not in role_by_id
+):
     raise SystemExit("FAIL: failed-case Evidence mutation anchor changed")
-write_mutant("failed", matrix.replace(failed_anchor, f"{failed_case}={label}", 1))
+failed_role = deepcopy(role)
+failed_role["records"] = [
+    record for record in failed_role["records"]
+    if record["case_id"] != failed_case
+]
+write_mutant("failed", role_payload=failed_role)
 doctored_pass_custom = deepcopy(custom)
 doctored_pass_record = next(
     record for record in doctored_pass_custom["records"]
     if record["case_id"] == failed_case
 )
-if doctored_pass_record.get("pass") is not False:
-    raise SystemExit("FAIL: doctored-pass Evidence mutation requires a failed source record")
 doctored_pass_record["pass"] = True
 write_mutant(
     "doctored-pass",
-    matrix.replace(failed_anchor, f"{failed_case}={label}", 1),
     custom_payload=doctored_pass_custom,
+    role_payload=failed_role,
 )
 
 missing_case = next(
@@ -2399,6 +2478,16 @@ per_pair_record["details"][-1]["matched_sids"] = []
 write_mutant("per-pair-sid", custom_payload=per_pair_custom)
 PY_EVIDENCE_MUTANTS
 
+  for mutant_root in "$evidence_mutants"/*; do
+    rebound_role="${mutant_root}/role-rebound.json"
+    rebind_role_report_to_custom \
+      "$mutant_root/custom.json" "$mutant_root/role.json" "$rebound_role"
+    mv -- "$rebound_role" "$mutant_root/role.json"
+    write_bound_evidence_provenance \
+      "$mutant_root/custom.json" "$mutant_root/role.json" \
+      "$RENDERED_EVIDENCE_REPORT" "$mutant_root/provenance.md"
+  done
+
   restore_evidence_join() {
     local label=$1 output
     if output="$(
@@ -2417,21 +2506,21 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/failed/matrix.md" \
       "$evidence_mutants/failed/custom.json" \
       "$evidence_mutants/failed/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/failed/provenance.md"
   restore_evidence_join "evidence failed case promoted"
   expect_failure "evidence doctored pass refusal" "promoted case is not execution-matching" \
     validate_evidence_join \
       "$evidence_mutants/doctored-pass/matrix.md" \
       "$evidence_mutants/doctored-pass/custom.json" \
       "$evidence_mutants/doctored-pass/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/doctored-pass/provenance.md"
   restore_evidence_join "evidence doctored pass refusal"
   expect_failure "evidence runner failure refusal" "promoted case is not execution-matching" \
     validate_evidence_join \
       "$evidence_mutants/runner-failure/matrix.md" \
       "$evidence_mutants/runner-failure/custom.json" \
       "$evidence_mutants/runner-failure/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/runner-failure/provenance.md"
   restore_evidence_join "evidence runner failure refusal"
   expect_failure "evidence per-pair required Sid" \
     "promoted case is not execution-matching" \
@@ -2439,7 +2528,7 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/per-pair-sid/matrix.md" \
       "$evidence_mutants/per-pair-sid/custom.json" \
       "$evidence_mutants/per-pair-sid/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/per-pair-sid/provenance.md"
   restore_evidence_join "evidence per-pair required Sid"
 
   evidence_suffix_original="$evidence_mutants/suffix-original.sh"
@@ -2448,7 +2537,7 @@ PY_EVIDENCE_MUTANTS
     "$evidence_mutants/hyphenated-suffix/matrix.md" \
     "$evidence_mutants/hyphenated-suffix/custom.json" \
     "$evidence_mutants/hyphenated-suffix/role.json" \
-    "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+    "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/hyphenated-suffix/provenance.md" 2>&1)"; then
     pass_case "evidence join accepts the recorded hyphenated suffix team-a"
   else
     fail_case "evidence join hyphenated suffix" "$output"
@@ -2464,14 +2553,14 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/hyphenated-suffix/matrix.md" \
       "$evidence_mutants/hyphenated-suffix/custom.json" \
       "$evidence_mutants/hyphenated-suffix/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/hyphenated-suffix/provenance.md"
   # shellcheck disable=SC1090
   source "$evidence_suffix_original"
   if output="$(validate_evidence_join \
     "$evidence_mutants/hyphenated-suffix/matrix.md" \
     "$evidence_mutants/hyphenated-suffix/custom.json" \
     "$evidence_mutants/hyphenated-suffix/role.json" \
-    "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+    "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/hyphenated-suffix/provenance.md" 2>&1)"; then
     pass_case "evidence hyphenated suffix mutation restored PASS"
   else
     fail_case "evidence hyphenated suffix mutation restoration" "$output"
@@ -2495,7 +2584,7 @@ PY_EVIDENCE_MUTANTS
     TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
       bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" 2>&1
   )" && grep -Fq \
-      'PASS: IAM matrix promoted record hash-list lengths match vectors (216 cases)' \
+      'PASS: IAM matrix promoted record hash-list lengths match vectors (219 cases)' \
       <<<"$output"; then
     pass_case "evidence promoted empty hash list mutation restored PASS"
   else
@@ -2505,7 +2594,8 @@ PY_EVIDENCE_MUTANTS
   set +e
   output="$(dispatch_registered_mutation \
     evidence-promoted-second-policy-hash \
-    "$evidence_mutants/second-hash/custom.json" 2>&1)"
+    "$evidence_mutants/second-hash/custom.json" \
+    "$evidence_mutants/second-hash/role.json" 2>&1)"
   rc=$?
   set -e
   fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
@@ -2517,13 +2607,11 @@ PY_EVIDENCE_MUTANTS
     fail_case "evidence promoted second policy hash mutation did not fail as required" \
       "rc=$rc output=$output"
   fi
-  if output="$(
-    TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
-      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
-        "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" 2>&1
-  )" && grep -Fq \
-      'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (216 cases)' \
-      <<<"$output"; then
+  if output="$(run_iam_matrix_plan_evidence_mutation \
+    "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" 2>&1)" && \
+     grep -Fq \
+       'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (219 cases)' \
+       <<<"$output"; then
     pass_case "evidence promoted second policy hash mutation restored PASS"
   else
     fail_case "evidence promoted second policy hash mutation restoration" "$output"
@@ -2533,35 +2621,35 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/missing/matrix.md" \
       "$evidence_mutants/missing/custom.json" \
       "$evidence_mutants/missing/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/missing/provenance.md"
   restore_evidence_join "evidence missing record"
   expect_failure "evidence duplicate record" "promoted case appears more than once" \
     validate_evidence_join \
       "$evidence_mutants/duplicate/matrix.md" \
       "$evidence_mutants/duplicate/custom.json" \
       "$evidence_mutants/duplicate/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/duplicate/provenance.md"
   restore_evidence_join "evidence duplicate record"
   expect_failure "evidence stale pointer" "Evidence pointer mismatch" \
     validate_evidence_join \
       "$evidence_mutants/pointer/matrix.md" \
       "$evidence_mutants/pointer/custom.json" \
       "$evidence_mutants/pointer/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/pointer/provenance.md"
   restore_evidence_join "evidence stale pointer"
   expect_failure "evidence wrong date" "Evidence date mismatch" \
     validate_evidence_join \
       "$evidence_mutants/date/matrix.md" \
       "$evidence_mutants/date/custom.json" \
       "$evidence_mutants/date/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/date/provenance.md"
   restore_evidence_join "evidence wrong date"
   expect_failure "evidence row above minimum" "Evidence row is above its computed minimum" \
     validate_evidence_join \
       "$evidence_mutants/row/matrix.md" \
       "$evidence_mutants/row/custom.json" \
       "$evidence_mutants/row/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/row/provenance.md"
   restore_evidence_join "evidence row above minimum"
 
   validate_evidence_role_refusal() {
@@ -2592,7 +2680,7 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/$fixture/matrix.md" \
       "$evidence_mutants/$fixture/custom.json" \
       "$evidence_mutants/$fixture/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/$fixture/provenance.md" 2>&1)"; then
       pass_case "$label refuses mismatching role record"
     else
       fail_case "$label refusal" "$output"
@@ -2611,7 +2699,7 @@ PY_EVIDENCE_MUTANTS
         "$evidence_mutants/$fixture/matrix.md" \
         "$evidence_mutants/$fixture/custom.json" \
         "$evidence_mutants/$fixture/role.json" \
-        "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE"
+        "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/$fixture/provenance.md"
     # shellcheck disable=SC1090
     source "$original"
     if output="$(validate_evidence_role_refusal \
@@ -2619,7 +2707,7 @@ PY_EVIDENCE_MUTANTS
       "$evidence_mutants/$fixture/matrix.md" \
       "$evidence_mutants/$fixture/custom.json" \
       "$evidence_mutants/$fixture/role.json" \
-      "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+      "$RENDERED_EVIDENCE_REPORT" "$evidence_mutants/$fixture/provenance.md" 2>&1)"; then
       pass_case "$label mutation restored PASS"
     else
       fail_case "$label mutation restoration" "$output"
@@ -2717,12 +2805,27 @@ PY_PUBLICATION
         "$ROLE_EVIDENCE_REPORT" "$metadata_root/report.md" \
         "$metadata_root/provenance-generator.md"
     restore_evidence_join "evidence publication generator binding"
+    publication_date_custom="$metadata_root/custom-date.json"
+    publication_date_role_source="$metadata_root/role-date-source.json"
+    publication_date_role="$metadata_root/role-date.json"
+    publication_date_provenance="$metadata_root/provenance-date-bound.md"
+    jq '.recorded_at = "2099-12-31T00:00:00Z"' \
+      "$CUSTOM_EVIDENCE_REPORT" >"$publication_date_custom"
+    jq '.recorded_at = "2099-12-31T00:00:01Z"' \
+      "$ROLE_EVIDENCE_REPORT" >"$publication_date_role_source"
+    rebind_role_report_to_custom \
+      "$publication_date_custom" "$publication_date_role_source" \
+      "$publication_date_role"
+    write_bound_evidence_provenance \
+      "$publication_date_custom" "$publication_date_role" \
+      "$metadata_root/report.md" "$publication_date_provenance" \
+      "$metadata_root/provenance-date.md"
     expect_failure "evidence publication date binding" \
       "Evidence publication recorded_on mismatch" \
       validate_evidence_join \
-        "$metadata_root/matrix-date.md" "$CUSTOM_EVIDENCE_REPORT" \
-        "$ROLE_EVIDENCE_REPORT" "$metadata_root/report.md" \
-        "$metadata_root/provenance-date.md"
+        "$metadata_root/matrix-date.md" "$publication_date_custom" \
+        "$publication_date_role" "$metadata_root/report.md" \
+        "$publication_date_provenance"
     restore_evidence_join "evidence publication date binding"
   else
     fail_case "Evidence publication metadata mutation setup" "$output"

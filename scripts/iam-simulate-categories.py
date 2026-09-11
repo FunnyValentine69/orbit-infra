@@ -117,8 +117,8 @@ def generate(matrix_path: Path) -> list[dict[str, str]]:
                 }
             )
 
-    if len(taxonomy) != 288:
-        fail(f"expected 288 unique matrix cases, found {len(taxonomy)}")
+    if len(taxonomy) != 289:
+        fail(f"expected 289 unique matrix cases, found {len(taxonomy)}")
     return taxonomy
 
 

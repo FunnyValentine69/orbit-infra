@@ -1263,10 +1263,14 @@ data "aws_iam_policy_document" "deployer_data" {
     }
   }
 
-  # Subscriptions are a distinct, untaggable SNS resource (subscription
-  # ARN, not the topic ARN) — no aws:ResourceTag/Project condition
-  # applies to them, so their actions get their own unconditioned
-  # statement scoped to the subscription ARN pattern instead.
+  # Committed cases evaluate the "*" request form: matching
+  # aws:ResourceTag/Project context is allowed, while absent or non-matching
+  # context yields implicitDeny. A separate, uncommitted 2026-09-11
+  # simulate-custom-policy probe found that supplying a resource ARN yields
+  # implicitDeny with no matched statement. Whether SNS populates this key at
+  # run time is unverified until a real call; the matrix label proves policy
+  # evaluation, not service enforcement. An absent key makes StringEquals
+  # false, so this grant can only be inert, not wider than intended.
   statement {
     sid    = "SnsSubscriptionManage"
     effect = "Allow"
@@ -1275,7 +1279,13 @@ data "aws_iam_policy_document" "deployer_data" {
       "sns:Unsubscribe",
       "sns:SetSubscriptionAttributes",
     ]
-    resources = ["arn:aws:sns:${var.region}:${data.aws_caller_identity.current.account_id}:${var.name}-*:*"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project_tag]
+    }
   }
 
   # --- Phase 3: CloudWatch alarms, project-scoped. ---
