@@ -1,0 +1,11 @@
+{
+  "projection": {
+    "roles": [
+      {
+        "readiness_case": {
+          "resource_arns": ["arn:aws:iam::000000000000:role/readiness-target"]
+        }
+      }
+    ]
+  }
+}

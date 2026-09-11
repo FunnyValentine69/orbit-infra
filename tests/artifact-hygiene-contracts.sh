@@ -7,6 +7,8 @@ FIXTURES="$REPO_ROOT/tests/fixtures/artifact-hygiene"
 CLEAN="$FIXTURES/clean.md"
 CLEAN_CUSTOM_JSON="$FIXTURES/iam-simulation-custom-report.json"
 CLEAN_ROLE_JSON="$FIXTURES/iam-simulation-role-report.json"
+CLEAN_RESOURCE_ARNS_JSON="$FIXTURES/clean-resource-arns.json"
+BAD_READINESS_PRINCIPAL_JSON="$FIXTURES/bad-readiness-principal.json"
 BAD_JSON="$FIXTURES/bad-iam-simulation-report.json"
 FORBID_FILE="$FIXTURES/forbid-list.txt"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-artifact-hygiene.XXXXXX")"
@@ -90,6 +92,14 @@ check_suite() {
 
   verdict="$(run_one "$script" pass "" "$CLEAN_ROLE_JSON")"
   echo "clean role JSON report fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" pass "" "$CLEAN_RESOURCE_ARNS_JSON")"
+  echo "resource_arns JSON fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" fail "principal-arn" "$BAD_READINESS_PRINCIPAL_JSON")"
+  echo "readiness_principal JSON fixture: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
 
   verdict="$(run_one "$script" fail "account-id" "$BAD_JSON")"
@@ -203,6 +213,11 @@ run_mutation_proof \
   "principal-arn" \
   "if identity_path != REDACTED_PRINCIPAL:  # principal-arn-guard" \
   "if False:  # principal-arn-guard"
+
+run_mutation_proof \
+  "resource-arns-exemption" \
+  'RESOURCE_FIELDS = {"resource_arn", "resource_arns", "Resource", "NotResource"}' \
+  'RESOURCE_FIELDS = {"resource_arn", "Resource", "NotResource"}'
 
 run_mutation_proof \
   "request-id" \
