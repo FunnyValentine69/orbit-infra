@@ -25,8 +25,8 @@ completeness-duplicate-case-across-envelopes	validate_completeness	FAIL: case id
 completeness-filename-derivation	validate_completeness	FAIL: vector filename mismatch for aws_iam_policy.deployer_data ClickhouseSecretCreateWithTag: expected aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json
 completeness-schema-validation	validate_completeness	FAIL: vector validation failed for aws_iam_policy.deployer_data__ClickhouseSecretCreateWithTag.json: FAIL: case is missing required field: expect
 completeness-envelope-header-mismatch	validate_completeness	FAIL: case_id prefix does not match envelope header: case:aws_iam_role_policy.plan_reader_deny:DenyReadStateObjectsOutsideScope:ALL:none:protected-resource expected case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:
-evidence-failed-case-promoted	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching
-evidence-doctored-pass-refusal	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching
+evidence-failed-case-promoted	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource
+evidence-doctored-pass-refusal	validate_evidence_join	FAIL: promoted case is not execution-matching: case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource
 evidence-runner-failure-refusal	validate_evidence_join	FAIL: promoted case is not execution-matching:
 evidence-missing-record	validate_evidence_join	FAIL: promoted case has no evidence record:
 evidence-duplicate-record	validate_evidence_join	FAIL: promoted case appears more than once in an evidence lane:
@@ -149,7 +149,7 @@ renderer-role-redaction-marker-refusal	run_report_renderer	FAIL: role report mus
 renderer-hygiene-call-removal	sed:remove-renderer-hygiene-call	FAIL: published renderer mutant is rejected by artifact hygiene: account-id
 renderer-json-hygiene-call-removal	sed:remove-renderer-json-hygiene-input	FAIL: renderer accepted JSON report containing account-id
 renderer-account-redacted-check-removal	sed:remove-renderer-account-redacted-check	FAIL: renderer accepted role report lacking account_redacted
-renderer-doctored-pass-finding	mutate_report_renderer:doctored-pass	FAIL: doctored pass suppressed renderer finding: case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching
+renderer-doctored-pass-finding	mutate_report_renderer:doctored-pass	FAIL: doctored pass suppressed renderer finding: case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource
 renderer-pair-publication-rollback	mutate_report_renderer:publication	FAIL: injected publication failure between report and provenance
 mutation-registry-valid-helper-edit	registry_mutation_probe:expected	FAIL: mutation registry valid helper edit changed observed diagnostic
 mutation-registry-helper-transformation	registry_mutation_probe:expected	FAIL: mutation registry helper transformation changed without registry row

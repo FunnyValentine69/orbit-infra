@@ -2876,7 +2876,15 @@ mutate_runbook_legacy_recorded_on() {
 }
 
 run_runbook_legacy_render() {
-  python3 "$IAM_SIM_FIXTURE_FACTORY" run-runbook-legacy-render "$@" "$REPO_ROOT"
+  local runbook=$1 custom_report=$2 role_report=$3 out_dir=$4
+  local legacy_custom="${out_dir}-custom.json"
+  local legacy_role="${out_dir}-role.json"
+  mkdir -p "$(dirname "$out_dir")"
+  jq 'del(.recorded_at)' "$custom_report" >"$legacy_custom"
+  jq 'del(.recorded_at, .custom_report_sha256)' \
+    "$role_report" >"$legacy_role"
+  python3 "$IAM_SIM_FIXTURE_FACTORY" run-runbook-legacy-render \
+    "$runbook" "$legacy_custom" "$legacy_role" "$out_dir" "$REPO_ROOT"
 }
 
 mutate_renderer_recording() {
@@ -3154,7 +3162,7 @@ run_iam_simulate_report_contracts() {
   local scalar_rejection_mutant="$phase2_dir/iam-simulate-report-scalar-rejection.sh"
   local scalar_rejection_out="$phase2_dir/rendered-scalar-rejection"
   local scalar_restored_out="$phase2_dir/rendered-scalar-restored"
-  local failed_case="case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+  local failed_case="case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource"
   local doctored_pass_custom="$phase2_dir/doctored-pass-custom-report.json"
   local doctored_pass_out="$phase2_dir/rendered-doctored-pass"
   local doctored_pass_renderer="$phase2_dir/iam-simulate-report-doctored-pass.sh"
@@ -3509,11 +3517,11 @@ role.pop("account_redacted")
 unmarked_path.write_text(
     json.dumps(role, indent=2, sort_keys=True) + "\n", encoding="utf-8"
 )
-failed_case = "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching"
+failed_case = "case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource"
 doctored = json.loads(evidence_custom.read_text(encoding="utf-8"))
 failed = next(record for record in doctored["records"] if record["case_id"] == failed_case)
 if failed.get("pass") is not False:
-    raise SystemExit("FAIL: renderer doctored-pass fixture requires the failed SNS record")
+    raise SystemExit("FAIL: renderer doctored-pass fixture requires the failed custom record")
 failed["pass"] = True
 doctored_pass_path.write_text(
     json.dumps(doctored, indent=2, sort_keys=True) + "\n", encoding="utf-8"

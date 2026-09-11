@@ -486,9 +486,9 @@ the put-role-policy digest. Digest-bearing provenance requires a known ancestor
 generator commit with no generator-file drift through HEAD. The join derives `${SUFFIX}`
 from the plan-reader role name recorded in the role report, so suffixes such as
 `team-a` remain valid. Thirty-two registered mutants cover those joins and bindings,
-including a doctored SNS pass, a per-pair Sid miss, empty and mismatching-second
+including a doctored custom pass, a per-pair Sid miss, empty and mismatching-second
 promoted hash lists, a hyphenated-suffix matcher regression, and a runner failure.
-Every restored join must pass. Before replacement lane reports are published, projection mutations reconstruct the immediately prior `SnsSubscriptionManage` statement in a scratch saved plan so the committed report remains byte-bound; the host-owned plan-mode gate binds the new statement after rerunning both lanes.
+Every restored join must pass. The failed-case and doctored-pass mutations remove the published role-lane closure for the sole custom failure, so stored custom `pass` cannot promote an execution mismatch; the restored join remains bound to the current published lane reports.
 
 The `TAXONOMY` group runs
 `scripts/iam-simulate-categories.py --check`, independently compares the 289

@@ -6,8 +6,8 @@ This publication renders account `000000000000` only.
 
 | Field | Value |
 | --- | --- |
-| recorded_on | 2026-09-10 |
-| generator commit | 0ae9a1e |
+| recorded_on | 2026-09-11 |
+| generator commit | c8d5f87 |
 
 ## Case results
 
@@ -65,8 +65,9 @@ This publication renders account `000000000000` only.
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom | allowed | allowed | SnsRestWithResourceTag | yes |
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | custom | implicitDeny | implicitDeny | none | yes |
-| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching | custom | allowed | implicitDeny | none | no |
-| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:nonmatching | custom | implicitDeny | implicitDeny | none | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | custom | implicitDeny | implicitDeny | none | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | custom | allowed | allowed | SnsSubscriptionManage | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | custom | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | custom | allowed | allowed | TagDiscovery | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:absent | custom-isolated | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | custom | allowed | allowed | Ec2CreateTagsForCreateActions | yes |
@@ -290,8 +291,9 @@ This publication renders account `000000000000` only.
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | principal | allowed | allowed | SnsRestWithResourceTag | yes |
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | principal | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | principal | implicitDeny | implicitDeny | none | yes |
-| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching | principal | allowed | implicitDeny | none | no |
-| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:nonmatching | principal | implicitDeny | implicitDeny | none | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | principal | implicitDeny | implicitDeny | none | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | principal | allowed | allowed | SnsSubscriptionManage | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | principal | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | principal | allowed | allowed | TagDiscovery | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | principal | allowed | allowed | Ec2CreateTagsForCreateActions | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:matching | principal | allowed | allowed | Ec2CreateTagsForCreateActions | yes |
@@ -411,9 +413,7 @@ This publication renders account `000000000000` only.
 
 ## Findings
 
-- `case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching` (custom). Expected: `allowed`; observed: `implicitDeny`. Matched Sids: none.
 - `case:aws_iam_role_policy.plan_reader_deny:DenyListBucketOutsideScope:ALL:none:non-protected-resource` (custom). Expected: `allowed`; observed: `implicitDeny`. Matched Sids: none.
-- `case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching` (role). Expected: `allowed`; observed: `implicitDeny`. Matched Sids: none.
 
 ## Divergences
 
@@ -578,6 +578,15 @@ This publication renders account `000000000000` only.
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | Organizations: sns:SetTopicAttributes arn:aws:sns:us-east-1:000000000000:outside-79s5rw-topic | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | Organizations: sns:Subscribe arn:aws:sns:us-east-1:000000000000:outside-79s5rw-topic | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
 | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | Organizations: sns:UntagResource arn:aws:sns:us-east-1:000000000000:outside-79s5rw-topic | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | Organizations: sns:GetSubscriptionAttributes * | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | Organizations: sns:SetSubscriptionAttributes * | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | Organizations: sns:Unsubscribe * | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | Organizations: sns:GetSubscriptionAttributes * | allowed | allowed | allowed | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | Organizations: sns:SetSubscriptionAttributes * | allowed | allowed | allowed | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | Organizations: sns:Unsubscribe * | allowed | allowed | allowed | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | Organizations: sns:GetSubscriptionAttributes * | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | Organizations: sns:SetSubscriptionAttributes * | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | Organizations: sns:Unsubscribe * | implicitDeny | implicitDeny | implicitDeny | explicitDeny |
 | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | Organizations: tag:GetResources * | allowed | allowed | allowed | explicitDeny |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | Organizations: ec2:CreateTags * | allowed | allowed | allowed | explicitDeny |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:matching | Organizations: ec2:CreateTags * | allowed | allowed | allowed | explicitDeny |
@@ -847,68 +856,69 @@ This publication renders account `000000000000` only.
 
 | Lane | Total | Passed | Failed | Runner failures |
 | --- | ---: | ---: | ---: | ---: |
-| custom | 239 | 237 | 2 | 0 |
-| role | 156 | 155 | 1 | 0 |
+| custom | 240 | 239 | 1 | 0 |
+| role | 157 | 157 | 0 | 0 |
 
 ## Submitted document SHA-256s
 
 | Lane | Case ID | Input | SHA-256 |
 | --- | --- | --- | --- |
 | custom | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:absent | policy_input_list | d1385a503a7a490c85e84009a3c8e63504ab6ac3e8926bfb5222a133403de255 |
-| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:non-matching | policy_input_list | d1385a503a7a490c85e84009a3c8e63504ab6ac3e8926bfb5222a133403de255 |
 | custom | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:resource:nonmatching | policy_input_list | d1385a503a7a490c85e84009a3c8e63504ab6ac3e8926bfb5222a133403de255 |
-| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:absent | policy_input_list | c5779af5d8cc658d5e94b3848308dd9c2b8c73b782f8feb066271a6c89d34f6b |
-| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | c5779af5d8cc658d5e94b3848308dd9c2b8c73b782f8feb066271a6c89d34f6b |
 | custom | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:resource:nonmatching | policy_input_list | c5779af5d8cc658d5e94b3848308dd9c2b8c73b782f8feb066271a6c89d34f6b |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:absent | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:non-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:resource:nonmatching | policy_input_list | 04534532fd896707a70635610f6dd26a474357093c4c472dbf43cb44b1135412 |
 | custom | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:absent | policy_input_list | f58f0324513cef3a026e48d430ec39a9502128d2ee3cbd45c19613ed5b3cb732 |
-| custom | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:non-matching | policy_input_list | f58f0324513cef3a026e48d430ec39a9502128d2ee3cbd45c19613ed5b3cb732 |
 | custom | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:resource:nonmatching | policy_input_list | f58f0324513cef3a026e48d430ec39a9502128d2ee3cbd45c19613ed5b3cb732 |
-| custom | case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:absent | policy_input_list | cb9bd58428ed8972e42bcf1a44a5c23a38c2a94afa1febc37cfcb22aaaa0676e |
-| custom | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | cb9bd58428ed8972e42bcf1a44a5c23a38c2a94afa1febc37cfcb22aaaa0676e |
 | custom | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:resource:nonmatching | policy_input_list | cb9bd58428ed8972e42bcf1a44a5c23a38c2a94afa1febc37cfcb22aaaa0676e |
-| custom | case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:resource:nonmatching | policy_input_list | b917c7c64675eb8e2909acd45b3b03a3c42da38adc0151345a411171f8965b1b |
-| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:absent | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:none-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:one-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:absent | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:non-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:nonmatching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| custom | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | policy_input_list | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:none-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:one-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:absent | policy_input_list | 8951f16ea43f83af2c03e7ceb015bf9872e4eac57c5b7e5cd85da7bb088c4f21 |
 | custom | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | policy_input_list | 6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b |
 | custom | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:non-matching | policy_input_list | 8951f16ea43f83af2c03e7ceb015bf9872e4eac57c5b7e5cd85da7bb088c4f21 |
@@ -1115,88 +1125,90 @@ This publication renders account `000000000000` only.
 | custom | case:aws_iam_role_policy.publisher:SigningKey:ALL:kms:ResourceAliases:none-matching | policy_input_list | 42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977 |
 | custom | case:aws_iam_role_policy.publisher:SigningKey:ALL:kms:ResourceAliases:one-matching | policy_input_list | 42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977 |
 | custom | case:aws_iam_role_policy.publisher:SigningKey:ALL:resource:nonmatching | policy_input_list | 42dbf1f6c41183b0205a606cb46fa1680e78886759139365993fe8ea435b1977 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:absent | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:absent | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:non-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:non-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:absent | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:absent | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:none-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:none-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:one-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:one-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:absent | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:absent | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:non-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:non-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:none:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:nonmatching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:nonmatching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | custom_lane | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
-| role | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | put_role_policy | dd7dfe68310186b0986857a5fd1fbf45f16f3df5c1ea2f98d65f3a07f7991e40 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretReadModifyWithResourceTag:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:ClickhouseSecretTagResourceExisting:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:aws:RequestTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmCreateWithTag:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:CloudwatchAlarmRestWithResourceTag:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EcrVerificationAuth:ALL:none:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:none:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EcrVerificationPull:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:EnvDataBucketLifecycle:ALL:none:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsDescribeStarOnly:ALL:none:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsModifyDeleteWithResourceTag:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:LogsTagResourceExisting:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:S3BucketDescribeReads:ALL:none:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:none-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:none-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:one-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:kms:ResourceAliases:one-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SigningPublicKeyRead:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:aws:RequestTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsCreateWithTag:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsRestWithResourceTag:ALL:resource:nonmatching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | role | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | custom_lane | 6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b |
 | role | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | put_role_policy | 6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b |
 | role | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:matching | custom_lane | 6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b |

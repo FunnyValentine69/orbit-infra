@@ -2,7 +2,7 @@
 
 ```
 LOCATION   fix/sns-subscription-star
-STATE      LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; run 33825140591 from main 9b253b6); stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only; the IAM matrix has 86 statement rows and 13 binding rows, with 216 cases in 64 rows `AWS-SIMULATED` and 22 rows retaining their lower label; the nightly AWS sweeper remains CODE-ONLY until P0-3b
+STATE      LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; run 33825140591 from main 9b253b6); stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only; the 2026-09-11 IAM simulator run promoted 219 cases in 65 of 86 statement rows, with 21 rows retaining their lower label; custom lane 239/240 passed with its sole finding closed by the 157/157 role lane, which recorded 154 agreements, 3 divergences, 429 Organizations divergences, and zero residue; the nightly AWS sweeper remains CODE-ONLY until P0-3b
 NEXT       P0-3b decided 2026-09-08: no paid upgrade; the project closes at the LocalStack-verified level. The real-AWS tail (P0-4, P5-1, P5-x, P5-5..P5-11, P5-22, P5-28, P5-29, the remaining lower-label IAM cases, P5-37..P5-41) stays parked and remains executable if the account is ever upgraded; P5-35 and P5-36 are LocalStack-doable low-priority residuals, not gated
 ```
 

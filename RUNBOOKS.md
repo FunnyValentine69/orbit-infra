@@ -397,9 +397,10 @@ in full with `arn:aws:iam::000000000000:<redacted-principal>`; the writer refuse
 any report retaining the caller's user or role name. The shared writer then
 applies a final whole-report identifier redaction and records
 `redaction_applied: true`. The cleanup paths remain contract-tested offline. A
-real role-lane execution on 2026-09-10 recorded 156 cases: 155 passed and 1
-failed on the same `SnsSubscriptionManage` finding as the custom lane, with 153
-custom-lane agreements, 3 divergences, and zero residue; see
+real role-lane execution on 2026-09-11 recorded 157 cases: 157 passed, with 154
+custom-lane agreements, 3 divergences, 429 Organizations divergences, and zero
+residue; the role lane closed the sole custom-only finding, while
+`SnsSubscriptionManage` passed under its tag-conditioned star grant. See
 `docs/assets/iam-simulation-role-report.json`.
 
 Render the publishable Markdown pair from the completed JSON reports. Omit the
