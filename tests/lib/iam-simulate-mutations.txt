@@ -39,7 +39,7 @@ evidence-role-forbidden-sid-check	mutate_evidence_role_check:forbidden	FAIL: evi
 evidence-role-required-sid-check	mutate_evidence_role_check:required	FAIL: evidence role required Sid check did not enforce expected refusal
 evidence-per-pair-required-sid	validate_evidence_join	FAIL: promoted case is not execution-matching:
 evidence-promoted-empty-hash-list	run_iam_matrix_evidence_mutation:empty-hash	FAIL: promoted custom record has an empty policy_input_list hash list:
-evidence-promoted-second-policy-hash	run_iam_matrix_evidence_mutation:second-hash	FAIL: promoted policy_input_list hashes mismatch for case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary
+evidence-promoted-second-policy-hash	run_iam_matrix_plan_evidence_mutation	FAIL: promoted policy_input_list hashes mismatch for case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary
 runner-per-resource-mapper	run_phase2_runner	FAIL: decision mismatch for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-good/example: expected allowed, observed explicitDeny
 runner-per-pair-required-sid	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObjectVersion *: DenyReadStateObjectsOutsideScope
 runner-position-to-sid-attribution	run_phase2_runner	FAIL: required matched Sid is absent for s3:GetObject arn:aws:s3:::orbit-infra-79s5rw-bad/example: DenyReadStateObjectsOutsideScope

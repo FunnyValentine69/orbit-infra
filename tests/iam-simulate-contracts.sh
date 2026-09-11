@@ -346,58 +346,25 @@ print(f"PASS: IAM simulation role projections bind to plan source bytes ({count}
 PY_ROLE_PROJECTIONS
 }
 
-validate_promoted_second_policy_hash() {
-  local custom_report=$1
-  python3 - "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$VECTORS/aws_iam_policy.task_boundary__EcrAuth.json" "$custom_report" <<'PY_SECOND_HASH'
-import hashlib
-import json
-from pathlib import Path
-import sys
-
-
-case_id = "case:aws_iam_policy.task_boundary:EcrAuth:ALL:none:outside-boundary"
-plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-envelope = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-documents = {
-    resource["address"]: resource["values"]["policy"]
-    for resource in plan["planned_values"]["root_module"]["resources"]
-    if isinstance(resource, dict)
-    and isinstance(resource.get("address"), str)
-    and isinstance(resource.get("values"), dict)
-    and isinstance(resource["values"].get("policy"), str)
-}
-cases = [case for case in envelope.get("cases", []) if case.get("case_id") == case_id]
-records = [record for record in report.get("records", []) if record.get("case_id") == case_id]
-if len(cases) != 1 or len(records) != 1:
-    raise SystemExit(f"FAIL: promoted second-hash fixture count differs for {case_id}")
-vector = cases[0]
-submitted = [documents[envelope["document"]], *vector.get("synthetic_policy_input_list", [])]
-expected = [hashlib.sha256(item.encode("utf-8")).hexdigest() for item in submitted]
-entries = records[0].get("document_hashes_submitted", {}).get("policy_input_list")
-actual = [entry.get("sha256") for entry in entries] if isinstance(entries, list) else None
-if actual != expected:
-    raise SystemExit(
-        f"FAIL: promoted policy_input_list hashes mismatch for {case_id}: "
-        f"report={actual} plan={expected}"
-    )
-print(f"PASS: promoted ordered policy hashes bind to plan/vector bytes for {case_id}")
-PY_SECOND_HASH
-}
-
 run_iam_matrix_evidence_mutation() {
   local submode=$1 custom_report=$2
-  case "$submode" in
-    empty-hash)
-      TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
-        IAM_MATRIX_SKIP_NEGATIVES=1 \
-        bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
-      ;;
-    second-hash)
-      validate_promoted_second_policy_hash "$custom_report"
-      ;;
-    *) echo "FAIL: unknown IAM matrix Evidence mutation: $submode" >&2; return 1 ;;
-  esac
+  if [ "$submode" != empty-hash ]; then
+    echo "FAIL: unknown IAM matrix Evidence mutation: $submode" >&2
+    return 1
+  fi
+  TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
+    IAM_MATRIX_SKIP_NEGATIVES=1 \
+    bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
+}
+
+run_iam_matrix_plan_evidence_mutation() {
+  local custom_report=$1 role_report=$2
+  TMPDIR="$tmp_dir" \
+    IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
+    IAM_MATRIX_ROLE_EVIDENCE_REPORT="$role_report" \
+    IAM_MATRIX_SKIP_NEGATIVES=1 \
+    bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
+      "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
 }
 
 mutate_report_aggregate() {
@@ -2627,7 +2594,8 @@ PY_EVIDENCE_MUTANTS
   set +e
   output="$(dispatch_registered_mutation \
     evidence-promoted-second-policy-hash \
-    "$evidence_mutants/second-hash/custom.json" 2>&1)"
+    "$evidence_mutants/second-hash/custom.json" \
+    "$evidence_mutants/second-hash/role.json" 2>&1)"
   rc=$?
   set -e
   fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
@@ -2639,8 +2607,11 @@ PY_EVIDENCE_MUTANTS
     fail_case "evidence promoted second policy hash mutation did not fail as required" \
       "rc=$rc output=$output"
   fi
-  if output="$(validate_promoted_second_policy_hash "$CUSTOM_EVIDENCE_REPORT" 2>&1)" && \
-     grep -Fq 'PASS: promoted ordered policy hashes bind to plan/vector bytes' <<<"$output"; then
+  if output="$(run_iam_matrix_plan_evidence_mutation \
+    "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" 2>&1)" && \
+     grep -Fq \
+       'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (219 cases)' \
+       <<<"$output"; then
     pass_case "evidence promoted second policy hash mutation restored PASS"
   else
     fail_case "evidence promoted second policy hash mutation restoration" "$output"
