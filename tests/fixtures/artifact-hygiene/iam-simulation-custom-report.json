@@ -4,6 +4,14 @@
     {
       "case_id": "case:fixture.policy:AllowRead:ALL:none:matching",
       "decision_observed": "allowed",
+      "details": [
+        {
+          "action_name": "s3:GetObject",
+          "decision_observed": "allowed",
+          "matched_sids": ["AllowRead"],
+          "resource_arn": "arn:aws:s3:::fixture/example"
+        }
+      ],
       "document_hashes_submitted": {
         "permissions_boundary_policy_input_list": [],
         "policy_input_list": [
@@ -25,6 +33,14 @@
     {
       "case_id": "case:fixture.policy:DenyRead:ALL:none:non-matching",
       "decision_observed": "explicitDeny",
+      "details": [
+        {
+          "action_name": "s3:GetObject",
+          "decision_observed": "explicitDeny",
+          "matched_sids": ["DenyRead"],
+          "resource_arn": "arn:aws:s3:::fixture/example"
+        }
+      ],
       "document_hashes_submitted": {
         "permissions_boundary_policy_input_list": [],
         "policy_input_list": [

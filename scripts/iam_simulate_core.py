@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -343,8 +344,23 @@ def redact_report(value: Any, field: str | None = None) -> Any:
     return value
 
 
+def recorded_at_utc() -> str:
+    """Return the current UTC second in the report timestamp format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def write_report(path: Path, payload: dict[str, Any]) -> None:
     """Write a redacted stable report with one compact record or exclusion per line."""
+    recorded_at = payload.get("recorded_at")
+    if (
+        not isinstance(recorded_at, str)
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", recorded_at) is None
+    ):
+        raise RunnerFailure("report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ")
+    try:
+        datetime.strptime(recorded_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise RunnerFailure("report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ") from exc
     payload = redact_report(payload)
     payload["redaction_applied"] = True
     keys = sorted(payload)

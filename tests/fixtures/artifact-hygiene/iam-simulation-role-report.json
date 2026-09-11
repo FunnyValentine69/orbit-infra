@@ -17,6 +17,14 @@
       "comparison": "agreement",
       "custom_lane": {
         "decision_observed": "allowed",
+        "details": [
+          {
+            "action_name": "s3:GetObject",
+            "decision_observed": "allowed",
+            "matched_sids": ["AllowRead"],
+            "resource_arn": "arn:aws:s3:::fixture/example"
+          }
+        ],
         "matched_sids": ["AllowRead"]
       },
       "default": {
@@ -43,6 +51,14 @@
       "scp_excluded": {
         "agrees_with_custom_lane": true,
         "decision_observed": "allowed",
+        "details": [
+          {
+            "action_name": "s3:GetObject",
+            "decision_observed": "allowed",
+            "matched_sids": ["AllowRead"],
+            "resource_arn": "arn:aws:s3:::fixture/example"
+          }
+        ],
         "matched_sids": ["AllowRead"],
         "matched_statement_sources": []
       },
@@ -53,6 +69,14 @@
       "comparison": "divergence",
       "custom_lane": {
         "decision_observed": "explicitDeny",
+        "details": [
+          {
+            "action_name": "s3:GetObject",
+            "decision_observed": "explicitDeny",
+            "matched_sids": ["DenyRead"],
+            "resource_arn": "arn:aws:s3:::fixture/example"
+          }
+        ],
         "matched_sids": ["DenyRead"]
       },
       "default": {
@@ -105,6 +129,14 @@
       "scp_excluded": {
         "agrees_with_custom_lane": false,
         "decision_observed": "allowed",
+        "details": [
+          {
+            "action_name": "s3:GetObject",
+            "decision_observed": "allowed",
+            "matched_sids": [],
+            "resource_arn": "arn:aws:s3:::fixture/example"
+          }
+        ],
         "matched_sids": [],
         "matched_statement_sources": []
       },

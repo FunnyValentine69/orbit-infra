@@ -409,14 +409,18 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 150 stable mutation case
-IDs, their mutation functions or `sed` targets, and their expected `FAIL:`
-diagnostic prefixes. The suite records each executed failure, rejects missing,
-unregistered, duplicate, or diagnostic-drifting observations, and prints its
-executed/registered count only after all restored paths pass.
+`tests/lib/iam-simulate-mutations.txt` currently names 170 stable mutation case
+IDs, their mutation functions or labelled `sed` targets, and their expected
+`FAIL:` diagnostic prefixes. Its action column uses the closed `fn`,
+`fn:submode`, or `sed:label` dispatcher grammar. The suite rejects actions that
+do not dispatch, mutation helpers without a registry row, missing, unregistered,
+duplicate, or diagnostic-drifting observations, and prints its
+executed/registered count only after all restored paths pass. Dedicated mutants
+change a valid registered action and a helper transformation independently.
 
-The shared report writer applies a final recursive identifier redaction, records
-`redaction_applied: true`, keeps each top-level summary or scalar on one line,
+The shared report writer requires a run-start UTC `recorded_at`, applies a final
+recursive identifier redaction, records `redaction_applied: true`, keeps each
+top-level summary or scalar on one line,
 and renders sorted `records` and role-lane `exclusions` with one compact JSON
 object per line. SHA-256 and Git-SHA tokens remain byte-preserved. The writer
 creates its temporary file beside the destination, so the final `os.replace` is
@@ -438,7 +442,10 @@ both JSON inputs and both rendered Markdown outputs with artifact hygiene, and
 kills mutants that remove the role marker guard, the JSON inputs, or the entire
 hygiene call. The custom fake validates context entries exactly, and a dropped
 `--context-entries` mutant fails. The group also checks that a doctored custom
-`pass` cannot suppress a finding. Role divergences render the vector expectation
+`pass` cannot suppress a finding. Role results ignore stored `pass`, first
+require equal, duplicate-free custom/SCP-excluded action-resource pair sets,
+and then re-derive decisions and Sids from the SCP-excluded details. Role
+divergences render the vector expectation
 and the custom lane's observed decision in separate columns. Per-pair details are
 re-evaluated against `expect.resource_decisions` even when the aggregate observed
 decision is a homogeneous scalar; dict observations and agreeing scalar fallbacks
@@ -447,10 +454,15 @@ their JSON summaries, and a scalar-rejection mutant must make those counts diver
 An injected failure between report
 and provenance publication restores both original output files;
 the provenance is published last. The group also checks the Makefile wiring.
-The root `make test` recipe runs
+Modern reports derive `recorded_on` from the custom run's `recorded_at`, bind a
+role report to the exact custom-report bytes, and reject a role timestamp earlier
+than the custom timestamp. `--recorded-on` is limited to all-legacy inputs. The
+root `make test` recipe runs
 `tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
 That fixture matrix rejects lowercase `requestid`; removing case-insensitive
-matching is a killed mutation with an explicit restored pass.
+matching is a killed mutation with an explicit restored pass. Complete 64/40-hex
+tokens are exempt only in JSON digest fields and Markdown digest/commit table
+cells; a non-digest JSON field containing account-shaped digits still fails.
 
 The `EVIDENCE` group joins every `AWS-SIMULATED` matrix label to a unique
 execution-matching custom-policy record or, when needed, a unique matching
@@ -461,11 +473,14 @@ custom `pass` values and re-evaluates both lanes' decisions and
 required/forbidden Sids against the vector; a runner
 failure never matches. It enforces the row minimum, verifies the provenance
 date and exact report pointer, and refuses publication date or generator-commit
-disagreement between the Markdown report and provenance. It prints the computed
-custom, role, and Markdown SHA-256 digests and will compare them once P5-52
-makes the renderer record the complete digest set. The join derives `${SUFFIX}`
+disagreement between the Markdown report and provenance. It verifies the
+renderer-recorded custom, role, and Markdown SHA-256 rows against the exact
+published bytes. A role fallback also binds the custom policy hashes through the
+named top-level projection source documents, exact projection policy bytes, and
+the put-role-policy digest. Digest-bearing provenance requires a known ancestor
+generator commit with no generator-file drift through HEAD. The join derives `${SUFFIX}`
 from the plan-reader role name recorded in the role report, so suffixes such as
-`team-a` remain valid. Sixteen registered mutants cover those joins and bindings,
+`team-a` remain valid. Twenty-four registered mutants cover those joins and bindings,
 including a doctored SNS pass, a per-pair Sid miss, empty and mismatching-second
 promoted hash lists, a hyphenated-suffix matcher regression, and a runner failure.
 Every restored join
@@ -645,6 +660,16 @@ stand-in with the same growth contract on both platforms; its registry action
 explicitly names macOS Bash 3.2 and Linux Bash 5. Duplicate Sids across
 combined role documents and any loaded vector case ID missing from the custom
 report fail before a role is created.
+After every policy put, the fake returns the stored bytes through
+`get-role-policy`, then answers one SCP-excluded readiness probe selected from
+the full pre-`--only` inventory. Readiness requires an expected decision and a
+required matched Sid; allowed and explicit-deny witnesses qualify, while
+attribution-only cases do not. `propagation_delay_calls` delays both readback and
+probe visibility, and reports retain the resulting per-projection
+`propagation_attempts`. Contracts cover a delayed full run, allowed-only,
+deny-only, and zero-selected projections, prove every committed projection has
+a deterministic witness, and kill retry removal while preserving cleanup after
+exhausted readback.
 Every selected case is simulated first with the exact SCP exclusion and then
 with the default effective-policy request. Every detail decision must first match
 the vector's scalar or per-resource expectation; a mismatch marks the record

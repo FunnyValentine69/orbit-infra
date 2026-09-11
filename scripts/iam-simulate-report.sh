@@ -5,12 +5,13 @@ REPO_ROOT="${IAM_SIM_REPORT_REPO_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 HYGIENE="$REPO_ROOT/scripts/artifact-hygiene.sh"
 
 usage() {
-  echo "usage: $0 --custom-report <json> [--role-report <json>] --out-dir <dir>" >&2
+  echo "usage: $0 --custom-report <json> [--role-report <json>] [--recorded-on <date>] --out-dir <dir>" >&2
   exit 2
 }
 
 custom_report=""
 role_report=""
+recorded_on_override=""
 out_dir=""
 
 while [ "$#" -gt 0 ]; do
@@ -23,6 +24,11 @@ while [ "$#" -gt 0 ]; do
     --role-report)
       [ "$#" -ge 2 ] || usage
       role_report=$2
+      shift 2
+      ;;
+    --recorded-on)
+      [ "$#" -ge 2 ] || usage
+      recorded_on_override=$2
       shift 2
       ;;
     --out-dir)
@@ -86,13 +92,14 @@ on_exit() {
   exit "$rc"
 }
 trap on_exit EXIT
-recorded_on="$(date +%F)"
 generator_commit="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
 python3 - \
   "$custom_report" "$role_report" \
   "$rendered_report" "$rendered_provenance" \
-  "$recorded_on" "$generator_commit" <<'PY'
+  "$recorded_on_override" "$generator_commit" <<'PY'
+from datetime import datetime
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -104,7 +111,7 @@ import sys
     role_path,
     report_path,
     provenance_path,
-    recorded_on,
+    recorded_on_override,
     generator_commit,
 ) = sys.argv[1:]
 
@@ -283,7 +290,16 @@ def custom_matches(record):
         if observed_resources != set(per_resource):
             return False
     elif expected_decision is not None:
-        decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
+        if isinstance(details, list) and details:
+            decisions = [
+                detail.get("decision_observed")
+                for detail in details
+                if isinstance(detail, dict)
+            ]
+            if len(decisions) != len(details):
+                return False
+        else:
+            decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
         if not decisions or any(decision != expected_decision for decision in decisions):
             return False
     required = set(expectation.get("matched_sid_required", []))
@@ -298,8 +314,38 @@ def custom_matches(record):
     return required <= matched and not (forbidden & matched)
 
 
+def detail_pairs(details):
+    if not isinstance(details, list):
+        return None
+    pairs = []
+    for detail in details:
+        if not isinstance(detail, dict):
+            return None
+        action = detail.get("action_name")
+        resource = detail.get("resource_arn")
+        if not isinstance(action, str) or not isinstance(resource, str):
+            return None
+        pairs.append((action, resource))
+    if len(pairs) != len(set(pairs)):
+        return None
+    return set(pairs)
+
+
 def role_matches(record):
-    return record["pass"] is True
+    if "runner_failure" in record:
+        return False
+    custom_pairs = detail_pairs(record["custom_lane"].get("details"))
+    excluded_pairs = detail_pairs(record["scp_excluded"].get("details"))
+    if custom_pairs is None or excluded_pairs is None or custom_pairs != excluded_pairs:
+        return False
+    observed = record["scp_excluded"]
+    candidate = {
+        "expect": role_expectation(record),
+        "decision_observed": observed["decision_observed"],
+        "details": observed["details"],
+        "matched_sids": observed["matched_sids"],
+    }
+    return custom_matches(candidate)
 
 
 def outcome(records, matches):
@@ -345,6 +391,42 @@ for record in custom_records:
 role = read_report(role_path, "role") if role_path else None
 if role is not None:
     validate_role(role, custom_by_id)
+
+supplied_reports = [("custom", custom)]
+if role is not None:
+    supplied_reports.append(("role", role))
+recorded_values = [report.get("recorded_at") for _, report in supplied_reports]
+modern = [isinstance(value, str) for value in recorded_values]
+if any(modern):
+    if not all(modern):
+        fail("all supplied reports must carry recorded_at or all must be legacy")
+    if recorded_on_override:
+        fail("--recorded-on is only valid for legacy reports without recorded_at")
+    parsed = []
+    for (label, _), value in zip(supplied_reports, recorded_values):
+        try:
+            parsed.append(datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
+        except (TypeError, ValueError):
+            fail(f"{label} report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ")
+    if role is not None:
+        if parsed[1] < parsed[0]:
+            fail("role report recorded_at precedes custom report recorded_at")
+        expected_custom_digest = hashlib.sha256(Path(custom_path).read_bytes()).hexdigest()
+        if role.get("custom_report_sha256") != expected_custom_digest:
+            fail(
+                "role report custom_report_sha256 does not match the exact custom report bytes"
+            )
+    recorded_on = parsed[0].strftime("%Y-%m-%d")
+else:
+    if not recorded_on_override:
+        fail("legacy reports require --recorded-on YYYY-MM-DD")
+    try:
+        parsed_override = datetime.strptime(recorded_on_override, "%Y-%m-%d")
+    except ValueError:
+        fail("--recorded-on must be YYYY-MM-DD")
+    if parsed_override.strftime("%Y-%m-%d") != recorded_on_override:
+        fail("--recorded-on must be YYYY-MM-DD")
+    recorded_on = recorded_on_override
 
 role_records = role["records"] if role is not None else []
 report_lines = [
@@ -472,6 +554,12 @@ report_lines.extend(
 append_hash_rows(report_lines, "custom", custom_records)
 append_hash_rows(report_lines, "role", role_records)
 Path(report_path).write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+report_digests = {
+    "custom report sha256": hashlib.sha256(Path(custom_path).read_bytes()).hexdigest(),
+    "Markdown report sha256": hashlib.sha256(Path(report_path).read_bytes()).hexdigest(),
+}
+if role is not None:
+    report_digests["role report sha256"] = hashlib.sha256(Path(role_path).read_bytes()).hexdigest()
 
 custom_counts = outcome(custom_records, custom_matches)
 role_counts = outcome(role_records, role_matches)
@@ -517,6 +605,15 @@ provenance_lines = [
     f"| recorded_from | {recorded_from} |",
     f"| recorded_on | {recorded_on} |",
     f"| generator commit | {generator_commit} |",
+    *[
+        f"| {name} | {report_digests[name]} |"
+        for name in (
+            "custom report sha256",
+            "role report sha256",
+            "Markdown report sha256",
+        )
+        if name in report_digests
+    ],
     f"| commands | {'<br>'.join(commands)} |",
     (
         "| account and region | Free Plan account in `us-east-1`; the rendered "
@@ -549,7 +646,7 @@ provenance_lines.extend(
         "- non-placeholder 12-digit account identifiers, including IAM ARN accounts;",
         "- AWS principal and session identifiers, including assumed-role paths;",
         "- request identifier keys and bare UUIDs; and",
-        "- the SHA-256 exemption that removes complete 64-hex digests before the account and UUID checks.",
+        "- field-scoped complete 64/40-hex digest and commit exemptions: JSON digest keys and Markdown digest/commit table cells only.",
         "",
         "No forbidden-value file is supplied by this renderer, so forbid-list matching is not part of this publication check.",
     ]

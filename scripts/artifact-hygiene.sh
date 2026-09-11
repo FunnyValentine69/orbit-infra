@@ -115,6 +115,86 @@ try:
     json_payload = json.loads(serialized)
 except json.JSONDecodeError:
     json_payload = None
+
+
+def digest_field(field):
+    if not isinstance(field, str):
+        return False
+    normalized = field.casefold()
+    return (
+        normalized.endswith("sha256")
+        or normalized.endswith("hash")
+        or normalized.endswith("hashes_submitted")
+        or normalized == "generator_commit"
+    )
+
+
+def collect_scoped_hex(value, field=None, inherited=False):
+    scoped = inherited or digest_field(field)
+    found = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            found.update(collect_scoped_hex(item, key, scoped))
+    elif isinstance(value, list):
+        for item in value:
+            found.update(collect_scoped_hex(item, field, scoped))
+    elif isinstance(value, str) and scoped:
+        found.update(HEX64.findall(value))
+        found.update(HEX40.findall(value))
+    return found
+
+
+json_scoped_hex = collect_scoped_hex(json_payload) if json_payload is not None else set()
+markdown_sha_column = None
+markdown_sha_columns = {}
+for index, raw_line in enumerate(lines, 1):
+    table_line = raw_line.rstrip("\n")
+    if not (table_line.startswith("|") and table_line.endswith("|")):
+        markdown_sha_column = None
+        continue
+    cells = [cell.strip() for cell in table_line[1:-1].split("|")]
+    normalized = [re.sub(r"[^a-z0-9]", "", cell.casefold()) for cell in cells]
+    if "sha256" in normalized:
+        markdown_sha_column = normalized.index("sha256")
+        continue
+    if markdown_sha_column is not None and markdown_sha_column < len(cells):
+        markdown_sha_columns[index] = markdown_sha_column
+
+
+def strip_complete_hex(value):
+    sanitized = HEX64.sub("", value)  # sha256-guard
+    sanitized = HEX40.sub("", sanitized)  # git-sha-guard
+    return sanitized
+
+
+def sanitize_scoped_hex(content, json_payload, line_no):
+    if json_payload is not None:
+        direct_digest = re.compile(
+            r'("(?:[^"\\]|\\.)*(?:sha256|hash|generator_commit)"\s*:\s*")'
+            r'([0-9a-fA-F]{40}|[0-9a-fA-F]{64})(")',
+            re.IGNORECASE,
+        )
+        sanitized = direct_digest.sub(r"\1\3", content)
+        if '"hashes_submitted"' in content or re.match(
+            r'^\s*"[0-9a-fA-F]+"[,]?\s*$', content
+        ):
+            for token in json_scoped_hex:
+                sanitized = sanitized.replace(token, "")
+        return sanitized
+    if not (content.startswith("|") and content.endswith("|")):
+        return content
+    cells = content[1:-1].split("|")
+    first = re.sub(r"[^a-z0-9]", "", cells[0].casefold()) if cells else ""
+    scoped_cells = set()
+    if "sha256" in first or "commit" in first:
+        scoped_cells.update(range(len(cells)))
+    if line_no in markdown_sha_columns:
+        scoped_cells.add(markdown_sha_columns[line_no])
+    for index in scoped_cells:
+        cells[index] = strip_complete_hex(cells[index])
+    return "|" + "|".join(cells) + "|"
+
+
 if json_payload is not None:
     leaked_principal = find_unredacted_principal(json_payload)
     if leaked_principal is not None:
@@ -132,8 +212,7 @@ if json_payload is not None:
 
 for line_no, line in enumerate(lines, 1):
     content = line.rstrip("\n")
-    sanitized = HEX64.sub("", content)
-    sanitized = HEX40.sub("", sanitized)  # git-sha-guard
+    sanitized = sanitize_scoped_hex(content, json_payload, line_no)
 
     for account_id in IAM_ARN.findall(sanitized):
         if account_id != PLACEHOLDER_ACCOUNT:  # iam-arn-guard
