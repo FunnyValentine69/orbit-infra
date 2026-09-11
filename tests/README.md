@@ -409,7 +409,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 184 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 196 stable mutation case
 IDs, their mutation functions or labelled `sed` targets, and their expected
 `FAIL:` diagnostic prefixes. Its action column uses the closed `fn`,
 `fn:submode`, or `sed:label` dispatcher grammar. The suite rejects actions that
@@ -480,7 +480,7 @@ named top-level projection source documents, exact projection policy bytes, and
 the put-role-policy digest. Digest-bearing provenance requires a known ancestor
 generator commit with no generator-file drift through HEAD. The join derives `${SUFFIX}`
 from the plan-reader role name recorded in the role report, so suffixes such as
-`team-a` remain valid. Twenty-four registered mutants cover those joins and bindings,
+`team-a` remain valid. Thirty-two registered mutants cover those joins and bindings,
 including a doctored SNS pass, a per-pair Sid miss, empty and mismatching-second
 promoted hash lists, a hyphenated-suffix matcher regression, and a runner failure.
 Every restored join

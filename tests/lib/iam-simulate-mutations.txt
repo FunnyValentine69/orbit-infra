@@ -185,3 +185,16 @@ evidence-generator-commit-unknown	mutate_generator_commit:unknown	FAIL: Evidence
 evidence-generator-commit-stale	mutate_generator_commit:stale	FAIL: Evidence generator drift since generator commit:
 renderer-present-malformed-recorded-at	mutate_report_renderer:legacy-recorded-at	FAIL: renderer accepted present non-string recorded_at as legacy
 renderer-role-outcome-empty-pairs	mutate_renderer_role_outcome:empty-pairs	FAIL: role record
+
+renderer-custom-aggregate-decision	mutate_report_aggregate:renderer-custom-decision	FAIL: renderer accepted doctored custom aggregate decision:
+renderer-custom-aggregate-sids	mutate_report_aggregate:renderer-custom-sids	FAIL: renderer accepted doctored custom aggregate sids:
+renderer-role-aggregate-decision	mutate_report_aggregate:renderer-role-decision	FAIL: renderer accepted doctored role aggregate decision:
+renderer-role-aggregate-sids	mutate_report_aggregate:renderer-role-sids	FAIL: renderer accepted doctored role aggregate sids:
+evidence-custom-aggregate-decision	mutate_report_aggregate:evidence-custom-decision	FAIL: promoted case is not execution-matching:
+evidence-custom-aggregate-sids	mutate_report_aggregate:evidence-custom-sids	FAIL: promoted case is not execution-matching:
+evidence-role-aggregate-decision	mutate_report_aggregate:evidence-role-decision	FAIL: promoted case is not execution-matching:
+evidence-role-aggregate-sids	mutate_report_aggregate:evidence-role-sids	FAIL: promoted case is not execution-matching:
+evidence-modern-custom-report-binding	mutate_modern_evidence:custom-binding	FAIL: role report custom_report_sha256 does not match the exact custom report bytes
+evidence-modern-role-chronology	mutate_modern_evidence:role-chronology	FAIL: role report recorded_at precedes custom report recorded_at
+evidence-modern-recorded-at-type	mutate_modern_evidence:recorded-at-type	FAIL: custom report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ
+evidence-modern-digest-downgrade	mutate_modern_evidence:digest-downgrade	FAIL: provenance digest set is incomplete: missing custom report sha256

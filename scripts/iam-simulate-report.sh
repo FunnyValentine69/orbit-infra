@@ -273,6 +273,60 @@ def role_view(record):
     return expected, observed, record["scp_excluded"]["matched_sids"]
 
 
+def aggregates_match_details(observation):
+    details = observation.get("details")
+    if not isinstance(details, list):
+        return True
+    if not details:
+        return False
+    decisions = {}
+    matched_sids = set()
+    actions = set()
+    resources = set()
+    for detail in details:
+        if not isinstance(detail, dict):
+            return False
+        action = detail.get("action_name")
+        resource = detail.get("resource_arn")
+        decision = detail.get("decision_observed")
+        sids = detail.get("matched_sids")
+        if (
+            not isinstance(action, str)
+            or not action
+            or not isinstance(resource, str)
+            or not resource
+            or not isinstance(decision, str)
+            or not decision
+            or not isinstance(sids, list)
+            or any(not isinstance(sid, str) or not sid for sid in sids)
+        ):
+            return False
+        pair = (action, resource)
+        if pair in decisions:
+            return False
+        decisions[pair] = decision
+        matched_sids.update(sids)
+        actions.add(action)
+        resources.add(resource)
+    if len(resources) > 1 and len(actions) == 1:
+        action = next(iter(actions))
+        aggregate_decision = {
+            resource: decisions[(action, resource)]
+            for resource in sorted(resources)
+        }
+    elif len(set(decisions.values())) == 1:
+        aggregate_decision = next(iter(decisions.values()))
+    else:
+        aggregate_decision = {
+            f"{action}|{resource}": decision
+            for (action, resource), decision in sorted(decisions.items())
+        }
+    return (
+        observation.get("decision_observed") == aggregate_decision
+        and observation.get("matched_sids") == sorted(matched_sids)
+    )
+
+
 def custom_matches(record):
     if "runner_failure" in record:
         return False
@@ -281,6 +335,8 @@ def custom_matches(record):
     per_resource = expectation.get("resource_decisions")
     observed = record["decision_observed"]
     details = record.get("details")
+    if not aggregates_match_details(record):
+        return False
     if isinstance(per_resource, dict):
         missing = object()
         observed_resources = set()
@@ -369,6 +425,10 @@ def role_matches(record):
         f"role record {case_id} scp_excluded",
     )
     if custom_pairs != excluded_pairs:
+        return False
+    if not aggregates_match_details(record["custom_lane"]):
+        return False
+    if not aggregates_match_details(record["scp_excluded"]):
         return False
     observed = record["scp_excluded"]
     candidate = {

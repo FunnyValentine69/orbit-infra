@@ -360,6 +360,124 @@ run_iam_matrix_evidence_mutation() {
   esac
 }
 
+mutate_report_aggregate() {
+  local submode=$1 source=$2 destination=$3
+  python3 - "$submode" "$source" "$destination" <<'PY_AGGREGATE_MUTANT'
+from copy import deepcopy
+import json
+from pathlib import Path
+import sys
+
+submode = sys.argv[1]
+source = Path(sys.argv[2])
+destination = Path(sys.argv[3])
+consumer, lane, field = submode.split("-", 2)
+payload = json.loads(source.read_text(encoding="utf-8"))
+custom_case = "case:aws_iam_policy.task_boundary:EcsExec:ALL:none:in-boundary"
+renderer_role_case = (
+    "case:aws_iam_policy.deployer_data:"
+    "ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching"
+)
+evidence_role_case = (
+    "case:aws_iam_role_policy.plan_reader_deny:"
+    "DenyListBucketOutsideScope:ALL:none:non-protected-resource"
+)
+case_id = custom_case if lane == "custom" else (
+    renderer_role_case if consumer == "renderer" else evidence_role_case
+)
+
+
+def mutate(observation):
+    details = observation.get("details")
+    if not isinstance(details, list) or not details:
+        raise SystemExit("FAIL: aggregate mutation target lacks details")
+    if field == "decision":
+        observation["decision_observed"] = "doctoredDecision"
+    elif field == "sids":
+        sids = observation.get("matched_sids")
+        if not isinstance(sids, list):
+            raise SystemExit("FAIL: aggregate mutation target lacks matched_sids")
+        observation["matched_sids"] = sorted([*sids, "DoctoredAggregateSid"])
+    else:
+        raise SystemExit(f"FAIL: unknown aggregate mutation field: {field}")
+
+
+records = [record for record in payload["records"] if record.get("case_id") == case_id]
+if len(records) != 1:
+    raise SystemExit(f"FAIL: aggregate mutation found {len(records)} records for {case_id}")
+if lane == "custom":
+    mutate(records[0])
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+else:
+    destination.mkdir(parents=True, exist_ok=True)
+    for view in ("custom_lane", "scp_excluded"):
+        variant = deepcopy(payload)
+        record = next(item for item in variant["records"] if item["case_id"] == case_id)
+        mutate(record[view])
+        (destination / f"{view}.json").write_text(
+            json.dumps(variant, indent=2) + "\n", encoding="utf-8"
+        )
+print(case_id)
+PY_AGGREGATE_MUTANT
+}
+
+
+mutate_modern_evidence() {
+  local submode=$1 custom_source=$2 role_source=$3 provenance_source=$4 destination=$5
+  python3 - \
+    "$submode" "$custom_source" "$role_source" \
+    "$provenance_source" "$destination" <<'PY_MODERN_MUTANT'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+submode = sys.argv[1]
+custom_source, role_source, provenance_source, destination = map(Path, sys.argv[2:])
+destination.mkdir(parents=True)
+custom = json.loads(custom_source.read_text(encoding="utf-8"))
+role = json.loads(role_source.read_text(encoding="utf-8"))
+provenance = provenance_source.read_text(encoding="utf-8")
+custom_path = destination / "custom.json"
+role_path = destination / "role.json"
+provenance_path = destination / "provenance.md"
+
+if submode == "custom-binding":
+    custom["recorded_at"] = "2026-09-10T12:00:00Z"
+    role["recorded_at"] = "2026-09-10T12:00:01Z"
+elif submode == "role-chronology":
+    role["recorded_at"] = "2026-09-09T23:59:59Z"
+elif submode == "recorded-at-type":
+    custom["recorded_at"] = 42
+elif submode != "digest-downgrade":
+    raise SystemExit(f"FAIL: unknown modern Evidence mutation: {submode}")
+
+custom_path.write_text(json.dumps(custom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+role_path.write_text(json.dumps(role, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+if submode == "digest-downgrade":
+    provenance = re.sub(
+        r"(?m)^\| (?:custom report sha256|role report sha256|Markdown report sha256) "
+        r"\| [0-9a-f]{64} \|\n?",
+        "",
+        provenance,
+    )
+else:
+    for name, path in (
+        ("custom report sha256", custom_path),
+        ("role report sha256", role_path),
+    ):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        pattern = rf"(?m)^\| {re.escape(name)} \| [0-9a-f]{{64}} \|$"
+        provenance, count = re.subn(pattern, f"| {name} | {digest} |", provenance)
+        if count != 1:
+            raise SystemExit(f"FAIL: modern Evidence mutation found {count} {name} rows")
+provenance_path.write_text(provenance, encoding="utf-8")
+PY_MODERN_MUTANT
+}
+
+
 validate_mutation_registry
 
 validate_evidence_join() {
@@ -371,6 +489,7 @@ validate_evidence_join() {
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -390,8 +509,7 @@ def load_json(path: Path, description: str):
         fail(f"cannot read {description}: {exc}")
 
 
-def load_records(path: Path, description: str) -> dict[str, list[dict]]:
-    payload = load_json(path, description)
+def index_records(payload, description: str) -> dict[str, list[dict]]:
     if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
         fail(f"{description} must contain a records array")
     records: dict[str, list[dict]] = defaultdict(list)
@@ -469,6 +587,60 @@ def expected_resource_decision(expectation: dict, resource: str):
     return matches[0] if len(matches) == 1 else None
 
 
+def aggregates_match_details(observation: dict) -> bool:
+    details = observation.get("details")
+    if not isinstance(details, list):
+        return True
+    if not details:
+        return False
+    decisions = {}
+    matched_sids = set()
+    actions = set()
+    resources = set()
+    for detail in details:
+        if not isinstance(detail, dict):
+            return False
+        action = detail.get("action_name")
+        resource = detail.get("resource_arn")
+        decision = detail.get("decision_observed")
+        sids = detail.get("matched_sids")
+        if (
+            not isinstance(action, str)
+            or not action
+            or not isinstance(resource, str)
+            or not resource
+            or not isinstance(decision, str)
+            or not decision
+            or not isinstance(sids, list)
+            or any(not isinstance(sid, str) or not sid for sid in sids)
+        ):
+            return False
+        pair = (action, resource)
+        if pair in decisions:
+            return False
+        decisions[pair] = decision
+        matched_sids.update(sids)
+        actions.add(action)
+        resources.add(resource)
+    if len(resources) > 1 and len(actions) == 1:
+        action = next(iter(actions))
+        aggregate_decision = {
+            resource: decisions[(action, resource)]
+            for resource in sorted(resources)
+        }
+    elif len(set(decisions.values())) == 1:
+        aggregate_decision = next(iter(decisions.values()))
+    else:
+        aggregate_decision = {
+            f"{action}|{resource}": decision
+            for (action, resource), decision in sorted(decisions.items())
+        }
+    return (
+        observation.get("decision_observed") == aggregate_decision
+        and observation.get("matched_sids") == sorted(matched_sids)
+    )
+
+
 def details_cover_vector(vector: dict, details: list[dict]) -> bool:
     actions = vector.get("action_names")
     resources = vector.get("resource_arns") or ["*"]
@@ -498,6 +670,8 @@ def observation_matches(vector: dict, evidence: dict) -> bool:
     forbidden = expectation.get("matched_sid_forbidden", [])
     details = evidence.get("details")
     if isinstance(details, list):
+        if not aggregates_match_details(evidence):
+            return False
         if not details_cover_vector(vector, details):
             return False
         for detail in details:
@@ -549,11 +723,15 @@ def custom_matches(vector: dict, record: dict) -> bool:
 
 def role_matches(vector: dict, record: dict) -> bool:
     evidence = record.get("scp_excluded")
+    custom_lane = record.get("custom_lane")
     expectation = vector.get("expect")
     return (
         "runner_failure" not in record
         and isinstance(evidence, dict)
+        and isinstance(custom_lane, dict)
         and isinstance(expectation, dict)
+        and aggregates_match_details(custom_lane)
+        and aggregates_match_details(evidence)
         and observation_matches(vector, evidence)
     )
 
@@ -623,9 +801,10 @@ provenance_path = Path(sys.argv[6])
 expected_pointer = sys.argv[7]
 repo_root = Path(sys.argv[8])
 generator_files = sys.argv[9:]
-custom_records = load_records(custom_path, "custom evidence report")
-role_records = load_records(role_path, "role evidence report")
+custom_payload = load_json(custom_path, "custom evidence report")
 role_payload = load_json(role_path, "role evidence report")
+custom_records = index_records(custom_payload, "custom evidence report")
+role_records = index_records(role_payload, "role evidence report")
 report_suffix = load_report_suffix(role_path)
 try:
     matrix_text = matrix_path.read_text(encoding="utf-8")
@@ -639,6 +818,32 @@ recorded_on_matches = re.findall(
 if len(recorded_on_matches) != 1:
     fail("provenance must contain exactly one recorded_on date")
 recorded_on = recorded_on_matches[0]
+supplied_reports = [
+    ("custom", custom_payload),
+    ("role", role_payload),
+]
+modern_fields = ["recorded_at" in payload for _, payload in supplied_reports]
+modern = any(modern_fields)
+if modern:
+    if not all(modern_fields):
+        fail("all supplied reports must carry recorded_at or all must be legacy")
+    parsed_recorded_at = {}
+    for label, payload in supplied_reports:
+        try:
+            parsed_recorded_at[label] = datetime.strptime(
+                payload["recorded_at"], "%Y-%m-%dT%H:%M:%SZ"
+            )
+        except (TypeError, ValueError):
+            fail(f"{label} report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ")
+    if parsed_recorded_at["role"] < parsed_recorded_at["custom"]:
+        fail("role report recorded_at precedes custom report recorded_at")
+    if parsed_recorded_at["custom"].strftime("%Y-%m-%d") != recorded_on:
+        fail("provenance recorded_on does not match custom report recorded_at date")
+    expected_custom_digest = hashlib.sha256(custom_path.read_bytes()).hexdigest()
+    if role_payload.get("custom_report_sha256") != expected_custom_digest:
+        fail(
+            "role report custom_report_sha256 does not match the exact custom report bytes"
+        )
 generator_matches = re.findall(
     r"^\| generator commit \| ([0-9a-f]+) \|$", provenance_text, re.MULTILINE
 )
@@ -703,8 +908,8 @@ for name in digest_paths:
         fail(f"provenance repeats {name}")
     if matches:
         provenance_digests[name] = matches[0]
-if provenance_digests and set(provenance_digests) != set(digest_paths):
-    missing = sorted(set(digest_paths) - set(provenance_digests))[0]
+if (modern or provenance_digests) and set(provenance_digests) != set(digest_paths):
+    missing = next(name for name in digest_paths if name not in provenance_digests)
     fail(f"provenance digest set is incomplete: missing {missing}")
 for name, recorded_digest in provenance_digests.items():
     if recorded_digest != computed_digests[name]:
@@ -712,7 +917,7 @@ for name, recorded_digest in provenance_digests.items():
             f"provenance digest mismatch for {name}: "
             f"recorded={recorded_digest} computed={computed_digests[name]}"
         )
-if provenance_digests and subprocess.run(
+if (modern or provenance_digests) and subprocess.run(
     [
         "git", "diff", "--quiet", generator_commit, "HEAD", "--",
         *generator_files,
@@ -1567,6 +1772,125 @@ else
   fail_case "IAM simulation Evidence join" "$output"
 fi
 
+validate_renderer_aggregate_refusal() {
+  local scope=$1 custom_report=$2 role_input=$3 output_root=$4 case_id=$5
+  local role_report rendered expected_yes expected_no output
+  local -a role_reports
+  if [ "$scope" = custom ]; then
+    role_reports=("$role_input")
+    expected_yes=0
+    expected_no=1
+  else
+    role_reports=("$role_input"/*.json)
+    expected_yes=1
+    expected_no=1
+  fi
+  for role_report in "${role_reports[@]}"; do
+    rendered="$output_root/$(basename "$role_report" .json)"
+    if ! output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$custom_report" \
+        "$role_report" "$rendered" \
+        2>&1
+    )"; then
+      printf '%s\n' "$output" >&2
+      return 1
+    fi
+    if ! python3 - \
+      "$rendered/IAM_SIMULATION_REPORT.md" "$case_id" \
+      "$expected_yes" "$expected_no" <<'PY_RENDERED_AGGREGATE'
+from pathlib import Path
+import sys
+
+report = Path(sys.argv[1]).read_text(encoding="utf-8")
+case_id = sys.argv[2]
+rows = [line for line in report.splitlines() if line.startswith(f"| {case_id} |")]
+yes = sum(line.endswith("| yes |") for line in rows)
+no = sum(line.endswith("| no |") for line in rows)
+if (yes, no) != (int(sys.argv[3]), int(sys.argv[4])):
+    raise SystemExit(
+        f"FAIL: renderer aggregate refusal differs: case={case_id} yes={yes} no={no}"
+    )
+PY_RENDERED_AGGREGATE
+    then
+      return 1
+    fi
+  done
+}
+
+
+validate_evidence_aggregate_refusal() {
+  local scope=$1 custom_report=$2 role_input=$3 case_id=$4
+  local role_report output rc
+  local -a role_reports
+  if [ "$scope" = custom ]; then
+    role_reports=("$role_input")
+  else
+    role_reports=("$role_input"/*.json)
+  fi
+  for role_report in "${role_reports[@]}"; do
+    set +e
+    output="$(
+      validate_evidence_join \
+        "$MATRIX" "$custom_report" "$role_report" \
+        "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1
+    )"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] || ! grep -Fq \
+      "FAIL: promoted case is not execution-matching: $case_id" <<<"$output"; then
+      printf 'FAIL: Evidence aggregate refusal differs: rc=%s output=%s\n' \
+        "$rc" "$output" >&2
+      return 1
+    fi
+  done
+  printf 'FAIL: promoted case is not execution-matching: %s\n' "$case_id"
+}
+
+aggregate_mutants="$tmp_dir/aggregate-mutants"
+for consumer in renderer evidence; do
+  for lane in custom role; do
+    for field in decision sids; do
+      label="$consumer $lane aggregate $field"
+      mutation_id="${consumer}-${lane}-aggregate-${field}"
+      mutation_root="$aggregate_mutants/$mutation_id"
+      if [ "$lane" = custom ]; then
+        custom_mutant="$mutation_root.json"
+        role_mutant="$ROLE_EVIDENCE_REPORT"
+        case_id="$(dispatch_registered_mutation \
+          "$mutation_id" "$CUSTOM_EVIDENCE_REPORT" "$custom_mutant")"
+      else
+        custom_mutant="$CUSTOM_EVIDENCE_REPORT"
+        role_mutant="$mutation_root"
+        case_id="$(dispatch_registered_mutation \
+          "$mutation_id" "$ROLE_EVIDENCE_REPORT" "$role_mutant")"
+      fi
+      if [ "$consumer" = renderer ]; then
+        if output="$(validate_renderer_aggregate_refusal \
+          "$lane" "$custom_mutant" "$role_mutant" \
+          "$aggregate_mutants/rendered-$mutation_id" "$case_id" 2>&1)"; then
+          pass_case "$label mutation -> FAIL: renderer accepted doctored $lane aggregate $field: $case_id"
+        else
+          fail_case "$label mutation" "$output"
+        fi
+      elif output="$(validate_evidence_aggregate_refusal \
+        "$lane" "$custom_mutant" "$role_mutant" "$case_id" 2>&1)"; then
+        pass_case "$label mutation -> $output"
+      else
+        fail_case "$label mutation" "$output"
+      fi
+    done
+  done
+done
+
+if output="$(validate_evidence_join \
+  "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+  "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+  pass_case "Evidence aggregate mutations restored PASS"
+else
+  fail_case "Evidence aggregate mutation restoration" "$output"
+fi
+
 modern_evidence="$tmp_dir/modern-evidence"
 modern_custom="$modern_evidence/custom.json"
 modern_role="$modern_evidence/role.json"
@@ -1609,6 +1933,22 @@ else
 fi
 
 if [ "$failures" -eq "$group_failures" ]; then
+  while IFS='|' read -r mutation_id mutation_label mutation_diagnostic; do
+    mutation_root="$modern_evidence/$mutation_id"
+    dispatch_registered_mutation "$mutation_id" \
+      "$modern_custom" "$modern_role" \
+      "$modern_render/IAM_SIMULATION_PROVENANCE.md" "$mutation_root"
+    expect_failure "$mutation_label" "$mutation_diagnostic" \
+      validate_evidence_join \
+        "$MATRIX" "$mutation_root/custom.json" "$mutation_root/role.json" \
+        "$modern_render/IAM_SIMULATION_REPORT.md" "$mutation_root/provenance.md"
+  done <<'MODERN_EVIDENCE_MUTATIONS'
+evidence-modern-custom-report-binding|evidence modern custom report binding|role report custom_report_sha256 does not match the exact custom report bytes
+evidence-modern-role-chronology|evidence modern role chronology|role report recorded_at precedes custom report recorded_at
+evidence-modern-recorded-at-type|evidence modern recorded at type|custom report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ
+evidence-modern-digest-downgrade|evidence modern digest downgrade|provenance digest set is incomplete: missing custom report sha256
+MODERN_EVIDENCE_MUTATIONS
+
   for digest_mutation in doctored missing; do
     digest_provenance="$modern_evidence/provenance-$digest_mutation.md"
     dispatch_registered_mutation "evidence-provenance-digest-$digest_mutation" \
@@ -1891,8 +2231,12 @@ forbidden_role = deepcopy(role)
 forbidden_record = next(
     record for record in forbidden_role["records"] if record["case_id"] == forbidden_case
 )
-forbidden_record["scp_excluded"]["matched_sids"].append(forbidden_sid)
-forbidden_record["scp_excluded"]["details"][0]["matched_sids"].append(forbidden_sid)
+forbidden_record["scp_excluded"]["matched_sids"] = sorted([
+    *forbidden_record["scp_excluded"]["matched_sids"], forbidden_sid
+])
+forbidden_record["scp_excluded"]["details"][0]["matched_sids"] = sorted([
+    *forbidden_record["scp_excluded"]["details"][0]["matched_sids"], forbidden_sid
+])
 write_mutant("role-forbidden-sid", role_payload=forbidden_role)
 
 required_case = (
@@ -1953,11 +2297,10 @@ required_record["scp_excluded"]["matched_sids"] = [
     for sid in required_record["scp_excluded"]["matched_sids"]
     if sid != required_sid
 ]
-required_record["scp_excluded"]["details"][0]["matched_sids"] = [
-    sid
-    for sid in required_record["scp_excluded"]["details"][0]["matched_sids"]
-    if sid != required_sid
-]
+for detail in required_record["scp_excluded"]["details"]:
+    detail["matched_sids"] = [
+        sid for sid in detail["matched_sids"] if sid != required_sid
+    ]
 write_mutant(
     "role-required-sid",
     custom_payload=required_custom,
