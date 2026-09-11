@@ -477,7 +477,10 @@ def hashes(item: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
 
 
 def write_report(
-    path: Path, records: list[dict[str, Any]], expected_case_ids: list[str]
+    path: Path,
+    records: list[dict[str, Any]],
+    expected_case_ids: list[str],
+    recorded_at: str,
 ) -> None:
     record_case_ids = [record["case_id"] for record in records]
     repeated = sorted(
@@ -497,11 +500,16 @@ def write_report(
         "failed": sum(record["pass"] is False for record in records),
         "runner_failures": sum("runner_failure" in record for record in records),
     }
-    payload = {"records": sorted(records, key=lambda record: record["case_id"]), "summary": summary}
+    payload = {
+        "recorded_at": recorded_at,
+        "records": sorted(records, key=lambda record: record["case_id"]),
+        "summary": summary,
+    }
     core.write_report(path, payload)
 
 
 def main() -> int:
+    recorded_at = core.recorded_at_utc()
     args = parse_args()
     plan_documents, account_id, suffix = extract_plan(args.plan)
     vectors = load_vectors(args.vectors, args.only, account_id, suffix)
@@ -525,7 +533,7 @@ def main() -> int:
                 "document_hashes_submitted": hashes(item),
                 "runner_failure": exc.message,
             })
-        write_report(args.report, records, expected_case_ids)
+        write_report(args.report, records, expected_case_ids, recorded_at)
         print(f"FAIL: {exc.message}", file=sys.stderr)
         return exc.code
     records: list[dict[str, Any]] = []
@@ -590,7 +598,7 @@ def main() -> int:
                 }
                 failure_messages.append(str(exc))
             records.append(record)
-    write_report(args.report, records, expected_case_ids)
+    write_report(args.report, records, expected_case_ids, recorded_at)
     if failure_messages:
         print(f"FAIL: {failure_messages[0]}", file=sys.stderr)
         return 1

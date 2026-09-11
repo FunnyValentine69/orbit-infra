@@ -11,8 +11,26 @@ BAD_JSON="$FIXTURES/bad-iam-simulation-report.json"
 FORBID_FILE="$FIXTURES/forbid-list.txt"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-artifact-hygiene.XXXXXX")"
 results="$tmp_dir/results.txt"
+scoped_bad_json="$tmp_dir/scoped-bad.json"
+scoped_clean_json="$tmp_dir/scoped-clean.json"
 failures=0
 trap 'rm -rf "$tmp_dir"' EXIT
+
+python3 - "$scoped_bad_json" "$scoped_clean_json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+bad_path, clean_path = map(Path, sys.argv[1:])
+bad_path.write_text(
+    json.dumps({"note": "1" * 64}, indent=2) + "\n",
+    encoding="utf-8",
+)
+clean_path.write_text(
+    json.dumps({"report_sha256": "1" * 64}, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
 
 pass_case() {
   printf 'PASS: %s\n' "$1" | tee -a "$results"
@@ -76,6 +94,14 @@ check_suite() {
 
   verdict="$(run_one "$script" fail "account-id" "$BAD_JSON")"
   echo "bad JSON report fixture: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" fail "account-id" "$scoped_bad_json")"
+  echo "non-digest 64-hex JSON field: $verdict" >&3
+  [ "$verdict" = "ok" ] || suite_ok=1
+
+  verdict="$(run_one "$script" pass "" "$scoped_clean_json")"
+  echo "digest-scoped 64-hex JSON field: $verdict" >&3
   [ "$verdict" = "ok" ] || suite_ok=1
 
   verdict="$(run_one "$script" pass "" "$FIXTURES/clean-git-sha.md")"
@@ -217,13 +243,12 @@ run_mutation_proof \
   "if BARE_UUID.search(sanitized):" \
   "if False:"
 
-# sha256 exemption: without stripping 64-hex tokens first, the clean
-# fixture's legitimate hash lines start tripping the account-id and
-# request-id (UUID) checks.
+# sha256 exemption: without stripping digest-field 64-hex tokens, the clean
+# fixtures' legitimate hashes start tripping the account-id checks.
 run_mutation_proof \
   "sha256-exemption" \
-  "sanitized = HEX64.sub(\"\", content)" \
-  "sanitized = content"
+  "sanitized = HEX64.sub(\"\", value)  # sha256-guard" \
+  "sanitized = value  # sha256-guard"
 
 # git-sha exemption: without stripping 40-hex tokens first, the clean
 # git-sha fixture's legitimate commit-id line starts tripping the

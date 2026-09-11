@@ -353,6 +353,16 @@ each source document uses its own complete create, put, simulate, and delete
 pass; no document's cases are dropped. A duplicate Sid across documents in a
 combined role fails closed with both source addresses.
 
+After each inline-policy put, the lane first reads the policy back until its
+document equals the submitted bytes, then sends one SCP-excluded readiness
+probe. The probe uses the first decision case in the full, pre-`--only` vector
+inventory for that projection whose expectation requires a matched Sid; either
+an allowed statement or an explicit deny statement is a valid visibility
+witness, while attribution-only cases are excluded. Both checks allow five
+attempts with 1, 2, 4, and 8 second backoff, and the role report records the
+observed `{readback, probe}` counts in `propagation_attempts` for every
+projection. Exhaustion fails the run and still enters normal cleanup.
+
 Every selected case runs first with the exact `{"PolicyType":"scp"}` exclusion
 and then without an exclusion. Required and forbidden Sids are checked on every
 action/resource detail independently; their union is retained only for display.
@@ -373,8 +383,10 @@ IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws \
   --expect-account <12-digit-account>
 ```
 
-The role report records each projection's source addresses, source-policy
-SHA-256 hashes, selected and excluded case counts by reason, agreements,
+At run start, the lane snapshots the custom report and evaluates only that
+snapshot. The role report records UTC `recorded_at`, the exact snapshot's
+`custom_report_sha256`, each projection's source addresses, source-policy
+SHA-256 hashes, `propagation_attempts`, selected and excluded case counts by reason, agreements,
 principal/custom divergences, and Organizations divergences. The AWS-managed
 `ReadOnlyAccess` attachment has no inline equivalent and is always recorded as a
 role-lane exclusion. A single final redaction replaces both the live account and
@@ -397,6 +409,7 @@ Render the publishable Markdown pair from the completed JSON reports. Omit the
 scripts/iam-simulate-report.sh \
   --custom-report <custom-report.json> \
   --role-report <role-report.json> \
+  --recorded-on 2026-09-10 \
   --out-dir docs/assets
 ```
 

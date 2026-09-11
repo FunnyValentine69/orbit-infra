@@ -18,12 +18,27 @@ ROLE_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/iam-simulation-role-report.json"
 RENDERED_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/IAM_SIMULATION_REPORT.md"
 EVIDENCE_PROVENANCE="$REPO_ROOT/docs/assets/IAM_SIMULATION_PROVENANCE.md"
 EVIDENCE_POINTER="docs/assets/IAM_SIMULATION_REPORT.md"
+IAM_SIM_CORE="$REPO_ROOT/scripts/iam_simulate_core.py"
+EVIDENCE_GENERATOR_FILES=(
+  "scripts/iam-simulate.sh"
+  "scripts/iam-simulate-roles.sh"
+  "scripts/iam-simulate-report.sh"
+  "scripts/iam_simulate_core.py"
+  "scripts/artifact-hygiene.sh"
+)
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-iam-simulate.XXXXXX")"
 results="$tmp_dir/results.txt"
 mutation_observations="$tmp_dir/mutation-observations.txt"
+mutation_dispatches="$tmp_dir/mutation-dispatches.txt"
 failures=0
 : >"$mutation_observations"
+: >"$mutation_dispatches"
 trap 'rm -rf "$tmp_dir"' EXIT
+
+mutation_case_id_from_label() {
+  LC_ALL=C tr '[:upper:]' '[:lower:]' <<<"$1" |
+    sed -E 's/[^a-z0-9]+/-/g; s/^-//; s/-$//'
+}
 
 pass_case() {
   local message=$1 prefix label case_id diagnostic
@@ -31,10 +46,7 @@ pass_case() {
     prefix=${message%%" -> FAIL:"*}
     label=${prefix% mutation}
     diagnostic="FAIL:${message#*" -> FAIL:"}"
-    case_id="$(
-      LC_ALL=C tr '[:upper:]' '[:lower:]' <<<"$label" |
-        sed -E 's/[^a-z0-9]+/-/g; s/^-//; s/-$//'
-    )"
+    case_id="$(mutation_case_id_from_label "$label")"
     printf '%s\t%s\n' "$case_id" "$diagnostic" >>"$mutation_observations"
   fi
   printf 'PASS: %s\n' "$1" | tee -a "$results"
@@ -49,9 +61,22 @@ expect_failure() {
   local label=$1
   local expected=$2
   shift 2
-  local output rc fail_line
+  local output rc fail_line case_id action helper
+  case_id="$(mutation_case_id_from_label "$label")"
   set +e
-  output="$("$@" 2>&1)"
+  if grep -Fxq "$case_id" "$mutation_dispatches"; then
+    output="$("$@" 2>&1)"
+  elif action="$(registry_action "$case_id")" && [[ "$action" != *:* ]]; then
+    helper=${action%%:*}
+    if [ "$1" = "$helper" ]; then
+      shift
+      output="$(dispatch_registered_mutation "$case_id" "$@" 2>&1)"
+    else
+      output="$("$@" 2>&1)"
+    fi
+  else
+    output="$("$@" 2>&1)"
+  fi
   rc=$?
   set -e
   fail_line="$(grep -m1 '^FAIL:' <<< "$output" || true)"
@@ -63,12 +88,16 @@ expect_failure() {
 }
 
 validate_mutation_registry() {
-  python3 - "$MUTATION_REGISTRY" "${1:-}" <<'PY_REGISTRY'
+  python3 - "$MUTATION_REGISTRY" "${1:-}" "${2:-}" "${3:-}" "${4:-}" <<'PY_REGISTRY'
 from pathlib import Path
+import re
 import sys
 
 registry_path = Path(sys.argv[1])
 observations_path = Path(sys.argv[2]) if sys.argv[2] else None
+check_helpers = sys.argv[3] == "check-helpers"
+helper_names_arg = sys.argv[4]
+dispatches_path = Path(sys.argv[5]) if sys.argv[5] else None
 
 
 def fail(message):
@@ -90,11 +119,37 @@ for line_number, line in enumerate(lines, 1):
     case_id, action, diagnostic = fields
     if not case_id or not action or not diagnostic.startswith("FAIL:"):
         fail(f"line {line_number} has an invalid id, action, or diagnostic")
+    if not re.fullmatch(
+        r"(?:[A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z0-9_.+-]+)?|sed:[A-Za-z0-9_-]+)",
+        action,
+    ):
+        fail(f"line {line_number} action does not match the closed dispatcher grammar: {action}")
     if case_id in registry:
         fail(f"repeats case id: {case_id}")
     registry[case_id] = (action, diagnostic)
 if not registry:
     fail("contains no cases")
+
+if check_helpers:
+    helper_names = set(helper_names_arg.splitlines())
+    for case_id, (action, _) in registry.items():
+        if action.startswith("sed:"):
+            continue
+        helper = action.split(":", 1)[0]
+        if helper not in helper_names:
+            fail(f"action does not dispatch for {case_id}: {action}")
+    registered_helpers = {
+        action.split(":", 1)[0]
+        for action, _ in registry.values()
+        if not action.startswith("sed:")
+    }
+    unregistered = sorted(
+        helper for helper in helper_names
+        if helper.startswith(("mutate_", "registry_mutation_"))
+        and helper not in registered_helpers
+    )
+    if unregistered:
+        fail(f"helper has no registry row: {unregistered[0]}")
 
 if observations_path is None:
     print(f"PASS: IAM simulate mutation registry schema ({len(registry)} case(s))")
@@ -126,6 +181,15 @@ for case_id in sorted(registry):
             f"diagnostic mismatch for {case_id}: "
             f"expected prefix {expected!r}, observed {observed!r}"
         )
+if dispatches_path is None:
+    fail("execution validation requires dispatcher observations")
+dispatches = dispatches_path.read_text(encoding="utf-8").splitlines()
+missing_dispatches = sorted(set(registry) - set(dispatches))
+if missing_dispatches:
+    fail(f"did not dispatch cases: {', '.join(missing_dispatches)}")
+unexpected_dispatches = sorted(set(dispatches) - set(registry))
+if unexpected_dispatches:
+    fail(f"dispatched unregistered case: {unexpected_dispatches[0]}")
 print(
     f"PASS: IAM simulate mutation registry "
     f"({len(observations)}/{len(registry)} executed; restored suite passed)"
@@ -133,20 +197,308 @@ print(
 PY_REGISTRY
 }
 
+
+registry_action() {
+  local case_id=$1 registry=${MUTATION_REGISTRY_OVERRIDE:-$MUTATION_REGISTRY}
+  awk -F '\t' -v case_id="$case_id" '
+    !/^#/ && $1 == case_id { print $2; found += 1 }
+    END { if (found != 1) exit 1 }
+  ' "$registry"
+}
+
+apply_registered_sed() {
+  local label=$1 source=$2 destination=$3
+  # shellcheck disable=SC2016 # Sed table matches literal shell source.
+  case "$label" in
+    drop-shared-report-record) sed '/shared_call_case_ids/ d' "$source" >"$destination" ;;
+    change-colliding-expectation) sed '0,/"decision":"explicitDeny"/s//"decision":"allowed"/' "$source" >"$destination" ;;
+    drop-delete-role-policy-call) sed '/iam delete-role-policy/ d' "$source" >"$destination" ;;
+    drop-first-dry-run-call) sed '1d' "$source" >"$destination" ;;
+    remove-renderer-account-redacted-check) sed 's/if report.get("account_redacted") is not True:  # role-account-redacted-guard/if False:  # role-account-redacted-guard/' "$source" >"$destination" ;;
+    remove-renderer-hygiene-call) sed 's/if ! "$HYGIENE" "${hygiene_inputs\[@\]}"; then  # artifact-hygiene-publication-guard/if false; then  # artifact-hygiene-publication-guard/' "$source" >"$destination" ;;
+    remove-renderer-json-hygiene-input) sed 's/hygiene_inputs=("$custom_report")/hygiene_inputs=()/' "$source" >"$destination" ;;
+    remove-request-id-ignorecase) sed 's/, re\.IGNORECASE)/)/' "$source" >"$destination" ;;
+    *) echo "FAIL: mutation registry sed label does not dispatch: $label" >&2; return 1 ;;
+  esac
+  if [ -x "$source" ]; then
+    chmod +x "$destination"
+  fi
+}
+
+registry_function_is_noop() {
+  local body
+  body="$(declare -f "$1" | sed -E '1d; /^[[:space:]]*[{][[:space:]]*$/d; /^[[:space:]]*[}][[:space:]]*$/d; s/[[:space:];]//g; /^$/d')"
+  case "$body" in
+    :|true|return|return0) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+dispatch_registered_mutation() {
+  local case_id=$1 action helper submode
+  shift
+  if ! action="$(registry_action "$case_id")"; then
+    echo "FAIL: mutation registry case does not dispatch: $case_id" >&2
+    return 1
+  fi
+  if [[ "$action" == sed:* ]]; then
+    printf '%s\n' "$case_id" >>"$mutation_dispatches"
+    apply_registered_sed "${action#sed:}" "$@"
+    return
+  fi
+  helper=${action%%:*}
+  submode=""
+  [ "$helper" = "$action" ] || submode=${action#*:}
+  if ! declare -F "$helper" >/dev/null; then
+    echo "FAIL: mutation registry action does not dispatch for $case_id: $action" >&2
+    return 1
+  fi
+  if registry_function_is_noop "$helper"; then
+    echo "FAIL: mutation registry action is a no-op for $case_id: $helper" >&2
+    return 1
+  fi
+  printf '%s\n' "$case_id" >>"$mutation_dispatches"
+  if [ -n "$submode" ]; then
+    "$helper" "$submode" "$@"
+  else
+    "$helper" "$@"
+  fi
+}
+
+registry_silent_probe() {
+  local submode=$1
+  [ "$submode" = expected ]
+}
+
+# shellcheck disable=SC2329 # Called indirectly by dispatch_registered_mutation.
+registry_mutation_probe() {
+  local submode=$1
+  case "$submode" in
+    expected) echo "FAIL: registry mutation probe expected diagnostic" >&2; return 1 ;;
+    drift) echo "FAIL: registry mutation probe drifted diagnostic" >&2; return 1 ;;
+    *) echo "FAIL: registry mutation probe unknown submode: $submode" >&2; return 1 ;;
+  esac
+}
+
+run_schema_mutation() {
+  local fixture=$1
+  python3 "$VALIDATOR" "$VECTOR_FIXTURES/$fixture"
+}
+
+mutate_evidence_suffix_check() {
+  python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+    mutate-evidence-suffix-check "$@"
+}
+
+mutate_evidence_role_check() {
+  local submode=$1
+  shift
+  python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+    mutate-evidence-role-check "$1" "$2" "$submode"
+}
+
+validate_generator_drift_scope() {
+  local required candidate
+  for required in scripts/iam-simulate.sh scripts/iam-simulate-roles.sh; do
+    for candidate in "$@"; do
+      if [ "$candidate" = "$required" ]; then
+        continue 2
+      fi
+    done
+    echo "FAIL: Evidence generator drift scope omits $required" >&2
+    return 1
+  done
+}
+
+mutate_generator_drift_scope() {
+  validate_generator_drift_scope \
+    scripts/iam-simulate-report.sh \
+    scripts/iam_simulate_core.py \
+    scripts/artifact-hygiene.sh
+}
+
+validate_plan_role_projections() {
+  validate_plan_role_projections_with_core "$IAM_SIM_CORE" "$@"
+}
+
+validate_plan_role_projections_with_core() {
+  python3 - "$1" "$2" "$3" <<'PY_ROLE_PROJECTIONS'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+core_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("iam_simulate_core_projection_contract", core_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"FAIL: cannot load IAM simulator core: {core_path}")
+core = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = core
+spec.loader.exec_module(core)
+plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+role_report = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+try:
+    count = core.validate_role_report_projections(plan, role_report)
+except core.RunnerFailure as exc:
+    raise SystemExit(f"FAIL: {exc}") from exc
+print(f"PASS: IAM simulation role projections bind to plan source bytes ({count} projections)")
+PY_ROLE_PROJECTIONS
+}
+
+run_iam_matrix_evidence_mutation() {
+  local submode=$1 custom_report=$2
+  case "$submode" in
+    empty-hash)
+      TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
+        IAM_MATRIX_SKIP_NEGATIVES=1 \
+        bash "$REPO_ROOT/tests/iam-matrix-contracts.sh"
+      ;;
+    second-hash)
+      TMPDIR="$tmp_dir" IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$custom_report" \
+        IAM_MATRIX_SKIP_NEGATIVES=1 \
+        bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
+          "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json"
+      ;;
+    *) echo "FAIL: unknown IAM matrix Evidence mutation: $submode" >&2; return 1 ;;
+  esac
+}
+
+mutate_report_aggregate() {
+  local submode=$1 source=$2 destination=$3
+  python3 - "$submode" "$source" "$destination" <<'PY_AGGREGATE_MUTANT'
+from copy import deepcopy
+import json
+from pathlib import Path
+import sys
+
+submode = sys.argv[1]
+source = Path(sys.argv[2])
+destination = Path(sys.argv[3])
+consumer, lane, field = submode.split("-", 2)
+payload = json.loads(source.read_text(encoding="utf-8"))
+custom_case = "case:aws_iam_policy.task_boundary:EcsExec:ALL:none:in-boundary"
+renderer_role_case = (
+    "case:aws_iam_policy.deployer_data:"
+    "ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching"
+)
+evidence_role_case = (
+    "case:aws_iam_role_policy.plan_reader_deny:"
+    "DenyListBucketOutsideScope:ALL:none:non-protected-resource"
+)
+case_id = custom_case if lane == "custom" else (
+    renderer_role_case if consumer == "renderer" else evidence_role_case
+)
+
+
+def mutate(observation):
+    details = observation.get("details")
+    if not isinstance(details, list) or not details:
+        raise SystemExit("FAIL: aggregate mutation target lacks details")
+    if field == "decision":
+        observation["decision_observed"] = "doctoredDecision"
+    elif field == "sids":
+        sids = observation.get("matched_sids")
+        if not isinstance(sids, list):
+            raise SystemExit("FAIL: aggregate mutation target lacks matched_sids")
+        observation["matched_sids"] = sorted([*sids, "DoctoredAggregateSid"])
+    else:
+        raise SystemExit(f"FAIL: unknown aggregate mutation field: {field}")
+
+
+records = [record for record in payload["records"] if record.get("case_id") == case_id]
+if len(records) != 1:
+    raise SystemExit(f"FAIL: aggregate mutation found {len(records)} records for {case_id}")
+if lane == "custom":
+    mutate(records[0])
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+else:
+    destination.mkdir(parents=True, exist_ok=True)
+    for view in ("custom_lane", "scp_excluded"):
+        variant = deepcopy(payload)
+        record = next(item for item in variant["records"] if item["case_id"] == case_id)
+        mutate(record[view])
+        (destination / f"{view}.json").write_text(
+            json.dumps(variant, indent=2) + "\n", encoding="utf-8"
+        )
+print(case_id)
+PY_AGGREGATE_MUTANT
+}
+
+
+mutate_modern_evidence() {
+  local submode=$1 custom_source=$2 role_source=$3 provenance_source=$4 destination=$5
+  python3 - \
+    "$submode" "$custom_source" "$role_source" \
+    "$provenance_source" "$destination" <<'PY_MODERN_MUTANT'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+submode = sys.argv[1]
+custom_source, role_source, provenance_source, destination = map(Path, sys.argv[2:])
+destination.mkdir(parents=True)
+custom = json.loads(custom_source.read_text(encoding="utf-8"))
+role = json.loads(role_source.read_text(encoding="utf-8"))
+provenance = provenance_source.read_text(encoding="utf-8")
+custom_path = destination / "custom.json"
+role_path = destination / "role.json"
+provenance_path = destination / "provenance.md"
+
+if submode == "custom-binding":
+    custom["recorded_at"] = "2026-09-10T12:00:00Z"
+    role["recorded_at"] = "2026-09-10T12:00:01Z"
+elif submode == "role-chronology":
+    role["recorded_at"] = "2026-09-09T23:59:59Z"
+elif submode == "recorded-at-type":
+    custom["recorded_at"] = 42
+elif submode != "digest-downgrade":
+    raise SystemExit(f"FAIL: unknown modern Evidence mutation: {submode}")
+
+custom_path.write_text(json.dumps(custom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+role_path.write_text(json.dumps(role, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+if submode == "digest-downgrade":
+    provenance = re.sub(
+        r"(?m)^\| (?:custom report sha256|role report sha256|Markdown report sha256) "
+        r"\| [0-9a-f]{64} \|\n?",
+        "",
+        provenance,
+    )
+else:
+    for name, path in (
+        ("custom report sha256", custom_path),
+        ("role report sha256", role_path),
+    ):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        pattern = rf"(?m)^\| {re.escape(name)} \| [0-9a-f]{{64}} \|$"
+        provenance, count = re.subn(pattern, f"| {name} | {digest} |", provenance)
+        if count != 1:
+            raise SystemExit(f"FAIL: modern Evidence mutation found {count} {name} rows")
+provenance_path.write_text(provenance, encoding="utf-8")
+PY_MODERN_MUTANT
+}
+
+
 validate_mutation_registry
 
 validate_evidence_join() {
   local matrix=$1 custom_report=$2 role_report=$3 rendered_report=$4 provenance=$5
   python3 - \
     "$matrix" "$VECTORS" "$custom_report" "$role_report" \
-    "$rendered_report" "$provenance" "$EVIDENCE_POINTER" <<'PY_EVIDENCE'
+    "$rendered_report" "$provenance" "$EVIDENCE_POINTER" "$REPO_ROOT" \
+    "${EVIDENCE_GENERATOR_FILES[@]}" <<'PY_EVIDENCE'
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 
@@ -161,8 +513,7 @@ def load_json(path: Path, description: str):
         fail(f"cannot read {description}: {exc}")
 
 
-def load_records(path: Path, description: str) -> dict[str, list[dict]]:
-    payload = load_json(path, description)
+def index_records(payload, description: str) -> dict[str, list[dict]]:
     if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
         fail(f"{description} must contain a records array")
     records: dict[str, list[dict]] = defaultdict(list)
@@ -240,6 +591,60 @@ def expected_resource_decision(expectation: dict, resource: str):
     return matches[0] if len(matches) == 1 else None
 
 
+def aggregates_match_details(observation: dict) -> bool:
+    details = observation.get("details")
+    if not isinstance(details, list):
+        return True
+    if not details:
+        return False
+    decisions = {}
+    matched_sids = set()
+    actions = set()
+    resources = set()
+    for detail in details:
+        if not isinstance(detail, dict):
+            return False
+        action = detail.get("action_name")
+        resource = detail.get("resource_arn")
+        decision = detail.get("decision_observed")
+        sids = detail.get("matched_sids")
+        if (
+            not isinstance(action, str)
+            or not action
+            or not isinstance(resource, str)
+            or not resource
+            or not isinstance(decision, str)
+            or not decision
+            or not isinstance(sids, list)
+            or any(not isinstance(sid, str) or not sid for sid in sids)
+        ):
+            return False
+        pair = (action, resource)
+        if pair in decisions:
+            return False
+        decisions[pair] = decision
+        matched_sids.update(sids)
+        actions.add(action)
+        resources.add(resource)
+    if len(resources) > 1 and len(actions) == 1:
+        action = next(iter(actions))
+        aggregate_decision = {
+            resource: decisions[(action, resource)]
+            for resource in sorted(resources)
+        }
+    elif len(set(decisions.values())) == 1:
+        aggregate_decision = next(iter(decisions.values()))
+    else:
+        aggregate_decision = {
+            f"{action}|{resource}": decision
+            for (action, resource), decision in sorted(decisions.items())
+        }
+    return (
+        observation.get("decision_observed") == aggregate_decision
+        and observation.get("matched_sids") == sorted(matched_sids)
+    )
+
+
 def details_cover_vector(vector: dict, details: list[dict]) -> bool:
     actions = vector.get("action_names")
     resources = vector.get("resource_arns") or ["*"]
@@ -269,6 +674,8 @@ def observation_matches(vector: dict, evidence: dict) -> bool:
     forbidden = expectation.get("matched_sid_forbidden", [])
     details = evidence.get("details")
     if isinstance(details, list):
+        if not aggregates_match_details(evidence):
+            return False
         if not details_cover_vector(vector, details):
             return False
         for detail in details:
@@ -320,13 +727,73 @@ def custom_matches(vector: dict, record: dict) -> bool:
 
 def role_matches(vector: dict, record: dict) -> bool:
     evidence = record.get("scp_excluded")
+    custom_lane = record.get("custom_lane")
     expectation = vector.get("expect")
     return (
         "runner_failure" not in record
         and isinstance(evidence, dict)
+        and isinstance(custom_lane, dict)
         and isinstance(expectation, dict)
+        and aggregates_match_details(custom_lane)
+        and aggregates_match_details(evidence)
         and observation_matches(vector, evidence)
     )
+
+
+def submitted_hashes(record: dict, lane: str) -> list[str] | None:
+    entries = record.get("document_hashes_submitted", {}).get(lane)
+    if not isinstance(entries, list):
+        return None
+    hashes = [entry.get("sha256") for entry in entries if isinstance(entry, dict)]
+    if len(hashes) != len(entries) or any(not isinstance(value, str) for value in hashes):
+        return None
+    return hashes
+
+
+def role_hash_chain(custom: dict, role: dict) -> str | None:
+    custom_hashes = submitted_hashes(custom, "policy_input_list")
+    role_hashes = submitted_hashes(role, "custom_lane")
+    if (
+        custom_hashes is None
+        or role_hashes is None
+        or len(custom_hashes) != len(set(custom_hashes))
+        or len(role_hashes) != len(set(role_hashes))
+        or set(custom_hashes) != set(role_hashes)
+    ):
+        return "custom-to-role"
+    projection_ref = role.get("projection")
+    if not isinstance(projection_ref, dict):
+        return "source-document"
+    projection_id = projection_ref.get("projection_id")
+    projections = [
+        item for item in role_payload.get("projection", {}).get("roles", [])
+        if isinstance(item, dict) and item.get("projection_id") == projection_id
+    ]
+    if len(projections) != 1:
+        return "source-document"
+    projection = projections[0]
+    sources = projection.get("source_documents")
+    if not isinstance(sources, list):
+        return "source-document"
+    source_hashes = {
+        item.get("sha256") for item in sources
+        if isinstance(item, dict) and isinstance(item.get("address"), str)
+        and isinstance(item.get("sha256"), str)
+    }
+    if not set(custom_hashes) <= source_hashes:
+        return "source-document"
+    policy_document = projection.get("policy_document")
+    policy_sha256 = projection_ref.get("policy_sha256")
+    if (
+        not isinstance(policy_document, str)
+        or not isinstance(policy_sha256, str)
+        or hashlib.sha256(policy_document.encode("utf-8")).hexdigest() != policy_sha256
+    ):
+        return "projection-policy"
+    put_hashes = submitted_hashes(role, "put_role_policy")
+    if put_hashes != [policy_sha256]:
+        return "put-role-policy"
+    return None
 
 
 matrix_path = Path(sys.argv[1])
@@ -336,8 +803,12 @@ role_path = Path(sys.argv[4])
 rendered_path = Path(sys.argv[5])
 provenance_path = Path(sys.argv[6])
 expected_pointer = sys.argv[7]
-custom_records = load_records(custom_path, "custom evidence report")
-role_records = load_records(role_path, "role evidence report")
+repo_root = Path(sys.argv[8])
+generator_files = sys.argv[9:]
+custom_payload = load_json(custom_path, "custom evidence report")
+role_payload = load_json(role_path, "role evidence report")
+custom_records = index_records(custom_payload, "custom evidence report")
+role_records = index_records(role_payload, "role evidence report")
 report_suffix = load_report_suffix(role_path)
 try:
     matrix_text = matrix_path.read_text(encoding="utf-8")
@@ -351,12 +822,52 @@ recorded_on_matches = re.findall(
 if len(recorded_on_matches) != 1:
     fail("provenance must contain exactly one recorded_on date")
 recorded_on = recorded_on_matches[0]
+supplied_reports = [
+    ("custom", custom_payload),
+    ("role", role_payload),
+]
+modern_fields = ["recorded_at" in payload for _, payload in supplied_reports]
+modern = any(modern_fields)
+if modern:
+    if not all(modern_fields):
+        fail("all supplied reports must carry recorded_at or all must be legacy")
+    parsed_recorded_at = {}
+    for label, payload in supplied_reports:
+        try:
+            parsed_recorded_at[label] = datetime.strptime(
+                payload["recorded_at"], "%Y-%m-%dT%H:%M:%SZ"
+            )
+        except (TypeError, ValueError):
+            fail(f"{label} report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ")
+    if parsed_recorded_at["role"] < parsed_recorded_at["custom"]:
+        fail("role report recorded_at precedes custom report recorded_at")
+    if parsed_recorded_at["custom"].strftime("%Y-%m-%d") != recorded_on:
+        fail("provenance recorded_on does not match custom report recorded_at date")
+    expected_custom_digest = hashlib.sha256(custom_path.read_bytes()).hexdigest()
+    if role_payload.get("custom_report_sha256") != expected_custom_digest:
+        fail(
+            "role report custom_report_sha256 does not match the exact custom report bytes"
+        )
 generator_matches = re.findall(
     r"^\| generator commit \| ([0-9a-f]+) \|$", provenance_text, re.MULTILINE
 )
 if len(generator_matches) != 1:
     fail("provenance must contain exactly one generator commit")
 generator_commit = generator_matches[0]
+if subprocess.run(
+    ["git", "cat-file", "-e", f"{generator_commit}^{{commit}}"],
+    cwd=repo_root,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+).returncode != 0:
+    fail(f"Evidence generator commit is unknown: {generator_commit}")
+if subprocess.run(
+    ["git", "merge-base", "--is-ancestor", generator_commit, "HEAD"],
+    cwd=repo_root,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+).returncode != 0:
+    fail(f"Evidence generator commit is not an ancestor of HEAD: {generator_commit}")
 report_recorded_on = re.findall(
     r"^\| recorded_on \| (\d{4}-\d{2}-\d{2}) \|$", rendered_text, re.MULTILINE
 )
@@ -401,8 +912,8 @@ for name in digest_paths:
         fail(f"provenance repeats {name}")
     if matches:
         provenance_digests[name] = matches[0]
-if provenance_digests and set(provenance_digests) != set(digest_paths):
-    missing = sorted(set(digest_paths) - set(provenance_digests))[0]
+if (modern or provenance_digests) and set(provenance_digests) != set(digest_paths):
+    missing = next(name for name in digest_paths if name not in provenance_digests)
     fail(f"provenance digest set is incomplete: missing {missing}")
 for name, recorded_digest in provenance_digests.items():
     if recorded_digest != computed_digests[name]:
@@ -410,6 +921,14 @@ for name, recorded_digest in provenance_digests.items():
             f"provenance digest mismatch for {name}: "
             f"recorded={recorded_digest} computed={computed_digests[name]}"
         )
+if (modern or provenance_digests) and subprocess.run(
+    [
+        "git", "diff", "--quiet", generator_commit, "HEAD", "--",
+        *generator_files,
+    ],
+    cwd=repo_root,
+).returncode != 0:
+    fail(f"Evidence generator drift since generator commit: {generator_commit}")
 
 case_entry = re.compile(r"(case:[^ ;=)]+) => (.*?)(?=; case:|$)")
 evidence_entry = re.compile(r"(case:[^ ;=)]+)=(.*?)(?=; case:|$)")
@@ -434,6 +953,11 @@ def matching_path(case_id: str) -> str | None:
     if len(custom) == 1 and custom_matches(vector, custom[0]):
         return "custom"
     if len(role) == 1 and role_matches(vector, role[0]):
+        if len(custom) != 1:
+            return None
+        broken_link = role_hash_chain(custom[0], role[0])
+        if broken_link is not None:
+            fail(f"Evidence role hash chain {broken_link} mismatch for case: {case_id}")
         return "role"
     return None
 
@@ -660,16 +1184,16 @@ if [ -f "$TAXONOMY" ]; then
     fail_case "taxonomy matrix equality, disjoint categories, reasons, and counts" "$output"
   fi
 
-  mutated="$(mutate_taxonomy added)"
+  mutated="$(dispatch_registered_mutation taxonomy-added-case)"
   expect_failure "taxonomy added case" "contains case absent from matrix" \
     validate_taxonomy "$mutated"
-  mutated="$(mutate_taxonomy removed)"
+  mutated="$(dispatch_registered_mutation taxonomy-removed-case)"
   expect_failure "taxonomy removed case" "omits matrix case" \
     validate_taxonomy "$mutated"
-  mutated="$(mutate_taxonomy duplicate)"
+  mutated="$(dispatch_registered_mutation taxonomy-duplicate-category)"
   expect_failure "taxonomy duplicate category" "appears in two categories" \
     validate_taxonomy "$mutated"
-  mutated="$(mutate_taxonomy empty-reason)"
+  mutated="$(dispatch_registered_mutation taxonomy-empty-reason)"
   expect_failure "taxonomy empty reason" "empty or non-string reason" \
     validate_taxonomy "$mutated"
 else
@@ -832,34 +1356,34 @@ PY
   fi
 
   expect_failure "schema missing decision" "expect.decision is required" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-missing-decision.json"
+    dispatch_registered_mutation schema-missing-decision
   expect_failure "schema attribution decision" \
     "expect.decision is forbidden for attribution-only" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-attribution-decision.json"
+    dispatch_registered_mutation schema-attribution-decision
   expect_failure "schema isolated statement on non-isolated mode" \
     "isolated_statement is forbidden for custom" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-isolated-nonisolated.json"
+    dispatch_registered_mutation schema-isolated-statement-on-non-isolated-mode
   expect_failure "schema isolated allowed decision" \
     "custom-isolated vectors cannot expect allowed" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-isolated-allowed.json"
+    dispatch_registered_mutation schema-isolated-allowed-decision
   expect_failure "schema embedded custom policy" \
     "policy_input_list is forbidden for custom vectors; resolve repository policies from the plan" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-embedded-policy-input.json"
+    dispatch_registered_mutation schema-embedded-custom-policy
   expect_failure "schema embedded isolated statement" \
     "isolated_statement is forbidden for custom-isolated vectors; resolve repository policies from the plan" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-embedded-isolated-statement.json"
+    dispatch_registered_mutation schema-embedded-isolated-statement
   expect_failure "schema literal account id" "literal 12-digit account id" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-account-id.json"
+    dispatch_registered_mutation schema-literal-account-id
   expect_failure "schema unknown context type" "unknown ContextKeyType" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-context-key-type.json"
+    dispatch_registered_mutation schema-unknown-context-type
   expect_failure "schema unknown case id" "case_id is absent from categories.json" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-unknown-case.json"
+    dispatch_registered_mutation schema-unknown-case-id
   expect_failure "schema unknown custom field" "unexpected is forbidden for custom vectors" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-unknown-field.json"
+    dispatch_registered_mutation schema-unknown-custom-field
   expect_failure "schema envelope header mismatch" "case_id prefix does not match envelope header" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-header-mismatch.json"
+    dispatch_registered_mutation schema-envelope-header-mismatch
   expect_failure "schema duplicate case" "envelope repeats case_id" \
-    python3 "$VALIDATOR" "$VECTOR_FIXTURES/invalid-duplicate-case.json"
+    dispatch_registered_mutation schema-duplicate-case
 else
   fail_case "IAM simulate vector validator exists" "$VALIDATOR is missing"
 fi
@@ -1210,6 +1734,81 @@ fi
 
 echo "== iam simulate contracts: EVIDENCE =="
 group_failures=$failures
+if output="$(validate_generator_drift_scope "${EVIDENCE_GENERATOR_FILES[@]}" 2>&1)"; then
+  pass_case "Evidence generator drift scope includes both simulator runners"
+else
+  fail_case "Evidence generator runner drift scope" "$output"
+fi
+expect_failure "evidence generator runner drift scope" \
+  "Evidence generator drift scope omits scripts/iam-simulate.sh" \
+  dispatch_registered_mutation evidence-generator-runner-drift-scope
+
+account_projection_plan="$tmp_dir/role-projection-live-account-plan.json"
+account_projection_report="$tmp_dir/role-projection-redacted-report.json"
+account_projection_core_mutant="$tmp_dir/iam-simulate-core-unredacted-projection.py"
+python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+  build-role-projection-account-redaction \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" "$account_projection_plan" \
+  "$account_projection_report"
+if output="$(validate_plan_role_projections \
+  "$account_projection_plan" "$account_projection_report" 2>&1)"; then
+  pass_case "role projection comparison accepts report-redacted account ids"
+else
+  fail_case "role projection report account redaction" "$output"
+fi
+dispatch_registered_mutation evidence-role-projection-account-redaction \
+  "$IAM_SIM_CORE" "$account_projection_core_mutant"
+expect_failure "evidence role projection account redaction" \
+  "role projection source policy differs for deployer:aws_iam_policy.deployer_data" \
+  validate_plan_role_projections_with_core "$account_projection_core_mutant" \
+    "$account_projection_plan" "$account_projection_report"
+if output="$(validate_plan_role_projections \
+  "$account_projection_plan" "$account_projection_report" 2>&1)"; then
+  pass_case "evidence role projection account redaction mutation restored PASS"
+else
+  fail_case "evidence role projection account redaction mutation restoration" "$output"
+fi
+
+if output="$(validate_plan_role_projections \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
+  pass_case "${output#PASS: }"
+else
+  fail_case "IAM simulation role projections bind to plan source bytes" "$output"
+fi
+projection_source_plan="$tmp_dir/role-projection-source-bytes-plan.json"
+projection_source_id="$(dispatch_registered_mutation \
+  evidence-role-projection-source-hashes \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$projection_source_plan")"
+expect_failure "evidence role projection source hashes" \
+  "role projection source documents differ for $projection_source_id" \
+  validate_plan_role_projections "$projection_source_plan" "$ROLE_EVIDENCE_REPORT"
+if output="$(validate_plan_role_projections \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
+  pass_case "evidence role projection source hashes mutation restored PASS"
+else
+  fail_case "evidence role projection source hashes mutation restoration" "$output"
+fi
+
+projection_mutant="$tmp_dir/role-projection-source-binding-mutant.json"
+projection_id="$(dispatch_registered_mutation \
+  evidence-role-projection-source-binding \
+  "$ROLE_EVIDENCE_REPORT" "$projection_mutant")"
+expect_failure "evidence role projection source binding" \
+  "role projection source policy differs for $projection_id" \
+  validate_plan_role_projections \
+    "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$projection_mutant"
+if output="$(validate_plan_role_projections \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
+  pass_case "evidence role projection source binding mutation restored PASS"
+else
+  fail_case "evidence role projection source binding mutation restoration" "$output"
+fi
+
 if output="$(
   validate_evidence_join \
     "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
@@ -1220,6 +1819,264 @@ else
   fail_case "IAM simulation Evidence join" "$output"
 fi
 
+validate_renderer_aggregate_refusal() {
+  local scope=$1 custom_report=$2 role_input=$3 output_root=$4 case_id=$5
+  local role_report rendered expected_yes expected_no output
+  local -a role_reports
+  if [ "$scope" = custom ]; then
+    role_reports=("$role_input")
+    expected_yes=0
+    expected_no=1
+  else
+    role_reports=("$role_input"/*.json)
+    expected_yes=1
+    expected_no=1
+  fi
+  for role_report in "${role_reports[@]}"; do
+    rendered="$output_root/$(basename "$role_report" .json)"
+    if ! output="$(
+      run_report_renderer \
+        "$IAM_SIM_REPORT_RENDERER" "$custom_report" \
+        "$role_report" "$rendered" \
+        2>&1
+    )"; then
+      printf '%s\n' "$output" >&2
+      return 1
+    fi
+    if ! python3 - \
+      "$rendered/IAM_SIMULATION_REPORT.md" "$case_id" \
+      "$expected_yes" "$expected_no" <<'PY_RENDERED_AGGREGATE'
+from pathlib import Path
+import sys
+
+report = Path(sys.argv[1]).read_text(encoding="utf-8")
+case_id = sys.argv[2]
+rows = [line for line in report.splitlines() if line.startswith(f"| {case_id} |")]
+yes = sum(line.endswith("| yes |") for line in rows)
+no = sum(line.endswith("| no |") for line in rows)
+if (yes, no) != (int(sys.argv[3]), int(sys.argv[4])):
+    raise SystemExit(
+        f"FAIL: renderer aggregate refusal differs: case={case_id} yes={yes} no={no}"
+    )
+PY_RENDERED_AGGREGATE
+    then
+      return 1
+    fi
+  done
+}
+
+
+validate_evidence_aggregate_refusal() {
+  local scope=$1 custom_report=$2 role_input=$3 case_id=$4
+  local role_report output rc
+  local -a role_reports
+  if [ "$scope" = custom ]; then
+    role_reports=("$role_input")
+  else
+    role_reports=("$role_input"/*.json)
+  fi
+  for role_report in "${role_reports[@]}"; do
+    set +e
+    output="$(
+      validate_evidence_join \
+        "$MATRIX" "$custom_report" "$role_report" \
+        "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1
+    )"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] || ! grep -Fq \
+      "FAIL: promoted case is not execution-matching: $case_id" <<<"$output"; then
+      printf 'FAIL: Evidence aggregate refusal differs: rc=%s output=%s\n' \
+        "$rc" "$output" >&2
+      return 1
+    fi
+  done
+  printf 'FAIL: promoted case is not execution-matching: %s\n' "$case_id"
+}
+
+aggregate_mutants="$tmp_dir/aggregate-mutants"
+for consumer in renderer evidence; do
+  for lane in custom role; do
+    for field in decision sids; do
+      label="$consumer $lane aggregate $field"
+      mutation_id="${consumer}-${lane}-aggregate-${field}"
+      mutation_root="$aggregate_mutants/$mutation_id"
+      if [ "$lane" = custom ]; then
+        custom_mutant="$mutation_root.json"
+        role_mutant="$ROLE_EVIDENCE_REPORT"
+        case_id="$(dispatch_registered_mutation \
+          "$mutation_id" "$CUSTOM_EVIDENCE_REPORT" "$custom_mutant")"
+      else
+        custom_mutant="$CUSTOM_EVIDENCE_REPORT"
+        role_mutant="$mutation_root"
+        case_id="$(dispatch_registered_mutation \
+          "$mutation_id" "$ROLE_EVIDENCE_REPORT" "$role_mutant")"
+      fi
+      if [ "$consumer" = renderer ]; then
+        if output="$(validate_renderer_aggregate_refusal \
+          "$lane" "$custom_mutant" "$role_mutant" \
+          "$aggregate_mutants/rendered-$mutation_id" "$case_id" 2>&1)"; then
+          pass_case "$label mutation -> FAIL: renderer accepted doctored $lane aggregate $field: $case_id"
+        else
+          fail_case "$label mutation" "$output"
+        fi
+      elif output="$(validate_evidence_aggregate_refusal \
+        "$lane" "$custom_mutant" "$role_mutant" "$case_id" 2>&1)"; then
+        pass_case "$label mutation -> $output"
+      else
+        fail_case "$label mutation" "$output"
+      fi
+    done
+  done
+done
+
+if output="$(validate_evidence_join \
+  "$MATRIX" "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+  "$RENDERED_EVIDENCE_REPORT" "$EVIDENCE_PROVENANCE" 2>&1)"; then
+  pass_case "Evidence aggregate mutations restored PASS"
+else
+  fail_case "Evidence aggregate mutation restoration" "$output"
+fi
+
+modern_evidence="$tmp_dir/modern-evidence"
+modern_custom="$modern_evidence/custom.json"
+modern_role="$modern_evidence/role.json"
+modern_render="$modern_evidence/rendered"
+mkdir -p "$modern_evidence"
+python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" build-modern-evidence \
+  "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
+  "$modern_custom" "$modern_role"
+if output="$(
+  "$IAM_SIM_REPORT_RENDERER" \
+    --custom-report "$modern_custom" --role-report "$modern_role" \
+    --out-dir "$modern_render" 2>&1
+)" && join_output="$(validate_evidence_join \
+  "$MATRIX" "$modern_custom" "$modern_role" \
+  "$modern_render/IAM_SIMULATION_REPORT.md" \
+  "$modern_render/IAM_SIMULATION_PROVENANCE.md" 2>&1)" && \
+  python3 - "$modern_custom" "$modern_role" \
+    "$modern_render/IAM_SIMULATION_PROVENANCE.md" <<'PY_MODERN_EVIDENCE'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+custom_path, role_path, provenance_path = map(Path, sys.argv[1:])
+custom = json.loads(custom_path.read_text(encoding="utf-8"))
+role = json.loads(role_path.read_text(encoding="utf-8"))
+provenance = provenance_path.read_text(encoding="utf-8")
+if custom.get("recorded_at") != "2026-09-10T00:00:00Z":
+    raise SystemExit("FAIL: modern custom report recorded_at fixture changed")
+if role.get("custom_report_sha256") != hashlib.sha256(custom_path.read_bytes()).hexdigest():
+    raise SystemExit("FAIL: modern role report custom_report_sha256 does not bind exact bytes")
+if not re.search(r"(?m)^\| recorded_on \| 2026-09-10 \|$", provenance):
+    raise SystemExit("FAIL: modern provenance recorded_on differs from custom lane date")
+PY_MODERN_EVIDENCE
+then
+  pass_case "IAM simulation modern Evidence join -> $join_output"
+else
+  fail_case "IAM simulation modern Evidence join" "${output:-${join_output:-validation failed}}"
+fi
+
+if [ "$failures" -eq "$group_failures" ]; then
+  while IFS='|' read -r mutation_id mutation_label mutation_diagnostic; do
+    mutation_root="$modern_evidence/$mutation_id"
+    dispatch_registered_mutation "$mutation_id" \
+      "$modern_custom" "$modern_role" \
+      "$modern_render/IAM_SIMULATION_PROVENANCE.md" "$mutation_root"
+    expect_failure "$mutation_label" "$mutation_diagnostic" \
+      validate_evidence_join \
+        "$MATRIX" "$mutation_root/custom.json" "$mutation_root/role.json" \
+        "$modern_render/IAM_SIMULATION_REPORT.md" "$mutation_root/provenance.md"
+  done <<'MODERN_EVIDENCE_MUTATIONS'
+evidence-modern-custom-report-binding|evidence modern custom report binding|role report custom_report_sha256 does not match the exact custom report bytes
+evidence-modern-role-chronology|evidence modern role chronology|role report recorded_at precedes custom report recorded_at
+evidence-modern-recorded-at-type|evidence modern recorded at type|custom report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ
+evidence-modern-digest-downgrade|evidence modern digest downgrade|provenance digest set is incomplete: missing custom report sha256
+MODERN_EVIDENCE_MUTATIONS
+
+  for digest_mutation in doctored missing; do
+    digest_provenance="$modern_evidence/provenance-$digest_mutation.md"
+    dispatch_registered_mutation "evidence-provenance-digest-$digest_mutation" \
+      "$modern_render/IAM_SIMULATION_PROVENANCE.md" "$digest_provenance"
+    if [ "$digest_mutation" = doctored ]; then
+      digest_diagnostic="provenance digest mismatch for custom report sha256:"
+    else
+      digest_diagnostic="provenance digest set is incomplete: missing custom report sha256"
+    fi
+    expect_failure "evidence provenance digest $digest_mutation" \
+      "$digest_diagnostic" validate_evidence_join \
+      "$MATRIX" "$modern_custom" "$modern_role" \
+      "$modern_render/IAM_SIMULATION_REPORT.md" "$digest_provenance"
+  done
+
+  for recording_mutation in recorded-at custom-report-binding; do
+    recording_custom="$modern_evidence/custom-$recording_mutation.json"
+    recording_role="$modern_evidence/role-$recording_mutation.json"
+    if [ "$recording_mutation" = recorded-at ]; then
+      recording_case="renderer-recorded-at-date"
+      recording_diagnostic="role report recorded_at precedes custom report recorded_at"
+      recording_label="renderer recorded at date"
+    else
+      recording_case="renderer-custom-report-binding"
+      recording_diagnostic="role report custom_report_sha256 does not match the exact custom report bytes"
+      recording_label="renderer custom report binding"
+    fi
+    dispatch_registered_mutation "$recording_case" \
+      "$modern_custom" "$modern_role" "$recording_custom" "$recording_role"
+    expect_failure "$recording_label" "$recording_diagnostic" \
+      "$IAM_SIM_REPORT_RENDERER" --custom-report "$recording_custom" \
+      --role-report "$recording_role" \
+      --out-dir "$modern_evidence/rendered-$recording_mutation"
+  done
+  expect_failure "renderer recorded on modern refusal" \
+    "--recorded-on is only valid for legacy reports without recorded_at" \
+    dispatch_registered_mutation renderer-recorded-on-modern-refusal \
+      "$modern_custom" "$modern_role" \
+      "$modern_evidence/rendered-modern-override"
+
+  for chain_link in custom-to-role source-document projection-policy put-role-policy; do
+    chain_role="$modern_evidence/role-$chain_link.json"
+    chain_provenance="$modern_evidence/provenance-$chain_link.md"
+    cp -- "$modern_render/IAM_SIMULATION_PROVENANCE.md" "$chain_provenance"
+    chain_case="$(dispatch_registered_mutation "evidence-role-hash-$chain_link" \
+      "$modern_custom" "$modern_role" "$chain_role" "$chain_provenance")"
+    expect_failure "evidence role hash $chain_link" \
+      "Evidence role hash chain $chain_link mismatch for case: $chain_case" \
+      validate_evidence_join "$MATRIX" "$modern_custom" "$chain_role" \
+      "$modern_render/IAM_SIMULATION_REPORT.md" "$chain_provenance"
+    chain_rendered="$modern_evidence/rendered-role-hash-$chain_link"
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$modern_custom" "$chain_role" \
+      "$chain_rendered" 2>&1)" && \
+       python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+         validate-renderer-role-outcome \
+         "$chain_rendered/IAM_SIMULATION_REPORT.md" "$chain_case"; then
+      pass_case "renderer re-derives role hash $chain_link agreement"
+    else
+      fail_case "renderer role hash $chain_link agreement" "$output"
+    fi
+  done
+
+  for generator_mutation in unknown stale; do
+    generator_provenance="$modern_evidence/provenance-generator-$generator_mutation.md"
+    generator_report="$modern_evidence/report-generator-$generator_mutation.md"
+    dispatch_registered_mutation "evidence-generator-commit-$generator_mutation" \
+      "$modern_render/IAM_SIMULATION_PROVENANCE.md" "$generator_provenance" \
+      "$modern_render/IAM_SIMULATION_REPORT.md" "$generator_report"
+    if [ "$generator_mutation" = unknown ]; then
+      generator_diagnostic="Evidence generator commit is unknown:"
+    else
+      generator_diagnostic="Evidence generator drift since generator commit:"
+    fi
+    expect_failure "evidence generator commit $generator_mutation" \
+      "$generator_diagnostic" validate_evidence_join \
+      "$MATRIX" "$modern_custom" "$modern_role" \
+      "$generator_report" "$generator_provenance"
+  done
+fi
+
 if [ "$failures" -eq "$group_failures" ]; then
   evidence_mutants="$tmp_dir/evidence-mutants"
   python3 - \
@@ -1227,6 +2084,7 @@ if [ "$failures" -eq "$group_failures" ]; then
     "$EVIDENCE_PROVENANCE" "$evidence_mutants" "$EVIDENCE_POINTER" \
     "$VECTORS" <<'PY_EVIDENCE_MUTANTS'
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -1292,10 +2150,24 @@ def replace_suffix(value, old, new):
     return value
 
 
+hyphenated_custom = replace_suffix(custom, "79s5rw", "team-a")
+hyphenated_role = replace_suffix(role, "79s5rw", "team-a")
+for projection in hyphenated_role["projection"]["roles"]:
+    projection_sha256 = hashlib.sha256(
+        projection["policy_document"].encode("utf-8")
+    ).hexdigest()
+    projection["policy_sha256"] = projection_sha256
+    for record in hyphenated_role["records"]:
+        if record["projection"]["projection_id"] != projection["projection_id"]:
+            continue
+        record["projection"]["policy_sha256"] = projection_sha256
+        record["document_hashes_submitted"]["put_role_policy"] = [
+            {"sha256": projection_sha256}
+        ]
 write_mutant(
     "hyphenated-suffix",
-    custom_payload=replace_suffix(custom, "79s5rw", "team-a"),
-    role_payload=replace_suffix(role, "79s5rw", "team-a"),
+    custom_payload=hyphenated_custom,
+    role_payload=hyphenated_role,
 )
 
 
@@ -1417,8 +2289,12 @@ forbidden_role = deepcopy(role)
 forbidden_record = next(
     record for record in forbidden_role["records"] if record["case_id"] == forbidden_case
 )
-forbidden_record["scp_excluded"]["matched_sids"].append(forbidden_sid)
-forbidden_record["scp_excluded"]["details"][0]["matched_sids"].append(forbidden_sid)
+forbidden_record["scp_excluded"]["matched_sids"] = sorted([
+    *forbidden_record["scp_excluded"]["matched_sids"], forbidden_sid
+])
+forbidden_record["scp_excluded"]["details"][0]["matched_sids"] = sorted([
+    *forbidden_record["scp_excluded"]["details"][0]["matched_sids"], forbidden_sid
+])
 write_mutant("role-forbidden-sid", role_payload=forbidden_role)
 
 required_case = (
@@ -1479,11 +2355,10 @@ required_record["scp_excluded"]["matched_sids"] = [
     for sid in required_record["scp_excluded"]["matched_sids"]
     if sid != required_sid
 ]
-required_record["scp_excluded"]["details"][0]["matched_sids"] = [
-    sid
-    for sid in required_record["scp_excluded"]["details"][0]["matched_sids"]
-    if sid != required_sid
-]
+for detail in required_record["scp_excluded"]["details"]:
+    detail["matched_sids"] = [
+        sid for sid in detail["matched_sids"] if sid != required_sid
+    ]
 write_mutant(
     "role-required-sid",
     custom_payload=required_custom,
@@ -1579,8 +2454,7 @@ PY_EVIDENCE_MUTANTS
     fail_case "evidence join hyphenated suffix" "$output"
   fi
   declare -f validate_evidence_join >"$evidence_suffix_original"
-  python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
-    mutate-evidence-suffix-check \
+  dispatch_registered_mutation evidence-hyphenated-suffix \
     "$evidence_suffix_original" "$evidence_suffix_mutant"
   # shellcheck disable=SC1090
   source "$evidence_suffix_mutant"
@@ -1604,12 +2478,9 @@ PY_EVIDENCE_MUTANTS
   fi
 
   set +e
-  output="$(
-    TMPDIR="$tmp_dir" \
-      IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$evidence_mutants/empty-hash/custom.json" \
-      IAM_MATRIX_SKIP_NEGATIVES=1 \
-      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" 2>&1
-  )"
+  output="$(dispatch_registered_mutation \
+    evidence-promoted-empty-hash-list \
+    "$evidence_mutants/empty-hash/custom.json" 2>&1)"
   rc=$?
   set -e
   fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
@@ -1632,13 +2503,9 @@ PY_EVIDENCE_MUTANTS
   fi
 
   set +e
-  output="$(
-    TMPDIR="$tmp_dir" \
-      IAM_MATRIX_CUSTOM_EVIDENCE_REPORT="$evidence_mutants/second-hash/custom.json" \
-      IAM_MATRIX_SKIP_NEGATIVES=1 \
-      bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" \
-        "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" 2>&1
-  )"
+  output="$(dispatch_registered_mutation \
+    evidence-promoted-second-policy-hash \
+    "$evidence_mutants/second-hash/custom.json" 2>&1)"
   rc=$?
   set -e
   fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
@@ -1731,8 +2598,8 @@ PY_EVIDENCE_MUTANTS
       fail_case "$label refusal" "$output"
       return
     fi
-    if ! output="$(python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
-      mutate-evidence-role-check "$original" "$mutant" "$mutation" 2>&1)"; then
+    if ! output="$(dispatch_registered_mutation \
+      "evidence-role-$mutation-sid-check" "$original" "$mutant" 2>&1)"; then
       fail_case "$label mutation setup" "$output"
       return
     fi
@@ -1777,12 +2644,14 @@ PY_EVIDENCE_MUTANTS
     python3 - \
       "$MATRIX" "$publication_pair/IAM_SIMULATION_REPORT.md" \
       "$publication_pair/IAM_SIMULATION_PROVENANCE.md" \
-      "$evidence_mutants/publication-metadata" <<'PY_PUBLICATION'
+      "$evidence_mutants/publication-metadata" "$REPO_ROOT" <<'PY_PUBLICATION'
 from pathlib import Path
 import re
+import subprocess
 import sys
 
-matrix_path, report_path, provenance_path, output_root = map(Path, sys.argv[1:])
+matrix_path, report_path, provenance_path, output_root = map(Path, sys.argv[1:5])
+repo_root = Path(sys.argv[5])
 output_root.mkdir()
 matrix = matrix_path.read_text(encoding="utf-8")
 report = report_path.read_text(encoding="utf-8")
@@ -1802,10 +2671,15 @@ current_matrix = re.sub(
 )
 (output_root / "matrix.md").write_text(current_matrix, encoding="utf-8")
 (output_root / "report.md").write_text(report, encoding="utf-8")
+parent_generator = subprocess.check_output(
+    ["git", "rev-parse", f"{generator[0]}^"],
+    cwd=repo_root,
+    text=True,
+).strip()[:7]
 (output_root / "provenance-generator.md").write_text(
     provenance.replace(
         f"| generator commit | {generator[0]} |",
-        "| generator commit | deadbee |",
+        f"| generator commit | {parent_generator} |",
         1,
     ),
     encoding="utf-8",
@@ -1862,7 +2736,80 @@ else
   echo "FAIL: IAM simulate EVIDENCE group" >&2
 fi
 
-if output="$(validate_mutation_registry "$mutation_observations" 2>&1)"; then
+registry_noop_probe() {
+  :
+}
+
+registry_noop_mutant="$tmp_dir/mutation-registry-noop-mutant.txt"
+python3 - "$MUTATION_REGISTRY" "$registry_noop_mutant" <<'PY_REGISTRY_NOOP_MUTANT'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+old = "mutation-registry-valid-helper-edit\tregistry_mutation_probe:expected\t"
+new = "mutation-registry-valid-helper-edit\tregistry_noop_probe\t"
+if source.count(old) != 1:
+    raise SystemExit("FAIL: mutation registry no-op mutation anchor changed")
+Path(sys.argv[2]).write_text(source.replace(old, new, 1), encoding="utf-8")
+PY_REGISTRY_NOOP_MUTANT
+set +e
+output="$(MUTATION_REGISTRY_OVERRIDE="$registry_noop_mutant" \
+  dispatch_registered_mutation mutation-registry-valid-helper-edit 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && \
+   [ "$output" = "FAIL: mutation registry action is a no-op for mutation-registry-valid-helper-edit: registry_noop_probe" ]; then
+  pass_case "mutation registry no-op action refusal"
+else
+  fail_case "mutation registry no-op action refusal" "rc=$rc output=$output"
+fi
+
+registry_dispatch_mutant="$tmp_dir/mutation-registry-action-mutant.txt"
+python3 - "$MUTATION_REGISTRY" "$registry_dispatch_mutant" <<'PY_REGISTRY_ACTION_MUTANT'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+old = "mutation-registry-valid-helper-edit\tregistry_mutation_probe:expected\t"
+new = "mutation-registry-valid-helper-edit\tregistry_silent_probe:expected\t"
+if source.count(old) != 1:
+    raise SystemExit("FAIL: mutation registry valid-helper mutation anchor changed")
+Path(sys.argv[2]).write_text(source.replace(old, new, 1), encoding="utf-8")
+PY_REGISTRY_ACTION_MUTANT
+set +e
+output="$(MUTATION_REGISTRY_OVERRIDE="$registry_dispatch_mutant" \
+  dispatch_registered_mutation mutation-registry-valid-helper-edit 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] && [ -z "$output" ]; then
+  pass_case "mutation registry valid helper edit mutation -> FAIL: mutation registry valid helper edit changed observed diagnostic: observed=<none>"
+else
+  fail_case "mutation registry valid helper edit mutation did not change the diagnostic" \
+    "rc=$rc output=$output"
+fi
+
+registry_probe_original="$(declare -f registry_mutation_probe)"
+registry_mutation_probe() {
+  echo "FAIL: registry mutation probe transformed diagnostic" >&2
+  return 1
+}
+set +e
+output="$(dispatch_registered_mutation mutation-registry-helper-transformation 2>&1)"
+rc=$?
+set -e
+eval "$registry_probe_original"
+if [ "$rc" -ne 0 ] && \
+   [ "$output" = "FAIL: registry mutation probe transformed diagnostic" ]; then
+  pass_case "mutation registry helper transformation mutation -> FAIL: mutation registry helper transformation changed without registry row: $output"
+else
+  fail_case "mutation registry helper transformation mutation did not change the diagnostic" \
+    "rc=$rc output=$output"
+fi
+
+helper_names="$(compgen -A function)"
+if output="$(validate_mutation_registry \
+  "$mutation_observations" check-helpers "$helper_names" \
+  "$mutation_dispatches" 2>&1)"; then
   pass_case "${output#PASS: }"
 else
   fail_case "IAM simulate mutation registry execution" "$output"

@@ -5,12 +5,13 @@ REPO_ROOT="${IAM_SIM_REPORT_REPO_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 HYGIENE="$REPO_ROOT/scripts/artifact-hygiene.sh"
 
 usage() {
-  echo "usage: $0 --custom-report <json> [--role-report <json>] --out-dir <dir>" >&2
+  echo "usage: $0 --custom-report <json> [--role-report <json>] [--recorded-on <date>] --out-dir <dir>" >&2
   exit 2
 }
 
 custom_report=""
 role_report=""
+recorded_on_override=""
 out_dir=""
 
 while [ "$#" -gt 0 ]; do
@@ -23,6 +24,11 @@ while [ "$#" -gt 0 ]; do
     --role-report)
       [ "$#" -ge 2 ] || usage
       role_report=$2
+      shift 2
+      ;;
+    --recorded-on)
+      [ "$#" -ge 2 ] || usage
+      recorded_on_override=$2
       shift 2
       ;;
     --out-dir)
@@ -86,13 +92,14 @@ on_exit() {
   exit "$rc"
 }
 trap on_exit EXIT
-recorded_on="$(date +%F)"
 generator_commit="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
 python3 - \
   "$custom_report" "$role_report" \
   "$rendered_report" "$rendered_provenance" \
-  "$recorded_on" "$generator_commit" <<'PY'
+  "$recorded_on_override" "$generator_commit" <<'PY'
+from datetime import datetime
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -104,7 +111,7 @@ import sys
     role_path,
     report_path,
     provenance_path,
-    recorded_on,
+    recorded_on_override,
     generator_commit,
 ) = sys.argv[1:]
 
@@ -176,6 +183,27 @@ def validate_custom(report):
         validate_hashes(record, label)
 
 
+ROLE_EXPECTATION_FIELDS = (
+    "decision",
+    "resource_decisions",
+    "matched_sid_required",
+    "matched_sid_forbidden",
+)
+
+
+def resolve_role_expectation(record, custom_record):
+    case_id = record["case_id"]
+    if "expect" in record:
+        expectation = record["expect"]
+    elif custom_record is not None:
+        expectation = custom_record["expect"]
+    else:
+        fail(f"role record {case_id} has no custom match and no expect")
+    if not any(field in expectation for field in ROLE_EXPECTATION_FIELDS):
+        fail(f"role record {case_id} expect must include a supported expectation field")
+    return expectation
+
+
 def validate_role(report, custom_by_id):
     if report.get("account_redacted") is not True:  # role-account-redacted-guard
         fail("role report must set account_redacted to true")
@@ -188,10 +216,11 @@ def validate_role(report, custom_by_id):
         custom_record = custom_by_id.get(case_id)
         if "expect" in record and not isinstance(record["expect"], dict):
             fail(f"{label} expect must be an object")
+        expectation = resolve_role_expectation(record, custom_record)
         if (
             custom_record is not None
             and "expect" in record
-            and record["expect"] != custom_record["expect"]
+            and expectation != custom_record["expect"]
         ):
             fail(f"role record {case_id} expectation differs from custom vector expectation")
         if not isinstance(record.get("pass"), bool):
@@ -233,16 +262,69 @@ def custom_view(record):
 
 
 def role_expectation(record):
-    if "expect" in record:
-        return record["expect"]
-    custom_record = custom_by_id.get(record["case_id"])
-    return custom_record["expect"] if custom_record is not None else {}
+    return resolve_role_expectation(
+        record, custom_by_id.get(record["case_id"])
+    )
 
 
 def role_view(record):
     expected = role_expectation(record).get("decision", "attribution-only")
     observed = record["scp_excluded"]["decision_observed"]
     return expected, observed, record["scp_excluded"]["matched_sids"]
+
+
+def aggregates_match_details(observation):
+    details = observation.get("details")
+    if not isinstance(details, list):
+        return True
+    if not details:
+        return False
+    decisions = {}
+    matched_sids = set()
+    actions = set()
+    resources = set()
+    for detail in details:
+        if not isinstance(detail, dict):
+            return False
+        action = detail.get("action_name")
+        resource = detail.get("resource_arn")
+        decision = detail.get("decision_observed")
+        sids = detail.get("matched_sids")
+        if (
+            not isinstance(action, str)
+            or not action
+            or not isinstance(resource, str)
+            or not resource
+            or not isinstance(decision, str)
+            or not decision
+            or not isinstance(sids, list)
+            or any(not isinstance(sid, str) or not sid for sid in sids)
+        ):
+            return False
+        pair = (action, resource)
+        if pair in decisions:
+            return False
+        decisions[pair] = decision
+        matched_sids.update(sids)
+        actions.add(action)
+        resources.add(resource)
+    if len(resources) > 1 and len(actions) == 1:
+        action = next(iter(actions))
+        aggregate_decision = {
+            resource: decisions[(action, resource)]
+            for resource in sorted(resources)
+        }
+    elif len(set(decisions.values())) == 1:
+        aggregate_decision = next(iter(decisions.values()))
+    else:
+        aggregate_decision = {
+            f"{action}|{resource}": decision
+            for (action, resource), decision in sorted(decisions.items())
+        }
+    return (
+        observation.get("decision_observed") == aggregate_decision
+        and observation.get("matched_sids") == sorted(matched_sids)
+    )
 
 
 def custom_matches(record):
@@ -253,6 +335,8 @@ def custom_matches(record):
     per_resource = expectation.get("resource_decisions")
     observed = record["decision_observed"]
     details = record.get("details")
+    if not aggregates_match_details(record):
+        return False
     if isinstance(per_resource, dict):
         missing = object()
         observed_resources = set()
@@ -283,7 +367,16 @@ def custom_matches(record):
         if observed_resources != set(per_resource):
             return False
     elif expected_decision is not None:
-        decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
+        if isinstance(details, list) and details:
+            decisions = [
+                detail.get("decision_observed")
+                for detail in details
+                if isinstance(detail, dict)
+            ]
+            if len(decisions) != len(details):
+                return False
+        else:
+            decisions = list(observed.values()) if isinstance(observed, dict) else [observed]
         if not decisions or any(decision != expected_decision for decision in decisions):
             return False
     required = set(expectation.get("matched_sid_required", []))
@@ -298,8 +391,113 @@ def custom_matches(record):
     return required <= matched and not (forbidden & matched)
 
 
+def detail_pairs(details, label):
+    if not isinstance(details, list):
+        fail(f"{label} details must be an array")
+    if not details:
+        fail(f"{label} details must not be empty")
+    pairs = set()
+    for index, detail in enumerate(details):
+        if not isinstance(detail, dict):
+            fail(f"{label} details[{index}] must be an object")
+        action = require_string(
+            detail.get("action_name"), f"{label} details[{index}] action_name"
+        )
+        resource = require_string(
+            detail.get("resource_arn"), f"{label} details[{index}] resource_arn"
+        )
+        pair = (action, resource)
+        if pair in pairs:
+            fail(f"{label} details repeats action/resource pair: {action} {resource}")
+        pairs.add(pair)
+    return pairs
+
+
+def submitted_hashes(record, lane):
+    entries = record.get("document_hashes_submitted", {}).get(lane)
+    if not isinstance(entries, list):
+        return None
+    hashes = [entry.get("sha256") for entry in entries if isinstance(entry, dict)]
+    if len(hashes) != len(entries) or any(not isinstance(value, str) for value in hashes):
+        return None
+    return hashes
+
+
+def role_hash_chain_agrees(custom_record, role_record):
+    custom_hashes = submitted_hashes(custom_record, "policy_input_list")
+    role_hashes = submitted_hashes(role_record, "custom_lane")
+    if (
+        custom_hashes is None
+        or role_hashes is None
+        or len(custom_hashes) != len(set(custom_hashes))
+        or len(role_hashes) != len(set(role_hashes))
+        or set(custom_hashes) != set(role_hashes)
+    ):
+        return False
+    projection_ref = role_record.get("projection")
+    if not isinstance(projection_ref, dict):
+        return False
+    projection_id = projection_ref.get("projection_id")
+    projections = [
+        item for item in role.get("projection", {}).get("roles", [])
+        if isinstance(item, dict) and item.get("projection_id") == projection_id
+    ]
+    if len(projections) != 1:
+        return False
+    projection = projections[0]
+    sources = projection.get("source_documents")
+    if not isinstance(sources, list):
+        return False
+    source_hashes = {
+        item.get("sha256") for item in sources
+        if isinstance(item, dict) and isinstance(item.get("address"), str)
+        and isinstance(item.get("sha256"), str)
+    }
+    if not set(custom_hashes) <= source_hashes:
+        return False
+    policy_document = projection.get("policy_document")
+    policy_sha256 = projection_ref.get("policy_sha256")
+    if (
+        not isinstance(policy_document, str)
+        or not isinstance(policy_sha256, str)
+        or hashlib.sha256(policy_document.encode("utf-8")).hexdigest()
+        != policy_sha256
+    ):
+        return False
+    return submitted_hashes(role_record, "put_role_policy") == [policy_sha256]
+
+
 def role_matches(record):
-    return record["pass"] is True
+    if "runner_failure" in record:
+        return False
+    case_id = record["case_id"]
+    custom_record = custom_by_id.get(case_id)
+    if custom_record is None or not role_hash_chain_agrees(custom_record, record):
+        return False
+    report_custom_pairs = detail_pairs(
+        custom_record.get("details"), f"custom record {case_id}"
+    )
+    custom_pairs = detail_pairs(
+        record["custom_lane"].get("details"), f"role record {case_id} custom_lane"
+    )
+    excluded_pairs = detail_pairs(
+        record["scp_excluded"].get("details"),
+        f"role record {case_id} scp_excluded",
+    )
+    if custom_pairs != report_custom_pairs or excluded_pairs != report_custom_pairs:
+        return False
+    if not aggregates_match_details(record["custom_lane"]):
+        return False
+    if not aggregates_match_details(record["scp_excluded"]):
+        return False
+    observed = record["scp_excluded"]
+    candidate = {
+        "expect": role_expectation(record),
+        "decision_observed": observed["decision_observed"],
+        "details": observed["details"],
+        "matched_sids": observed["matched_sids"],
+    }
+    return custom_matches(candidate)
 
 
 def outcome(records, matches):
@@ -345,6 +543,45 @@ for record in custom_records:
 role = read_report(role_path, "role") if role_path else None
 if role is not None:
     validate_role(role, custom_by_id)
+
+supplied_reports = [("custom", custom)]
+if role is not None:
+    supplied_reports.append(("role", role))
+recorded_values = [
+    report["recorded_at"] if "recorded_at" in report else None
+    for _, report in supplied_reports
+]
+modern = ["recorded_at" in report for _, report in supplied_reports]
+if any(modern):
+    if not all(modern):
+        fail("all supplied reports must carry recorded_at or all must be legacy")
+    parsed = []
+    for (label, _), value in zip(supplied_reports, recorded_values):
+        try:
+            parsed.append(datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ"))
+        except (TypeError, ValueError):
+            fail(f"{label} report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ")
+    if recorded_on_override:
+        fail("--recorded-on is only valid for legacy reports without recorded_at")
+    if role is not None:
+        if parsed[1] < parsed[0]:
+            fail("role report recorded_at precedes custom report recorded_at")
+        expected_custom_digest = hashlib.sha256(Path(custom_path).read_bytes()).hexdigest()
+        if role.get("custom_report_sha256") != expected_custom_digest:
+            fail(
+                "role report custom_report_sha256 does not match the exact custom report bytes"
+            )
+    recorded_on = parsed[0].strftime("%Y-%m-%d")
+else:
+    if not recorded_on_override:
+        fail("legacy reports require --recorded-on YYYY-MM-DD")
+    try:
+        parsed_override = datetime.strptime(recorded_on_override, "%Y-%m-%d")
+    except ValueError:
+        fail("--recorded-on must be YYYY-MM-DD")
+    if parsed_override.strftime("%Y-%m-%d") != recorded_on_override:
+        fail("--recorded-on must be YYYY-MM-DD")
+    recorded_on = recorded_on_override
 
 role_records = role["records"] if role is not None else []
 report_lines = [
@@ -472,6 +709,12 @@ report_lines.extend(
 append_hash_rows(report_lines, "custom", custom_records)
 append_hash_rows(report_lines, "role", role_records)
 Path(report_path).write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+report_digests = {
+    "custom report sha256": hashlib.sha256(Path(custom_path).read_bytes()).hexdigest(),
+    "Markdown report sha256": hashlib.sha256(Path(report_path).read_bytes()).hexdigest(),
+}
+if role is not None:
+    report_digests["role report sha256"] = hashlib.sha256(Path(role_path).read_bytes()).hexdigest()
 
 custom_counts = outcome(custom_records, custom_matches)
 role_counts = outcome(role_records, role_matches)
@@ -517,6 +760,15 @@ provenance_lines = [
     f"| recorded_from | {recorded_from} |",
     f"| recorded_on | {recorded_on} |",
     f"| generator commit | {generator_commit} |",
+    *[
+        f"| {name} | {report_digests[name]} |"
+        for name in (
+            "custom report sha256",
+            "role report sha256",
+            "Markdown report sha256",
+        )
+        if name in report_digests
+    ],
     f"| commands | {'<br>'.join(commands)} |",
     (
         "| account and region | Free Plan account in `us-east-1`; the rendered "
@@ -549,7 +801,7 @@ provenance_lines.extend(
         "- non-placeholder 12-digit account identifiers, including IAM ARN accounts;",
         "- AWS principal and session identifiers, including assumed-role paths;",
         "- request identifier keys and bare UUIDs; and",
-        "- the SHA-256 exemption that removes complete 64-hex digests before the account and UUID checks.",
+        "- field-scoped complete 64/40-hex digest and commit exemptions: JSON digest keys and Markdown digest/commit table cells only.",
         "",
         "No forbidden-value file is supplied by this renderer, so forbid-list matching is not part of this publication check.",
     ]

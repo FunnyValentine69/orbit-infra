@@ -55,9 +55,15 @@ fi
 # shellcheck source=scripts/iam-matrix-documents.sh
 source "$REPO_ROOT/scripts/iam-matrix-documents.sh"
 
+recorded_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="${IAM_SIM_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM}"
 if ! [[ "$run_id" =~ ^[A-Za-z0-9+=,.@_-]{1,32}$ ]]; then
   echo "FAIL: IAM_SIM_RUN_ID must be 1-32 IAM-name characters" >&2
+  exit 2
+fi
+retry_base_seconds="${IAM_SIM_RETRY_BASE_SECONDS:-1}"
+if ! [[ "$retry_base_seconds" =~ ^[0-9]+$ ]] || [ "$retry_base_seconds" -gt 30 ]; then
+  echo "FAIL: IAM_SIM_RETRY_BASE_SECONDS must be an integer from 0 through 30" >&2
   exit 2
 fi
 tag_key=OrbitIamSimulationRun
@@ -77,12 +83,31 @@ role_plan="$tmp_dir/role-plan.json"
 case_stream="$tmp_dir/cases.bin"
 records="$tmp_dir/records.jsonl"
 manual_notes="$tmp_dir/manual-cleanup.txt"
+custom_report_sha256=""
+if [ "$dry_run" -eq 0 ]; then
+  custom_report_snapshot="$tmp_dir/custom-report.json"
+  if ! cp -- "$custom_report" "$custom_report_snapshot"; then
+    echo "FAIL: could not snapshot custom report: $custom_report" >&2
+    rm -rf "$tmp_dir"
+    exit 1
+  fi
+  custom_report="$custom_report_snapshot"
+  custom_report_sha256="$(python3 - "$custom_report" <<'PY_DIGEST'
+import hashlib
+from pathlib import Path
+import sys
+
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY_DIGEST
+)"
+fi
 : >"$records"
 : >"$manual_notes"
 
 prepare_args=(
   "$REPO_ROOT" "$VALIDATOR" "$IAM_SIM_CORE" "$plan" "$vectors" "$expect_account" "$run_id"
-  "$role_plan" "$case_stream" "$custom_report" "$dry_run"
+  "$role_plan" "$case_stream" "$custom_report" "$dry_run" "$recorded_at"
+  "$custom_report_sha256"
 )
 if [ -n "$only" ]; then
   prepare_args+=("$only")
@@ -110,7 +135,9 @@ output_path = Path(sys.argv[separator + 8])
 case_stream_path = Path(sys.argv[separator + 9])
 custom_report_path = Path(sys.argv[separator + 10]) if sys.argv[separator + 10] else None
 dry_run = sys.argv[separator + 11] == "1"
-only = sys.argv[separator + 12] if len(sys.argv) > separator + 12 else None
+recorded_at = sys.argv[separator + 12]
+custom_report_sha256 = sys.argv[separator + 13] or None
+only = sys.argv[separator + 14] if len(sys.argv) > separator + 14 else None
 
 
 sys.dont_write_bytecode = True
@@ -222,12 +249,13 @@ except json.JSONDecodeError as exc:
     fail(f"vector validator emitted invalid JSONL for {vectors_path}: {exc}")
 if not flattened:
     fail(f"vector validator emitted no cases for {vectors_path}")
-vectors = []
+all_vectors = []
 for vector in flattened:
     prefix = f"case:{vector['document']}:{vector['sid']}:"
     if not vector["case_id"].startswith(prefix) or vector["case_id"] == prefix:
         fail(f"case id exact prefix mismatch: expected {prefix}")
-    vectors.append(render(vector))
+    all_vectors.append(render(vector))
+vectors = all_vectors
 if only is not None:
     selected = [vector for vector in vectors if vector["case_id"] == only]
     if not selected:
@@ -242,22 +270,12 @@ case_ids = [vector["case_id"] for vector in vectors]
 if len(case_ids) != len(set(case_ids)):
     fail("vector directory repeats a case_id")
 
-role_for_document = {
-    "aws_iam_role_policy.plan_reader_deny": "plan-reader",
-    "aws_iam_role_policy.plan_reader_state": "plan-reader",
-    "aws_iam_policy.deployer_state": "deployer",
-    "aws_iam_policy.deployer_ec2": "deployer",
-    "aws_iam_policy.deployer_elb_ecs": "deployer",
-    "aws_iam_policy.deployer_data": "deployer",
-    "aws_iam_policy.deployer_iam": "deployer",
-    "aws_iam_policy.deployer_guard": "deployer",
-    "aws_iam_role_policy.publisher": "publisher",
-}
+role_for_document = core.ROLE_FOR_DOCUMENT
 exclusions = [{
     "binding": "aws_iam_role_policy_attachment.plan_reader_readonly",
     "reason": "AWS-managed ReadOnlyAccess cannot be represented by the inline role-lane projection",
 }]
-candidate_cases = {role: [] for role in ("plan-reader", "deployer", "publisher")}
+candidate_cases = {role: [] for role in core.ROLE_KINDS}
 for vector in vectors:
     if vector["simulation_mode"] == "custom-isolated":
         exclusions.append({
@@ -277,111 +295,86 @@ for vector in vectors:
         continue
     candidate_cases[role].append(vector)
 
-def combine_documents(role, addresses):
-    versions = set()
-    statements = []
-    seen_sids = {}
-    for address in addresses:
-        try:
-            core.statement_spans(documents[address])
-        except core.RunnerFailure as exc:
-            fail(str(exc))
-        policy = json.loads(documents[address])
-        version = policy.get("Version")
-        if not isinstance(version, str) or not version:
-            fail(f"projected policy document lacks Version: {address}")
-        versions.add(version)
-        raw_statements = policy.get("Statement")
-        if isinstance(raw_statements, dict):
-            raw_statements = [raw_statements]
-        if not isinstance(raw_statements, list) or not raw_statements:
-            fail(f"projected policy document has no statements: {address}")
-        for statement in raw_statements:
-            sid = statement["Sid"]
-            if sid in seen_sids and seen_sids[sid] != address:
-                fail(
-                    f"duplicate Sid {sid} across {seen_sids[sid]} and {address}"
-                )
-            seen_sids[sid] = address
-            statements.append(statement)
-    if len(versions) != 1:
-        fail(f"role {role} policy documents disagree on Version: {sorted(versions)}")
-    return json.dumps(
-        {"Version": next(iter(versions)), "Statement": statements},
-        separators=(",", ":"),
-    )
-
-
-def source_entries(addresses):
-    return [
-        {
-            "address": address,
-            "sha256": core.document_sha256(documents[address]),
-        }
-        for address in addresses
-    ]
-
-
+selected_roles = {role for role in core.ROLE_KINDS if candidate_cases[role]}
+try:
+    projection_specs = core.build_role_projections(documents, selected_roles)
+except core.RunnerFailure as exc:
+    fail(str(exc))
+pass_counts = {
+    role: sum(spec["role_kind"] == role for spec in projection_specs)
+    for role in core.ROLE_KINDS
+}
+pass_indices = {role: 0 for role in core.ROLE_KINDS}
+projection_for_document = {}
 roles = []
-supported = []
-for role in ("plan-reader", "deployer", "publisher"):
-    cases = candidate_cases[role]
-    if not cases:
-        continue
-    role_documents = sorted(
-        address for address, mapped_role in role_for_document.items()
-        if mapped_role == role
-    )
-    combined_policy = combine_documents(role, role_documents)
-    combined_size = len(re.sub(r"\s", "", combined_policy))
-    source_size = sum(len(re.sub(r"\s", "", documents[address])) for address in role_documents)
-    if combined_size <= 10240:
-        pass_specs = [("combined", role_documents, combined_policy)]
-    else:
-        pass_specs = []
-        for address in role_documents:
-            policy = documents[address]
-            policy_size = len(re.sub(r"\s", "", policy))
-            if policy_size > 10240:
-                fail(
-                    f"per-document projection exceeds 10240 characters for {address}: {policy_size}"
-                )
-            pass_specs.append(("per-document", [address], policy))
+for spec in projection_specs:
+    role = spec["role_kind"]
+    pass_indices[role] += 1
+    role_name = f"orbit-iam-sim-{run_id}-{role}"
+    policy_name = f"orbit-iam-sim-{role}"
+    if pass_counts[role] > 1:
+        role_name += f"-p{pass_indices[role]}"
+        policy_name += f"-p{pass_indices[role]}"
+    projection = dict(spec)
+    projection.update({"name": role_name, "policy_name": policy_name})
+    roles.append(projection)
+    for source in projection["source_documents"]:
+        projection_for_document[source["address"]] = projection["projection_id"]
 
-    projection_for_document = {}
-    for pass_index, (projection_kind, source_addresses, policy) in enumerate(pass_specs, 1):
-        projection_id = (
-            f"{role}:combined"
-            if projection_kind == "combined"
-            else f"{role}:{source_addresses[0]}"
-        )
-        role_name = f"orbit-iam-sim-{run_id}-{role}"
-        policy_name = f"orbit-iam-sim-{role}"
-        if len(pass_specs) > 1:
-            role_name += f"-p{pass_index}"
-            policy_name += f"-p{pass_index}"
-        entries = source_entries(source_addresses)
-        roles.append({
-            "role_kind": role,
-            "projection_id": projection_id,
-            "projection_kind": projection_kind,
-            "name": role_name,
-            "policy_name": policy_name,
-            "policy_document": policy,
-            "policy_sha256": core.document_sha256(policy),
-            "policy_character_count": len(re.sub(r"\s", "", policy)),
-            "source_character_count": (
-                source_size if projection_kind == "combined"
-                else len(re.sub(r"\s", "", documents[source_addresses[0]]))
-            ),
-            "source_documents": entries,
-        })
-        for address in source_addresses:
-            projection_for_document[address] = projection_id
+supported = []
+for role in core.ROLE_KINDS:
+    cases = candidate_cases[role]
     for vector in cases:
         vector["temporary_projection_id"] = projection_for_document[vector["document"]]
     supported.extend(cases)
 
+if not dry_run:
+    for projection in roles:
+        readiness_case = None
+        source_addresses = {
+            entry["address"] for entry in projection["source_documents"]
+        }
+        for vector in all_vectors:
+            expect = vector.get("expect", {})
+            required_sids = expect.get("matched_sid_required", [])
+            decision = expect.get("decision")
+            if (
+                vector.get("document") not in source_addresses
+                or vector.get("assertion_kind") != "decision"
+                or not required_sids
+            ):
+                continue
+            qualifies = decision == "allowed"
+            if decision == "explicitDeny":
+                policy = json.loads(documents[vector["document"]])
+                statements = policy["Statement"]
+                if isinstance(statements, dict):
+                    statements = [statements]
+                deny_sids = {
+                    statement.get("Sid")
+                    for statement in statements
+                    if statement.get("Effect") == "Deny"
+                }
+                qualifies = any(sid in deny_sids for sid in required_sids)
+            if not qualifies:
+                continue
+            readiness_case = vector
+            break
+        if readiness_case is None:
+            fail(
+                "role projection lacks a Sid-matching readiness case: "
+                f"{projection['projection_id']}"
+            )
+        action_groups = core.split_action_authorization_groups(
+            readiness_case["action_names"]
+        )
+        if len(action_groups) != 1:
+            fail(
+                "role projection readiness case needs more than one request: "
+                f"{projection['projection_id']} {readiness_case['case_id']}"
+            )
+        projection["readiness_case"] = readiness_case
+        projection["propagation_attempts"] = {"readback": 0, "probe": 0}
 if not supported:
     if only is not None:
         reason = next(
@@ -464,6 +457,8 @@ payload = {
     "vector_account_id": vector_account_id,
     "suffix": suffix,
     "run_id": run_id,
+    "recorded_at": recorded_at,
+    "custom_report_sha256": custom_report_sha256,
     "caller_arn": initial_principal,
     "assume_role_policy": assume_policy,
     "assume_role_policy_sha256": core.document_sha256(assume_policy),
@@ -701,6 +696,8 @@ payload = {
     "plan_account": role_plan["vector_account_id"],
     "plan_account_redacted": role_plan["vector_account_id"] != placeholder_account,
     "run_id": role_plan["run_id"],
+    "recorded_at": role_plan["recorded_at"],
+    "custom_report_sha256": role_plan["custom_report_sha256"],
     "ownership_nonce": nonce,
     "ownership_nonce_redacted": True,
     "projection": {
@@ -841,9 +838,11 @@ principal_simulation_pass() {
       iam simulate-principal-policy
       --policy-source-arn "arn:aws:iam::$expect_account:role/$CASE_ROLE_NAME"
       --action-names "${action_group[@]}"
-      --resource-arns "${CASE_RESOURCES[@]}"
-      "${CASE_CONTEXT_ARGS[@]}"
     )
+    if [ "${#CASE_RESOURCES[@]}" -gt 0 ]; then
+      call_args+=(--resource-arns "${CASE_RESOURCES[@]}")
+    fi
+    call_args+=("${CASE_CONTEXT_ARGS[@]}")
     if [ "$include_exclusion" -eq 1 ]; then
       call_args+=(--policy-exclusion-list '{"PolicyType":"scp"}')
     fi
@@ -866,6 +865,166 @@ principal_simulation_pass() {
       return 1
     fi
   fi
+}
+
+
+load_readiness_call() {
+  local index=$1 value context
+  PROBE_ACTIONS=()
+  while IFS= read -r value; do
+    PROBE_ACTIONS+=("$value")
+  done < <(jq -r ".roles[$index].readiness_case.action_names[]" "$role_plan")
+  PROBE_RESOURCES=()
+  while IFS= read -r value; do
+    PROBE_RESOURCES+=("$value")
+  done < <(jq -r ".roles[$index].readiness_case.resource_arns[]" "$role_plan")
+  context="$(jq -c ".roles[$index].readiness_case.context_entries" "$role_plan")"
+  PROBE_CONTEXT_ARGS=(--output json)
+  [ "$context" = '[]' ] || PROBE_CONTEXT_ARGS=(--context-entries "$context" --output json)
+}
+
+
+validate_readiness_probe() {
+  local index=$1 response_path=$2
+  python3 - "$REPO_ROOT/scripts/iam_simulate_core.py" "$role_plan" "$index" "$response_path" <<'PY_READINESS'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+core_path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("iam_simulate_core_readiness", core_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(f"FAIL: cannot load IAM simulator core: {core_path}")
+core = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = core
+spec.loader.exec_module(core)
+role_plan = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+role = role_plan["roles"][int(sys.argv[3])]
+case = role["readiness_case"]
+response = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+try:
+    mapped = core.map_request(response, {
+        "action_names": case["action_names"],
+        "resource_arns": case["resource_arns"],
+        "policy_input_list": [role["policy_document"]],
+        "permissions_boundary_policy_input_list": [],
+        "bind_to_single_document": True,
+        "ignore_organizations": True,
+    })
+except core.RunnerFailure as exc:
+    raise SystemExit(f"FAIL: readiness response could not be mapped: {exc}") from exc
+expect = case["expect"]
+per_resource = expect.get("resource_decisions")
+required = set(expect["matched_sid_required"])
+for detail in mapped["details"]:
+    expected_decision = (
+        per_resource[detail["resource_arn"]]
+        if isinstance(per_resource, dict)
+        else expect["decision"]
+    )
+    if detail["decision_observed"] != expected_decision:
+        raise SystemExit("FAIL: readiness decision does not match the selected case")
+    if not required.issubset(detail["matched_sids"]):
+        raise SystemExit("FAIL: readiness response lacks a required Sid")
+PY_READINESS
+}
+
+
+compare_readback_policy() {
+  python3 - "$1" "$2" <<'PY_READBACK'
+import json
+import sys
+
+try:
+    observed = json.loads(sys.argv[1])
+    submitted = json.loads(sys.argv[2])
+except json.JSONDecodeError as exc:
+    print(f"inline policy readback is not valid JSON: {exc}")
+    raise SystemExit(1)
+if observed != submitted:
+    print("inline policy readback differs from submitted document")
+    raise SystemExit(1)
+PY_READBACK
+}
+
+
+wait_for_policy_readback() {
+  local attempt delay
+  READBACK_ATTEMPTS=0
+  READBACK_LAST_ERROR=""
+  for ((attempt = 1; attempt <= 5; attempt++)); do
+    READBACK_ATTEMPTS=$attempt
+    call_capture iam get-role-policy --role-name "$ROLE_NAME" \
+      --policy-name "$POLICY_NAME" --query PolicyDocument --output json
+    if [ "$CALL_RC" -eq 0 ]; then
+      if READBACK_LAST_ERROR="$(
+        compare_readback_policy "$CALL_OUTPUT" "$POLICY_DOCUMENT" 2>&1
+      )"; then
+        return 0
+      fi
+    else
+      READBACK_LAST_ERROR=$CALL_ERROR
+    fi
+    if [ "$attempt" -lt 5 ]; then
+      delay=$((retry_base_seconds * (1 << (attempt - 1))))
+      sleep "$delay"
+    fi
+  done
+  return 1
+}
+
+
+wait_for_readiness_probe() {
+  local index=$1 attempt delay response_path
+  local -a call_args
+  PROBE_ATTEMPTS=0
+  PROBE_LAST_ERROR=""
+  load_readiness_call "$index"
+  for ((attempt = 1; attempt <= 5; attempt++)); do
+    PROBE_ATTEMPTS=$attempt
+    call_args=(
+      iam simulate-principal-policy
+      --policy-source-arn "arn:aws:iam::$expect_account:role/$ROLE_NAME"
+      --action-names "${PROBE_ACTIONS[@]}"
+    )
+    if [ "${#PROBE_RESOURCES[@]}" -gt 0 ]; then
+      call_args+=(--resource-arns "${PROBE_RESOURCES[@]}")
+    fi
+    call_args+=("${PROBE_CONTEXT_ARGS[@]}")
+    call_args+=(--policy-exclusion-list '{"PolicyType":"scp"}')
+    call_capture "${call_args[@]}"
+    if [ "$CALL_RC" -eq 0 ]; then
+      response_path="$tmp_dir/readiness-$index-$attempt.json"
+      printf '%s\n' "$CALL_OUTPUT" >"$response_path"
+      if PROBE_LAST_ERROR="$(
+        validate_readiness_probe "$index" "$response_path" 2>&1
+      )"; then
+        return 0
+      fi
+    else
+      PROBE_LAST_ERROR=$CALL_ERROR
+    fi
+    if [ "$attempt" -lt 5 ]; then
+      delay=$((retry_base_seconds * (1 << (attempt - 1))))
+      sleep "$delay"
+    fi
+  done
+  return 1
+}
+
+
+record_propagation_attempts() {
+  local index=$1 readback=$2 probe=$3 next_plan
+  next_plan="$tmp_dir/role-plan-next.json"
+  if ! jq --argjson readback "$readback" --argjson probe "$probe" \
+    ".roles[$index].propagation_attempts = {readback:\$readback, probe:\$probe}" \
+    "$role_plan" >"$next_plan"; then
+    echo "FAIL: could not record propagation attempts for $ROLE_NAME" >&2
+    return 1
+  fi
+  mv "$next_plan" "$role_plan"
 }
 
 
@@ -1011,6 +1170,17 @@ for ((index = 0; index < role_count; index++)); do
     exit 1
   fi
   printf 'loaded\n' >"$(role_policy_file "$index")"
+  if ! wait_for_policy_readback; then
+    record_propagation_attempts "$index" "$READBACK_ATTEMPTS" 0
+    echo "FAIL: inline policy readback propagation exhausted for $ROLE_NAME after 5 attempts: $READBACK_LAST_ERROR" >&2
+    exit 1
+  fi
+  if ! wait_for_readiness_probe "$index"; then
+    record_propagation_attempts "$index" "$READBACK_ATTEMPTS" "$PROBE_ATTEMPTS"
+    echo "FAIL: inline policy readiness probe propagation exhausted for $ROLE_NAME after 5 attempts: $PROBE_LAST_ERROR" >&2
+    exit 1
+  fi
+  record_propagation_attempts "$index" "$READBACK_ATTEMPTS" "$PROBE_ATTEMPTS"
 done
 
 map_role_pass() {

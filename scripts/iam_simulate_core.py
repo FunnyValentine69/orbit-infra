@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -245,6 +246,200 @@ def document_sha256(document: str) -> str:
     return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
 
+ROLE_KINDS = ("plan-reader", "deployer", "publisher")
+ROLE_FOR_DOCUMENT = {
+    "aws_iam_role_policy.plan_reader_deny": "plan-reader",
+    "aws_iam_role_policy.plan_reader_state": "plan-reader",
+    "aws_iam_policy.deployer_state": "deployer",
+    "aws_iam_policy.deployer_ec2": "deployer",
+    "aws_iam_policy.deployer_elb_ecs": "deployer",
+    "aws_iam_policy.deployer_data": "deployer",
+    "aws_iam_policy.deployer_iam": "deployer",
+    "aws_iam_policy.deployer_guard": "deployer",
+    "aws_iam_role_policy.publisher": "publisher",
+}
+ROLE_POLICY_CHARACTER_LIMIT = 10240
+
+
+def _combine_role_documents(
+    role: str, addresses: list[str], documents: dict[str, str]
+) -> str:
+    versions = set()
+    statements = []
+    seen_sids = {}
+    for address in addresses:
+        document = documents.get(address)
+        if not isinstance(document, str) or not document:
+            raise RunnerFailure(f"projected policy document is missing: {address}")
+        statement_spans(document)
+        try:
+            policy = json.loads(document)
+        except json.JSONDecodeError as exc:
+            raise RunnerFailure(
+                f"projected policy document is invalid JSON: {address}: {exc}"
+            ) from exc
+        version = policy.get("Version") if isinstance(policy, dict) else None
+        if not isinstance(version, str) or not version:
+            raise RunnerFailure(f"projected policy document lacks Version: {address}")
+        versions.add(version)
+        raw_statements = policy.get("Statement")
+        if isinstance(raw_statements, dict):
+            raw_statements = [raw_statements]
+        if not isinstance(raw_statements, list) or not raw_statements:
+            raise RunnerFailure(f"projected policy document has no statements: {address}")
+        for statement in raw_statements:
+            sid = statement["Sid"]
+            if sid in seen_sids and seen_sids[sid] != address:
+                raise RunnerFailure(
+                    f"duplicate Sid {sid} across {seen_sids[sid]} and {address}"
+                )
+            seen_sids[sid] = address
+            statements.append(statement)
+    if len(versions) != 1:
+        raise RunnerFailure(
+            f"role {role} policy documents disagree on Version: {sorted(versions)}"
+        )
+    return json.dumps(
+        {"Version": next(iter(versions)), "Statement": statements},
+        separators=(",", ":"),
+    )
+
+
+def build_role_projections(
+    documents: dict[str, str], selected_roles: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Build deterministic combined or per-document temporary-role policies."""
+    selected = set(ROLE_KINDS) if selected_roles is None else set(selected_roles)
+    unknown = selected - set(ROLE_KINDS)
+    if unknown:
+        raise RunnerFailure(f"unknown role projection kind: {sorted(unknown)[0]}")
+    projections = []
+    for role in ROLE_KINDS:
+        if role not in selected:
+            continue
+        addresses = sorted(
+            address
+            for address, mapped_role in ROLE_FOR_DOCUMENT.items()
+            if mapped_role == role
+        )
+        combined_policy = _combine_role_documents(role, addresses, documents)
+        combined_size = len(re.sub(r"\s", "", combined_policy))
+        source_size = sum(
+            len(re.sub(r"\s", "", documents[address])) for address in addresses
+        )
+        if combined_size <= ROLE_POLICY_CHARACTER_LIMIT:
+            pass_specs = [("combined", addresses, combined_policy)]
+        else:
+            pass_specs = []
+            for address in addresses:
+                policy = documents[address]
+                policy_size = len(re.sub(r"\s", "", policy))
+                if policy_size > ROLE_POLICY_CHARACTER_LIMIT:
+                    raise RunnerFailure(
+                        "per-document projection exceeds 10240 characters for "
+                        f"{address}: {policy_size}"
+                    )
+                pass_specs.append(("per-document", [address], policy))
+        for projection_kind, source_addresses, policy in pass_specs:
+            projection_id = (
+                f"{role}:combined"
+                if projection_kind == "combined"
+                else f"{role}:{source_addresses[0]}"
+            )
+            projections.append({
+                "role_kind": role,
+                "projection_id": projection_id,
+                "projection_kind": projection_kind,
+                "policy_document": policy,
+                "policy_sha256": document_sha256(policy),
+                "policy_character_count": len(re.sub(r"\s", "", policy)),
+                "source_character_count": (
+                    source_size
+                    if projection_kind == "combined"
+                    else len(re.sub(r"\s", "", documents[source_addresses[0]]))
+                ),
+                "source_documents": [
+                    {
+                        "address": address,
+                        "sha256": document_sha256(documents[address]),
+                    }
+                    for address in source_addresses
+                ],
+            })
+    return projections
+
+
+def _plan_role_documents(plan: Any) -> dict[str, str]:
+    try:
+        resources = plan["planned_values"]["root_module"]["resources"]
+    except (KeyError, TypeError) as exc:
+        raise RunnerFailure("role projection plan lacks root resources") from exc
+    if not isinstance(resources, list):
+        raise RunnerFailure("role projection plan resources must be an array")
+    documents = {}
+    for address in ROLE_FOR_DOCUMENT:
+        matches = [
+            resource
+            for resource in resources
+            if isinstance(resource, dict) and resource.get("address") == address
+        ]
+        if len(matches) != 1:
+            raise RunnerFailure(
+                f"role projection plan must contain exactly one {address}, "
+                f"found {len(matches)}"
+            )
+        values = matches[0].get("values")
+        policy = values.get("policy") if isinstance(values, dict) else None
+        if not isinstance(policy, str) or not policy:
+            raise RunnerFailure(
+                f"role projection plan policy is null, unknown, or empty: {address}"
+            )
+        documents[address] = policy
+    return documents
+
+
+def validate_role_report_projections(plan: Any, role_report: Any) -> int:
+    """Bind reported projection policy bytes to policies in a saved plan."""
+    rebuilt = build_role_projections(_plan_role_documents(plan))
+    reported = (
+        role_report.get("projection", {}).get("roles")
+        if isinstance(role_report, dict)
+        else None
+    )
+    if not isinstance(reported, list):
+        raise RunnerFailure("role report projection roles must be an array")
+    reported_by_id = {}
+    for projection in reported:
+        projection_id = (
+            projection.get("projection_id") if isinstance(projection, dict) else None
+        )
+        if not isinstance(projection_id, str) or projection_id in reported_by_id:
+            raise RunnerFailure("role report contains an invalid or duplicate projection id")
+        reported_by_id[projection_id] = projection
+    rebuilt_ids = [projection["projection_id"] for projection in rebuilt]
+    if set(reported_by_id) != set(rebuilt_ids):
+        raise RunnerFailure("role report projection ids differ from the plan rebuild")
+    for expected in rebuilt:
+        projection_id = expected["projection_id"]
+        observed = reported_by_id[projection_id]
+        expected_policy_document = redact_report(
+            expected["policy_document"], "policy_document"
+        )
+        if observed.get("policy_document") != expected_policy_document:
+            raise RunnerFailure(
+                f"role projection source policy differs for {projection_id}"
+            )
+        if observed.get("source_documents") != expected["source_documents"]:
+            raise RunnerFailure(
+                f"role projection source documents differ for {projection_id}"
+            )
+        if observed.get("policy_sha256") != expected["policy_sha256"]:
+            raise RunnerFailure(
+                f"role projection source sha256 differs for {projection_id}"
+            )
+    return len(rebuilt)
+
+
 REPORT_PLACEHOLDER_ACCOUNT = "000000000000"
 REPORT_REDACTED = "<redacted>"
 REPORT_REDACTED_PRINCIPAL = "arn:aws:iam::000000000000:<redacted-principal>"
@@ -343,8 +538,23 @@ def redact_report(value: Any, field: str | None = None) -> Any:
     return value
 
 
+def recorded_at_utc() -> str:
+    """Return the current UTC second in the report timestamp format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def write_report(path: Path, payload: dict[str, Any]) -> None:
     """Write a redacted stable report with one compact record or exclusion per line."""
+    recorded_at = payload.get("recorded_at")
+    if (
+        not isinstance(recorded_at, str)
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", recorded_at) is None
+    ):
+        raise RunnerFailure("report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ")
+    try:
+        datetime.strptime(recorded_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise RunnerFailure("report recorded_at must be UTC YYYY-MM-DDTHH:MM:SSZ") from exc
     payload = redact_report(payload)
     payload["redaction_applied"] = True
     keys = sorted(payload)
