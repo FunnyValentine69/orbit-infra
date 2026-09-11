@@ -422,9 +422,16 @@ def validate_role_report_projections(plan: Any, role_report: Any) -> int:
     for expected in rebuilt:
         projection_id = expected["projection_id"]
         observed = reported_by_id[projection_id]
-        if observed.get("policy_document") != expected["policy_document"]:
+        expected_policy_document = redact_report(
+            expected["policy_document"], "policy_document"
+        )
+        if observed.get("policy_document") != expected_policy_document:
             raise RunnerFailure(
                 f"role projection source policy differs for {projection_id}"
+            )
+        if observed.get("source_documents") != expected["source_documents"]:
+            raise RunnerFailure(
+                f"role projection source documents differ for {projection_id}"
             )
         if observed.get("policy_sha256") != expected["policy_sha256"]:
             raise RunnerFailure(

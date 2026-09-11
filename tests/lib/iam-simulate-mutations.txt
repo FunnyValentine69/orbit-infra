@@ -157,6 +157,7 @@ evidence-provenance-digest-doctored	mutate_provenance_digest:doctored	FAIL: prov
 evidence-provenance-digest-missing	mutate_provenance_digest:missing	FAIL: provenance digest set is incomplete: missing custom report sha256
 renderer-role-outcome-decision	mutate_renderer_role_outcome:decision	FAIL: renderer role outcome mutant remained passing:
 renderer-role-outcome-deleted-pair	mutate_renderer_role_outcome:deleted-pair	FAIL: renderer role outcome mutant remained passing:
+renderer-role-outcome-truncated-pair	mutate_renderer_role_outcome:truncated-pair	FAIL: renderer role outcome mutant remained passing:
 renderer-role-outcome-duplicate-pair	mutate_renderer_role_outcome:duplicate-pair	FAIL: role record
 renderer-role-outcome-substituted-resource	mutate_renderer_role_outcome:substituted-resource	FAIL: renderer role outcome mutant remained passing:
 renderer-role-outcome-malformed-details	mutate_renderer_role_outcome:malformed-details	FAIL: role record
@@ -173,6 +174,8 @@ evidence-role-hash-source-document	mutate_evidence_hash_chain:source-document	FA
 evidence-role-hash-projection-policy	mutate_evidence_hash_chain:projection-policy	FAIL: Evidence role hash chain projection-policy mismatch for case:
 evidence-role-hash-put-role-policy	mutate_evidence_hash_chain:put-role-policy	FAIL: Evidence role hash chain put-role-policy mismatch for case:
 evidence-role-projection-source-binding	mutate_role_projection_source_binding	FAIL: role projection source policy differs for plan-reader:combined
+evidence-role-projection-account-redaction	mutate_core_projection_validation:account-redaction	FAIL: role projection source policy differs for deployer:aws_iam_policy.deployer_data
+evidence-role-projection-source-hashes	mutate_role_projection_source_bytes	FAIL: role projection source documents differ for plan-reader:combined
 evidence-generator-runner-drift-scope	mutate_generator_drift_scope	FAIL: Evidence generator drift scope omits scripts/iam-simulate.sh
 role-lane-empty-resource-list	mutate_role_empty_resources	FAIL: SCP-excluded principal simulation failed for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching: FAIL: fake simulate-principal-policy received --resource-arns with zero values
 role-lane-propagation-retry	mutate_role_propagation_retry	FAIL: inline policy readback propagation exhausted for
@@ -185,6 +188,7 @@ evidence-generator-commit-unknown	mutate_generator_commit:unknown	FAIL: Evidence
 evidence-generator-commit-stale	mutate_generator_commit:stale	FAIL: Evidence generator drift since generator commit:
 renderer-present-malformed-recorded-at	mutate_report_renderer:legacy-recorded-at	FAIL: renderer accepted present non-string recorded_at as legacy
 renderer-role-outcome-empty-pairs	mutate_renderer_role_outcome:empty-pairs	FAIL: role record
+renderer-runbook-legacy-recorded-on	mutate_runbook_legacy_recorded_on	FAIL: legacy reports require --recorded-on YYYY-MM-DD
 
 renderer-custom-aggregate-decision	mutate_report_aggregate:renderer-custom-decision	FAIL: renderer accepted doctored custom aggregate decision:
 renderer-custom-aggregate-sids	mutate_report_aggregate:renderer-custom-sids	FAIL: renderer accepted doctored custom aggregate sids:

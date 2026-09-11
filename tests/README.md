@@ -409,7 +409,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 196 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 200 stable mutation case
 IDs, their mutation functions or labelled `sed` targets, and their expected
 `FAIL:` diagnostic prefixes. Its action column uses the closed `fn`,
 `fn:submode`, or `sed:label` dispatcher grammar. The suite rejects actions that
@@ -442,9 +442,11 @@ both JSON inputs and both rendered Markdown outputs with artifact hygiene, and
 kills mutants that remove the role marker guard, the JSON inputs, or the entire
 hygiene call. The custom fake validates context entries exactly, and a dropped
 `--context-entries` mutant fails. The group also checks that a doctored custom
-`pass` cannot suppress a finding. Role results ignore stored `pass`, first
-require equal, duplicate-free custom/SCP-excluded action-resource pair sets,
-and then re-derive decisions and Sids from the SCP-excluded details. Role
+`pass` cannot suppress a finding. Role results ignore stored `pass` and the
+stored source-hash flag, require both role detail sets to equal the matching
+custom report's complete action-resource pair set, and bind custom hashes through
+the projection sources, projection policy, and put-role-policy digest before
+re-deriving decisions and Sids from the SCP-excluded details. Role
 divergences render the vector expectation
 and the custom lane's observed decision in separate columns. Per-pair details are
 re-evaluated against `expect.resource_decisions` even when the aggregate observed
@@ -456,7 +458,9 @@ and provenance publication restores both original output files;
 the provenance is published last. The group also checks the Makefile wiring.
 Modern reports derive `recorded_on` from the custom run's `recorded_at`, bind a
 role report to the exact custom-report bytes, and reject a role timestamp earlier
-than the custom timestamp. `--recorded-on` is limited to all-legacy inputs. The
+than the custom timestamp. `--recorded-on` is limited to all-legacy inputs; the
+documented legacy command is executed against the committed reports and its
+date-removal mutant must fail. The
 root `make test` recipe runs
 `tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
 That fixture matrix rejects lowercase `requestid`; removing case-insensitive
@@ -601,9 +605,11 @@ IDs fail with the requested ID and a specific exclusion reason.
 
 An independent projection oracle reconstructs pass partitioning, source order,
 concatenated policy bytes, hashes, character counts, case membership, and call
-ordering from the Terraform plan and vector envelopes. It does not consume the
-role plan emitted by the lane, and source-partition, concatenation, and hash
-mutants must each fail it.
+ordering from the Terraform plan and vector envelopes. The report validator
+compares account-redacted projection text while retaining the raw-byte digest
+check and requires the complete ordered source address/hash list. It does not
+consume the role plan emitted by the lane, and source-partition, concatenation,
+account-redaction, source-byte, and hash mutants must each fail it.
 
 The role-lane mapping cases use the same module for the exact 5,682-character
 delimiter-inclusive/exclusive-end range, braces and brackets inside strings,

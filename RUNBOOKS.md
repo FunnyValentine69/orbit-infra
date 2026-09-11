@@ -409,6 +409,7 @@ Render the publishable Markdown pair from the completed JSON reports. Omit the
 scripts/iam-simulate-report.sh \
   --custom-report <custom-report.json> \
   --role-report <role-report.json> \
+  --recorded-on 2026-09-10 \
   --out-dir docs/assets
 ```
 

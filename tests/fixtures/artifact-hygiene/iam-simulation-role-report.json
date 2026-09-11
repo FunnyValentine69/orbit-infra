@@ -10,6 +10,25 @@
   "manual_cleanup": [],
   "ownership_nonce": "<redacted>",
   "ownership_nonce_redacted": true,
+  "projection": {
+    "roles": [
+      {
+        "policy_document": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AllowRead\",\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::fixture/*\"},{\"Sid\":\"DenyRead\",\"Effect\":\"Deny\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::fixture/*\"}]}",
+        "policy_sha256": "a58e833f7114d5edc98356bc727d940a40f3d555a89ee0678e704f29e2e15a26",
+        "projection_id": "fixture:combined",
+        "source_documents": [
+          {
+            "address": "fixture.policy.allow",
+            "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "address": "fixture.policy.deny",
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ]
+      }
+    ]
+  },
   "redaction_applied": true,
   "records": [
     {
@@ -41,13 +60,17 @@
         ],
         "put_role_policy": [
           {
-            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            "sha256": "a58e833f7114d5edc98356bc727d940a40f3d555a89ee0678e704f29e2e15a26"
           }
         ]
       },
       "mode": "principal",
       "organizations_divergences": [],
       "pass": true,
+      "projection": {
+        "policy_sha256": "a58e833f7114d5edc98356bc727d940a40f3d555a89ee0678e704f29e2e15a26",
+        "projection_id": "fixture:combined"
+      },
       "scp_excluded": {
         "agrees_with_custom_lane": true,
         "decision_observed": "allowed",
@@ -108,7 +131,7 @@
         ],
         "put_role_policy": [
           {
-            "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+            "sha256": "a58e833f7114d5edc98356bc727d940a40f3d555a89ee0678e704f29e2e15a26"
           }
         ]
       },
@@ -126,6 +149,10 @@
         }
       ],
       "pass": true,
+      "projection": {
+        "policy_sha256": "a58e833f7114d5edc98356bc727d940a40f3d555a89ee0678e704f29e2e15a26",
+        "projection_id": "fixture:combined"
+      },
       "scp_excluded": {
         "agrees_with_custom_lane": false,
         "decision_observed": "allowed",

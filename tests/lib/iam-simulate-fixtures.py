@@ -1965,6 +1965,13 @@ def _command_mutate_renderer_role_outcome():
         )
     elif mutation == 'deleted-pair':
         details.pop()
+    elif mutation == 'truncated-pair':
+        if len(details) < 2 or len(record['custom_lane']['details']) < 2:
+            raise SystemExit(
+                'FAIL: renderer truncated-pair mutation requires two detail pairs'
+            )
+        details.pop()
+        record['custom_lane']['details'].pop()
     elif mutation == 'duplicate-pair':
         details.append(deepcopy(details[0]))
     elif mutation == 'malformed-details':
@@ -2157,6 +2164,134 @@ def _command_mutate_role_projection_source_binding():
         json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8'
     )
     print(projection['projection_id'])
+
+
+def _command_build_role_projection_account_redaction():
+    plan_source, role_source, plan_out, role_out = map(Path, sys.argv[1:5])
+    placeholder = '000000000000'
+    live_account = '123456789012'
+    plan = json.loads(plan_source.read_text(encoding='utf-8'))
+    replacements = 0
+    policies = {}
+    for resource in plan['planned_values']['root_module']['resources']:
+        values = resource.get('values')
+        policy = values.get('policy') if isinstance(values, dict) else None
+        if not isinstance(policy, str):
+            continue
+        replacements += policy.count(placeholder)
+        values['policy'] = policy.replace(placeholder, live_account)
+        policies[resource['address']] = values['policy']
+    if replacements == 0:
+        raise SystemExit('FAIL: projection account-redaction fixture lacks an account')
+    role = json.loads(role_source.read_text(encoding='utf-8'))
+    for projection in role['projection']['roles']:
+        raw_policy = projection['policy_document'].replace(placeholder, live_account)
+        projection['policy_sha256'] = hashlib.sha256(raw_policy.encode()).hexdigest()
+        for source_document in projection['source_documents']:
+            source_document['sha256'] = hashlib.sha256(
+                policies[source_document['address']].encode()
+            ).hexdigest()
+    plan_out.write_text(
+        json.dumps(plan, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+    )
+    role_out.write_text(
+        json.dumps(role, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+    )
+
+
+def _command_mutate_core_projection_validation():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    mutation = sys.argv[3]
+    if mutation != 'account-redaction':
+        raise SystemExit(f'FAIL: unknown projection validation mutation: {mutation}')
+    source = source_path.read_text(encoding='utf-8')
+    strict = '''        expected_policy_document = redact_report(
+            expected["policy_document"], "policy_document"
+        )
+        if observed.get("policy_document") != expected_policy_document:'''
+    mutant = '''        if observed.get("policy_document") != expected["policy_document"]:'''
+    if source.count(strict) == 1:
+        source = source.replace(strict, mutant, 1)
+    elif source.count(mutant) != 1:
+        raise SystemExit('FAIL: projection account-redaction mutation anchor changed')
+    destination.write_text(source, encoding='utf-8')
+
+
+def _command_mutate_role_projection_source_bytes():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    plan = json.loads(source_path.read_text(encoding='utf-8'))
+    address = 'aws_iam_role_policy.plan_reader_deny'
+    resource = next(
+        item for item in plan['planned_values']['root_module']['resources']
+        if item.get('address') == address
+    )
+    policy = resource['values']['policy']
+    if not policy.startswith('{'):
+        raise SystemExit('FAIL: projection source-bytes mutation anchor changed')
+    resource['values']['policy'] = '{ ' + policy[1:]
+    destination.write_text(
+        json.dumps(plan, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+    )
+    print('plan-reader:combined')
+
+
+def _command_mutate_runbook_legacy_recorded_on():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    recorded_on = '  --recorded-on 2026-09-10 \\\n'
+    if source.count(recorded_on) == 1:
+        source = source.replace(recorded_on, '', 1)
+    elif 'scripts/iam-simulate-report.sh \\\n' not in source:
+        raise SystemExit('FAIL: runbook legacy render mutation anchor changed')
+    destination.write_text(source, encoding='utf-8')
+
+
+def _command_run_runbook_legacy_render():
+    runbook_path, custom_path, role_path, out_dir, repo_root = map(
+        Path, sys.argv[1:6]
+    )
+    blocks = re.findall(
+        r'```(?:bash)?\n(.*?)\n```',
+        runbook_path.read_text(encoding='utf-8'),
+        re.DOTALL,
+    )
+    commands = [
+        block for block in blocks
+        if block.lstrip().startswith('scripts/iam-simulate-report.sh')
+    ]
+    if len(commands) != 1:
+        raise SystemExit(
+            'FAIL: runbook must contain exactly one IAM report render command'
+        )
+    args = shlex.split(commands[0].replace('\\\n', ' '))
+    replacements = {
+        '<custom-report.json>': str(custom_path),
+        '<role-report.json>': str(role_path),
+        'docs/assets': str(out_dir),
+    }
+    args = [replacements.get(arg, arg) for arg in args]
+    env = os.environ.copy()
+    env['IAM_SIM_REPORT_REPO_ROOT'] = str(repo_root)
+    result = subprocess.run(
+        args,
+        cwd=repo_root,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stdout.rstrip() or 'FAIL: runbook render command failed')
+    expected = {'IAM_SIMULATION_REPORT.md', 'IAM_SIMULATION_PROVENANCE.md'}
+    observed = {item.name for item in out_dir.iterdir() if item.is_file()}
+    if observed != expected:
+        raise SystemExit(
+            f'FAIL: runbook render command wrote unexpected files: {sorted(observed)}'
+        )
+    print('PASS: documented legacy IAM report render command executes')
 
 
 def _command_mutate_renderer_recording():

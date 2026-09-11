@@ -318,7 +318,11 @@ mutate_generator_drift_scope() {
 }
 
 validate_plan_role_projections() {
-  python3 - "$IAM_SIM_CORE" "$1" "$2" <<'PY_ROLE_PROJECTIONS'
+  validate_plan_role_projections_with_core "$IAM_SIM_CORE" "$@"
+}
+
+validate_plan_role_projections_with_core() {
+  python3 - "$1" "$2" "$3" <<'PY_ROLE_PROJECTIONS'
 import importlib.util
 import json
 from pathlib import Path
@@ -1739,6 +1743,33 @@ expect_failure "evidence generator runner drift scope" \
   "Evidence generator drift scope omits scripts/iam-simulate.sh" \
   dispatch_registered_mutation evidence-generator-runner-drift-scope
 
+account_projection_plan="$tmp_dir/role-projection-live-account-plan.json"
+account_projection_report="$tmp_dir/role-projection-redacted-report.json"
+account_projection_core_mutant="$tmp_dir/iam-simulate-core-unredacted-projection.py"
+python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+  build-role-projection-account-redaction \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" "$account_projection_plan" \
+  "$account_projection_report"
+if output="$(validate_plan_role_projections \
+  "$account_projection_plan" "$account_projection_report" 2>&1)"; then
+  pass_case "role projection comparison accepts report-redacted account ids"
+else
+  fail_case "role projection report account redaction" "$output"
+fi
+dispatch_registered_mutation evidence-role-projection-account-redaction \
+  "$IAM_SIM_CORE" "$account_projection_core_mutant"
+expect_failure "evidence role projection account redaction" \
+  "role projection source policy differs for deployer:aws_iam_policy.deployer_data" \
+  validate_plan_role_projections_with_core "$account_projection_core_mutant" \
+    "$account_projection_plan" "$account_projection_report"
+if output="$(validate_plan_role_projections \
+  "$account_projection_plan" "$account_projection_report" 2>&1)"; then
+  pass_case "evidence role projection account redaction mutation restored PASS"
+else
+  fail_case "evidence role projection account redaction mutation restoration" "$output"
+fi
+
 if output="$(validate_plan_role_projections \
   "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
   "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
@@ -1746,6 +1777,22 @@ if output="$(validate_plan_role_projections \
 else
   fail_case "IAM simulation role projections bind to plan source bytes" "$output"
 fi
+projection_source_plan="$tmp_dir/role-projection-source-bytes-plan.json"
+projection_source_id="$(dispatch_registered_mutation \
+  evidence-role-projection-source-hashes \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$projection_source_plan")"
+expect_failure "evidence role projection source hashes" \
+  "role projection source documents differ for $projection_source_id" \
+  validate_plan_role_projections "$projection_source_plan" "$ROLE_EVIDENCE_REPORT"
+if output="$(validate_plan_role_projections \
+  "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" \
+  "$ROLE_EVIDENCE_REPORT" 2>&1)"; then
+  pass_case "evidence role projection source hashes mutation restored PASS"
+else
+  fail_case "evidence role projection source hashes mutation restoration" "$output"
+fi
+
 projection_mutant="$tmp_dir/role-projection-source-binding-mutant.json"
 projection_id="$(dispatch_registered_mutation \
   evidence-role-projection-source-binding \
@@ -1999,6 +2046,17 @@ MODERN_EVIDENCE_MUTATIONS
       "Evidence role hash chain $chain_link mismatch for case: $chain_case" \
       validate_evidence_join "$MATRIX" "$modern_custom" "$chain_role" \
       "$modern_render/IAM_SIMULATION_REPORT.md" "$chain_provenance"
+    chain_rendered="$modern_evidence/rendered-role-hash-$chain_link"
+    if output="$(run_report_renderer \
+      "$IAM_SIM_REPORT_RENDERER" "$modern_custom" "$chain_role" \
+      "$chain_rendered" 2>&1)" && \
+       python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+         validate-renderer-role-outcome \
+         "$chain_rendered/IAM_SIMULATION_REPORT.md" "$chain_case"; then
+      pass_case "renderer re-derives role hash $chain_link agreement"
+    else
+      fail_case "renderer role hash $chain_link agreement" "$output"
+    fi
   done
 
   for generator_mutation in unknown stale; do

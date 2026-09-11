@@ -2860,6 +2860,25 @@ mutate_role_projection_source_binding() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-projection-source-binding "$@"
 }
 
+mutate_core_projection_validation() {
+  local submode=$1
+  shift
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-core-projection-validation \
+    "$1" "$2" "$submode"
+}
+
+mutate_role_projection_source_bytes() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-projection-source-bytes "$@"
+}
+
+mutate_runbook_legacy_recorded_on() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-runbook-legacy-recorded-on "$@"
+}
+
+run_runbook_legacy_render() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" run-runbook-legacy-render "$@" "$REPO_ROOT"
+}
+
 mutate_renderer_recording() {
   local submode=$1
   shift
@@ -3150,6 +3169,9 @@ run_iam_simulate_report_contracts() {
   local legacy_recorded_at_mutant="$phase2_dir/iam-simulate-report-legacy-recorded-at.sh"
   local bad_field_hex="$phase2_dir/bad-nondigest-hex.json"
   local field_scope_mutant="$phase2_dir/artifact-hygiene-field-scope-mutant.sh"
+  local runbook_mutant="$phase2_dir/RUNBOOKS-without-recorded-on.md"
+  local runbook_out="$phase2_dir/rendered-runbook-legacy"
+  local runbook_mutant_out="$phase2_dir/rendered-runbook-legacy-mutant"
 
   if output="$(
     python3 "$IAM_SIM_FIXTURE_FACTORY" validate-report-atomic-replace \
@@ -3356,7 +3378,7 @@ PY_FIELD_HEX
     fi
 
 
-    for role_outcome in decision deleted-pair duplicate-pair malformed-details empty-pairs substituted-resource; do
+    for role_outcome in decision deleted-pair truncated-pair duplicate-pair malformed-details empty-pairs substituted-resource; do
       role_outcome_report="$phase2_dir/renderer-role-$role_outcome.json"
       role_outcome_out="$phase2_dir/renderer-role-$role_outcome-out"
       role_outcome_case="$(dispatch_registered_mutation \
@@ -3390,6 +3412,27 @@ PY_FIELD_HEX
         fail_case "renderer role outcome ${role_outcome//-/ } mutation" "$output"
       fi
     done
+
+    if output="$(run_runbook_legacy_render \
+      "$REPO_ROOT/RUNBOOKS.md" "$CUSTOM_EVIDENCE_REPORT" \
+      "$ROLE_EVIDENCE_REPORT" "$runbook_out" 2>&1)"; then
+      pass_case "${output#PASS: }"
+    else
+      fail_case "documented legacy IAM report render command" "$output"
+    fi
+    dispatch_registered_mutation renderer-runbook-legacy-recorded-on \
+      "$REPO_ROOT/RUNBOOKS.md" "$runbook_mutant"
+    expect_failure "renderer runbook legacy recorded on" \
+      "legacy reports require --recorded-on YYYY-MM-DD" \
+      run_runbook_legacy_render "$runbook_mutant" "$CUSTOM_EVIDENCE_REPORT" \
+        "$ROLE_EVIDENCE_REPORT" "$runbook_mutant_out"
+    if output="$(run_runbook_legacy_render \
+      "$REPO_ROOT/RUNBOOKS.md" "$CUSTOM_EVIDENCE_REPORT" \
+      "$ROLE_EVIDENCE_REPORT" "$runbook_out" 2>&1)"; then
+      pass_case "renderer runbook legacy recorded on mutation restored PASS"
+    else
+      fail_case "renderer runbook legacy recorded on mutation restoration" "$output"
+    fi
 
     dispatch_registered_mutation renderer-scalar-resource-decision-rejection \
       "$scalar_rejection_mutant"

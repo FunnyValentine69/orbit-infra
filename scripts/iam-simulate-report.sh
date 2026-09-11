@@ -413,10 +413,70 @@ def detail_pairs(details, label):
     return pairs
 
 
+def submitted_hashes(record, lane):
+    entries = record.get("document_hashes_submitted", {}).get(lane)
+    if not isinstance(entries, list):
+        return None
+    hashes = [entry.get("sha256") for entry in entries if isinstance(entry, dict)]
+    if len(hashes) != len(entries) or any(not isinstance(value, str) for value in hashes):
+        return None
+    return hashes
+
+
+def role_hash_chain_agrees(custom_record, role_record):
+    custom_hashes = submitted_hashes(custom_record, "policy_input_list")
+    role_hashes = submitted_hashes(role_record, "custom_lane")
+    if (
+        custom_hashes is None
+        or role_hashes is None
+        or len(custom_hashes) != len(set(custom_hashes))
+        or len(role_hashes) != len(set(role_hashes))
+        or set(custom_hashes) != set(role_hashes)
+    ):
+        return False
+    projection_ref = role_record.get("projection")
+    if not isinstance(projection_ref, dict):
+        return False
+    projection_id = projection_ref.get("projection_id")
+    projections = [
+        item for item in role.get("projection", {}).get("roles", [])
+        if isinstance(item, dict) and item.get("projection_id") == projection_id
+    ]
+    if len(projections) != 1:
+        return False
+    projection = projections[0]
+    sources = projection.get("source_documents")
+    if not isinstance(sources, list):
+        return False
+    source_hashes = {
+        item.get("sha256") for item in sources
+        if isinstance(item, dict) and isinstance(item.get("address"), str)
+        and isinstance(item.get("sha256"), str)
+    }
+    if not set(custom_hashes) <= source_hashes:
+        return False
+    policy_document = projection.get("policy_document")
+    policy_sha256 = projection_ref.get("policy_sha256")
+    if (
+        not isinstance(policy_document, str)
+        or not isinstance(policy_sha256, str)
+        or hashlib.sha256(policy_document.encode("utf-8")).hexdigest()
+        != policy_sha256
+    ):
+        return False
+    return submitted_hashes(role_record, "put_role_policy") == [policy_sha256]
+
+
 def role_matches(record):
     if "runner_failure" in record:
         return False
     case_id = record["case_id"]
+    custom_record = custom_by_id.get(case_id)
+    if custom_record is None or not role_hash_chain_agrees(custom_record, record):
+        return False
+    report_custom_pairs = detail_pairs(
+        custom_record.get("details"), f"custom record {case_id}"
+    )
     custom_pairs = detail_pairs(
         record["custom_lane"].get("details"), f"role record {case_id} custom_lane"
     )
@@ -424,7 +484,7 @@ def role_matches(record):
         record["scp_excluded"].get("details"),
         f"role record {case_id} scp_excluded",
     )
-    if custom_pairs != excluded_pairs:
+    if custom_pairs != report_custom_pairs or excluded_pairs != report_custom_pairs:
         return False
     if not aggregates_match_details(record["custom_lane"]):
         return False
