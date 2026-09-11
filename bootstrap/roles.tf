@@ -1263,10 +1263,14 @@ data "aws_iam_policy_document" "deployer_data" {
     }
   }
 
-  # The IAM policy simulator evaluates these actions as star-only: any
-  # resource ARN yields implicitDeny with no matched statement (probed
-  # 2026-09-11), although the service authorization reference lists the
-  # topic resource type. The tag condition is honoured on the star grant.
+  # Committed cases evaluate the "*" request form: matching
+  # aws:ResourceTag/Project context is allowed, while absent or non-matching
+  # context yields implicitDeny. A separate, uncommitted 2026-09-11
+  # simulate-custom-policy probe found that supplying a resource ARN yields
+  # implicitDeny with no matched statement. Whether SNS populates this key at
+  # run time is unverified until a real call; the matrix label proves policy
+  # evaluation, not service enforcement. An absent key makes StringEquals
+  # false, so this grant can only be inert, not wider than intended.
   statement {
     sid    = "SnsSubscriptionManage"
     effect = "Allow"
