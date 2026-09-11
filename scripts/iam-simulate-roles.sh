@@ -1017,6 +1017,7 @@ PY_READINESS
 wait_for_policy_readback() {
   local attempt delay
   READBACK_ATTEMPTS=0
+  READBACK_LAST_ERROR=""
   for ((attempt = 1; attempt <= 5; attempt++)); do
     READBACK_ATTEMPTS=$attempt
     call_capture iam get-role-policy --role-name "$ROLE_NAME" \
@@ -1024,6 +1025,7 @@ wait_for_policy_readback() {
     if [ "$CALL_RC" -eq 0 ] && [ "$CALL_OUTPUT" = "$POLICY_DOCUMENT" ]; then
       return 0
     fi
+    READBACK_LAST_ERROR=$CALL_ERROR
     if [ "$attempt" -lt 5 ]; then
       delay=$((retry_base_seconds * (1 << (attempt - 1))))
       sleep "$delay"
@@ -1037,6 +1039,7 @@ wait_for_readiness_probe() {
   local index=$1 attempt delay response_path
   local -a call_args
   PROBE_ATTEMPTS=0
+  PROBE_LAST_ERROR=""
   load_readiness_call "$index"
   for ((attempt = 1; attempt <= 5; attempt++)); do
     PROBE_ATTEMPTS=$attempt
@@ -1054,9 +1057,13 @@ wait_for_readiness_probe() {
     if [ "$CALL_RC" -eq 0 ]; then
       response_path="$tmp_dir/readiness-$index-$attempt.json"
       printf '%s\n' "$CALL_OUTPUT" >"$response_path"
-      if validate_readiness_probe "$index" "$response_path" >/dev/null 2>&1; then
+      if PROBE_LAST_ERROR="$(
+        validate_readiness_probe "$index" "$response_path" 2>&1
+      )"; then
         return 0
       fi
+    else
+      PROBE_LAST_ERROR=$CALL_ERROR
     fi
     if [ "$attempt" -lt 5 ]; then
       delay=$((retry_base_seconds * (1 << (attempt - 1))))
@@ -1224,12 +1231,12 @@ for ((index = 0; index < role_count; index++)); do
   printf 'loaded\n' >"$(role_policy_file "$index")"
   if ! wait_for_policy_readback; then
     record_propagation_attempts "$index" "$READBACK_ATTEMPTS" 0
-    echo "FAIL: inline policy readback propagation exhausted for $ROLE_NAME after 5 attempts" >&2
+    echo "FAIL: inline policy readback propagation exhausted for $ROLE_NAME after 5 attempts: $READBACK_LAST_ERROR" >&2
     exit 1
   fi
   if ! wait_for_readiness_probe "$index"; then
     record_propagation_attempts "$index" "$READBACK_ATTEMPTS" "$PROBE_ATTEMPTS"
-    echo "FAIL: inline policy readiness probe propagation exhausted for $ROLE_NAME after 5 attempts" >&2
+    echo "FAIL: inline policy readiness probe propagation exhausted for $ROLE_NAME after 5 attempts: $PROBE_LAST_ERROR" >&2
     exit 1
   fi
   record_propagation_attempts "$index" "$READBACK_ATTEMPTS" "$PROBE_ATTEMPTS"

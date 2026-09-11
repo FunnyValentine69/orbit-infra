@@ -144,6 +144,7 @@ ROLE_SCENARIOS = (
     ('success', None, {}),
     ('propagation-delay', 'success', {'propagation_delay_calls': 1}),
     ('propagation-readback-exhausted', 'success', {'propagation_delay_calls': 5}),
+    ('propagation-readiness-exhausted', 'success', {'readiness_delay_calls': 5}),
     ('authorization-split', 'success', {'custom': 'authorization-split'}),
     ('context-required', 'success', {'expected_context_entries': REQUIRED_CONTEXT_ENTRIES}),
     ('throttle-once', 'success', {'failure': {'operation': 'simulate-custom-policy', 'at': 1, 'error': 'Throttling', 'exit': 254}}),
@@ -663,7 +664,9 @@ def _fake_aws():
         state = _load_state(path)
         if not state.get('probe_complete'):
             state['probe_attempts'] += 1
-            delayed = state['probe_attempts'] <= scenario.get('propagation_delay_calls', 0)
+            delayed = state['probe_attempts'] <= scenario.get(
+                'readiness_delay_calls', scenario.get('propagation_delay_calls', 0)
+            )
             if not delayed:
                 state['probe_complete'] = True
             _save_state(path, state)
@@ -1950,6 +1953,8 @@ def _command_mutate_renderer_role_outcome():
         details.pop()
     elif mutation == 'duplicate-pair':
         details.append(deepcopy(details[0]))
+    elif mutation == 'malformed-details':
+        details[0] = 'not-an-object'
     elif mutation == 'substituted-resource':
         details[0]['resource_arn'] = 'arn:aws:s3:::orbit-infra-fixture-substituted'
     else:
@@ -1957,6 +1962,26 @@ def _command_mutate_renderer_role_outcome():
     record['pass'] = True
     destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
     print(record['case_id'])
+
+
+def _command_mutate_renderer_role_expectation():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    mutation = sys.argv[3]
+    payload = json.loads(source_path.read_text(encoding='utf-8'))
+    record = payload['records'][0]
+    record['case_id'] = 'case:fixture.policy:UnknownRead:ALL:none:matching'
+    if mutation == 'missing-source':
+        record.pop('expect', None)
+    elif mutation == 'empty-expectation':
+        record['expect'] = {}
+    else:
+        raise SystemExit(
+            f'FAIL: unknown renderer role-expectation mutation: {mutation}'
+        )
+    destination.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+    )
 
 
 def _command_validate_renderer_role_outcome():
@@ -2328,6 +2353,27 @@ def _command_validate_role_readback_exhaustion():
     if any(call[:2] == ['iam', 'simulate-principal-policy'] for call in calls):
         raise SystemExit('FAIL: readiness probe ran after readback exhaustion')
     print('PASS: exhausted readback records five attempts and stops before probing')
+
+
+def _command_validate_role_readiness_exhaustion():
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+    call_paths = sorted(
+        Path(sys.argv[2]).glob('*.json'), key=lambda item: int(item.stem)
+    )
+    calls = [json.loads(path.read_text(encoding='utf-8')) for path in call_paths]
+    roles = payload.get('projection', {}).get('roles', [])
+    attempts = [role.get('propagation_attempts') for role in roles]
+    if not attempts or attempts[0] != {'readback': 1, 'probe': 5}:
+        raise SystemExit('FAIL: exhausted readiness attempts were not recorded')
+    if any(item != {'readback': 0, 'probe': 0} for item in attempts[1:]):
+        raise SystemExit('FAIL: propagation continued after readiness exhaustion')
+    if sum(call[:2] == ['iam', 'get-role-policy'] for call in calls) != 1:
+        raise SystemExit('FAIL: exhausted readiness did not use one readback attempt')
+    if sum(
+        call[:2] == ['iam', 'simulate-principal-policy'] for call in calls
+    ) != 5:
+        raise SystemExit('FAIL: exhausted readiness did not use exactly five attempts')
+    print('PASS: exhausted readiness records five attempts after one readback')
 
 
 def _command_mutate_role_propagation_retry():

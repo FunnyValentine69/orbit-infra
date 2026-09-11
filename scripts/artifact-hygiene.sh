@@ -117,34 +117,6 @@ except json.JSONDecodeError:
     json_payload = None
 
 
-def digest_field(field):
-    if not isinstance(field, str):
-        return False
-    normalized = field.casefold()
-    return (
-        normalized.endswith("sha256")
-        or normalized.endswith("hash")
-        or normalized.endswith("hashes_submitted")
-        or normalized == "generator_commit"
-    )
-
-
-def collect_scoped_hex(value, field=None, inherited=False):
-    scoped = inherited or digest_field(field)
-    found = set()
-    if isinstance(value, dict):
-        for key, item in value.items():
-            found.update(collect_scoped_hex(item, key, scoped))
-    elif isinstance(value, list):
-        for item in value:
-            found.update(collect_scoped_hex(item, field, scoped))
-    elif isinstance(value, str) and scoped:
-        found.update(HEX64.findall(value))
-        found.update(HEX40.findall(value))
-    return found
-
-
-json_scoped_hex = collect_scoped_hex(json_payload) if json_payload is not None else set()
 markdown_sha_column = None
 markdown_sha_columns = {}
 for index, raw_line in enumerate(lines, 1):
@@ -175,11 +147,6 @@ def sanitize_scoped_hex(content, json_payload, line_no):
             re.IGNORECASE,
         )
         sanitized = direct_digest.sub(r"\1\3", content)
-        if '"hashes_submitted"' in content or re.match(
-            r'^\s*"[0-9a-fA-F]+"[,]?\s*$', content
-        ):
-            for token in json_scoped_hex:
-                sanitized = sanitized.replace(token, "")
         return sanitized
     if not (content.startswith("|") and content.endswith("|")):
         return content

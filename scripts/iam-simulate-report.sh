@@ -183,6 +183,27 @@ def validate_custom(report):
         validate_hashes(record, label)
 
 
+ROLE_EXPECTATION_FIELDS = (
+    "decision",
+    "resource_decisions",
+    "matched_sid_required",
+    "matched_sid_forbidden",
+)
+
+
+def resolve_role_expectation(record, custom_record):
+    case_id = record["case_id"]
+    if "expect" in record:
+        expectation = record["expect"]
+    elif custom_record is not None:
+        expectation = custom_record["expect"]
+    else:
+        fail(f"role record {case_id} has no custom match and no expect")
+    if not any(field in expectation for field in ROLE_EXPECTATION_FIELDS):
+        fail(f"role record {case_id} expect must include a supported expectation field")
+    return expectation
+
+
 def validate_role(report, custom_by_id):
     if report.get("account_redacted") is not True:  # role-account-redacted-guard
         fail("role report must set account_redacted to true")
@@ -195,10 +216,11 @@ def validate_role(report, custom_by_id):
         custom_record = custom_by_id.get(case_id)
         if "expect" in record and not isinstance(record["expect"], dict):
             fail(f"{label} expect must be an object")
+        expectation = resolve_role_expectation(record, custom_record)
         if (
             custom_record is not None
             and "expect" in record
-            and record["expect"] != custom_record["expect"]
+            and expectation != custom_record["expect"]
         ):
             fail(f"role record {case_id} expectation differs from custom vector expectation")
         if not isinstance(record.get("pass"), bool):
@@ -240,10 +262,9 @@ def custom_view(record):
 
 
 def role_expectation(record):
-    if "expect" in record:
-        return record["expect"]
-    custom_record = custom_by_id.get(record["case_id"])
-    return custom_record["expect"] if custom_record is not None else {}
+    return resolve_role_expectation(
+        record, custom_by_id.get(record["case_id"])
+    )
 
 
 def role_view(record):
@@ -314,29 +335,38 @@ def custom_matches(record):
     return required <= matched and not (forbidden & matched)
 
 
-def detail_pairs(details):
+def detail_pairs(details, label):
     if not isinstance(details, list):
-        return None
-    pairs = []
-    for detail in details:
+        fail(f"{label} details must be an array")
+    pairs = set()
+    for index, detail in enumerate(details):
         if not isinstance(detail, dict):
-            return None
-        action = detail.get("action_name")
-        resource = detail.get("resource_arn")
-        if not isinstance(action, str) or not isinstance(resource, str):
-            return None
-        pairs.append((action, resource))
-    if len(pairs) != len(set(pairs)):
-        return None
-    return set(pairs)
+            fail(f"{label} details[{index}] must be an object")
+        action = require_string(
+            detail.get("action_name"), f"{label} details[{index}] action_name"
+        )
+        resource = require_string(
+            detail.get("resource_arn"), f"{label} details[{index}] resource_arn"
+        )
+        pair = (action, resource)
+        if pair in pairs:
+            fail(f"{label} details repeats action/resource pair: {action} {resource}")
+        pairs.add(pair)
+    return pairs
 
 
 def role_matches(record):
     if "runner_failure" in record:
         return False
-    custom_pairs = detail_pairs(record["custom_lane"].get("details"))
-    excluded_pairs = detail_pairs(record["scp_excluded"].get("details"))
-    if custom_pairs is None or excluded_pairs is None or custom_pairs != excluded_pairs:
+    case_id = record["case_id"]
+    custom_pairs = detail_pairs(
+        record["custom_lane"].get("details"), f"role record {case_id} custom_lane"
+    )
+    excluded_pairs = detail_pairs(
+        record["scp_excluded"].get("details"),
+        f"role record {case_id} scp_excluded",
+    )
+    if custom_pairs != excluded_pairs:
         return False
     observed = record["scp_excluded"]
     candidate = {

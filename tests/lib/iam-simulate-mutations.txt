@@ -157,8 +157,14 @@ evidence-provenance-digest-doctored	mutate_provenance_digest:doctored	FAIL: prov
 evidence-provenance-digest-missing	mutate_provenance_digest:missing	FAIL: provenance digest set is incomplete: missing custom report sha256
 renderer-role-outcome-decision	mutate_renderer_role_outcome:decision	FAIL: renderer role outcome mutant remained passing:
 renderer-role-outcome-deleted-pair	mutate_renderer_role_outcome:deleted-pair	FAIL: renderer role outcome mutant remained passing:
-renderer-role-outcome-duplicate-pair	mutate_renderer_role_outcome:duplicate-pair	FAIL: renderer role outcome mutant remained passing:
+renderer-role-outcome-duplicate-pair	mutate_renderer_role_outcome:duplicate-pair	FAIL: role record
 renderer-role-outcome-substituted-resource	mutate_renderer_role_outcome:substituted-resource	FAIL: renderer role outcome mutant remained passing:
+renderer-role-outcome-malformed-details	mutate_renderer_role_outcome:malformed-details	FAIL: role record
+renderer-legacy-role-expectation-source	mutate_renderer_role_expectation:missing-source	FAIL: role record
+renderer-legacy-role-expectation-empty	mutate_renderer_role_expectation:empty-expectation	FAIL: role record
+renderer-mixed-modern-legacy-pair	run_renderer_date_refusal:mixed	FAIL: all supplied reports must carry recorded_at or all must be legacy
+renderer-legacy-recorded-on-required	run_renderer_date_refusal:missing	FAIL: legacy reports require --recorded-on YYYY-MM-DD
+renderer-malformed-recorded-on	run_renderer_date_refusal:malformed	FAIL: --recorded-on must be YYYY-MM-DD
 renderer-recorded-at-date	mutate_renderer_recording:recorded-at	FAIL: role report recorded_at precedes custom report recorded_at
 renderer-custom-report-binding	mutate_renderer_recording:custom-report-binding	FAIL: role report custom_report_sha256 does not match the exact custom report bytes
 renderer-recorded-on-modern-refusal	run_renderer_recorded_on_modern	FAIL: --recorded-on is only valid for legacy reports without recorded_at
@@ -168,6 +174,8 @@ evidence-role-hash-projection-policy	mutate_evidence_hash_chain:projection-polic
 evidence-role-hash-put-role-policy	mutate_evidence_hash_chain:put-role-policy	FAIL: Evidence role hash chain put-role-policy mismatch for case:
 role-lane-empty-resource-list	mutate_role_empty_resources	FAIL: SCP-excluded principal simulation failed for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching: FAIL: fake simulate-principal-policy received --resource-arns with zero values
 role-lane-propagation-retry	mutate_role_propagation_retry	FAIL: inline policy readback propagation exhausted for
+role-lane-readback-exhaustion-reason	run_role_propagation_exhaustion:readback	FAIL: inline policy readback propagation exhausted for orbit-iam-sim-fixture-run-plan-reader after 5 attempts: An error occurred (NoSuchEntity) when calling the GetRolePolicy operation
+role-lane-readiness-exhaustion-reason	run_role_propagation_exhaustion:readiness	FAIL: inline policy readiness probe propagation exhausted for orbit-iam-sim-fixture-run-plan-reader after 5 attempts: FAIL: readiness decision does not match the selected case
 artifact-hygiene-field-scoped-hex	mutate_artifact_hygiene_field_scope	FAIL: artifact hygiene field-scoped hex mutant accepted non-digest value
 evidence-generator-commit-unknown	mutate_generator_commit:unknown	FAIL: Evidence generator commit is unknown:
 evidence-generator-commit-stale	mutate_generator_commit:stale	FAIL: Evidence generator drift since generator commit:

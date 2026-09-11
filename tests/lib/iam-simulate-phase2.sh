@@ -1370,6 +1370,25 @@ validate_role_readback_exhaustion() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-readback-exhaustion "$@"
 }
 
+validate_role_readiness_exhaustion() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-role-readiness-exhaustion "$@"
+}
+
+run_role_propagation_exhaustion() {
+  local submode=$1 report=$2 scenario
+  case "$submode" in
+    readback) scenario=propagation-readback-exhausted ;;
+    readiness) scenario=propagation-readiness-exhausted ;;
+    *) echo "FAIL: unknown role propagation exhaustion mutation: $submode" >&2; return 1 ;;
+  esac
+  IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
+    IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
+    IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
+    IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
+    IAM_SIM_TEST_ROLE_REPORT="$report" \
+    run_phase2_role_lane "$scenario"
+}
+
 mutate_role_propagation_retry() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-propagation-retry \
     "$@" "$REPO_ROOT"
@@ -2168,21 +2187,36 @@ run_iam_simulate_role_lane_contracts() {
     propagation_report="$phase2_dir/role-propagation-readback-exhausted-report.json"
     reset_phase2_fake
     set +e
-    output="$(IAM_SIM_LANE_CONFIRM=create-real-iam-resources \
-      IAM_SIM_TEST_ROLE_PLAN="$phase2_dir/role-projection-plan.json" \
-      IAM_SIM_TEST_ROLE_VECTORS="$phase2_dir/role-projection-vectors" \
-      IAM_SIM_TEST_ROLE_CUSTOM_REPORT="$phase2_dir/role-projection-custom-report.json" \
-      IAM_SIM_TEST_ROLE_REPORT="$propagation_report" \
-      run_phase2_role_lane propagation-readback-exhausted 2>&1)"
+    output="$(dispatch_registered_mutation \
+      role-lane-readback-exhaustion-reason "$propagation_report" 2>&1)"
     rc=$?
     set -e
     if [ "$rc" -ne 0 ] && \
-       grep -Fq 'FAIL: inline policy readback propagation exhausted for' <<<"$output" && \
+       grep -Fq 'after 5 attempts: An error occurred (NoSuchEntity) when calling the GetRolePolicy operation' <<<"$output" && \
        validate_role_readback_exhaustion "$propagation_report" "$phase2_calls" && \
        ! find "$phase2_roles" -name '*.json' -type f | grep -q .; then
-      pass_case "role-lane exhausted readback fails and cleanup runs"
+      fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+      pass_case "role-lane readback exhaustion reason mutation -> $fail_line"
     else
-      fail_case "role-lane exhausted readback fails and cleanup runs" \
+      fail_case "role-lane readback exhaustion reason mutation did not fail with the last error" \
+        "rc=$rc output=$output"
+    fi
+
+    propagation_report="$phase2_dir/role-propagation-readiness-exhausted-report.json"
+    reset_phase2_fake
+    set +e
+    output="$(dispatch_registered_mutation \
+      role-lane-readiness-exhaustion-reason "$propagation_report" 2>&1)"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] && \
+       grep -Fq 'after 5 attempts: FAIL: readiness decision does not match the selected case' <<<"$output" && \
+       validate_role_readiness_exhaustion "$propagation_report" "$phase2_calls" && \
+       ! find "$phase2_roles" -name '*.json' -type f | grep -q .; then
+      fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+      pass_case "role-lane readiness exhaustion reason mutation -> $fail_line"
+    else
+      fail_case "role-lane readiness exhaustion reason mutation did not fail with the last reason" \
         "rc=$rc output=$output"
     fi
 
@@ -2737,6 +2771,13 @@ mutate_renderer_role_outcome() {
     "$1" "$2" "$submode" "$3"
 }
 
+mutate_renderer_role_expectation() {
+  local submode=$1
+  shift
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-renderer-role-expectation \
+    "$1" "$2" "$submode"
+}
+
 mutate_role_empty_resources() {
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-empty-resources \
     "$1" "$2" "$REPO_ROOT"
@@ -2768,6 +2809,30 @@ run_renderer_recorded_on_modern() {
   "$IAM_SIM_REPORT_RENDERER" \
     --custom-report "$1" --role-report "$2" --recorded-on 2026-09-10 \
     --out-dir "$3"
+}
+
+run_renderer_date_refusal() {
+  local submode=$1 renderer=$2 custom_report=$3 role_report=$4 out_dir=$5
+  local mixed_custom="$phase2_dir/renderer-mixed-modern-custom.json"
+  case "$submode" in
+    mixed)
+      jq '.recorded_at = "2026-09-10T00:00:00Z"' \
+        "$custom_report" >"$mixed_custom"
+      IAM_SIM_REPORT_REPO_ROOT="$REPO_ROOT" "$renderer" \
+        --custom-report "$mixed_custom" --role-report "$role_report" \
+        --out-dir "$out_dir"
+      ;;
+    missing)
+      IAM_SIM_REPORT_REPO_ROOT="$REPO_ROOT" "$renderer" \
+        --custom-report "$custom_report" --out-dir "$out_dir"
+      ;;
+    malformed)
+      IAM_SIM_REPORT_REPO_ROOT="$REPO_ROOT" "$renderer" \
+        --custom-report "$custom_report" --recorded-on 2026/09/10 \
+        --out-dir "$out_dir"
+      ;;
+    *) echo "FAIL: unknown renderer date refusal mutation: $submode" >&2; return 1 ;;
+  esac
 }
 
 mutate_generator_commit() {
@@ -3005,6 +3070,8 @@ run_iam_simulate_report_contracts() {
   local json_hygiene_mutant_out="$phase2_dir/rendered-json-hygiene-mutant"
   local output rc fail_line checker_output case_fold_anchor case_fold_anchor_count
   local role_outcome role_outcome_case role_outcome_report role_outcome_out
+  local structural_diagnostic expectation_mutation expectation_report
+  local expectation_label expectation_diagnostic date_case date_label date_diagnostic
   local bad_field_hex="$phase2_dir/bad-nondigest-hex.json"
   local field_scope_mutant="$phase2_dir/artifact-hygiene-field-scope-mutant.sh"
 
@@ -3213,18 +3280,32 @@ PY_FIELD_HEX
     fi
 
 
-    for role_outcome in decision deleted-pair duplicate-pair substituted-resource; do
+    for role_outcome in decision deleted-pair duplicate-pair malformed-details substituted-resource; do
       role_outcome_report="$phase2_dir/renderer-role-$role_outcome.json"
       role_outcome_out="$phase2_dir/renderer-role-$role_outcome-out"
       role_outcome_case="$(dispatch_registered_mutation \
         "renderer-role-outcome-$role_outcome" \
         "$ROLE_EVIDENCE_REPORT" "$role_outcome_report" \
         "$CUSTOM_EVIDENCE_REPORT")"
-      if output="$(run_report_renderer \
+      structural_diagnostic=""
+      case "$role_outcome" in
+        duplicate-pair)
+          structural_diagnostic="role record $role_outcome_case scp_excluded details repeats action/resource pair:"
+          ;;
+        malformed-details)
+          structural_diagnostic="role record $role_outcome_case scp_excluded details[0] must be an object"
+          ;;
+      esac
+      if [ -n "$structural_diagnostic" ]; then
+        expect_failure "renderer role outcome ${role_outcome//-/ }" \
+          "$structural_diagnostic" \
+          run_report_renderer "$IAM_SIM_REPORT_RENDERER" \
+            "$CUSTOM_EVIDENCE_REPORT" "$role_outcome_report" "$role_outcome_out"
+      elif output="$(run_report_renderer \
         "$IAM_SIM_REPORT_RENDERER" "$CUSTOM_EVIDENCE_REPORT" \
         "$role_outcome_report" "$role_outcome_out" 2>&1)" && \
-         python3 "$IAM_SIM_FIXTURE_FACTORY" validate-renderer-role-outcome \
-           "$role_outcome_out/$report_name" "$role_outcome_case"; then
+           python3 "$IAM_SIM_FIXTURE_FACTORY" validate-renderer-role-outcome \
+             "$role_outcome_out/$report_name" "$role_outcome_case"; then
         pass_case "renderer role outcome ${role_outcome//-/ } mutation -> FAIL: renderer role outcome mutant remained passing: $role_outcome_case"
       else
         fail_case "renderer role outcome ${role_outcome//-/ } mutation" "$output"
@@ -3373,6 +3454,34 @@ PY
       fail_case "renderer role expectation binding mutation restoration" "$output"
     fi
 
+    for expectation_mutation in missing-source empty-expectation; do
+      expectation_report="$phase2_dir/renderer-legacy-role-$expectation_mutation.json"
+      if [ "$expectation_mutation" = missing-source ]; then
+        expectation_label="renderer legacy role expectation source"
+        expectation_diagnostic="role record case:fixture.policy:UnknownRead:ALL:none:matching has no custom match and no expect"
+      else
+        expectation_label="renderer legacy role expectation empty"
+        expectation_diagnostic="role record case:fixture.policy:UnknownRead:ALL:none:matching expect must include a supported expectation field"
+      fi
+      dispatch_registered_mutation \
+        "$(mutation_case_id_from_label "$expectation_label")" \
+        "$clean_role" "$expectation_report"
+      expect_failure "$expectation_label" "$expectation_diagnostic" \
+        run_report_renderer "$IAM_SIM_REPORT_RENDERER" "$clean_custom" \
+          "$expectation_report" "$phase2_dir/rendered-$expectation_mutation"
+    done
+
+    while IFS='|' read -r date_case date_label date_diagnostic; do
+      expect_failure "$date_label" "$date_diagnostic" \
+        dispatch_registered_mutation "$date_case" \
+          "$IAM_SIM_REPORT_RENDERER" "$clean_custom" "$clean_role" \
+          "$phase2_dir/rendered-$date_case"
+    done <<'RENDERER_DATE_REFUSALS'
+renderer-mixed-modern-legacy-pair|renderer mixed modern legacy pair|all supplied reports must carry recorded_at or all must be legacy
+renderer-legacy-recorded-on-required|renderer legacy recorded on required|legacy reports require --recorded-on YYYY-MM-DD
+renderer-malformed-recorded-on|renderer malformed recorded on|--recorded-on must be YYYY-MM-DD
+RENDERER_DATE_REFUSALS
+
     dispatch_registered_mutation renderer-mixed-resource-decisions "$mixed_mutant"
     if output="$(run_report_renderer \
       "$mixed_mutant" "$mixed_custom" "" "$mixed_mutant_out" 2>&1)"; then
@@ -3460,7 +3569,7 @@ PY
     set +e
     output="$(
       run_report_renderer \
-        "$IAM_SIM_REPORT_RENDERER" "$bad_json_custom" "$clean_role" \
+        "$IAM_SIM_REPORT_RENDERER" "$bad_json_custom" "" \
         "$bad_json_out" 2>&1
     )"
     rc=$?
@@ -3480,7 +3589,7 @@ PY
     set +e
     output="$(
       dispatch_registered_mutation renderer-account-id-case-refusal \
-        "$IAM_SIM_REPORT_RENDERER" "$bad_case_custom" "$clean_role" \
+        "$IAM_SIM_REPORT_RENDERER" "$bad_case_custom" "" \
         "$bad_case_out" 2>&1
     )"
     rc=$?
@@ -3524,7 +3633,7 @@ PY
       "$IAM_SIM_REPORT_RENDERER" "$json_hygiene_mutant"
     if output="$(
       run_report_renderer \
-        "$json_hygiene_mutant" "$bad_json_custom" "$clean_role" \
+        "$json_hygiene_mutant" "$bad_json_custom" "" \
         "$json_hygiene_mutant_out" 2>&1
     )" &&
        [ -f "$json_hygiene_mutant_out/$report_name" ] &&
@@ -3537,7 +3646,7 @@ PY
     set +e
     output="$(
       run_report_renderer \
-        "$IAM_SIM_REPORT_RENDERER" "$bad_json_custom" "$clean_role" \
+        "$IAM_SIM_REPORT_RENDERER" "$bad_json_custom" "" \
         "$phase2_dir/rendered-json-hygiene-restored" 2>&1
     )"
     rc=$?
@@ -3556,7 +3665,7 @@ PY
       "$IAM_SIM_REPORT_RENDERER" "$hygiene_mutant"
     if output="$(
       run_report_renderer \
-        "$hygiene_mutant" "$bad_case_custom" "$clean_role" \
+        "$hygiene_mutant" "$bad_case_custom" "" \
         "$hygiene_mutant_out" 2>&1
     )" && [ -f "$hygiene_mutant_out/$report_name" ]; then
       set +e
