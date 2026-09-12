@@ -51,7 +51,12 @@ retired_paths = {
     "RUNBOOKS" + ".md",
     "docs/" + "EVIDENCE.md",
     "docs/" + "iam-matrix.md",
+    "docs/" + "iam-simulate-vector-schema.md",
 }
+
+for path in sorted(tracked):
+    if path == "STATE" + ".md" or path in retired_paths:
+        fail(f"retired documentation file is tracked: {path}")
 
 
 def destinations(text: str):
@@ -162,9 +167,6 @@ if publication:
         text = (root / source).read_text(encoding="utf-8")
         if "STATE" + ".md" in text:
             fail(f"retired documentation name in {source}: {'STATE' + '.md'}")
-    if "STATE" + ".md" in tracked:
-        fail("STATE" + ".md remains in the tracked manifest")
-
     index_path = "docs/evidence/README.md"
     if index_path not in tracked:
         fail(f"evidence index is not tracked: {index_path}")
@@ -209,6 +211,18 @@ print(f"PASS: documentation scanner ({len(markdown)} Markdown files)")
 PY_DOCS_SCAN
 }
 
+build_manifest() {
+  local root=$1 output=$2
+  git -C "$root" ls-files --cached --others --exclude-standard | while IFS= read -r path; do
+    if [ -f "$root/$path" ]; then
+      printf '%s\n' "$path"
+    else
+      echo "FAIL: tracked path missing on disk: $path" >&2
+      exit 1
+    fi
+  done | LC_ALL=C sort -u >"$output"
+}
+
 if [ "${1:-}" = "--scan" ]; then
   if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
     echo "usage: $0 --scan <root> <tracked-manifest> [current|publication]" >&2
@@ -217,30 +231,24 @@ if [ "${1:-}" = "--scan" ]; then
   scan_docs "$2" "$3" "${4:-current}"
   exit 0
 fi
+if [ "${1:-}" = "--manifest" ]; then
+  if [ "$#" -ne 3 ]; then
+    echo "usage: $0 --manifest <root> <output>" >&2
+    exit 2
+  fi
+  build_manifest "$2" "$3"
+  exit 0
+fi
 if [ "$#" -ne 0 ]; then
-  echo "usage: $0 [--scan <root> <tracked-manifest> [current|publication]]" >&2
+  echo "usage: $0 [--scan <root> <tracked-manifest> [current|publication] | --manifest <root> <output>]" >&2
   exit 2
 fi
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-docs.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 manifest="$tmp_dir/tracked-files.txt"
-git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard | while IFS= read -r path; do
-  if [ -f "$REPO_ROOT/$path" ]; then
-    printf '%s\n' "$path"
-  else
-    echo "FAIL: tracked path missing on disk: $path" >&2
-    exit 1
-  fi
-done | LC_ALL=C sort -u >"$manifest"
-
-if [ -f "$REPO_ROOT/docs/VERIFY.md" ]; then
-  scan_docs "$REPO_ROOT" "$manifest" publication
-else
-  scan_docs "$REPO_ROOT" "$manifest" current
-  echo "SKIP: documentation budgets and publication wording (docs/VERIFY.md not present; packet B activates them)"
-  echo "SKIP: evidence-index completeness (docs/VERIFY.md not present; packet B supplies the final index)"
-fi
+build_manifest "$REPO_ROOT" "$manifest"
+scan_docs "$REPO_ROOT" "$manifest" publication
 
 state_doc='STATE''.md'
 if git -C "$REPO_ROOT" ls-files --error-unmatch "$state_doc" >/dev/null 2>&1; then
@@ -293,7 +301,8 @@ EOF_README
 [schema](./iam-simulate-vector-schema.md)
 EOF_INDEX
   printf '#!/usr/bin/env bash\ntrue\n' >"$destination/scripts/check.sh"
-  rm -f "$destination/STATE.md"
+  local retired='EVIDENCE.md'
+  rm -f "$destination/STATE.md" "$destination/docs/$retired"
   find "$destination" -type f -print | sed "s#^$destination/##" | LC_ALL=C sort >"$fixture_manifest"
 }
 
@@ -332,6 +341,19 @@ mutate_state_tracked() {
   printf '# State\n' >"$1/STATE.md"
   printf 'STATE.md\n' >>"$fixture_manifest"
 }
+mutate_verify_missing() {
+  local root=$1
+  rm -f "$root/docs/VERIFY.md"
+  sed '/docs\/VERIFY\.md/d' "$root/README.md" >"$root/README.md.mutant"
+  mv "$root/README.md.mutant" "$root/README.md"
+  sed '/^docs\/VERIFY\.md$/d' "$fixture_manifest" >"$fixture_manifest.mutant"
+  mv "$fixture_manifest.mutant" "$fixture_manifest"
+}
+mutate_retired_file() {
+  local retired='EVIDENCE.md'
+  printf '# Retired evidence\n' >"$1/docs/$retired"
+  printf 'docs/%s\n' "$retired" >>"$fixture_manifest"
+}
 mutate_readme_embed() {
   sed '/docs\/assets\/demo-lease\.gif/d' "$1/README.md" \
     >"$1/README.md.mutant"
@@ -339,11 +361,45 @@ mutate_readme_embed() {
 }
 mutate_token() { printf '%s\n' "$2" >>"$1/docs/VERIFY.md"; }
 
+run_missing_on_disk_mutation() {
+  local root="$tmp_dir/mutation-missing-on-disk"
+  local fixture_root="$tmp_dir/missing-on-disk-fixture"
+  local output_manifest="$tmp_dir/missing-on-disk-manifest.txt"
+  local tracked_path="docs/VERIFY.md"
+  local output rc fail_line
+  mkdir -p "$root"
+  git -C "$root" init -q
+  write_fixture "$fixture_root"
+  cp -R "$fixture_root/." "$root/"
+  git -C "$root" add .
+  git -C "$root" -c user.name=fixture -c user.email=fixture@localhost \
+    commit -q -m fixture
+  rm -f "$root/$tracked_path"
+  set +e
+  output="$("$SELF" --manifest "$root" "$output_manifest" 2>&1)"
+  rc=$?
+  set -e
+  fail_line="$(grep -m1 '^FAIL:' <<<"$output" || true)"
+  if [ "$rc" -eq 0 ] || \
+     [ "$fail_line" != "FAIL: tracked path missing on disk: $tracked_path" ]; then
+    echo "FAIL: docs mutation missing-on-disk did not fail as required: rc=$rc output=$output" >&2
+    exit 1
+  fi
+  echo "PASS: docs mutation missing-on-disk -> $fail_line"
+  printf '# Verify\n' >"$root/$tracked_path"
+  "$SELF" --manifest "$root" "$output_manifest"
+  "$SELF" --scan "$root" "$output_manifest" publication >/dev/null
+  echo "PASS: docs mutation missing-on-disk restored PASS"
+}
+
 run_mutation budget-overrun 'FAIL: documentation budget exceeded: README.md' mutate_budget
 run_mutation broken-link 'FAIL: unresolved documentation link in README.md' mutate_link
 run_mutation retired-name 'FAIL: retired documentation target in README.md' mutate_retired
 run_mutation missing-index-entry 'FAIL: evidence index missing link: docs/assets/demo.gif' mutate_index
-run_mutation state-tracked 'FAIL: STATE.md remains in the tracked manifest' mutate_state_tracked
+run_mutation state-tracked 'FAIL: retired documentation file is tracked: STATE.md' mutate_state_tracked
+run_mutation verify-missing 'FAIL: documentation budget file is not tracked: docs/VERIFY.md' mutate_verify_missing
+run_mutation retired-file 'FAIL: retired documentation file is tracked: docs/'"EVIDENCE.md" mutate_retired_file
+run_missing_on_disk_mutation
 run_mutation readme-embed 'FAIL: README missing required image embed: docs/assets/demo-lease.gif' mutate_readme_embed
 
 token_specs=(
@@ -362,4 +418,4 @@ for spec in "${token_specs[@]}"; do
     mutate_token "$token"
 done
 
-echo "PASS: documentation contracts (13 mutations; restored suite passed)"
+echo "PASS: documentation contracts (16 mutations; restored suite passed)"

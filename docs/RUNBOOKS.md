@@ -130,9 +130,10 @@ Render the Markdown report and provenance from completed JSON reports; omit `--r
 scripts/iam-simulate-report.sh \
   --custom-report <custom-report.json> \
   --role-report <role-report.json> \
-  --recorded-on 2026-09-10 \
   --out-dir docs/assets
 ```
+
+`--recorded-on YYYY-MM-DD` is accepted only for legacy reports that lack `recorded_at`.
 
 The renderer stages both files, runs artifact hygiene on input reports and outputs, derives outcomes from pair details, and publishes the report before provenance with rollback on either failed move. The pair must agree on publication metadata and generator commit. Never edit generated reports directly.
 

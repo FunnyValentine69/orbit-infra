@@ -14,7 +14,7 @@ import tempfile
 
 CAPTIONS = (
     "Pull request opens",
-    "Gates: fmt, validate, lint, docs, policy-size, conftest",
+    "Gates: validate, lint, test, docs, policy, no-NAT, Conftest",
     "LocalStack plan posts a comment on the PR",
     "Preview lease opens: new generation, owner token",
     "Terraform applies; acceptance checks pass",
@@ -26,7 +26,7 @@ SCHEDULE = (0, 1, 2, 3, 4, 5, 6, 3)
 SLOT_SECONDS = 3
 CYCLE_SECONDS = 7 * SLOT_SECONDS
 MAX_CAPTION_CHARS = 60
-MAIN_TEXT_WIDTH = 468
+MAIN_TEXT_WIDTH = 472
 SUPPLY_TEXT_WIDTH = 248
 MAIN_CHAR_WIDTH = 8
 SUPPLY_CHAR_WIDTH = 5.5

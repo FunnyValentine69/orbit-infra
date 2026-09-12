@@ -58,7 +58,7 @@ inspect_svg() {
   local actual="$tmp_dir/actual-captions.txt"
   cat > "$expected" <<'CAPTIONS'
 Pull request opens
-Gates: fmt, validate, lint, docs, policy-size, conftest
+Gates: validate, lint, test, docs, policy, no-NAT, Conftest
 LocalStack plan posts a comment on the PR
 Preview lease opens: new generation, owner token
 Terraform applies; acceptance checks pass
@@ -108,14 +108,25 @@ PY
 
 echo "== storyboard contracts: generator =="
 [ -f "$GENERATOR" ] || fail "scripts/storyboard.py is required"
-python3 "$GENERATOR" --output "$tmp_dir/first.svg"
-python3 "$GENERATOR" --output "$tmp_dir/second.svg"
+source_root="$tmp_dir/source-root"
+mkdir -p "$source_root/scripts"
+cp "$GENERATOR" "$source_root/scripts/storyboard.py"
+touch "$source_root/Makefile"
+git -C "$source_root" init -q
+git -C "$source_root" add scripts/storyboard.py Makefile
+git -C "$source_root" -c user.name=fixture -c user.email=fixture@localhost \
+  commit -q -m fixture
+run_generator() {
+  (cd "$source_root" && python3 scripts/storyboard.py "$@")
+}
+run_generator --output "$tmp_dir/first.svg"
+run_generator --output "$tmp_dir/second.svg"
 cmp -s "$tmp_dir/first.svg" "$tmp_dir/second.svg" || \
   fail "two storyboard generations differ"
 inspect_svg "$tmp_dir/first.svg"
 
-python3 "$GENERATOR" --snapshot 0 --output "$tmp_dir/snapshot-0.svg"
-python3 "$GENERATOR" --snapshot 12 --output "$tmp_dir/snapshot-12.svg"
+run_generator --snapshot 0 --output "$tmp_dir/snapshot-0.svg"
+run_generator --snapshot 12 --output "$tmp_dir/snapshot-12.svg"
 inspect_svg "$tmp_dir/snapshot-0.svg"
 inspect_svg "$tmp_dir/snapshot-12.svg"
 cmp -s "$tmp_dir/snapshot-0.svg" "$tmp_dir/snapshot-12.svg" && \
@@ -134,7 +145,7 @@ grep -Fq 'id="step-5" class="panel panel-5 lit"' "$tmp_dir/snapshot-12.svg" || \
 [ "$(grep -Ec 'id="step-[0-9]+" class="[^"]* lit"' \
   "$tmp_dir/snapshot-12.svg")" -eq 1 ] || \
   fail "snapshot 12 lights an unexpected panel set"
-python3 "$GENERATOR" --snapshot 9 --output "$tmp_dir/snapshot-9.svg"
+run_generator --snapshot 9 --output "$tmp_dir/snapshot-9.svg"
 grep -Fq 'id="step-4" class="panel panel-4 lit"' "$tmp_dir/snapshot-9.svg" || \
   fail "snapshot 9 does not light the lease panel"
 grep -Fq 'id="step-8" class="panel panel-8 supply lit"' \

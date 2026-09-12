@@ -2340,16 +2340,18 @@ def _command_mutate_role_projection_source_bytes():
     print('plan-reader:combined')
 
 
-def _command_mutate_runbook_legacy_recorded_on():
+def _command_mutate_runbook_modern_recorded_on():
     source_path = Path(sys.argv[1])
     destination = Path(sys.argv[2])
     source = source_path.read_text(encoding='utf-8')
-    recorded_on = '  --recorded-on 2026-09-10 \\\n'
-    if source.count(recorded_on) == 1:
-        source = source.replace(recorded_on, '', 1)
-    elif 'scripts/iam-simulate-report.sh \\\n' not in source:
-        raise SystemExit('FAIL: runbook legacy render mutation anchor changed')
-    destination.write_text(source, encoding='utf-8')
+    recorded_on = '  --recorded-on 2026-09-10 ' + '\\' + '\n'
+    role_report = '  --role-report <role-report.json> ' + '\\' + '\n'
+    if source.count(recorded_on) != 0 or source.count(role_report) != 1:
+        raise SystemExit('FAIL: runbook modern render mutation anchor changed')
+    destination.write_text(
+        source.replace(role_report, role_report + recorded_on, 1),
+        encoding='utf-8',
+    )
 
 
 def _command_run_runbook_legacy_render():
