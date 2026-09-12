@@ -2207,10 +2207,10 @@ mkdir -p "$modern_evidence"
 python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" build-modern-evidence \
   "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" \
   "$modern_custom" "$modern_role"
-sed 's/AWS-SIMULATED 2026-09-11 /AWS-SIMULATED 2026-09-10 /g' \
+sed 's/AWS-SIMULATED 2026-09-12 /AWS-SIMULATED 2026-09-10 /g' \
   "$MATRIX" >"$modern_matrix"
-if [ "$(grep -o 'AWS-SIMULATED 2026-09-10 ' "$modern_matrix" | wc -l | tr -d ' ')" -ne 216 ]; then
-  fail_case "modern Evidence matrix fixture" "expected 216 synthetic 2026-09-10 labels"
+if [ "$(grep -o 'AWS-SIMULATED 2026-09-10 ' "$modern_matrix" | wc -l | tr -d ' ')" -ne 220 ]; then
+  fail_case "modern Evidence matrix fixture" "expected 220 synthetic 2026-09-10 labels"
 fi
 if output="$(
   "$IAM_SIM_REPORT_RENDERER" \
@@ -2783,7 +2783,7 @@ PY_EVIDENCE_MUTANTS
     TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
       bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" 2>&1
   )" && grep -Fq \
-      'PASS: IAM matrix promoted record hash-list lengths match vectors (216 cases)' \
+      'PASS: IAM matrix promoted record hash-list lengths match vectors (220 cases)' \
       <<<"$output"; then
     pass_case "evidence promoted empty hash list mutation restored PASS"
   else
@@ -2809,7 +2809,7 @@ PY_EVIDENCE_MUTANTS
   if output="$(run_iam_matrix_plan_evidence_mutation \
     "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" 2>&1)" && \
      grep -Fq \
-       'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (216 cases)' \
+       'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (220 cases)' \
        <<<"$output"; then
     pass_case "evidence promoted second policy hash mutation restored PASS"
   else

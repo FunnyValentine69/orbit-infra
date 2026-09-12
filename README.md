@@ -115,7 +115,7 @@ make destroy TARGET=localstack ENV_ID=dev
 This repo labels every claim by how it was checked:
 
 - **LOCALSTACK-VERIFIED** — ran against the LocalStack emulator, in CI or locally.
-- **AWS-SIMULATED** — 240 custom-policy cases (239 passed, 1 custom-only finding, 0 runner failures) and 157 role-policy cases (157 passed, 0 failed; 154 agreements, 3 divergences); the role lane closes the custom-only finding, and `SnsSubscriptionManage` passes under its tag-conditioned star grant. See [`docs/assets/IAM_SIMULATION_REPORT.md`](docs/assets/IAM_SIMULATION_REPORT.md). This proves policy evaluation, not service enforcement.
+- **AWS-SIMULATED** — 241 custom-policy cases (240 passed, 1 custom-only finding, 0 runner failures) and 158 role-policy cases (158 passed, 0 failed; 155 agreements, 3 divergences); the role lane closes the custom-only finding, and `SnsSubscriptionManage` confirms star-only policy evaluation. See [`docs/assets/IAM_SIMULATION_REPORT.md`](docs/assets/IAM_SIMULATION_REPORT.md). This proves policy evaluation, not service enforcement.
 - **CODE-ONLY** — implemented and contract-tested, but not yet executed on real AWS.
 - **fixture-verified** — exercised through recorded fixtures rather than a live run.
 

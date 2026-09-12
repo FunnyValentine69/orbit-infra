@@ -422,7 +422,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 200 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 206 stable mutation case
 IDs, their mutation functions or labelled `sed` targets, and their expected
 `FAIL:` diagnostic prefixes. Its action column uses the closed `fn`,
 `fn:submode`, or `sed:label` dispatcher grammar. The suite rejects actions that
