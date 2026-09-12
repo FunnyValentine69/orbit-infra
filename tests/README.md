@@ -422,7 +422,7 @@ The phase-2 fixture library describes its plans, vector envelopes, canned
 simulator responses, custom-report records, and fake role-lane scenarios as
 base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
 renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 200 stable mutation case
+`tests/lib/iam-simulate-mutations.txt` currently names 206 stable mutation case
 IDs, their mutation functions or labelled `sed` targets, and their expected
 `FAIL:` diagnostic prefixes. Its action column uses the closed `fn`,
 `fn:submode`, or `sed:label` dispatcher grammar. The suite rejects actions that
@@ -503,7 +503,7 @@ promoted hash lists, a hyphenated-suffix matcher regression, and a runner failur
 Every restored join must pass. The failed-case and doctored-pass mutations remove the published role-lane closure for the sole custom failure, so stored custom `pass` cannot promote an execution mismatch; the restored join remains bound to the current published lane reports.
 
 The `TAXONOMY` group runs
-`scripts/iam-simulate-categories.py --check`, independently compares the 289
+`scripts/iam-simulate-categories.py --check`, independently compares the 290
 matrix case IDs to `tests/fixtures/iam-simulate/categories.json`, requires the
 four categories to be disjoint with non-empty reasons, and executes added,
 removed, duplicate-category, and empty-reason mutations. Regenerate the file
@@ -512,7 +512,7 @@ parses each row's explicit document and Sid prefix and writes deterministic LF
 JSON with array brackets around one compact object per line and a trailing
 newline.
 
-The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 289
+The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 290
 taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
 `aws:`-prefixed condition key, a colon-bearing trust document, and wrong-document
 refusal. Both runners enforce the same exact-prefix rule instead of splitting
@@ -536,7 +536,7 @@ both execution lanes use that directory form.
 The `COMPLETENESS` group reads the 81 real `(document, Sid)` envelopes from
 `tests/fixtures/iam-simulate/vectors/`. Filenames are
 `<document>__<sid>.json`, with every character outside `[A-Za-z0-9._-]`
-replaced by `_`. It counts the 240 case IDs globally, requires every case prefix
+replaced by `_`. It counts the 241 case IDs globally, requires every case prefix
 to match its envelope header, rejects a case ID appearing in two envelopes,
 checks exact filename derivation, and runs the real validator over every
 envelope. Simulator-eligible cases must occur exactly once unless
@@ -580,7 +580,7 @@ missing-address refusal, and absent/duplicate-Sid refusal before a fake AWS call
 Six table-derived doctored plans independently cover non-array resources,
 duplicate addresses, null policies, null role names, invalid suffix names, and
 multiple account IDs; each custom-runner guard has a temporary source mutant.
-A real-vector contract requires exactly 240 report records and currently counts
+A real-vector contract requires exactly 241 report records and currently counts
 8 shared-call batches across 16 cases; mutations make a colliding pair disagree
 and drop one shared case from the report. The isolated statement submitted by
 the runner comes from the named plan document, and its attribution spans are
@@ -601,6 +601,12 @@ projections fit under 10,240 whitespace-stripped characters and use one
 combined pass; the six deployer documents do not fit together and therefore
 use six separately created, simulated, and deleted per-document roles. Report
 records identify the deciding projection with source addresses and SHA-256 hashes.
+Each projection keeps `policy_sha256` for the raw submitted policy and adds
+`redacted_policy_sha256` for the stored redacted `policy_document`. The core
+contract rejects a missing redacted digest; renderer contracts cover a
+live-account redaction chain, doctored digest and document values, missing modern
+fields for both live and placeholder reports, and a source mutant that changes
+`recorded_at` keying.
 Before report serialization, one recursive boundary replaces the live account
 ID throughout the final object with `000000000000`; reports carry that placeholder in
 `account`, replace the per-invocation ownership nonce with `<redacted>`, and set
@@ -664,7 +670,7 @@ full-fixture dry run derives
 the projected-role count `R` and selected-case count `C` from the plan and vector
 fixtures at run time, then requires exactly `1 + 8R + 2G` calls, where `G` is
 the sum of non-empty authorization action groups over the `C` selected cases.
-The current full fixture has `R=8`, `C=157`, `G=158`, and therefore 381 calls.
+The current full fixture has `R=8`, `C=158`, `G=159`, and therefore 383 calls.
 A dropped-call mutant kills the formula check. Its restored path keeps the full
 denominator. The descriptor-leak mutant and instrumented bounded-read lane run
 against the same reduced 24-case fixture with a five-second wall-clock cap. Each

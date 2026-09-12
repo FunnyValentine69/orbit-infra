@@ -65,6 +65,31 @@
         "matched_sid_required": [],
         "matched_sid_forbidden": ["SnsSubscriptionManage"]
       }
+    },
+    {
+      "case_id": "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:supplied",
+      "simulation_mode": "custom",
+      "assertion_kind": "decision",
+      "action_names": [
+        "sns:GetSubscriptionAttributes",
+        "sns:SetSubscriptionAttributes",
+        "sns:Unsubscribe"
+      ],
+      "resource_arns": [
+        "arn:aws:sns:us-east-1:${ACCOUNT_ID}:orbit-infra-${SUFFIX}-preview"
+      ],
+      "context_entries": [
+        {
+          "ContextKeyName": "aws:ResourceTag/Project",
+          "ContextKeyValues": ["orbit-infra"],
+          "ContextKeyType": "string"
+        }
+      ],
+      "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_required": [],
+        "matched_sid_forbidden": ["SnsSubscriptionManage"]
+      }
     }
   ]
 }

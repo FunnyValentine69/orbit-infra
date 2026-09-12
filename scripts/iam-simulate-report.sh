@@ -457,12 +457,17 @@ def role_hash_chain_agrees(custom_record, role_record):
         return False
     policy_document = projection.get("policy_document")
     policy_sha256 = projection_ref.get("policy_sha256")
-    if (
-        not isinstance(policy_document, str)
-        or not isinstance(policy_sha256, str)
-        or hashlib.sha256(policy_document.encode("utf-8")).hexdigest()
-        != policy_sha256
-    ):
+    if not isinstance(policy_document, str) or not isinstance(policy_sha256, str):
+        return False
+    document_hash = hashlib.sha256(policy_document.encode("utf-8")).hexdigest()
+    if "recorded_at" in role:
+        redacted_policy_sha256 = projection.get("redacted_policy_sha256")
+        if (
+            not isinstance(redacted_policy_sha256, str)
+            or document_hash != redacted_policy_sha256
+        ):
+            return False
+    elif document_hash != policy_sha256:
         return False
     return submitted_hashes(role_record, "put_role_policy") == [policy_sha256]
 

@@ -95,7 +95,7 @@ role-lane-divergence-evidence	mutate_role_divergence_report	FAIL: role divergenc
 role-lane-missing-custom-case	run_phase2_role_lane	FAIL: custom report lacks exactly one record for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching
 role-lane-two-run-call-shape	mutate_role_two_run_calls	FAIL: two-run contract requires one exact scp-excluded call and one default call per case
 role-lane-dry-run-inventory	mutate_role_dry_run_inventory	FAIL: dry-run inventory requires three iam delete-role-policy calls
-role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 380, expected 1 + 8*8 + 2*158 = 381
+role-lane-full-fixture-formula-count	sed:drop-first-dry-run-call	FAIL: full-fixture dry-run call count is 382, expected 1 + 8*8 + 2*159 = 383
 role-lane-portable-deterministic-descriptor-leak	mutate_role_deterministic_fd_leak:macOS-bash-3.2+Linux-bash-5	FAIL: role-lane deterministic descriptor count grew by at least 1 per case
 role-lane-empty-sid-shared-core-guard	mutate_core_sid_validation	FAIL: role lane empty Sid shared core guard did not enforce expected refusal
 role-lane-plan-resources-array-guard	mutate_plan_guard:role-lane.resources-array	FAIL: role lane plan resources array guard did not enforce expected refusal
@@ -175,6 +175,7 @@ evidence-role-hash-projection-policy	mutate_evidence_hash_chain:projection-polic
 evidence-role-hash-put-role-policy	mutate_evidence_hash_chain:put-role-policy	FAIL: Evidence role hash chain put-role-policy mismatch for case:
 evidence-role-projection-source-binding	mutate_role_projection_source_binding	FAIL: role projection source policy differs for plan-reader:combined
 evidence-role-projection-account-redaction	mutate_core_projection_validation:account-redaction	FAIL: role projection source policy differs for deployer:aws_iam_policy.deployer_data
+evidence-role-projection-redacted-hash-required	mutate_role_redacted_policy_hash:missing	FAIL: role projection redacted sha256 differs for plan-reader:combined
 evidence-role-projection-source-hashes	mutate_role_projection_source_bytes	FAIL: role projection source documents differ for plan-reader:combined
 evidence-generator-runner-drift-scope	mutate_generator_drift_scope	FAIL: Evidence generator drift scope omits scripts/iam-simulate.sh
 role-lane-empty-resource-list	mutate_role_empty_resources	FAIL: SCP-excluded principal simulation failed for case:aws_iam_role_policy.plan_reader_state:ReadStateObjects:ALL:none:matching: FAIL: fake simulate-principal-policy received --resource-arns with zero values
@@ -189,6 +190,11 @@ evidence-generator-commit-stale	mutate_generator_commit:stale	FAIL: Evidence gen
 renderer-present-malformed-recorded-at	mutate_report_renderer:legacy-recorded-at	FAIL: renderer accepted present non-string recorded_at as legacy
 renderer-role-outcome-empty-pairs	mutate_renderer_role_outcome:empty-pairs	FAIL: role record
 renderer-runbook-legacy-recorded-on	mutate_runbook_legacy_recorded_on	FAIL: legacy reports require --recorded-on YYYY-MM-DD
+renderer-role-redacted-digest-doctored	mutate_role_redacted_policy_hash:digest	FAIL: renderer accepted doctored redacted_policy_sha256:
+renderer-role-redacted-document-doctored	mutate_role_redacted_policy_hash:document	FAIL: renderer accepted doctored redacted policy_document:
+renderer-role-redacted-hash-missing-live	mutate_role_redacted_policy_hash:missing	FAIL: renderer accepted live-account report without redacted_policy_sha256:
+renderer-role-redacted-hash-missing-placeholder	mutate_role_redacted_policy_hash:missing	FAIL: renderer accepted recorded_at report without redacted_policy_sha256:
+renderer-role-redacted-hash-recorded-at-branch	mutate_renderer_redacted_hash_branch	FAIL: renderer accepted recorded_at report without redacted_policy_sha256:
 
 renderer-custom-aggregate-decision	mutate_report_aggregate:renderer-custom-decision	FAIL: renderer accepted doctored custom aggregate decision:
 renderer-custom-aggregate-sids	mutate_report_aggregate:renderer-custom-sids	FAIL: renderer accepted doctored custom aggregate sids:
