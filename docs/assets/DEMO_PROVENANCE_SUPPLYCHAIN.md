@@ -5,16 +5,16 @@
 | Field | Value |
 | --- | --- |
 | recorded_from | demo/demo-supplychain.tape |
-| generator commit | d5138c7 (the tree at this commit holds the active recording generator closure) |
+| generator commit | 3c65b4e (the tree at this commit holds the active recording generator closure) |
 | canonicalizer sha256 | b185cd2a615c31627f5fd24a2e0c504fc7864e1ae5e4b155547ab4bd7e019001 |
 | comparison fixtures used | base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json |
 | contract suite fixtures used | base.spdx.json, identifier-renumber.spdx.json, identifier-swap.spdx.json, relationship-switch-same-name.spdx.json, reversed-order-same-name.spdx.json, same-inventory-different-checksum.spdx.json, same-inventory-different-license.spdx.json, same-inventory-different-relationship.spdx.json, timestamp-only-difference.spdx.json |
 | timestamp-variant result | PASS |
 | checksum-variant result | PASS |
 | contracts result | PASS |
-| gif sha256 | 750e2f96aa1441fd13db641be5c41905807bbda52c3c179bca4e72e5b336a283 |
-| size | 93868 bytes |
-| duration | 15.440000 s |
-| frames | 386 |
+| gif sha256 | 5d279b46a7daba3a8986d5e0a88847f0e09e12337c7732ce9d2cd9f7c70dafe0 |
+| size | 93101 bytes |
+| duration | 15.160000 s |
+| frames | 379 |
 
 This recording is offline: it exercises the committed SPDX fixtures, canonicalizer, and standalone 14-assertion contract without contacting LocalStack, Docker, Terraform, or AWS.

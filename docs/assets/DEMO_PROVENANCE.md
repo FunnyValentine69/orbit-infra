@@ -6,13 +6,13 @@
 | --- | --- |
 | recorded_from | LocalStack 2026.8.1, Terraform 1.16.0 |
 | recorded_on | 2026-09-12 |
-| generator commit | d5138c7 (the tree at this commit holds the active recording generator closure) |
+| generator commit | 3c65b4e (the tree at this commit holds the active recording generator closure) |
 | recorder | vhs 0.11.0, ttyd 1.7.7-unknown, ffmpeg 9.0.1 |
 | command | `OPERATOR_CIDR=203.0.113.0/24 make demo` from the repository root |
 | environment | ENV_ID=demo, TARGET=localstack, workspace default, CLI config empty, operator CIDR 203.0.113.0/24 (TEST-NET-3, /24 to /32) |
 | plan / apply / destroy | `Plan: 61 to add, 0 to change, 0 to destroy.`; `Apply complete! Resources: 61 added, 0 changed, 0 destroyed.`; `Destroy complete! Resources: 61 destroyed.` |
-| artifact | 221830 bytes, 29.360000 s, 734 frames |
-| artifact sha256 | 8fa1182e46585c3f1dd9743e09a11de78eff757a8d59b990703dc153fea1c53e |
+| artifact | 220560 bytes, 29.040000 s, 726 frames |
+| artifact sha256 | 8339516e770248c7ba867bbd6f43002b4c0edd08aab843b9da7203d4ce7d234b |
 
 ## What the wrapper asserts before moving the GIF into place
 
