@@ -31,5 +31,5 @@ This directory is the ledger layer for orbit-infra. The four evidence labels and
 | [iam-simulation-custom-report.json](../assets/iam-simulation-custom-report.json) | Machine-readable custom-policy simulator results. |
 | [iam-simulation-role-report.json](../assets/iam-simulation-role-report.json) | Machine-readable temporary-role simulator results and cleanup record. |
 | [storyboard.svg](../assets/storyboard.svg) | Animated overview of pull-request, preview, cleanup, and supply-chain flow. |
-| [iam-matrix.md](/docs/evidence/iam-matrix.md) | Authored IAM statements, principal bindings, taxonomy, and evidence cells. |
+| [iam-matrix.md](iam-matrix.md) | Authored IAM statements, principal bindings, taxonomy, and evidence cells. |
 | [iam-simulate-vector-schema.md](iam-simulate-vector-schema.md) | Schema and validation rules for authored simulator vector envelopes. |

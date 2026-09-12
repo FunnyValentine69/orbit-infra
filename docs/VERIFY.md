@@ -27,7 +27,8 @@ Run the complete local gate dispatcher:
 scripts/gates.sh
 ```
 
-The dispatcher runs validation, lint, tests, documentation contracts, IAM policy-size checks, the no-NAT check, and Conftest. The documentation suite checks publication budgets and links, indexes every evidence file, rejects retired paths and private-scope wording, and kills 17 injected mutations before confirming the restored suite.
+The policy-size step needs LocalStack on `http://localhost:4566` (`make localstack-up`); run `GATES_POLICY_SIZE=skip scripts/gates.sh` to omit that step.
+The dispatcher runs validation, lint, tests, documentation contracts, IAM policy-size checks, the no-NAT check, and Conftest. The documentation suite checks publication budgets and links, indexes every evidence file, rejects retired paths and private-scope wording, and kills 19 injected mutations before confirming the restored suite.
 
 With LocalStack running and its bootstrap applied, regenerate the exact-field IAM matrix plan:
 
@@ -71,8 +72,15 @@ The `iam-matrix-plan.yml` workflow applies the LocalStack bootstrap and runs exa
 
 ## Runtime checks and SLO
 
-The hosted LocalStack session waits for each enabled ECS service to reach its applied task definition, probes the ALB, performs owner-bound Stage 1, and completes Stage 2 in the same job. A later runner cannot recover that emulator, so `session-destroy` refuses a LocalStack target. Recovery and exact operator checks are in [Runbooks](RUNBOOKS.md).
+The hosted LocalStack session waits for each enabled ECS service to reach its applied task definition, probes the ALB, performs owner-bound Stage 1, and completes Stage 2 in the same job. A later runner cannot recover that emulator, so `session-destroy` refuses a LocalStack target. Recovery procedures are in [Runbooks](RUNBOOKS.md).
 
-For an AWS session, the hosted runner is intentionally outside `operator_cidr`: connection refusal or timeout is the expected negative result, while an operator inside the CIDR performs `/health` and `/s3-roundtrip`. The separate AWS close retains state in `closing` until the sweeper verifies asynchronous deletion and removes every state version.
+For an AWS session, run these commands from a network inside `operator_cidr`; the hosted runner is intentionally outside that CIDR and proves only the negative case (connection refusal or timeout):
+
+```bash
+curl -fsS "$ALB_URL/health"
+curl -fsS "$ALB_URL/s3-roundtrip"
+```
+
+The separate AWS close retains state in `closing` until the sweeper verifies asynchronous deletion and removes every state version.
 
 The written availability objective is at least 99% healthy-host time during an eight-hour session, a 4.8-minute error budget. `UnHealthyHostCount` supplies the measurement and `HTTPCode_Target_5XX_Count` is the leading indicator. LocalStack creates the alarms but has no metric pipeline, so their state remains `INSUFFICIENT_DATA`.

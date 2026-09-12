@@ -100,11 +100,7 @@ for source in markdown:
             target = posixpath.normpath(
                 posixpath.join(posixpath.dirname(source), path_part)
             )
-        if (
-            target == "STATE" + ".md"
-            or target in retired_paths
-            or posixpath.normpath(path_part) == "iam-matrix.md"
-        ):
+        if target == "STATE" + ".md" or target in retired_paths:
             fail(f"retired documentation target in {source}:{line_number}: {path_part}")
         if target not in tracked:
             fail(f"unresolved documentation link in {source}:{line_number}: {path_part}")
@@ -112,11 +108,13 @@ for source in markdown:
 for source in markdown + shell:
     text = (root / source).read_text(encoding="utf-8")
     for retired in sorted(retired_paths):
-        found = (
-            source in shell and re.search(r"(?<!docs/)RUNBOOKS\.md", text) is not None
-            if retired == "RUNBOOKS" + ".md"
-            else retired in text
-        )
+        if retired == "RUNBOOKS" + ".md":
+            found = (
+                source in shell
+                or (source in markdown and not source.startswith("docs/"))
+            ) and re.search(r"(?<!docs/)RUNBOOKS\.md", text) is not None
+        else:
+            found = retired in text
         if found:
             fail(f"retired documentation name in {source}: {retired}")
 
@@ -267,7 +265,7 @@ fi
 
 fixture_manifest="$tmp_dir/fixture-manifest.txt"
 mutation_count=0
-expected_mutations=17
+expected_mutations=19
 
 write_fixture() {
   local destination=$1
@@ -339,6 +337,12 @@ mutate_budget() {
 }
 mutate_link() { printf '[broken](missing.md)\n' >>"$1/README.md"; }
 mutate_retired() { printf '[retired](RUNBOOKS%s\n' '.md)' >>"$1/README.md"; }
+mutate_retired_bare_matrix() {
+  printf '[m](iam-matrix.md)\n' >>"$1/docs/THREAT_MODEL.md"
+}
+mutate_retired_prose() {
+  printf 'see RUNBOOKS%s\n' '.md for details' >>"$1/README.md"
+}
 mutate_index() {
   sed '/\.\.\/assets\/demo\.gif/d' "$1/docs/evidence/README.md" \
     >"$1/docs/evidence/README.md.mutant"
@@ -403,6 +407,8 @@ run_missing_on_disk_mutation() {
 run_mutation budget-overrun 'FAIL: documentation budget exceeded: README.md' mutate_budget
 run_mutation broken-link 'FAIL: unresolved documentation link in README.md' mutate_link
 run_mutation retired-name 'FAIL: retired documentation target in README.md' mutate_retired
+run_mutation retired-bare-matrix 'FAIL: retired documentation target in docs/THREAT_MODEL.md' mutate_retired_bare_matrix
+run_mutation retired-prose 'FAIL: retired documentation name in README.md' mutate_retired_prose
 run_mutation missing-index-entry 'FAIL: evidence index missing link: docs/assets/demo.gif' mutate_index
 run_mutation state-tracked 'FAIL: retired documentation file is tracked: STATE.md' mutate_state_tracked
 run_mutation verify-missing 'FAIL: documentation budget file is not tracked: docs/VERIFY.md' mutate_verify_missing
