@@ -758,7 +758,7 @@ def _command_validate_real_report():
         payload = json.loads(report_path.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         fail(f'cannot read real-vector report inputs: {exc}')
-    if len(expected) != 240: fail(f'real vector set has {len(expected)} case ids, expected 240')
+    if len(expected) != 241: fail(f'real vector set has {len(expected)} case ids, expected 241')
     records = payload.get('records') if isinstance(payload, dict) else None
     if not isinstance(records, list): fail('report records must be an array')
     case_ids = [record.get('case_id') for record in records if isinstance(record, dict)]
@@ -770,7 +770,7 @@ def _command_validate_real_report():
     if missing: fail(f'report omits selected case_id: {missing[0]}')
     unexpected = sorted(set(case_ids) - set(expected))
     if unexpected: fail(f'report contains unselected case_id: {unexpected[0]}')
-    if payload.get('summary', {}).get('total') != 240: fail('report summary total must equal 240')
+    if payload.get('summary', {}).get('total') != 241: fail('report summary total must equal 241')
     by_id = {record['case_id']: record for record in records}
     shared_groups = set()
     shared_cases = set()
@@ -788,7 +788,7 @@ def _command_validate_real_report():
             reciprocal = tuple(sorted([peer, *peer_record.get('shared_call_case_ids', [])]))
             if reciprocal != group: fail(f'shared-call peers are not reciprocal: {case_id} and {peer}')
     if len(shared_groups) != 8 or len(shared_cases) != 16: fail(f'shared-call census differs: {len(shared_groups)} batches and {len(shared_cases)} cases')
-    print('PASS: real 240-vector report coverage (240 records, 8 shared-call batches, 16 shared cases)')
+    print('PASS: real 241-vector report coverage (241 records, 8 shared-call batches, 16 shared cases)')
 def _command_mutate_core_authorization_groups():
     source = Path(sys.argv[1]).read_text(encoding='utf-8')
     old = '    for index, action_class in enumerate(normalized_classes, 1):\n'
@@ -1290,7 +1290,8 @@ def _command_validate_role_projection_report():
             if len(pass_specs) > 1:
                 role_name += f'-p{pass_index}'
                 policy_name += f'-p{pass_index}'
-            spec = {'role_kind': kind, 'projection_kind': projection_kind, 'projection_id': projection_id, 'name': role_name, 'policy_name': policy_name, 'policy_document': policy, 'policy_sha256': hashlib.sha256(policy.encode('utf-8')).hexdigest(), 'policy_character_count': len(re.sub('\\s', '', policy)), 'source_character_count': source_count, 'source_addresses': addresses}
+            policy_sha256 = hashlib.sha256(policy.encode('utf-8')).hexdigest()
+            spec = {'role_kind': kind, 'projection_kind': projection_kind, 'projection_id': projection_id, 'name': role_name, 'policy_name': policy_name, 'policy_document': policy, 'policy_sha256': policy_sha256, 'redacted_policy_sha256': policy_sha256, 'policy_character_count': len(re.sub('\\s', '', policy)), 'source_character_count': source_count, 'source_addresses': addresses}
             expected_by_kind[kind].append(spec)
             expected_roles.append(spec)
             for address in addresses: projection_for_document[address] = spec
@@ -1333,6 +1334,14 @@ def _command_validate_role_projection_report():
             projected_policy = projection.get('policy_document')
             if projected_policy != expected['policy_document']: raise SystemExit(f"FAIL: role projection did not concatenate statements in source order: {projection.get('projection_id')}")
             if projection.get('policy_sha256') != expected['policy_sha256']: raise SystemExit(f"FAIL: role projection policy hash differs: {projection.get('projection_id')}")
+            if (
+                projection.get('redacted_policy_sha256')
+                != expected['redacted_policy_sha256']
+            ):
+                raise SystemExit(
+                    'FAIL: role projection redacted policy hash differs: '
+                    f"{projection.get('projection_id')}"
+                )
             for field in ('projection_id', 'name', 'policy_name', 'policy_character_count', 'source_character_count'):
                 if projection.get(field) != expected[field]: raise SystemExit(f"FAIL: role projection {field} differs: {projection.get('projection_id')}")
             readiness = projection.get('readiness_case', {})
@@ -2168,6 +2177,10 @@ def _command_mutate_role_projection_source_binding():
 
 def _command_build_role_projection_account_redaction():
     plan_source, role_source, plan_out, role_out = map(Path, sys.argv[1:5])
+    custom_source = Path(sys.argv[5]) if len(sys.argv) > 5 else None
+    custom_out = Path(sys.argv[6]) if len(sys.argv) > 6 else None
+    if (custom_source is None) != (custom_out is None):
+        raise SystemExit('FAIL: projection account-redaction fixture requires both custom paths')
     placeholder = '000000000000'
     live_account = '123456789012'
     plan = json.loads(plan_source.read_text(encoding='utf-8'))
@@ -2184,19 +2197,106 @@ def _command_build_role_projection_account_redaction():
     if replacements == 0:
         raise SystemExit('FAIL: projection account-redaction fixture lacks an account')
     role = json.loads(role_source.read_text(encoding='utf-8'))
+    projection_hashes = {}
     for projection in role['projection']['roles']:
         raw_policy = projection['policy_document'].replace(placeholder, live_account)
         projection['policy_sha256'] = hashlib.sha256(raw_policy.encode()).hexdigest()
+        projection['redacted_policy_sha256'] = hashlib.sha256(
+            projection['policy_document'].encode()
+        ).hexdigest()
+        projection_hashes[projection['projection_id']] = projection['policy_sha256']
         for source_document in projection['source_documents']:
             source_document['sha256'] = hashlib.sha256(
                 policies[source_document['address']].encode()
             ).hexdigest()
+    for record in role['records']:
+        projection_ref = record.get('projection', {})
+        projection_id = projection_ref.get('projection_id')
+        if projection_id not in projection_hashes:
+            continue
+        projection_ref['policy_sha256'] = projection_hashes[projection_id]
+        put_hashes = record.get('document_hashes_submitted', {}).get('put_role_policy', [])
+        if len(put_hashes) == 1:
+            put_hashes[0]['sha256'] = projection_hashes[projection_id]
+    if custom_source is not None and custom_out is not None:
+        custom = json.loads(custom_source.read_text(encoding='utf-8'))
+        case_id = (
+            'case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:'
+            'ALL:aws:RequestTag/Project:matching'
+        )
+        custom_record = next(
+            record for record in custom['records'] if record.get('case_id') == case_id
+        )
+        role_record = next(
+            record for record in role['records'] if record.get('case_id') == case_id
+        )
+        source_hash = hashlib.sha256(
+            policies['aws_iam_policy.deployer_data'].encode()
+        ).hexdigest()
+        custom_record['document_hashes_submitted']['policy_input_list'][0][
+            'sha256'
+        ] = source_hash
+        role_record['document_hashes_submitted']['custom_lane'][0][
+            'sha256'
+        ] = source_hash
+        custom_out.write_text(
+            json.dumps(custom, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+        )
+        role['custom_report_sha256'] = hashlib.sha256(custom_out.read_bytes()).hexdigest()
     plan_out.write_text(
         json.dumps(plan, indent=2, sort_keys=True) + '\n', encoding='utf-8'
     )
     role_out.write_text(
         json.dumps(role, indent=2, sort_keys=True) + '\n', encoding='utf-8'
     )
+
+
+def _command_mutate_role_redacted_policy_hash():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    mutation = sys.argv[3]
+    payload = json.loads(source_path.read_text(encoding='utf-8'))
+    projection = next(
+        item for item in payload['projection']['roles']
+        if item.get('projection_id') == 'plan-reader:combined'
+    )
+    if mutation == 'missing':
+        projection.pop('redacted_policy_sha256', None)
+    elif mutation == 'digest':
+        projection['redacted_policy_sha256'] = '0' * 64
+    elif mutation == 'document':
+        projection['policy_document'] += ' '
+    else:
+        raise SystemExit(f'FAIL: unknown redacted policy hash mutation: {mutation}')
+    destination.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+    )
+
+
+def _command_validate_renderer_role_passing():
+    report_path = Path(sys.argv[1])
+    case_id = sys.argv[2]
+    rendered = report_path.read_text(encoding='utf-8')
+    rows = [
+        line for line in rendered.splitlines()
+        if line.startswith(f'| {case_id} | principal |')
+    ]
+    if len(rows) != 1 or not rows[0].endswith('| yes |'):
+        raise SystemExit(f'FAIL: renderer rejected valid redacted projection hash: {case_id}')
+
+
+def _command_mutate_renderer_redacted_hash_branch():
+    source_path = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    source = source_path.read_text(encoding='utf-8')
+    strict = '    if \"recorded_at\" in role:\n'
+    mutant = '    if isinstance(projection.get(\"redacted_policy_sha256\"), str):\n'
+    if source.count(strict) == 1:
+        source = source.replace(strict, mutant, 1)
+    elif source.count(mutant) != 1:
+        raise SystemExit('FAIL: renderer redacted hash branch mutation anchor changed')
+    destination.write_text(source, encoding='utf-8')
+    destination.chmod(0o755)
 
 
 def _command_mutate_core_projection_validation():
@@ -2210,7 +2310,10 @@ def _command_mutate_core_projection_validation():
             expected["policy_document"], "policy_document"
         )
         if observed.get("policy_document") != expected_policy_document:'''
-    mutant = '''        if observed.get("policy_document") != expected["policy_document"]:'''
+    mutant = '''        expected_policy_document = redact_report(
+            expected["policy_document"], "policy_document"
+        )
+        if observed.get("policy_document") != expected["policy_document"]:'''
     if source.count(strict) == 1:
         source = source.replace(strict, mutant, 1)
     elif source.count(mutant) != 1:

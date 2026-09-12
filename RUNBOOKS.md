@@ -386,7 +386,10 @@ IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws \
 At run start, the lane snapshots the custom report and evaluates only that
 snapshot. The role report records UTC `recorded_at`, the exact snapshot's
 `custom_report_sha256`, each projection's source addresses, source-policy
-SHA-256 hashes, `propagation_attempts`, selected and excluded case counts by reason, agreements,
+SHA-256 hashes, raw `policy_sha256`, and `redacted_policy_sha256` for the
+redacted `policy_document`; reports with `recorded_at` require both projection
+digests. The report also records `propagation_attempts`, selected and excluded
+case counts by reason, agreements,
 principal/custom divergences, and Organizations divergences. The AWS-managed
 `ReadOnlyAccess` attachment has no inline equivalent and is always recorded as a
 role-lane exclusion. A single final redaction replaces both the live account and
@@ -396,10 +399,11 @@ so a report cannot replay either ownership value. The caller identity is replace
 in full with `arn:aws:iam::000000000000:<redacted-principal>`; the writer refuses
 any report retaining the caller's user or role name. The shared writer then
 applies a final whole-report identifier redaction and records
-`redaction_applied: true`. The cleanup paths remain contract-tested offline. A
-real role-lane execution on 2026-09-11 recorded 157 cases: 157 passed, with 154
-custom-lane agreements, 3 divergences, 429 Organizations divergences, and zero
-residue; the role lane closed the sole custom-only finding, while
+`redaction_applied: true`. The cleanup paths remain contract-tested offline. The
+committed inventory will select 158 role cases on its next lane run. The
+published real role-lane execution from 2026-09-11 remains 157 cases: 157 passed,
+with 154 custom-lane agreements, 3 divergences, 429 Organizations divergences, and
+zero residue; the role lane closed the sole custom-only finding, while
 `SnsSubscriptionManage` passed under its tag-conditioned star grant. See
 `docs/assets/iam-simulation-role-report.json`.
 

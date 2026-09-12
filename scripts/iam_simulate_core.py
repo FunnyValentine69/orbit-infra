@@ -346,12 +346,14 @@ def build_role_projections(
                 if projection_kind == "combined"
                 else f"{role}:{source_addresses[0]}"
             )
+            redacted_policy = redact_report(policy, "policy_document")
             projections.append({
                 "role_kind": role,
                 "projection_id": projection_id,
                 "projection_kind": projection_kind,
                 "policy_document": policy,
                 "policy_sha256": document_sha256(policy),
+                "redacted_policy_sha256": document_sha256(redacted_policy),
                 "policy_character_count": len(re.sub(r"\s", "", policy)),
                 "source_character_count": (
                     source_size
@@ -436,6 +438,11 @@ def validate_role_report_projections(plan: Any, role_report: Any) -> int:
         if observed.get("policy_sha256") != expected["policy_sha256"]:
             raise RunnerFailure(
                 f"role projection source sha256 differs for {projection_id}"
+            )
+        expected_redacted_sha256 = document_sha256(expected_policy_document)
+        if observed.get("redacted_policy_sha256") != expected_redacted_sha256:
+            raise RunnerFailure(
+                f"role projection redacted sha256 differs for {projection_id}"
             )
     return len(rebuilt)
 

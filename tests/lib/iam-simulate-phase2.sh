@@ -789,7 +789,7 @@ PY
     set -e
     if [ "$real_rc" -ne 0 ] && \
        grep -Fq 'AWS simulator response lacks EvaluationResults array' <<<"$output" && \
-       [ "$(phase2_call_count iam simulate-custom-policy)" -eq 232 ] && \
+       [ "$(phase2_call_count iam simulate-custom-policy)" -eq 233 ] && \
        census="$(validate_real_report "$VECTORS" "$report" 2>&1)"; then
       pass_case "real-vector batch safety and report completeness -> $census"
     else
@@ -2854,6 +2854,21 @@ mutate_evidence_hash_chain() {
   local submode=$1
   shift
   python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-evidence-hash-chain "$@" "$submode"
+}
+
+mutate_role_redacted_policy_hash() {
+  local submode=$1
+  shift
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-role-redacted-policy-hash \
+    "$@" "$submode"
+}
+
+validate_renderer_role_passing() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" validate-renderer-role-passing "$@"
+}
+
+mutate_renderer_redacted_hash_branch() {
+  python3 "$IAM_SIM_FIXTURE_FACTORY" mutate-renderer-redacted-hash-branch "$@"
 }
 
 mutate_role_projection_source_binding() {

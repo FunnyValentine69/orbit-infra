@@ -787,11 +787,17 @@ def role_hash_chain(custom: dict, role: dict) -> str | None:
         return "source-document"
     policy_document = projection.get("policy_document")
     policy_sha256 = projection_ref.get("policy_sha256")
-    if (
-        not isinstance(policy_document, str)
-        or not isinstance(policy_sha256, str)
-        or hashlib.sha256(policy_document.encode("utf-8")).hexdigest() != policy_sha256
-    ):
+    if not isinstance(policy_document, str) or not isinstance(policy_sha256, str):
+        return "projection-policy"
+    document_hash = hashlib.sha256(policy_document.encode("utf-8")).hexdigest()
+    if "recorded_at" in role_payload:
+        redacted_policy_sha256 = projection.get("redacted_policy_sha256")
+        if (
+            not isinstance(redacted_policy_sha256, str)
+            or document_hash != redacted_policy_sha256
+        ):
+            return "projection-policy"
+    elif document_hash != policy_sha256:
         return "projection-policy"
     put_hashes = submitted_hashes(role, "put_role_policy")
     if put_hashes != [policy_sha256]:
@@ -1031,7 +1037,7 @@ CATEGORIES = (
     "not-simulatable",
 )
 EXPECTED_COUNTS = {
-    "simulator-decision": 232,
+    "simulator-decision": 233,
     "simulator-attribution-only": 8,
     "live-call-only": 6,
     "not-simulatable": 43,
@@ -1126,8 +1132,8 @@ for case_id, expected in matrix.items():
 counts = Counter(entry["category"] for entry in taxonomy)
 if dict(counts) != EXPECTED_COUNTS:
     fail(f"taxonomy counts differ: {dict(counts)}")
-if sum(counts.values()) != 289:
-    fail(f"taxonomy category sum is {sum(counts.values())}, expected 289")
+if sum(counts.values()) != 290:
+    fail(f"taxonomy category sum is {sum(counts.values())}, expected 290")
 PY
 }
 
@@ -1253,10 +1259,10 @@ for entry in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")):
     print(entry["case_id"], entry["document"], entry["sid"], entry["suffix"], sep="\t")
 PY
   )
-  if [ "$round_trip_ok" -eq 1 ] && [ "$round_trip_count" -eq 289 ]; then
-    pass_case "case-id exact-prefix round trip over 289 cases"
+  if [ "$round_trip_ok" -eq 1 ] && [ "$round_trip_count" -eq 290 ]; then
+    pass_case "case-id exact-prefix round trip over 290 cases"
   else
-    fail_case "case-id exact-prefix round trip over 289 cases" \
+    fail_case "case-id exact-prefix round trip over 290 cases" \
       "stopped at case $round_trip_count"
   fi
 
@@ -1315,11 +1321,61 @@ if [ -f "$VALIDATOR" ]; then
 
 
   if output="$(python3 "$VALIDATOR" "$VECTORS" --jsonl 2>&1)" && \
-     [ "$(wc -l <<<"$output" | tr -d ' ')" -eq 240 ] && \
-     [ "$(jq -s 'map(.case_id) | unique | length' <<<"$output")" -eq 240 ]; then
+     [ "$(wc -l <<<"$output" | tr -d ' ')" -eq 241 ] && \
+     [ "$(jq -s 'map(.case_id) | unique | length' <<<"$output")" -eq 241 ]; then
     pass_case "schema validator loads the vector directory in one JSONL pass"
   else
     fail_case "schema validator loads the vector directory in one JSONL pass" "$output"
+  fi
+
+  if output="$(python3 - \
+    "$VECTORS/aws_iam_policy.deployer_data__SnsSubscriptionManage.json" 2>&1 <<'PY_SNS_RESOURCE_CASE'
+import json
+from pathlib import Path
+import sys
+
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+case_id = (
+    "case:aws_iam_policy.deployer_data:SnsSubscriptionManage:"
+    "ALL:resource:supplied"
+)
+matches = [case for case in payload.get("cases", []) if case.get("case_id") == case_id]
+if len(matches) != 1:
+    raise SystemExit(
+        f"FAIL: SNS resource-supplied decision case count is {len(matches)}, expected 1"
+    )
+expected = {
+    "case_id": case_id,
+    "simulation_mode": "custom",
+    "assertion_kind": "decision",
+    "action_names": [
+        "sns:GetSubscriptionAttributes",
+        "sns:SetSubscriptionAttributes",
+        "sns:Unsubscribe",
+    ],
+    "resource_arns": [
+        "arn:aws:sns:us-east-1:${ACCOUNT_ID}:orbit-infra-${SUFFIX}-preview"
+    ],
+    "context_entries": [{
+        "ContextKeyName": "aws:ResourceTag/Project",
+        "ContextKeyValues": ["orbit-infra"],
+        "ContextKeyType": "string",
+    }],
+    "expect": {
+        "decision": "implicitDeny",
+        "matched_sid_required": [],
+        "matched_sid_forbidden": ["SnsSubscriptionManage"],
+    },
+}
+if matches[0] != expected:
+    raise SystemExit("FAIL: SNS resource-supplied decision case differs from contract")
+print("PASS: SNS resource-supplied star-only decision case")
+PY_SNS_RESOURCE_CASE
+  )"; then
+    pass_case "${output#PASS: }"
+  else
+    fail_case "SNS resource-supplied star-only decision case" "$output"
   fi
 
   examples_dir="$tmp_dir/schema-examples"
@@ -1713,7 +1769,7 @@ if output="$(
   validate_completeness "$TAXONOMY" \
     "$completeness_mutants/unresolved-exemption/vectors" \
     "$completeness_mutants/unresolved-exemption/unresolved.json" 2>&1
-)" && grep -Fq "(239 case(s) in 81 envelope(s), 1 unresolved)" <<< "$output"; then
+)" && grep -Fq "(240 case(s) in 81 envelope(s), 1 unresolved)" <<< "$output"; then
   pass_case "completeness unresolved exemption mutation -> $output"
 else
   fail_case "completeness unresolved exemption mutation did not pass as required" "$output"
@@ -1737,6 +1793,77 @@ fi
 
 echo "== iam simulate contracts: EVIDENCE =="
 group_failures=$failures
+if output="$(python3 - "$REPO_ROOT/RUNBOOKS.md" 2>&1 <<'PY_ROLE_HASH_DOC'
+from pathlib import Path
+import sys
+
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = (
+    "`redacted_policy_sha256`",
+    "redacted `policy_document`",
+    "`policy_sha256`",
+)
+missing = [item for item in required if item not in text]
+if missing:
+    raise SystemExit(f"FAIL: RUNBOOKS role-report hash field note is missing {missing[0]}")
+print("PASS: RUNBOOKS distinguishes raw and redacted role-policy digests")
+PY_ROLE_HASH_DOC
+)"; then
+  pass_case "${output#PASS: }"
+else
+  fail_case "RUNBOOKS role-report field note" "$output"
+fi
+
+if output="$(python3 - \
+  "$REPO_ROOT/TODO.md" "$MATRIX" "$REPO_ROOT/bootstrap/roles.tf" \
+  "$REPO_ROOT/STATE.md" 2>&1 <<'PY_PACKET_DOCS'
+from pathlib import Path
+import re
+import sys
+
+
+todo, matrix, roles, state = (
+    Path(path).read_text(encoding="utf-8") for path in sys.argv[1:]
+)
+for item in ("P5-38", "P5-39", "P5-40", "P5-41"):
+    matches = re.findall(rf"(?m)^- \[ \] {item}:.*$", todo)
+    if (
+        len(matches) != 1
+        or "parked behind P0-3b" not in matches[0]
+        or "real-AWS evidence required" not in matches[0]
+    ):
+        raise SystemExit(
+            f"FAIL: TODO {item} is not parked behind P0-3b with a real-AWS reason"
+        )
+if not re.search(r"(?m)^- \[ \] P5-68:.*\.terraform/modules/.*$", todo):
+    raise SystemExit(
+        "FAIL: TODO P5-68 does not file the Terraform module-cache exemption ordering finding"
+    )
+follow_ups = {
+    "P5-38": "context population is unverified",
+    "P5-39": "route53:VPCs population is unverified",
+    "P5-40": "operation-to-namespace resolution is unverified",
+    "P5-41": "per-session network ARNs are runtime-only",
+}
+for item, reason in follow_ups.items():
+    if f"TODO {item}; deferred P0-3b: {reason}" not in matrix:
+        raise SystemExit(
+            f"FAIL: IAM matrix Follow-up for {item} lacks its P0-3b reason"
+        )
+if "iam-condition-keys.md" in roles or roles.count("docs/iam-matrix.md") != 18:
+    raise SystemExit(
+        "FAIL: bootstrap role comments do not cite docs/iam-matrix.md at all 18 sites"
+    )
+if not re.search(r"(?m)^LOCATION   fix/iam-sim-followups-2$", state):
+    raise SystemExit("FAIL: STATE LOCATION does not name fix/iam-sim-followups-2")
+print("PASS: P0-3b deferrals, P5-68 filing, matrix citations, and STATE location")
+PY_PACKET_DOCS
+)"; then
+  pass_case "${output#PASS: }"
+else
+  fail_case "P0-3b deferrals and packet documentation" "$output"
+fi
 if output="$(validate_generator_drift_scope "${EVIDENCE_GENERATOR_FILES[@]}" 2>&1)"; then
   pass_case "Evidence generator drift scope includes both simulator runners"
 else
@@ -1752,11 +1879,17 @@ cp -- "$REPO_ROOT/tests/fixtures/iam-matrix/base-plan.json" "$recorded_projectio
 account_projection_plan="$tmp_dir/role-projection-live-account-plan.json"
 account_projection_report="$tmp_dir/role-projection-redacted-report.json"
 account_projection_core_mutant="$tmp_dir/iam-simulate-core-unredacted-projection.py"
+account_projection_custom="$tmp_dir/role-projection-live-account-custom.json"
+account_projection_missing="$tmp_dir/role-projection-redacted-hash-missing.json"
+renderer_live_hash_case="case:aws_iam_policy.deployer_data:ClickhouseSecretCreateWithTag:ALL:aws:RequestTag/Project:matching"
+renderer_mutation_case="case:aws_iam_role_policy.plan_reader_deny:DenyListBucketMissingPrefix:ALL:s3:prefix:absent"
+renderer_hash_render="$tmp_dir/renderer-redacted-hash-live"
 python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
   build-role-projection-account-redaction \
   "$recorded_projection_plan" \
   "$ROLE_EVIDENCE_REPORT" "$account_projection_plan" \
-  "$account_projection_report"
+  "$account_projection_report" \
+  "$CUSTOM_EVIDENCE_REPORT" "$account_projection_custom"
 if output="$(validate_plan_role_projections \
   "$account_projection_plan" "$account_projection_report" 2>&1)"; then
   pass_case "role projection comparison accepts report-redacted account ids"
@@ -1774,6 +1907,71 @@ if output="$(validate_plan_role_projections \
   pass_case "evidence role projection account redaction mutation restored PASS"
 else
   fail_case "evidence role projection account redaction mutation restoration" "$output"
+fi
+
+dispatch_registered_mutation evidence-role-projection-redacted-hash-required \
+  "$account_projection_report" "$account_projection_missing"
+expect_failure "evidence role projection redacted hash required" \
+  "role projection redacted sha256 differs for plan-reader:combined" \
+  validate_plan_role_projections \
+    "$account_projection_plan" "$account_projection_missing"
+
+if output="$(
+  {
+    run_report_renderer "$IAM_SIM_REPORT_RENDERER" \
+      "$account_projection_custom" "$account_projection_report" \
+      "$renderer_hash_render"
+    validate_renderer_role_passing \
+      "$renderer_hash_render/IAM_SIMULATION_REPORT.md" "$renderer_live_hash_case"
+  } 2>&1
+)"; then
+  pass_case "renderer accepts live-account redacted projection hash chain"
+else
+  fail_case "renderer live-account redacted projection hash chain" "$output"
+fi
+
+while IFS='|' read -r mutation_id mutation_source mutation_custom mutation diagnostic; do
+  mutation_role="$tmp_dir/$mutation_id.json"
+  mutation_render="$tmp_dir/rendered-$mutation_id"
+  dispatch_registered_mutation "$mutation_id" \
+    "$mutation_source" "$mutation_role"
+  if output="$(
+    run_report_renderer "$IAM_SIM_REPORT_RENDERER" \
+      "$mutation_custom" "$mutation_role" "$mutation_render"
+    python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" \
+      validate-renderer-role-outcome \
+      "$mutation_render/IAM_SIMULATION_REPORT.md" "$renderer_mutation_case"
+  )"; then
+    pass_case "$mutation_id mutation -> FAIL: $diagnostic: $renderer_mutation_case"
+  else
+    fail_case "$mutation_id" "$output"
+  fi
+done <<HASH_MUTATIONS
+renderer-role-redacted-digest-doctored|$account_projection_report|$account_projection_custom|digest|renderer accepted doctored redacted_policy_sha256
+renderer-role-redacted-document-doctored|$account_projection_report|$account_projection_custom|document|renderer accepted doctored redacted policy_document
+renderer-role-redacted-hash-missing-live|$account_projection_report|$account_projection_custom|missing|renderer accepted live-account report without redacted_policy_sha256
+renderer-role-redacted-hash-missing-placeholder|$ROLE_EVIDENCE_REPORT|$CUSTOM_EVIDENCE_REPORT|missing|renderer accepted recorded_at report without redacted_policy_sha256
+HASH_MUTATIONS
+
+placeholder_missing_role="$tmp_dir/renderer-redacted-hash-placeholder-missing.json"
+placeholder_missing_render="$tmp_dir/renderer-redacted-hash-placeholder-missing"
+branch_mutant="$tmp_dir/iam-simulate-report-redacted-hash-branch-mutant.sh"
+dispatch_registered_mutation renderer-role-redacted-hash-missing-placeholder \
+  "$ROLE_EVIDENCE_REPORT" "$placeholder_missing_role"
+dispatch_registered_mutation renderer-role-redacted-hash-recorded-at-branch \
+  "$IAM_SIM_REPORT_RENDERER" "$branch_mutant"
+if output="$(
+  {
+    run_report_renderer "$branch_mutant" \
+      "$CUSTOM_EVIDENCE_REPORT" "$placeholder_missing_role" \
+      "$placeholder_missing_render"
+    validate_renderer_role_passing \
+      "$placeholder_missing_render/IAM_SIMULATION_REPORT.md" "$renderer_mutation_case"
+  } 2>&1
+)"; then
+  pass_case "renderer role redacted hash recorded at branch mutation -> FAIL: renderer accepted recorded_at report without redacted_policy_sha256: $renderer_mutation_case"
+else
+  fail_case "renderer role redacted hash recorded at branch" "$output"
 fi
 
 if output="$(validate_plan_role_projections \
@@ -2011,8 +2209,8 @@ python3 "$REPO_ROOT/tests/lib/iam-simulate-fixtures.py" build-modern-evidence \
   "$modern_custom" "$modern_role"
 sed 's/AWS-SIMULATED 2026-09-11 /AWS-SIMULATED 2026-09-10 /g' \
   "$MATRIX" >"$modern_matrix"
-if [ "$(grep -o 'AWS-SIMULATED 2026-09-10 ' "$modern_matrix" | wc -l | tr -d ' ')" -ne 219 ]; then
-  fail_case "modern Evidence matrix fixture" "expected 219 synthetic 2026-09-10 labels"
+if [ "$(grep -o 'AWS-SIMULATED 2026-09-10 ' "$modern_matrix" | wc -l | tr -d ' ')" -ne 216 ]; then
+  fail_case "modern Evidence matrix fixture" "expected 216 synthetic 2026-09-10 labels"
 fi
 if output="$(
   "$IAM_SIM_REPORT_RENDERER" \
@@ -2225,6 +2423,7 @@ for projection in hyphenated_role["projection"]["roles"]:
         projection["policy_document"].encode("utf-8")
     ).hexdigest()
     projection["policy_sha256"] = projection_sha256
+    projection["redacted_policy_sha256"] = projection_sha256
     for record in hyphenated_role["records"]:
         if record["projection"]["projection_id"] != projection["projection_id"]:
             continue
@@ -2584,7 +2783,7 @@ PY_EVIDENCE_MUTANTS
     TMPDIR="$tmp_dir" IAM_MATRIX_SKIP_NEGATIVES=1 \
       bash "$REPO_ROOT/tests/iam-matrix-contracts.sh" 2>&1
   )" && grep -Fq \
-      'PASS: IAM matrix promoted record hash-list lengths match vectors (219 cases)' \
+      'PASS: IAM matrix promoted record hash-list lengths match vectors (216 cases)' \
       <<<"$output"; then
     pass_case "evidence promoted empty hash list mutation restored PASS"
   else
@@ -2610,7 +2809,7 @@ PY_EVIDENCE_MUTANTS
   if output="$(run_iam_matrix_plan_evidence_mutation \
     "$CUSTOM_EVIDENCE_REPORT" "$ROLE_EVIDENCE_REPORT" 2>&1)" && \
      grep -Fq \
-       'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (219 cases)' \
+       'PASS: IAM matrix promoted ordered policy and boundary hashes bind to plan/vector bytes (216 cases)' \
        <<<"$output"; then
     pass_case "evidence promoted second policy hash mutation restored PASS"
   else
