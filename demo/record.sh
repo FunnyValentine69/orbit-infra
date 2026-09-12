@@ -132,6 +132,71 @@ state_list() {
   return "$rc"
 }
 
+list_recording_state_versions() {
+  local bucket=$1
+  local prefix=$2
+  local key_marker=""
+  local version_marker=""
+  local prior_token=""
+  local response is_truncated next_key next_version token
+  local inventory='{"Versions":[],"DeleteMarkers":[]}'
+  local -a args
+
+  while :; do
+    args=(
+      s3api list-object-versions --bucket "$bucket" --prefix "$prefix"
+      --output json --no-paginate
+    )
+    if [ -n "$key_marker" ]; then
+      args+=(--key-marker "$key_marker")
+      if [ -n "$version_marker" ]; then
+        args+=(--version-id-marker "$version_marker")
+      fi
+    fi
+    if ! response="$(scripts/aws-cli.sh "${args[@]}")"; then
+      echo "could not list retained state versions" >&2
+      return 1
+    fi
+    if ! jq -e '
+      type == "object"
+      and (.IsTruncated | type == "boolean")
+      and ((has("Versions") | not) or (.Versions | type == "array"))
+      and ((has("DeleteMarkers") | not) or (.DeleteMarkers | type == "array"))
+      and all((.Versions // [])[], (.DeleteMarkers // [])[];
+        type == "object" and (.Key | type == "string"))
+    ' <<< "$response" >/dev/null 2>&1; then
+      echo "list-object-versions returned malformed output" >&2
+      return 1
+    fi
+    if ! inventory="$(jq -c --argjson page "$response" '
+      .Versions += ($page.Versions // [])
+      | .DeleteMarkers += ($page.DeleteMarkers // [])
+    ' <<< "$inventory")"; then
+      echo "could not combine retained state inventory" >&2
+      return 1
+    fi
+    is_truncated="$(jq -r '.IsTruncated' <<< "$response")"
+    [ "$is_truncated" = true ] || break
+    if ! next_key="$(
+      jq -er '.NextKeyMarker | select(type == "string" and length > 0)' \
+        <<< "$response"
+    )"; then
+      echo "truncated state-version response has no NextKeyMarker" >&2
+      return 1
+    fi
+    next_version="$(jq -r '.NextVersionIdMarker // empty' <<< "$response")"
+    token="${next_key}|${next_version}"
+    if [ "$token" = "$prior_token" ]; then
+      echo "state-version pagination did not advance" >&2
+      return 1
+    fi
+    prior_token=$token
+    key_marker=$next_key
+    version_marker=$next_version
+  done
+  printf '%s\n' "$inventory"
+}
+
 assert_generator_clean() {
   generator_clean_check . || die "generator inputs are not clean (reason above); commit or remove them before recording"
 }
@@ -189,7 +254,6 @@ preflight() {
   command -v ffprobe >/dev/null || die "ffprobe is required"
 
   if [ "$RECORDING_KIND" = verify ]; then
-    command -v tesseract >/dev/null || die "tesseract is required"
     command -v jq >/dev/null || die "jq is required"
     assert_generator_clean
     GENERATOR_COMMIT=$(git rev-parse --short=7 HEAD) || \
@@ -197,10 +261,9 @@ preflight() {
     {
       vhs --version
       ffmpeg -version | head -1
-      tesseract --version 2>&1 | head -1
       jq --version
     } > "$RUN/versions.txt" || die "could not record tool versions"
-    [ "$(grep -c . "$RUN/versions.txt")" -eq 4 ] || \
+    [ "$(grep -c . "$RUN/versions.txt")" -eq 3 ] || \
       die "tool version capture incomplete"
     cat "$RUN/versions.txt" || die "could not print tool versions"
     phase_ok
@@ -290,7 +353,7 @@ inject_check() {
 
 assert_steps() {
   local expected produced step value after file name final_lease inventory
-  local version_count marker_count state_bucket
+  local version_count marker_count state_bucket state_key
   phase_begin assert_steps
   expected="$RUN/expected-steps.txt"
   produced="$RUN/produced-steps.txt"
@@ -348,12 +411,12 @@ assert_steps() {
       state_bucket="$(sed -n \
         "s/^LEASE_BUCKET=\"\${LEASE_BUCKET:-\\([^\"]*\\)}\"$/\\1/p" scripts/lease.sh)"
       [ -n "$state_bucket" ] || die "could not resolve the lease state bucket"
-      inventory="$(scripts/aws-cli.sh s3api list-object-versions \
-        --bucket "$state_bucket" --prefix "envs/preview/$ENV_ID" \
-        --output json --no-paginate)" || \
+      state_key="envs/preview/$ENV_ID.tfstate"
+      inventory="$(list_recording_state_versions \
+        "$state_bucket" "envs/preview/$ENV_ID")" || \
         die "could not inventory retained state versions"
-      version_count="$(jq '(.Versions // []) | length' <<< "$inventory")"
-      marker_count="$(jq '(.DeleteMarkers // []) | length' <<< "$inventory")"
+      version_count="$(jq --arg key "$state_key" '[(.Versions // [])[] | select(.Key == $key or .Key == ($key + ".tflock"))] | length' <<< "$inventory")"
+      marker_count="$(jq --arg key "$state_key" '[(.DeleteMarkers // [])[] | select(.Key == $key or .Key == ($key + ".tflock"))] | length' <<< "$inventory")"
       [ "$version_count" -eq 0 ] && [ "$marker_count" -eq 0 ] || \
         die "state or lock versions remain after Stage 2"
       FINAL_STATUS=closed
@@ -374,7 +437,7 @@ assert_steps() {
   phase_ok
 }
 inspect_artifact() {
-  local size duration frame_info frames frame_rate minimum_frames floor
+  local size duration frame_info frames frame_rate minimum_frames floor grep_rc
   local local_user local_host
   phase_begin inspect_artifact
   [ -s "$RUN/demo.gif" ] || die "demo.gif missing or empty"
@@ -427,14 +490,32 @@ inspect_artifact() {
 
   local_user=$(id -un)
   local_host=$(hostname -s 2>/dev/null || hostname)
-  if grep -qE '/Users/|/home/|AKIA|@' "$RUN/demo.txt"; then
+  set +e
+  grep -qE '/Users/|/home/|AKIA|@' "$RUN/demo.txt"
+  grep_rc=$?
+  set -e
+  if [ "$grep_rc" -eq 0 ]; then
     die "demo.txt contains environment-specific text (path/access-key/email pattern); not publishing"
+  elif [ "$grep_rc" -ne 1 ]; then
+    die "grep failed on demo.txt"
   fi
-  if grep -oE '[0-9]{12}' "$RUN/demo.txt" | grep -vq 000000000000; then
+  set +e
+  grep -oE '[0-9]{12}' "$RUN/demo.txt" | grep -vq 000000000000
+  grep_rc=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${grep_rc[0]}" -gt 1 ] || [ "${grep_rc[1]}" -gt 1 ]; then
+    die "grep failed on demo.txt"
+  elif [ "${grep_rc[1]}" -eq 0 ]; then
     die "demo.txt contains environment-specific text (12-digit account number); not publishing"
   fi
-  if grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$RUN/demo.txt" | \
-    grep -vqE '^203\.0\.113\.|^127\.0\.0\.1$|^10\.|^0\.0\.0\.0$'; then
+  set +e
+  grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$RUN/demo.txt" | \
+    grep -vqE '^203\.0\.113\.|^127\.0\.0\.1$|^10\.|^0\.0\.0\.0$'
+  grep_rc=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${grep_rc[0]}" -gt 1 ] || [ "${grep_rc[1]}" -gt 1 ]; then
+    die "grep failed on demo.txt"
+  elif [ "${grep_rc[1]}" -eq 0 ]; then
     die "demo.txt contains environment-specific text (non-allowlisted IP address); not publishing"
   fi
   if grep -qiF "$local_user" "$RUN/demo.txt"; then
@@ -453,7 +534,7 @@ inspect_artifact() {
 build_manifest() {
   local vhs_version ttyd_version ffmpeg_version terraform_version localstack_version
   local recorded_from recorder recorded_on plan_line apply_line destroy_line sha
-  local canonicalizer_sha
+  local canonicalizer_sha contract_suite_fixtures fixture fixture_name
   phase_begin build_manifest
   sha=$(shasum -a 256 "$RUN/demo.gif" | awk '{print $1}')
 
@@ -506,6 +587,12 @@ build_manifest() {
       ;;
     verify)
       canonicalizer_sha=$(shasum -a 256 scripts/sbom-canon.sh | awk '{print $1}')
+      contract_suite_fixtures=
+      while IFS= read -r fixture; do
+        [ -f "$fixture" ] || die "SBOM contract fixture set is empty"
+        fixture_name=${fixture##*/}
+        contract_suite_fixtures="${contract_suite_fixtures:+$contract_suite_fixtures, }$fixture_name"
+      done < <(printf '%s\n' tests/fixtures/sbom/*.spdx.json | LC_ALL=C sort)
       grep -Fxq 'identical=0' "$RUN/canon-timestamp.log" || \
         die "timestamp canonicalization result is not identical"
       grep -Fxq 'identical=1' "$RUN/canon-checksum.log" || \
@@ -513,13 +600,14 @@ build_manifest() {
       grep -Fxq 'PASS: SBOM canonicalization contracts (14 assertions)' \
         "$RUN/contracts.log" || die "SBOM contract result is missing"
       {
-        printf 'recorded_from=offline SPDX fixture verification\n'
+        printf 'recorded_from=demo/demo-supplychain.tape\n'
         printf 'generator_commit=%s (the tree at this commit holds the active recording generator closure)\n' "$GENERATOR_COMMIT"
         printf 'canonicalizer_sha256=%s\n' "$canonicalizer_sha"
-        printf 'fixtures_used=base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json\n'
-        printf 'timestamp_result=identical\n'
-        printf 'checksum_result=different\n'
-        printf 'contracts_result=14 assertions\n'
+        printf 'comparison_fixtures_used=base.spdx.json, timestamp-only-difference.spdx.json, same-inventory-different-checksum.spdx.json\n'
+        printf 'contract_suite_fixtures_used=%s\n' "$contract_suite_fixtures"
+        printf 'timestamp_result=PASS\n'
+        printf 'checksum_result=PASS\n'
+        printf 'contracts_result=PASS\n'
         printf 'artifact_sha256=%s\n' "$sha"
         printf 'artifact_size=%s bytes\n' "$GIF_SIZE"
         printf 'artifact_duration=%s s\n' "$GIF_DURATION"
@@ -594,7 +682,8 @@ render_provenance() {
       rewrite_provenance_row recorded_from recorded_from
       rewrite_provenance_row generator_commit 'generator commit'
       rewrite_provenance_row canonicalizer_sha256 'canonicalizer sha256'
-      rewrite_provenance_row fixtures_used 'fixtures used'
+      rewrite_provenance_row comparison_fixtures_used 'comparison fixtures used'
+      rewrite_provenance_row contract_suite_fixtures_used 'contract suite fixtures used'
       rewrite_provenance_row timestamp_result 'timestamp-variant result'
       rewrite_provenance_row checksum_result 'checksum-variant result'
       rewrite_provenance_row contracts_result 'contracts result'

@@ -440,17 +440,25 @@ That command writes `docs/assets/storyboard.svg` and
 `bash tests/storyboard-contracts.sh` before publishing them together.
 
 For the recordings, start LocalStack, apply the LocalStack bootstrap once, and
-build the placeholder image. Record lifecycle, lease, and supply-chain evidence
-in order with `make demo`, `make demo NAME=lease`, and `make demo NAME=supply`,
-or run the same sequence with `make demo-all`. Each recorder invocation runs
-validation, teardown, provenance rendering, and publication as one guarded sequence;
-publication uses two independent renames, so interruption can leave a mixed pair
-that the provenance contract exposes and a rerun repairs. Do not edit those
+build the placeholder image. The offline supply recording requires vhs,
+FFmpeg/ffprobe, and jq; it does not require tesseract. Record lifecycle, lease,
+and supply-chain evidence in order with `make demo`, `make demo NAME=lease`,
+and `make demo NAME=supply`, or run the same sequence with `make demo-all`. Each
+recorder invocation runs validation, teardown, provenance rendering, and
+publication as one guarded sequence; publication uses two independent renames,
+so interruption can leave a mixed pair that the provenance contract exposes and
+a rerun repairs. Do not edit those
 generated files. The lease recording owns only its unique owner token and
-generation, and points here when a claim or manual-recovery state prevents safe
-cleanup.
+generation. Its final inventory counts only `envs/preview/<env_id>.tfstate` and
+that key's `.tflock`; sibling prefixes do not block publication. The recorder
+points here when a claim or manual-recovery state prevents safe cleanup.
 
 ## Sweeper
+
+Every new lease requires `lease.sh open --owner <nonempty>`. Stage 1
+`begin-cleanup` and Stage 2 `claim-stage2` require `--expect-owner` from the
+same fresh lease read as the generation and status. Legacy ownerless records
+fail these owner-bound predicates without mutation and require manual inspection.
 
 The workflow runs nightly at 03:17 UTC; the odd minute avoids common
 top-of-hour scheduling congestion. It runs only on `main` and only against

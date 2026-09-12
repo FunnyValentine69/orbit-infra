@@ -118,26 +118,27 @@ temporary file; `scripts/fixture-hygiene.sh` must accept it before it replaces
 the tracked fixture. The check rejects `prior_state`, true leaves below `*_sensitive` or
 `sensitive_values`, objects marked `"sensitive": true`, non-empty top-level
 `variables` because variables must not be serialized into fixtures,
-non-placeholder 12-digit numbers, IPv4 literals outside the documented
-RFC 1918, unspecified-address, and loopback allowances, and email addresses.
-JSON string keys and values are decoded before IPv6 candidates are parsed
-with Python's `ipaddress`: the default route, loopback, link-local, unique-local,
-unspecified, and `2001:db8::/32` documentation range are allowed, while other
-valid IPv6 literals are rejected. Invalid colon-delimited tokens such as digests
-are skipped. Fixtures are re-recorded
-from those roots, never edited. The real `envs/preview` plan is never committed
-because it can carry prior state and sensitive values.
+non-placeholder 12-digit numbers, and email addresses. IPv4 accepts the
+exact literal `0.0.0.0/0` plus networks contained by loopback, RFC 1918, or
+RFC 5737 documentation ranges. JSON string keys and values are decoded before
+IP candidates are parsed with Python's `ipaddress`; IPv4-mapped IPv6 uses the
+same IPv4 containment policy. Native IPv6 accepts the default route, loopback,
+link-local, unique-local, unspecified, and `2001:db8::/32` documentation range,
+while other valid IPv6 literals are rejected. Invalid colon-delimited tokens
+such as digests are skipped. Fixtures are re-recorded from those roots, never
+edited. The real `envs/preview` plan is never committed because it can carry
+prior state and sensitive values.
 
 ## Preview source and plan contracts
 
 `tests/preview-source-contracts.sh` comment-strips and parses the root preview
-Terraform without providers. Five predicates enforce exactly two direct
+Terraform without providers. Six predicates enforce exactly two direct
 `aws_security_group.alb` references, service-group-only workload module wiring,
-no security-group indirection/read-back/data lookup, no load-balancer data-source
-lookup/read-back, or bracket traversal on the protected load-balancer and
-security-group resources, the three-entry root
-security-group argument allowlist, and the sole statement object's exact two
-partition-derived `Resource` entries in the data bucket policy. Quoted-key
+the exact root-module data-source multiset `aws_caller_identity.current` plus
+`aws_partition.current`, no protected-resource read-back or bracket traversal,
+the three-entry root security-group argument allowlist, and the sole statement
+object's exact two partition-derived `Resource` entries in the data bucket
+policy. Quoted-key
 bracket traversals are normalized before the general token scans; independently,
 each protected resource token (`aws_lb.this`, `aws_security_group.alb`,
 `aws_security_group.service`) is matched against a per-token attribute
@@ -146,8 +147,9 @@ attribute and nothing else that continues the traversal (only a closing
 delimiter, comma, whitespace, or end of line may follow), so wrapped
 traversals such as `one([aws_lb.this]).security_groups` or
 `[aws_security_group.service][0].ingress` fail by construction.
-Its 26 scratch-source mutants include the load-balancer data-source read-back
-bypass, spaced and computed bracket traversals, a legacy-splat load-balancer
+Its executable registry asserts 29 scratch-source mutants. They include
+load-balancer-by-ARN, Resource Groups Tagging API, duplicate caller-identity,
+spaced and computed bracket traversals, a legacy-splat load-balancer
 read-back, wrapped `one([...])` and bracket-indexed read-backs, the nested canonical `Resource`
 decoy with a local-backed statement resource,
 heredoc rejection, exact root-binding multiplicity, and fail-closed `.tf.json`
@@ -192,6 +194,8 @@ consistent `passed:false` live result before deadline failure, exact ECS
 required AWS destroy image references and their Terraform forwarding,
 zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
 their `failures` array, atomic owner-plus-manifest lease open with one PUT,
+mandatory nonempty owner input on open, mandatory matching owner input on Stage 1
+and Stage 2 claims, missing/empty/mismatched-owner refusal without mutation,
 same-environment second-open refusal, empty-`--from` refusal,
 generation/status-bound Stage 1, exclusive Stage-1 and Stage-2 claims,
 expected-generation forwarding into Stage 2 claims, claim-bound manifest writes, duplicate-close refusal, generic-transition
@@ -200,7 +204,7 @@ owner- and generation-bound close refusals, the three-attempt lease limit,
 audited force retry, independent Stage 2 attempts and escalation, the
 Stage-2 generic-transition guard, cap escalation with CAS-loss refusal, generation
 tombstone pruning and reopening, and end-to-end Stage-1 claim release with state
-retention. The suite currently reports 40 cases.
+retention. The suite currently reports 55 cases.
 
 `tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
 Makefile contracts, including the LocalStack owner/rerun guards and the
@@ -209,7 +213,8 @@ close-and-sweep workflow blocks against controlled lease/close/sweep scripts.
 The in-job sweep block must close on attempt three, stop at 20 `closing`
 attempts, reject an unexpected status after one attempt, and fail immediately
 when the sweep command fails. The suite verifies the observed generation,
-status, and owner arguments, derives the two-hour Stage 2 takeover threshold
+status, and owner arguments and byte-matches the sweeper workflow's exact
+`scripts/sweep.sh env "$ENV_ID"` command, then derives the two-hour Stage 2 takeover threshold
 from the sweeper workflow timeout, checks the PyYAML import guard, and requires
 the gates job to install the pinned PyYAML before `scripts/gates.sh`. It runs
 `tests/dispatch-ordering-contracts.sh`, whose jq-level probes extract the live
@@ -239,9 +244,15 @@ bash tests/demo-contracts.sh
 
 Its six groups cover the exact per-name environment and unknown-name refusal;
 all three tapes and their required output; kind-specific provenance and generator
-closures, including ignored Terraform and Rego input refusal; the bounded,
-owner- and generation-fenced lease recovery helper; the existing lifecycle
-transaction failure table; and fake end-to-end lease and supply-chain recordings.
+closures, including default refusal of ignored closure inputs with only the
+declared runtime/cache exemptions; the bounded, owner- and generation-fenced
+lease recovery helper; the existing lifecycle transaction failure table; and
+fake end-to-end lease and supply-chain recordings. Artifact validation parses
+GIF frames and duration with Python's standard library. Supply provenance binds
+the comparison fixtures separately from the sorted full contract-suite fixture
+set and kills well-formed value substitutions. Grep error injection covers all
+three hygiene checks, and final inventory distinguishes exact state/lock keys
+from sibling prefixes.
 Lease cases include repeat recording from `closed`, abort and claim states,
 terminal foreign-owner refusals, mid-loop manual and Stage 2 claim races, teardown
 generation replacement, one- and two-pass sleeps, exhaustion, and an injected
@@ -389,10 +400,11 @@ appears after the fast pre-check, without attempting to schedule that race in
 the test.
 
 `tests/bootstrap-override-contracts.sh` applies the same ownership contract to
-both Makefile LocalStack bootstrap targets. Its 12 cases cover regular and
+both Makefile LocalStack bootstrap targets. Its 16 cases cover regular and
 dangling operator-owned sentinels with zero Terraform calls, successful
-creation and cleanup, directory-backed example-source copy failures that do not
-depend on permission bits and occur before any Terraform call, and injected
+creation and cleanup, permission failures surfaced verbatim, create races
+classified only after re-statting the destination, directory-backed
+example-source copy failures before any Terraform call, and injected
 init/plan/apply failures with their original recipe exit
 status and cleanup. It runs from `make test`.
 
@@ -712,7 +724,7 @@ failure accounting, cap escalation, exact state and `.tflock` cleanup with
 sibling isolation, an executable single-key selector mutant, prune-time
 If-Match loss, and ETag-conditional tombstone replacement, plus a TERM
 delivered during a refused Stage-2 takeover claim's own fresh read. The suite
-currently reports 39 cases.
+currently reports 41 cases.
 
 Fixture provenance:
 

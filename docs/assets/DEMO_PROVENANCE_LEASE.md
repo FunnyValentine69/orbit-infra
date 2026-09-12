@@ -5,17 +5,17 @@
 | Field | Value |
 | --- | --- |
 | recorded_from | LocalStack 2026.8.1, Terraform 1.16.0 |
-| generator commit | b3bf107 (the tree at this commit holds the active recording generator closure) |
+| generator commit | d812d59 (the tree at this commit holds the active recording generator closure) |
 | environment | ENV_ID=demo-lease, TARGET=localstack, workspace default, CLI config empty, operator CIDR 203.0.113.0/24 (TEST-NET-3, /24 to /32) |
 | pre-open lease status | closed |
-| opened generation | 3 |
+| opened generation | 6 |
 | apply resource count | 61 |
 | close result | close-env.sh: demo-lease stage 1 complete; lease remains 'closing' for the sweeper |
 | final lease status | closed |
 | state and lock versions remaining | 0 |
-| gif sha256 | ed01bf576d13e90e644df77f18b04583f616cb556fdbe52b2c008c311024db9d |
-| size | 135712 bytes |
-| duration | 27.760000 s |
-| frames | 694 |
+| gif sha256 | f7479862905dd7403b8093f40e38762e3afffe6966aa6d067d19679ac9cbfea0 |
+| size | 136861 bytes |
+| duration | 28.320000 s |
+| frames | 708 |
 
 The recorder validates every section result, the generation transition, owner fencing, the closed terminal state, and zero retained state or lock versions before publishing. Abort recovery is bound to the recording run's owner and generation; claimed, manual-intervention, cleanup-failed, and foreign leases require the manual recovery procedure.

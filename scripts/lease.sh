@@ -14,11 +14,11 @@ Usage: lease.sh <subcommand> [args]
 Subcommands:
   get <env_id>
   get-with-etag <env_id>
-  open <env_id> [--owner <token>] [--manifest <file>]
+  open <env_id> --owner <token> [--manifest <file>]
   transition <env_id> <from> cleanup_failed --generation <n> [--claim <token>] [--error <text>]
-  begin-cleanup <env_id> --generation <n> --from <open|closing|cleanup_failed> --claim <token> [--force-retry]
+  begin-cleanup <env_id> --expect-owner <token> --generation <n> --from <open|closing|cleanup_failed> --claim <token> [--force-retry]
   complete-stage1 <env_id> --generation <n> --claim <token>
-  claim-stage2 <env_id> --generation <n> [--token <token>] [--takeover-stale <seconds>]
+  claim-stage2 <env_id> --expect-owner <token> --generation <n> [--token <token>] [--takeover-stale <seconds>]
   release-stage2 <env_id> --generation <n> --claim <token>
   fail-stage2 <env_id> --generation <n> --claim <token> --error <text>
   set-manifest <env_id> <file> --generation <n> [--claim <token>]
@@ -27,8 +27,11 @@ Subcommands:
   list
 
 open creates generation N+1 only for an absent, closed, or deleted lease. Its
-optional owner and initial manifest are written by that same compare-and-swap PUT. Every
-mutation uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_attempt,
+owner is mandatory; it and the optional initial manifest are written by that same
+compare-and-swap PUT. begin-cleanup and claim-stage2 require --expect-owner. These
+cleanup predicates fail closed: an owner mismatch exits 3 without mutation; a
+missing or empty flag exits 2. Every mutation uses an S3 ETag compare-and-swap.
+begin-cleanup increments cleanup_attempt,
 requires the generation and source status observed by its caller, and allows at
 most three automatic stage-1 executions per generation. --force-retry is
 required after exhaustion; it clears an active Stage-2 claim and audits it.
@@ -152,6 +155,7 @@ cmd_open() {
         ;;
     esac
   done
+  [ -n "$owner" ] || { err "open requires --owner <nonempty>"; exit 2; }
 
   local initial_manifest='null'
   if [ -n "$manifest_file" ]; then
@@ -193,7 +197,7 @@ cmd_open() {
         opened_at: $ts,
         updated_at: $ts,
         error: null,
-        owner: (if $owner == "" then null else $owner end),
+        owner: $owner,
         manifest: $manifest,
         cleanup_attempt: 0,
         stage2_attempt: 0,
@@ -322,6 +326,7 @@ cmd_begin_cleanup() {
   local force_retry=false
   local expected_generation=""
   local expected_status=""
+  local expected_owner=""
   local claim=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -341,6 +346,11 @@ cmd_begin_cleanup() {
         claim="$2"
         shift 2
         ;;
+      --expect-owner)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--expect-owner requires a nonempty token"; exit 2; }
+        expected_owner="$2"
+        shift 2
+        ;;
       *) err "unexpected begin-cleanup argument '$1'"; exit 2 ;;
     esac
   done
@@ -353,6 +363,7 @@ cmd_begin_cleanup() {
     *) err "begin-cleanup requires --from <open|closing|cleanup_failed>"; exit 2 ;;
   esac
   [ -n "$claim" ] || { err "begin-cleanup requires --claim <token>"; exit 2; }
+  [ -n "$expected_owner" ] || { err "begin-cleanup requires --expect-owner <nonempty>"; exit 2; }
 
   read_lease "$env_id"
   if [ "$LEASE_FOUND" != 1 ]; then
@@ -374,8 +385,13 @@ cmd_begin_cleanup() {
   etag="$LEASE_ETAG"
   rm -f "$LEASE_BODY_FILE"
 
-  if [ "$generation" != "$expected_generation" ] || [ "$status" != "$expected_status" ]; then
-    err "begin-cleanup $env_id: lease generation or status changed"
+  if ! jq -e --arg owner "$expected_owner" \
+      --argjson generation "$expected_generation" --arg status "$expected_status" '
+      .generation == $generation
+      and .status == $status
+      and .owner == $owner
+    ' <<< "$lease_json" >/dev/null; then
+    err "begin-cleanup $env_id: lease generation, status, or owner changed"
     exit 3
   fi
   if [ "$has_stage1_claim" = true ] && [ "$force_retry" != true ]; then
@@ -507,6 +523,7 @@ cmd_claim_stage2() {
   local env_id="${1:?env_id required}"
   shift
   local expected_generation=""
+  local expected_owner=""
   local claim=""
   local takeover_stale=""
   while [ "$#" -gt 0 ]; do
@@ -526,6 +543,11 @@ cmd_claim_stage2() {
         takeover_stale="$2"
         shift 2
         ;;
+      --expect-owner)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || { err "--expect-owner requires a nonempty token"; exit 2; }
+        expected_owner="$2"
+        shift 2
+        ;;
       *) err "unexpected claim-stage2 argument '$1'"; exit 2 ;;
     esac
   done
@@ -537,6 +559,7 @@ cmd_claim_stage2() {
     err "claim-stage2 requires --takeover-stale <positive integer>"
     exit 2
   fi
+  [ -n "$expected_owner" ] || { err "claim-stage2 requires --expect-owner <nonempty>"; exit 2; }
   if [ -z "$claim" ]; then
     claim="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
   fi
@@ -556,9 +579,10 @@ cmd_claim_stage2() {
     err "claim-stage2 $env_id: lease has an active Stage-1 claim"
     exit 3
   fi
-  if ! jq -e --argjson generation "$expected_generation" '
+  if ! jq -e --argjson generation "$expected_generation" --arg owner "$expected_owner" '
       .status == "closing"
       and .generation == $generation
+      and .owner == $owner
       and (.stage1_claim // null) == null
       and (.manual_intervention_required // false) == false
     ' <<< "$lease_json" >/dev/null; then

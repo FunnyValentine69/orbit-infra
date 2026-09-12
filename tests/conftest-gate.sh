@@ -31,7 +31,8 @@ pass "recorded plans pass fixture hygiene"
 
 output_sensitive_fixture="$(mktemp)"
 sensitive_fixture="$(mktemp)"
-trap 'rm -f "$output_sensitive_fixture" "$sensitive_fixture"' EXIT
+hygiene_case_fixture="$(mktemp)"
+trap 'rm -f "$output_sensitive_fixture" "$sensitive_fixture" "$hygiene_case_fixture"' EXIT
 
 printf '%s\n' '{"planned_values":{"outputs":{"token":{"sensitive":true,"value":"x"}}}}' > "$output_sensitive_fixture"
 
@@ -60,6 +61,30 @@ if ! grep -Fq 'a *_sensitive value is true' <<< "$sensitive_output"; then
   fail "nested true sensitive marker did not report the sensitive message: $sensitive_output"
 fi
 pass "nested true sensitive marker is rejected"
+
+for hygiene_case in \
+  'mapped-private|::ffff:10.0.0.1|allow' \
+  'mapped-documentation|::ffff:203.0.113.9|allow' \
+  'mapped-public|::ffff:8.8.8.8|reject' \
+  'ipv6-public-period|2001:4860:4860::8888.|reject' \
+  'mapped-public-period|::ffff:8.8.8.8.|reject' \
+  'ipv6-documentation-period|2001:db8::1.|allow' \
+  'mapped-private-comma|::ffff:10.0.0.1,|allow' \
+  'loopback-cidr|127.0.0.1/32|allow' \
+  'documentation-cidr|203.0.113.5/32|allow'; do
+  IFS='|' read -r case_name address expected <<< "$hygiene_case"
+  printf '{"value":"%s"}\n' "$address" > "$hygiene_case_fixture"
+  set +e
+  hygiene_case_output="$(bash "$REPO_ROOT/scripts/fixture-hygiene.sh" \
+    "$hygiene_case_fixture" 2>&1)"
+  hygiene_case_rc=$?
+  set -e
+  if { [ "$expected" = allow ] && [ "$hygiene_case_rc" -ne 0 ]; } || \
+     { [ "$expected" = reject ] && [ "$hygiene_case_rc" -ne 1 ]; }; then
+    fail "fixture hygiene case $case_name expected $expected: $hygiene_case_output"
+  fi
+done
+pass "fixture IPv4 containment and mapped-IPv6 cases"
 
 if ! verify_output="$(conftest verify --policy "$POLICY" 2>&1)"; then
   fail "conftest verify failed: $verify_output"

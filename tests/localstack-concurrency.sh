@@ -200,7 +200,7 @@ assert_open_refusal() {
   local before after refusal rc
   before="$("$LEASE_SH" get "$env_id")"
   set +e
-  refusal="$("$LEASE_SH" open "$env_id" 2>&1)"
+  refusal="$("$LEASE_SH" open "$env_id" --owner localstack-concurrency 2>&1)"
   rc=$?
   set -e
   after="$("$LEASE_SH" get "$env_id")"
@@ -287,13 +287,13 @@ assert_post_close_inventory() {
 expected_a="$(expected_generation "$ENV_A" "$tmp_dir/lease-a.err")"
 expected_b="$(expected_generation "$ENV_B" "$tmp_dir/lease-b.err")"
 
-lease_a="$("$LEASE_SH" open "$ENV_A")" || fail "could not open lease for $ENV_A"
+lease_a="$("$LEASE_SH" open "$ENV_A" --owner localstack-concurrency)" || fail "could not open lease for $ENV_A"
 generation_a="$(jq -r '.generation' <<< "$lease_a")"
 [ "$generation_a" = "$expected_a" ] \
   || fail "$ENV_A opened generation $generation_a, expected $expected_a"
 acquired_a=true
 
-lease_b="$("$LEASE_SH" open "$ENV_B")" || fail "could not open lease for $ENV_B"
+lease_b="$("$LEASE_SH" open "$ENV_B" --owner localstack-concurrency)" || fail "could not open lease for $ENV_B"
 generation_b="$(jq -r '.generation' <<< "$lease_b")"
 [ "$generation_b" = "$expected_b" ] \
   || fail "$ENV_B opened generation $generation_b, expected $expected_b"
