@@ -6,12 +6,12 @@ The IAM simulation artifacts are generated from the JSON lane reports and are ne
 | --- | --- |
 | recorded_from | custom-policy report and temporary-role principal-policy report |
 | recorded_on | 2026-09-12 |
-| generator commit | f82d4a5 |
+| generator commit | 54a00a2 |
 | custom report sha256 | 3442a28690790ce9a2b1d81af0bab08259a202093321811c9c7255f36692119d |
 | role report sha256 | 172422dc59a3d95e6b1c24fe7741be7df1b769d911e37d16925b9d54a48eb588 |
-| Markdown report sha256 | d87f247d0a26f2aba6b06982a322576b839375d5f2faf28a5462effc200adacd |
+| Markdown report sha256 | ea9465bf5cc6a63f6b530eef914c81d0b77a122ee020a684d5c306b0a59a5444 |
 | commands | `TARGET=aws scripts/iam-simulate.sh --plan &lt;terraform-plan.json&gt; --vectors tests/fixtures/iam-simulate/vectors --report &lt;custom-report.json&gt;`<br>`IAM_SIM_LANE_CONFIRM=create-real-iam-resources TARGET=aws scripts/iam-simulate-roles.sh --plan &lt;terraform-plan.json&gt; --vectors tests/fixtures/iam-simulate/vectors --custom-report &lt;custom-report.json&gt; --report &lt;role-report.json&gt; --expect-account &lt;account&gt;`<br>`scripts/iam-simulate-report.sh --custom-report &lt;custom-report.json&gt; --role-report &lt;role-report.json&gt; --out-dir docs/assets` |
-| account and region | Free Plan account in `us-east-1`; the rendered account identifier is always `000000000000`. |
+| account and region | Policy evaluation ran in `us-east-1`; account identifiers are rendered with the placeholder `000000000000`. |
 | case counts by outcome | custom: 240 passed, 1 failed, 0 runner failures; role: 158 passed, 0 failed, 0 runner failures |
 
 ## Exclusions

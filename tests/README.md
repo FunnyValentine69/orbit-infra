@@ -1,832 +1,138 @@
 # Shell contract tests
 
-Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 allowance/close path are LOCALSTACK-VERIFIED in CI (Phase 4 run 33757937265; post-merge dispatch run 33825140591 from main 9b253b6; stage-claim exclusivity, the pending hand-backs, and prune are fixture-verified only); the nightly AWS sweeper is CODE-ONLY until P0-3b.
+Evidence labels and publication gates are documented in [Verification](../docs/VERIFY.md). The suites below are contract inventories: each entry names the executable and the behavior it owns.
 
-`tests/phase3-contracts.sh` requires PyYAML. Its version is pinned as `pyyaml`
-in `tools.lock`, read with `scripts/tool-version.sh pyyaml`, and installed
-explicitly in the `terraform-plan.yml` gates job before `scripts/gates.sh`.
+## Primary entry points
 
-`tests/sbom-canon.sh` checks that the real-syft-derived fixtures preserve the
-creator string and that timestamp-only changes, consistent identifier
-renumbering, and reversed package order compare equal. Five separate assertions
-require checksum, license, relationship, identifier-swap, and same-name
-relationship-switch changes to compare different; a missing optional
-relationships array proves null safety. Two fail-closed assertions reject a
-missing `spdxVersion` and a
-non-array `packages` field, for 14 assertions total.
-
-The phase-3 suite also joins every logical requirements line and requires a hash,
-checks the three direct pins and Dockerfile `--require-hashes` flag, and
-structurally verifies scan producer order, attestation flags, pinned Trivy
-versions, per-mode verifier call sites, weekly cadence, and the 10-day default.
-Its extracted verifier runs 22 cases across freshness boundaries, multiple
-attestations, malformed envelopes and timestamps, future timestamps, predicate
-contents, scanner versions, severity lists, and input range including
-leading-zero values. A removed-freshness mutant and flag/version mutations must
-be rejected. The call-site check extracts the upstream and public branches of
-the deployment-mode case separately and requires one `verify_scan_attestation`
-call per selected image in each branch; a fixture that moves every call into the
-public branch must fail the upstream assertion. An indented requirements line
-that arrives with no open requirement is rejected rather than dropped, and a
-scratch copy with an unhashed continuation inserted before the first requirement
-must fail.
-
-The sign-images SBOM idempotency guard is also executed, not only pattern-matched: the region from the prior-predicate temp file through its comparison loop is extracted from the workflow, wrapped in a function, and run with a stubbed `cosign` while jq and `scripts/sbom-canon.sh` stay real. Five cases cover a malformed envelope ahead of a valid one (the step must fail with `could not decode attestations`), a failing `cosign verify-attestation` (no prior attestation, so the image is re-attested), a matching prior predicate, and a differing prior predicate; a mutant that restores the streaming `jq -c` decode must exit 0 on the malformed-first stream, which is the killed-mutant proof that the slurped decode is load-bearing.
-
-Run the cleanup regression suite without AWS or LocalStack:
-
-```
-bash tests/cleanup-verifier.sh
+```sh
+make test
+scripts/gates.sh
+bash tests/docs-contracts.sh
+env -u AWS_PROFILE bash tests/iam-simulate-contracts.sh
 ```
 
-Fixture provenance: a fixture with `recorded_from` was captured from a real
-backend (currently LocalStack 2026.8.1 for the task-definition allowance); a
-fixture marked `authored` was hand-written from an API or lifecycle contract
-and must be replaced by a recorded response once that backend is available. Never
-adjust an `authored` fixture to make a predicate pass; record the real
-response instead.
+`tests/phase3-contracts.sh` requires the PyYAML version pinned in `tools.lock`. Offline suites use fakes and fixtures; they do not make live AWS calls. LocalStack and GitHub dispatch suites state their prerequisites explicitly.
 
-The recorded Conftest plan sidecars carry their recording metadata in
-`tests/fixtures/conftest/PROVENANCE.md`. A `terraform show -json` document
-cannot carry a custom `recorded_from` key, so the recording metadata stays in
-that sidecar.
+## Documentation contracts
 
-## Phase 5 Conftest policy gate
+`bash tests/docs-contracts.sh`
 
-Run the Conftest regression suite without AWS or LocalStack:
+The suite scans every tracked Markdown link and image, rejects retired documentation paths and seven forbidden public-scope strings, enforces the six publication line budgets, requires all four front-page embeds, indexes every file under `docs/assets/` and `docs/evidence/`, and confirms the removed state ledger is untracked. It injects and kills 11 mutations: one budget overflow, one broken link, one retired path, one missing evidence entry, and all seven forbidden strings. The restored scanner must pass with no skipped publication checks.
 
-```
-bash tests/conftest-gate.sh
-```
+## Artifact hygiene
 
-The suite first runs fixture hygiene against both committed plans, then
-requires `conftest verify` to pass all 91 Rego unit tests. It accepts the good
-plan without reporting `aws_security_group.alb`, and requires the bad plan to
-exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
-`aws_s3_bucket.data`, `aws_security_group.open`, `aws_security_group.alb`,
-`aws_security_group.zero_lb`, `aws_vpc_security_group_ingress_rule.open`,
-`aws_vpc_security_group_ingress_rule.ipv6_open`,
-`aws_security_group_rule.legacy_open`, and
-`aws_default_security_group.default`. It also requires the bad plan not to
-report the protected `aws_s3_bucket.database`. The suite also proves that a
-nested true `*_sensitive` marker and a sensitive output are rejected. The
-suite reports all 19 cases: `bad-plan.json` was re-recorded from the updated
-bad root, and the recorded bad-root plan is denied for
-`aws_vpc_security_group_ingress_rule.ipv6_open`. Bucket
-protection requires exactly one fully
-locked planned block targeted through either one unambiguous whole-resource
-configuration reference or an equal known planned bucket name. Reference and
-planned-name correlations are unioned, distinct blocks targeting one bucket are
-ambiguous, and unreferenced planned blocks with unknown or known-unmatched targets
-are denied as unresolvable. Policy selectors accept only managed resources, so data-source
-buckets are ignored and data-source load balancers cannot exempt a managed
-group. Open, unknown, or prefix-list non-ALB ingress is denied because this
-gate cannot prove a managed prefix list safe. Governed resources whose actions
-contain `forget` are denied because their protections cannot be verified. For a
-known ALB-group ID, a forgotten managed non-rule resource whose `change.before`
-contains that ID also revokes the exemption; a fresh-created group has no known
-pre-existing ID to match. The ALB exemption requires one distinct group
-reference and a planned root application-ALB instance; known planned attachment
-IDs must agree. A configuration group address correlates only when exactly one
-planned group instance matches; multiple `count`/`for_each` instances fail
-closed as ambiguous. Direct
-configuration references from a network, gateway, unknown-type, or unplanned
-`aws_lb`, other root managed resources, or root module calls revoke the
-exemption, as does a matching known group ID anywhere in any managed planned
-resource at any module depth. Planned application ALBs and rule-definition
-resources are excluded from those consumer checks. Any configuration reference
-under another security group's `expressions.ingress` or `expressions.egress`,
-whether flattened or nested, is treated as a rule source; planned nested ingress
-and egress `security_groups` source values are likewise excluded. Terraform plan
-JSON does not serialize locals, so a
-fresh-create ALB-group consumer hidden only behind local or other indirection
-remains undetectable; this repository's own root attaches the ALB group only to
-the ALB, which the live-plan gate checks through direct references.
-An unknown attachment must reference exactly the group's whole-resource and
-`.id` traversals. A standalone ingress
-rule, including an indexed instance, must also plan a known target equal to the
-group's known ID, or the rule target and group ID must both be unknown through
-that same exact two-traversal set. Condition references and planned literal or
-mismatched IDs are denied. Unknown legacy-rule direction is treated as
-potentially ingress.
+`bash tests/artifact-hygiene-contracts.sh`
 
-Fixture provenance: `good-plan.json` and `bad-plan.json` in
-`tests/fixtures/conftest/` are `recorded_from` LocalStack 2026.8.1 with
-Terraform 1.16.0 on 2026-09-04 from `good-root/` and `bad-root/` via
-`make record-conftest-fixtures`. Each `terraform show -json` writes to a
-temporary file; `scripts/fixture-hygiene.sh` must accept it before it replaces
-the tracked fixture. The check rejects `prior_state`, true leaves below `*_sensitive` or
-`sensitive_values`, objects marked `"sensitive": true`, non-empty top-level
-`variables` because variables must not be serialized into fixtures,
-non-placeholder 12-digit numbers, and email addresses. IPv4 accepts the
-exact literal `0.0.0.0/0` plus networks contained by loopback, RFC 1918, or
-RFC 5737 documentation ranges. JSON string keys and values are decoded before
-IP candidates are parsed with Python's `ipaddress`; IPv4-mapped IPv6 uses the
-same IPv4 containment policy. Native IPv6 accepts the default route, loopback,
-link-local, unique-local, unspecified, and `2001:db8::/32` documentation range,
-while other valid IPv6 literals are rejected. Invalid colon-delimited tokens
-such as digests are skipped. Fixtures are re-recorded from those roots, never
-edited. The real `envs/preview` plan is never committed because it can carry
-prior state and sensitive values.
+This suite exercises the shared hygiene checker against identifiers, account-shaped values, email addresses, paths, tool transcripts, and approved placeholders. Recorded fixtures keep provenance in their adjacent sidecars; generated assets must be regenerated, never hand-edited.
+
+## Bootstrap override contracts
+
+`bash tests/bootstrap-override-contracts.sh`
+
+The 16 cases prove that LocalStack bootstrap plan/apply owns an override only when it creates it. Existing files, symlinks, dangling symlinks, ignored variable files, permission failures, Terraform failures, and cleanup paths must preserve operator-owned entries and avoid unauthorized Terraform calls.
+
+## Conftest policy gate
+
+`bash tests/conftest-gate.sh`
+
+The suite reports 19 cases and also requires all 91 Rego unit tests. It accepts the recorded good plan and rejects the bad plan's public S3 resources, world-open IPv4/IPv6 ingress, ambiguous or unresolvable bucket protection, sensitive plan leaves, and invalid ALB exemptions. Managed resources are evaluated; data sources cannot serve as exemption anchors. The ALB exception requires one unambiguous planned application load balancer attachment, and standalone ingress rules must resolve to the same exact group.
+
+`tests/fixtures/conftest/PROVENANCE.md` records the LocalStack and Terraform versions for `good-plan.json` and `bad-plan.json`. Fixture hygiene rejects prior state, sensitive values, non-empty variables, private identifiers, and non-documentation network literals.
 
 ## Preview source and plan contracts
 
-`tests/preview-source-contracts.sh` comment-strips and parses the root preview
-Terraform without providers. Six predicates enforce exactly two direct
-`aws_security_group.alb` references, service-group-only workload module wiring,
-the exact root-module data-source multiset `aws_caller_identity.current` plus
-`aws_partition.current`, no protected-resource read-back or bracket traversal,
-the three-entry root security-group argument allowlist, and the sole statement
-object's exact two partition-derived `Resource` entries in the data bucket
-policy. Quoted-key
-bracket traversals are normalized before the general token scans; independently,
-each protected resource token (`aws_lb.this`, `aws_security_group.alb`,
-`aws_security_group.service`) is matched against a per-token attribute
-allowlist, and the token must be immediately followed by `.` plus an allowed
-attribute and nothing else that continues the traversal (only a closing
-delimiter, comma, whitespace, or end of line may follow), so wrapped
-traversals such as `one([aws_lb.this]).security_groups` or
-`[aws_security_group.service][0].ingress` fail by construction.
-Its executable registry asserts 29 scratch-source mutants. They include
-load-balancer-by-ARN, Resource Groups Tagging API, duplicate caller-identity,
-spaced and computed bracket traversals, a legacy-splat load-balancer
-read-back, wrapped `one([...])` and bracket-indexed read-backs, the nested canonical `Resource`
-decoy with a local-backed statement resource,
-heredoc rejection, exact root-binding multiplicity, and fail-closed `.tf.json`
-handling; all must fail their named predicate. The script runs from `make test`.
+`bash tests/preview-source-contracts.sh`
 
-`tests/preview-plan-contracts.sh <plan.json>` reads a Terraform plan JSON and
-uses 20 predicates to assert the `lb-name` and `tg-name` composition, a known
-partition in refresh-derived `prior_state`, the `data-bucket-present` requirement
-(exactly one `aws_s3_bucket.data` with a non-null, non-empty string
-`.values.bucket`), the preview data bucket lifecycle shape (rule id
-`data-retention`, a 7-day multipart abort, and a 30-day expiration on current
-objects), the complete SSL-only bucket policy document, exactly one
-`aws_lb_listener.http` with known non-empty protocol and action strings, and the
-absence of HTTPS listeners or HTTP redirect actions. The contract walks child
-modules recursively, so resources nested under `child_modules` at any depth are
-included alongside root module resources. `tests/preview-plan-mutations.sh
-<plan.json>` first requires the unmodified plan to pass, then derives 49
-temporary mutants that prove each contract predicate independently rejects its
-targeted drift. The naming mutants cover trailing hyphens, 33-character values,
-altered environment segments, empty name parts, and over-budget name parts for
-both resources; the partition mutants alter the policy ARN partition or remove
-the prior-state data source, and listener mutants delete the HTTP listener,
-inject HTTPS or redirects, or set the protocol or action type to null. Three of
-the 49 mutants are fail-closed input checks (empty, non-JSON, and
-missing-`planned_values` plan files) that confirm the contract script rejects
-invalid input rather than passing vacuously. Both scripts run in the
-`plan-localstack` job immediately after the Conftest live-plan gate.
+The source parser checks the exact root data-source multiset, exactly two direct ALB-group references, service-group-only workload wiring, partition-derived data-bucket policy resources, protected-resource traversal allowlists, and exact security-group argument multiplicity. It fails closed on heredocs and `.tf.json`. Its registry contains 29 source mutants, all of which must fail their named predicate before the restored source passes.
 
-Sanitized JSON fixtures in `tests/fixtures/cleanup/` record candidate metadata
-and exact API `rc`/`stdout`/`stderr` responses. The production predicate layer
-consumes the same response shape for recorded and live probes. The suite covers
-the 24-entry stale inventory incident, security-group-rule and unknown ARN
-handling, VPC endpoint states, exact inactive ECS status, the scoped LocalStack
-allowance, the 30-second AWS process boundary and 660-second ECS waiter
-boundary, tag-versus-manifest authority, failed delayed and pre-destroy-only tag
-observations, zero-exit tag responses with a missing key, null list, string
-list, empty stdout, entry missing `ResourceARN`, or numeric `ResourceARN`,
-non-zero and malformed cleanup-verifier results, contradictory summaries,
-invalid outcome strings, `passed:true` with a live result, and persistence of a
-consistent `passed:false` live result before deadline failure, exact ECS
-`MISSING`/non-`MISSING`/unconfirmed-empty responses, an absent state file,
-required AWS destroy image references and their Terraform forwarding,
-zero-exit `DeleteTaskDefinitions` responses that report the requested ARN in
-their `failures` array, atomic owner-plus-manifest lease open with one PUT,
-mandatory nonempty owner input on open, mandatory matching owner input on Stage 1
-and Stage 2 claims, missing/empty/mismatched-owner refusal without mutation,
-same-environment second-open refusal, empty-`--from` refusal,
-generation/status-bound Stage 1, exclusive Stage-1 and Stage-2 claims,
-expected-generation forwarding into Stage 2 claims, claim-bound manifest writes, duplicate-close refusal, generic-transition
-refusal of `closed`, atomic proof-plus-close, force-cleared claim audit,
-owner- and generation-bound close refusals, the three-attempt lease limit,
-audited force retry, independent Stage 2 attempts and escalation, the
-Stage-2 generic-transition guard, cap escalation with CAS-loss refusal, generation
-tombstone pruning and reopening, and end-to-end Stage-1 claim release with state
-retention. The suite currently reports 55 cases.
+`bash tests/preview-plan-contracts.sh <plan.json>`
 
-`tests/phase3-contracts.sh` separately checks the broader Phase 3 shell and
-Makefile contracts, including the LocalStack owner/rerun guards and the
-signal-path test below. It also executes both the AWS close and LocalStack
-close-and-sweep workflow blocks against controlled lease/close/sweep scripts.
-The in-job sweep block must close on attempt three, stop at 20 `closing`
-attempts, reject an unexpected status after one attempt, and fail immediately
-when the sweep command fails. The suite verifies the observed generation,
-status, and owner arguments and byte-matches the sweeper workflow's exact
-`scripts/sweep.sh env "$ENV_ID"` command, then derives the two-hour Stage 2 takeover threshold
-from the sweeper workflow timeout, checks the PyYAML import guard, and requires
-the gates job to install the pinned PyYAML before `scripts/gates.sh`. It runs
-`tests/dispatch-ordering-contracts.sh`, whose jq-level probes extract the live
-jobs aggregation and timestamp-comparison filters from
-`tests/dispatch-ordering.sh`. It also verifies five IPv6 hygiene negative,
-decoded-value/key, allowlist, and digest cases. The `iam-matrix-plan` workflow is
-parsed structurally and must contain exactly one job: that job owns the sole
-LocalStack action and matching `terraform-plan.yml` image/action pins, the sole
-bootstrap producer before the sole `make iam-matrix-plan` consumer, the main
-branch guard, and a checkout step with credentials persistence disabled; the
-workflow also keeps top-level read-only contents permission and never calls the
-inventory or contract scripts directly. It verifies that policy-size remains
-required by default and moves to the owner-only `plan-localstack` job after its
-health wait, and that Conftest is installed before the bootstrap-plan gate,
-bootstrap apply, live plan, redacted summary, live-plan gate, and PR comment in
-that order. Fork PRs receive the secret-free gates with policy-size explicitly
-skipped; owner PRs receive those gates plus the LocalStack-backed policy-size
-check. Neither suite starts, stops, or reconfigures LocalStack.
+The plan suite has 20 assertions for bounded load-balancer and target-group names, partition-aware SSL-only data-bucket policy, lifecycle retention, exact HTTP listener shape, and recursive child-module traversal.
 
-## Demo recording contracts
+`bash tests/preview-plan-mutations.sh <plan.json>`
 
-Run the recorder regression suite without LocalStack, vhs, ffprobe, or network access:
+The mutation suite derives 49 temporary plans, including empty, non-JSON, and missing-`planned_values` fail-closed inputs. Every mutant must fail while the original plan passes.
 
-```
-bash tests/demo-contracts.sh
-```
+## Policy-size dispatcher contracts
 
-Its six groups cover the exact per-name environment and unknown-name refusal;
-all three tapes and their required output; kind-specific provenance and generator
-closures, including default refusal of ignored closure inputs with only the
-declared runtime/cache exemptions; the bounded, owner- and generation-fenced
-lease recovery helper; the existing lifecycle transaction failure table; and
-fake end-to-end lease and supply-chain recordings. Artifact validation parses
-GIF frames and duration with Python's standard library. Supply provenance binds
-the comparison fixtures separately from the sorted full contract-suite fixture
-set and kills well-formed value substitutions. Grep error injection covers all
-three hygiene checks, and final inventory distinguishes exact state/lock keys
-from sibling prefixes.
-Lease cases include repeat recording from `closed`, abort and claim states,
-terminal foreign-owner refusals, mid-loop manual and Stage 2 claim races, teardown
-generation replacement, one- and two-pass sleeps, exhaustion, and an injected
-post-inventory display failure proving the no-backend-call boundary. Drift mutants
-cover each kind's scripts, templates, contracts, and fixtures. The provenance
-commit must be reachable, so CI checks out full history (`fetch-depth: 0`); a
-shallow checkout fails with `generator commit unreachable; fetch full history`. The suite
-remains chained through `tests/phase3-contracts.sh`.
+`bash tests/policy-size-contracts.sh`
 
-Run the storyboard generator contracts separately or through `make test`:
+Two groups exercise the policy-size check with and without an existing override. The same suite isolates `scripts/gates.sh`, supplies a fake documentation gate, and proves gate order plus failure propagation.
 
-```
-bash tests/storyboard-contracts.sh
-```
+## Phase 3 workflow contracts
 
-The generator group checks exact captions, byte determinism, accessibility,
-hygiene, reduced motion, and static snapshot scheduling. It also uses
-Git-initialized scratch roots to require the explicit one-missing failure, reject
-a tampered SVG even when its local provenance hash matches, and preserve the
-both-absent skip branch. Until both committed storyboard outputs exist, the
-asset group alone reports
-`SKIP: storyboard asset not committed yet`; once present, it validates byte
-identity, provenance hash, commit reachability, and the generator closure.
+`bash tests/phase3-contracts.sh`
 
-Run the process-group signal test directly without LocalStack:
+This suite covers workflow permissions and guards, pinned tool lookup, placeholder dependency hashes, private-image build and signing order, LocalStack plan and session structure, apply-side Conftest, bounded cleanup, and dispatch contracts. Its extracted scan verifier runs 22 cases; the LocalStack sweep loop runs 4 cases; fixture IPv6 hygiene runs 5 cases. It requires the IAM matrix plan workflow to own exactly one LocalStack bootstrap producer before its exact-field consumer.
 
-```
-bash tests/localstack-concurrency-signal.sh
-```
+`bash tests/sbom-canon.sh`
 
-It starts a fake worker whose process-group leader exits while a descendant
-keeps running, sends SIGTERM to the concurrency script, and requires the
-descendant to be gone after the exit trap targets the recorded process group
-and reaps the recorded worker.
+The canonicalizer reports 14 assertions. Timestamp, identifier renumbering, and package order normalize equal; checksum, license, external-reference, package identity, and relationship changes remain different. Missing schema and invalid package arrays fail closed.
 
-## IAM action-condition matrix
+## Cleanup verifier
 
-Run source mode without LocalStack:
+`bash tests/cleanup-verifier.sh`
 
-```
-bash tests/iam-matrix-contracts.sh
-```
+The suite reports 55 cases. It covers exact candidate probes, recorded LocalStack allowances, stale tag observations, malformed and contradictory results, timeouts, owner and generation binding, Stage 1 claims, retry limits, force-retry audit, Stage 2 counters, state retention, tombstone generations, and cancellation cleanup. A successful result requires consistent per-candidate outcomes, recomputed counts, and no unexplained live or indeterminate resource.
 
-Source mode requires exactly 86 statement rows and 13 binding rows. It verifies
-source Sid and document order, all seven condition-operator truth tables and
-their prescribed decisions, and exactly one unambiguous `expect <decision>`
-clause in every ordinary executable case. Every executable non-KMS `:absent`
-variant must omit the tested key: single-condition rows state that no entry is
-passed, while multi-condition rows pass only the other satisfying keys. The
-wrong-audience trust variant uses its exact conditional provider form and is
-`CODE-ONLY`; a bare `N/A(...)` is rejected. Source mode also checks same-action
-`resource:nonmatching` cases for every resource-scoped Allow, permits an exact
-`N/A(<reason>)` body only for the documented non-executable shapes (including
-trust `aud`/`sub` absent variants, the unobtainable mutable-name subject, and
-full-type wildcards such as
-`hostedzone/*`), rejects unquoted glob characters in simulator option arguments, and validates `stringList` handling for multivalued KMS aliases.
-From comment-stripped HCL and canonical matrix
-resources it derives same-role Action and conservative Resource overlap across
-every other Allow or Deny, including same-document statements. The attached
-`ReadOnlyAccess` policy is modeled as covering every `Describe*`, `Get*`, and
-`List*` action on `*`. The exact isolated single-statement masked-negative form
-is required on all and only the resulting 66 negative cases across 26 Sids;
-the isolated policy must name the row Sid, and attribution must identify a
-covering source Sid and document or `ReadOnlyAccess`. Every other
-executable non-boundary identity case uses principal simulation with its exact
-bound-role ARN. Every account-bearing ARN must use the deliberate LocalStack
-placeholder account `000000000000`, making the real-account render substitution
-total. Boundary cases use custom simulation; live KMS cases name their exact
-execution role ARN. The same HCL comment stripper protects Sid inventory and
-complete, anchored boundary-assignment counts, so comments and quoted decoys do
-not count. Fixture hygiene scans regular files plus symlink target strings and
-rejects links that resolve outside the IAM fixture directory. Evidence-label
-syntax is checked, and every promoted custom record's policy and boundary
-hash-list lengths must equal the inputs implied by its vector. Source mode checks
-that shape without claiming plan-byte agreement. The
-`absent-key-passed`, `arn-real-account`,
-`allow-masked-negative-missing`, `masked-negative-missing`,
-`masked-negative-wrong-sid`, `masked-form-on-unmasked-row`,
-`masked-form-whole-document`, `trust-absent-executable`,
-`trust-mutable-name-executable`, `unquoted-wildcard`,
-`uncommented-extra-sid`, and `wrong-audience-bare-na` mutations must print the
-`FAIL:` line for the contract they kill; `commented-sid-ignored` must pass.
+Fixtures in `tests/fixtures/cleanup/` are either marked `recorded_from` or `authored`. Replace authored fixtures only with sanitized backend recordings that preserve the same contract; never edit one merely to satisfy a predicate.
 
-The wildcard evaluation contract derives every `Resource = "*"` tuple that
-belongs in the first table from comment-stripped `bootstrap/roles.tf`, including
-the conditioned PR B `SnsSubscriptionManage` exception, and requires exact
-equality with the 40-row reference table. Seven tuple-set mutations add a Sid,
-append an action, remove or fabricate a table row, and alter each duplicate
-`EcrAuth` statement independently; three more break the static condition scopes.
-The authored `base-plan.json` includes the invalid Lambda-action removal plus the
-four conditions and one statement split. Because the bootstrap policy changed,
-the host worker must run `make bootstrap-apply TARGET=localstack` followed by
-`make iam-matrix-plan` to refresh plan-mode evidence; the fixture was not
-presented as a LocalStack recording. A second equality covers the 14 tuples
-condition-scoped in this PR: the tuples of the three scoped Sids in
-`bootstrap/roles.tf` must equal the rows of the condition-scoped table, each
-with both conclusions filled and a follow-up cited where resource scope is
-possible, with a removed-row and an appended-action fixture that must fail.
+## Sweeper
 
-After bootstrap has been applied to LocalStack, render and compare plan mode
-through the one hardened render path:
+`bash tests/sweeper.sh`
 
-```
-make iam-matrix-plan
-```
+The suite reports 41 cases. Its fake versioned S3 and AWS CLI cover classification and age boundaries, exact task-definition outcomes, pagination, per-object delete acknowledgements, partial deletion, stale open replacement, exclusive Stage 2 claims, pending-resource hand-back, independent attempt caps, signal release, stale-claim takeover, state and `.tflock` isolation, CAS loss, and ETag-conditioned tombstone pruning.
 
-For an already-rendered post-apply plan, run
-`bash tests/iam-matrix-contracts.sh <post-apply-plan.json>`. Plan mode compares
-Effect, Principal or NotPrincipal, Action or NotAction, Resource or
-NotResource, Condition, all bindings, and all three trust documents exactly.
-String and array policy fields canonicalise identically. For every promoted case,
-plan mode binds the complete ordered policy hash list: the exact plan-rendered
-document (or canonical `custom-isolated` wrapper) followed by each rendered
-`synthetic_policy_input_list` entry. It separately binds every ordered
-`permissions_boundary_policy_input_list` address to its exact plan bytes. A
-second-policy-hash mutant proves that checking only index zero is rejected. This
-byte binding runs under
-`make iam-matrix-plan`. A pre-apply plan whose trust policies are unknown fails
-with the apply-first diagnostic. This exact comparison runs in the same-repository
-`plan-localstack` job and in
-`iam-matrix-plan.yml` after a LocalStack bootstrap apply on every push to
-`main`, weekly, and by manual dispatch from the default branch. Source mode
-remains Sid-keyed on fork PRs; the next main push closes that exact-field drift
-window, with the weekly run as a backstop.
+## Demo recordings
 
-The slim plan and hygiene inputs in `tests/fixtures/iam-matrix/` are `authored`;
-their sidecar is `tests/fixtures/iam-matrix/PROVENANCE.md`. The condition-key
-reordering case asserts byte-identical inventory output. The email-address and
-second-account-id cases store safe fragments; the latter also injects the
-assembled ID into a temporary copy of `base-plan.json` to prove fixture-tree
-scanning without retaining that rejected value.
+`bash tests/demo-contracts.sh`
 
-`tests/policy-size-contracts.sh` has two groups, both running from a per-run
-temporary copy of the policy-size script and bootstrap Terraform files so
-concurrent suites never write to or delete the repository override. The
-existing-override group covers a regular file and a dangling symlink; both
-require immediate refusal and zero Terraform invocations, while the regular
-sentinel remains byte-identical and the link remains present with its target
-string unchanged. The no-existing-override group exercises
-init, plan, and show failures plus success, requires cleanup after every path,
-and verifies that `POLICY_SIZE_PLAN_JSON_OUT` receives the rendered plan.
-A structural contract also requires the override copy to run in a
-`set -o noclobber` subshell. This proves the create itself refuses a file that
-appears after the fast pre-check, without attempting to schedule that race in
-the test.
+Six groups cover environment construction, tape steps, CIDR and provenance, lease recovery, lifecycle transactions, and lease/supply recordings. The suite uses fakes rather than LocalStack, vhs, ffprobe, or network access. It validates per-kind generator closure, ignored-input refusal, preflight and post-preflight drift, teardown-before-publication, mixed-pair recovery, output metadata, and required provenance fields. Each behavior-changing contract includes a failing mutation before the restored pass.
 
-`tests/bootstrap-override-contracts.sh` applies the same ownership contract to
-both Makefile LocalStack bootstrap targets. Its 16 cases cover regular and
-dangling operator-owned sentinels with zero Terraform calls, successful
-creation and cleanup, permission failures surfaced verbatim, create races
-classified only after re-statting the destination, directory-backed
-example-source copy failures before any Terraform call, and injected
-init/plan/apply failures with their original recipe exit
-status and cleanup. It runs from `make test`.
+## Storyboard
 
-## IAM simulator contracts
+`bash tests/storyboard-contracts.sh`
 
-Run all eight taxonomy, case-ID, vector-schema, completeness, custom-runner,
-role-lane, report-renderer, and Evidence-join contract groups without AWS,
-Terraform, Docker, or LocalStack:
+The generator contracts check deterministic keyframes, static snapshots, accessibility, hygiene, and output independence before an asset exists. The asset and provenance checks then bind the committed pair to its recorded generator commit.
 
-```bash
-bash tests/iam-simulate-contracts.sh
-```
+## IAM matrix
 
-The phase-2 fixture library describes its plans, vector envelopes, canned
-simulator responses, custom-report records, and fake role-lane scenarios as
-base-plus-override tables in `tests/lib/iam-simulate-fixtures.py`. One generic
-renderer materializes every family. The execution registry in
-`tests/lib/iam-simulate-mutations.txt` currently names 206 stable mutation case
-IDs, their mutation functions or labelled `sed` targets, and their expected
-`FAIL:` diagnostic prefixes. Its action column uses the closed `fn`,
-`fn:submode`, or `sed:label` dispatcher grammar. The suite rejects actions that
-do not dispatch, mutation helpers without a registry row, missing, unregistered,
-duplicate, or diagnostic-drifting observations, and prints its
-executed/registered count only after all restored paths pass. Dedicated mutants
-change a valid registered action and a helper transformation independently.
+`bash tests/iam-matrix-contracts.sh`
 
-The shared report writer requires a run-start UTC `recorded_at`, applies a final
-recursive identifier redaction, records `redaction_applied: true`, keeps each
-top-level summary or scalar on one line,
-and renders sorted `records` and role-lane `exclusions` with one compact JSON
-object per line. SHA-256 and Git-SHA tokens remain byte-preserved. The writer
-creates its temporary file beside the destination, so the final `os.replace` is
-atomic even when the configured scratch directory is on another filesystem. The
-`REPORT` group round-trips this form against the equivalent pretty JSON and kills
-redaction-removal, principal-path-redaction, cross-directory-temporary-file, and
-`indent=2` writer mutants before proving the restored paths. IAM and STS principal
-ARNs in diagnostics become `arn:aws:iam::000000000000:<redacted-principal>`;
-semantic policy and simulated-resource ARN fields retain their identity paths. Both
-simulator lanes use the same writer.
+The matrix inventory contains 86 policy-statement rows and 13 principal bindings. Contracts bind source and exact-plan modes, action/resource/condition cells, trust and KMS principals, wildcard taxonomy, evidence pointers, case identifiers, hashes, and negative fixtures. The matrix is an executable specification; a lower evidence label is not promoted by prose.
 
-The `REPORT` group executes `scripts/iam-simulate-report.sh` against clean
-custom- and role-report fixtures and checks the rendered case table, findings,
-divergences, outcome counts, submitted document hashes, provenance, exclusions,
-and named hygiene review. A full SHA-256 containing account-shaped digits stays
-valid, while the same digits in a case ID fail closed with no published files.
-The group also refuses a role report without `account_redacted: true`, checks
-both JSON inputs and both rendered Markdown outputs with artifact hygiene, and
-kills mutants that remove the role marker guard, the JSON inputs, or the entire
-hygiene call. The custom fake validates context entries exactly, and a dropped
-`--context-entries` mutant fails. The group also checks that a doctored custom
-`pass` cannot suppress a finding. Role results ignore stored `pass` and the
-stored source-hash flag, require both role detail sets to equal the matching
-custom report's complete action-resource pair set, and bind custom hashes through
-the projection sources, projection policy, and put-role-policy digest before
-re-deriving decisions and Sids from the SCP-excluded details. Role
-divergences render the vector expectation
-and the custom lane's observed decision in separate columns. Per-pair details are
-re-evaluated against `expect.resource_decisions` even when the aggregate observed
-decision is a homogeneous scalar; dict observations and agreeing scalar fallbacks
-remain supported. The committed custom/role totals, passes, and failures must equal
-their JSON summaries, and a scalar-rejection mutant must make those counts diverge.
-An injected failure between report
-and provenance publication restores both original output files;
-the provenance is published last. The group also checks the Makefile wiring.
-Modern reports derive `recorded_on` from the custom run's `recorded_at`, bind a
-role report to the exact custom-report bytes, and reject a role timestamp earlier
-than the custom timestamp. `--recorded-on` is limited to all-legacy inputs; the
-documented legacy command is executed against the committed reports and its
-date-removal mutant must fail. The
-root `make test` recipe runs
-`tests/artifact-hygiene-contracts.sh` immediately after the IAM simulator suite.
-That fixture matrix rejects lowercase `requestid`; removing case-insensitive
-matching is a killed mutation with an explicit restored pass. Complete 64/40-hex
-tokens are exempt only in JSON digest fields and Markdown digest/commit table
-cells; a non-digest JSON field containing account-shaped digits still fails.
+## IAM simulator
 
-The `EVIDENCE` group joins every `AWS-SIMULATED` matrix label to a unique
-execution-matching custom-policy record or, when needed, a unique matching
-SCP-excluded role-policy record. When report details are available, every
-asserted action/resource pair must independently include every required Sid and
-exclude every forbidden Sid; the union remains display-only. It ignores stored
-custom `pass` values and re-evaluates both lanes' decisions and
-required/forbidden Sids against the vector; a runner
-failure never matches. It enforces the row minimum, verifies the provenance
-date and exact report pointer, and refuses publication date or generator-commit
-disagreement between the Markdown report and provenance. It verifies the
-renderer-recorded custom, role, and Markdown SHA-256 rows against the exact
-published bytes. A role fallback also binds the custom policy hashes through the
-named top-level projection source documents, exact projection policy bytes, and
-the put-role-policy digest. Digest-bearing provenance requires a known ancestor
-generator commit with no generator-file drift through HEAD. The join derives `${SUFFIX}`
-from the plan-reader role name recorded in the role report, so suffixes such as
-`team-a` remain valid. Thirty-two registered mutants cover those joins and bindings,
-including a doctored custom pass, a per-pair Sid miss, empty and mismatching-second
-promoted hash lists, a hyphenated-suffix matcher regression, and a runner failure.
-Every restored join must pass. The failed-case and doctored-pass mutations remove the published role-lane closure for the sole custom failure, so stored custom `pass` cannot promote an execution mismatch; the restored join remains bound to the current published lane reports.
+`env -u AWS_PROFILE bash tests/iam-simulate-contracts.sh`
 
-The `TAXONOMY` group runs
-`scripts/iam-simulate-categories.py --check`, independently compares the 290
-matrix case IDs to `tests/fixtures/iam-simulate/categories.json`, requires the
-four categories to be disjoint with non-empty reasons, and executes added,
-removed, duplicate-category, and empty-reason mutations. Regenerate the file
-with `python3 scripts/iam-simulate-categories.py`; the stdlib-only generator
-parses each row's explicit document and Sid prefix and writes deterministic LF
-JSON with array brackets around one compact object per line and a trailing
-newline.
+The taxonomy contains 290 unique cases. The authored vector directory contains 241 cases, and the published Evidence join promotes 220 cases in 65 matrix rows. The mutation registry contains 208 non-comment cases and must dispatch every row, reject no-op actions, observe the expected failure, and restore the changed source or fixture.
 
-The `CASE-ID` group sources `tests/lib/iam-simulate.sh`, round-trips all 290
-taxonomy entries, and separately covers `ALL:none`, `ALL:resource`, an
-`aws:`-prefixed condition key, a colon-bearing trust document, and wrong-document
-refusal. Both runners enforce the same exact-prefix rule instead of splitting
-case IDs on colons.
+The suite is divided into taxonomy, case-ID, schema, completeness, runner, role-lane, renderer, and Evidence groups. It verifies:
 
-The `SCHEMA` group executes `scripts/iam-simulate-validate.py` against four
-positive envelopes covering both simulation modes and assertion kinds, plus
-single-defect envelopes for the required failure branches. The files are
-synthetic schema fixtures, not authored execution vectors. Their names are
-`valid-*.json` and `invalid-*.json`; every invalid fixture is passed to the real
-validator and its `FAIL:` diagnostic is asserted. Dedicated cases prove header
-prefix and within-envelope duplicate rejection, while `--jsonl` must flatten a
-validated envelope by materializing its schema version, document, and Sid.
-Embedded `policy_input_list` and `isolated_statement` repository-policy
-snapshots remain invalid. The schema is specified in
-`docs/evidence/iam-simulate-vector-schema.md`. This suite makes no external-service
-calls. The validator also accepts a vector directory, validates its 81
-envelopes in sorted order in one process, and emits all prepared cases as JSONL;
-both execution lanes use that directory form.
+- exact vector schema, filename derivation, category coverage, and global case uniqueness;
+- shared-core policy hashing, statement scanning, action partitioning, request grouping, response mapping, retries, and fail-closed plan extraction;
+- temporary-role projection, exact caller trust, nonce ownership, readback and readiness, reverse cleanup, signal deferral, absence checks, and complete redaction;
+- per-action/resource decisions, required and forbidden Sids, principal divergences, Organizations attribution, and projection hashes;
+- transactional report publication, artifact hygiene, provenance digests and generator commit, and the 220-case/65-row evidence join.
 
-The `COMPLETENESS` group reads the 81 real `(document, Sid)` envelopes from
-`tests/fixtures/iam-simulate/vectors/`. Filenames are
-`<document>__<sid>.json`, with every character outside `[A-Za-z0-9._-]`
-replaced by `_`. It counts the 241 case IDs globally, requires every case prefix
-to match its envelope header, rejects a case ID appearing in two envelopes,
-checks exact filename derivation, and runs the real validator over every
-envelope. Simulator-eligible cases must occur exactly once unless
-`tests/fixtures/iam-simulate/unresolved.json` records the case ID and a
-non-empty precise question. Vectors for either non-simulator category and
-unknown case IDs are rejected. Independent mutants remove one `cases` member,
-add both forbidden categories, add an unknown ID, duplicate a case across two
-envelopes, drift a filename, invalidate one case, mismatch a header, and prove
-the counted unresolved exemption.
+The role report distinguishes raw `policy_sha256` from `redacted_policy_sha256` for the redacted `policy_document`. Modern reports are keyed by `recorded_at`; missing required digest or redaction fields fail.
 
-The `RUNNER` group creates a synthetic plan and vector envelopes in its
-temporary workspace, puts a fake `aws` first on `PATH`, and still routes every invocation
-through `scripts/aws-cli.sh`. It proves exact-ARN per-resource mapping
-when those results exist, action-level decision and attribution for explicit
-`*` or an omitted resource list, refusal of missing concrete resource results,
-and shared-core-derived separate requests for the two S3 delete names that
-require different authorization information. Action-class membership is
-case-insensitive, including lower-case
-`s3:deletebucketpublicaccessblock`. It also covers 1-based multiline
-position-to-Sid
-attribution with an exclusive end position and unique overlap against exact
-statement spans. The computed two-statement fixture and the exact 5,697-character,
-18-statement `deployer_data` plan policy both include the preceding comma in a
-returned range; the real `1:1779`/`1:2055` range maps to
-`ClickhouseSecretCreateWithTag`. A sibling range overlaps two statements and
-must remain ambiguous, while a zero-overlap range remains unmapped; both
-refusals assert document-length, span-count, range, and first/last-span
-diagnostics. Scanner contracts and killed mutants cover multiline input, braces
-and brackets inside a string, escaped quotes, and restoration of strict endpoint
-containment. Shared statement scanning also rejects empty and whitespace-only
-Sids with the zero-based statement index; an `isinstance`-only mutant is killed
-and restored in both execution lanes. Those mutants alter
-`scripts/iam_simulate_core.py`, proving the
-runner delegates scanning and unique-overlap attribution to the shared module;
-the restored module must pass again. The group also covers compatible shared-call
-reporting and pre-call
-refusal when a duplicate action/resource pair disagrees on its expectation, the
-five-attempt throttle cap, timeout non-retry, exact `TARGET=aws` refusal,
-byte-equal policy and boundary resolution from raw plan `.values.policy`,
-missing-address refusal, and absent/duplicate-Sid refusal before a fake AWS call.
-Six table-derived doctored plans independently cover non-array resources,
-duplicate addresses, null policies, null role names, invalid suffix names, and
-multiple account IDs; each custom-runner guard has a temporary source mutant.
-A real-vector contract requires exactly 241 report records and currently counts
-8 shared-call batches across 16 cases; mutations make a colliding pair disagree
-and drop one shared case from the report. The isolated statement submitted by
-the runner comes from the named plan document, and its attribution spans are
-computed against that one-statement wrapper. The plan fixture carries all ten
-addresses from `scripts/iam-matrix-documents.sh`; no authored execution vectors
-are added by this suite.
+The suite uses a fake AWS CLI for runner and temporary-role execution. The committed JSON and Markdown artifacts are sanitized publication inputs; the live invocation procedure is in [Runbooks](../docs/RUNBOOKS.md#iam-simulator-lanes).
 
-The `ROLE-LANE` group uses the same fake boundary and stateful temporary role
-store. It proves that `custom` vectors are selected unchanged while
-`custom-isolated` vectors carry the recorded no-principal-equivalent exclusion.
-Custom vectors whose documents are not identity-role bindings are excluded
-before custom-report preflight and retain their specific exclusion reason. The
-task-boundary fixture proves that such an excluded record may legitimately
-contain both the plan-document and synthetic-identity hashes without blocking
-the lane. For each selected role it concatenates every mapped document's
-`Statement` array in sorted address order. The plan-reader and publisher
-projections fit under 10,240 whitespace-stripped characters and use one
-combined pass; the six deployer documents do not fit together and therefore
-use six separately created, simulated, and deleted per-document roles. Report
-records identify the deciding projection with source addresses and SHA-256 hashes.
-Each projection keeps `policy_sha256` for the raw submitted policy and adds
-`redacted_policy_sha256` for the stored redacted `policy_document`. The core
-contract rejects a missing redacted digest; renderer contracts cover a
-live-account redaction chain, doctored digest and document values, missing modern
-fields for both live and placeholder reports, and a source mutant that changes
-`recorded_at` keying.
-Before report serialization, one recursive boundary replaces the live account
-ID throughout the final object with `000000000000`; reports carry that placeholder in
-`account`, replace the per-invocation ownership nonce with `<redacted>`, and set
-both redaction markers to `true`. Fake-recorded API calls prove that role names,
-trust policies, and principal-policy source ARNs retain the live account ID
-while the report contains neither the live account nor the replayable nonce. The
-trust document names exactly the invoking `sts get-caller-identity` Arn, never the
-account root; dry-run inventory uses the same builder with the redacted principal.
-Report serialization replaces the complete caller Arn with
-`arn:aws:iam::000000000000:<redacted-principal>`, so no caller user or role name is
-published. Exact `--only` selection executes one case; missing, duplicate, and
-unsupported
-IDs fail with the requested ID and a specific exclusion reason.
+## Dispatch and concurrency
 
-An independent projection oracle reconstructs pass partitioning, source order,
-concatenated policy bytes, hashes, character counts, case membership, and call
-ordering from the Terraform plan and vector envelopes. The report validator
-compares account-redacted projection text while retaining the raw-byte digest
-check and requires the complete ordered source address/hash list. It does not
-consume the role plan emitted by the lane, and source-partition, concatenation,
-account-redaction, source-byte, and hash mutants must each fail it.
+`bash tests/dispatch-ordering-contracts.sh`
 
-The role-lane mapping cases use the same module for the exact 5,697-character
-delimiter-inclusive/exclusive-end range, braces and brackets inside strings,
-escaped quotes, and an action-level response with no
-`ResourceSpecificResults`. The lane prepares its cases once as a NUL-delimited
-stream and maps every response in one shared-core invocation per principal
-pass, rather than spawning parsers and a mapper per case. The same
-strict-containment module mutation must fail both the `RUNNER` and `ROLE-LANE`
-groups, followed by an explicit restored pass in each group. Role projection
-delegates statement Sid validation to that shared scanner instead of maintaining
-a separate type-only check. The six malformed plan shapes are also run against
-the role extractor, with a separate guard-neutering source mutant for each
-because the two extractors differ. One mutation of the shared action-class
-partition likewise makes both lanes submit the rejected
-mixed S3 request; the fake returns the matching AWS `InvalidInput` diagnostic,
-and both restored lanes must pass.
+This offline suite extracts the jq filters used by the live ordering harness and checks complete job arrays, non-skipped timestamps, retry handling, and strict apply-terminal to next-start ordering.
 
-The group also proves the complete zero-call dry-run inventory, exact opt-in and
-account refusals, plus refusal of a plan carrying neither the placeholder nor
-the expected account with zero creates. Custom-report mode and source-hash
-agreement for selected cases also precede the first create, and selected records
-with synthetic identity documents are refused. The principal fake verifies the
-exact canonical context-entry set for condition-bearing cases, so a runner that
-drops context is killed. Report checks cover both expected- and plan-account
-redaction and the `plan_account_redacted` marker. A mutant that moves the custom
-preflight back over every loaded vector is killed, while the selected wrong-hash
-mutation still records zero create calls. The group also proves both run-id and
-32-hex nonce ownership tags before the first policy put, collision isolation,
-cleanup after a midway create failure and TERM, the delete-policy barrier,
-reverse cleanup across all projection passes, and post-cleanup `NoSuchEntity`
-verification. Midway-create and TERM
-failures run against both the three-role fixture and the eight-role projection.
-Additional eight-role cases inject at deployer p4 between a policy put and its
-marker and immediately after policy deletion; cleanup tolerates an unattached policy,
-defers TERM until cleanup, absence verification, and report writing finish, and
-then returns 143. A nonce-tamper case proves zero policy puts and deletes, and a
-nonce-ignoring source mutant is killed. A high-index cleanup mutant still passes
-the three-role case but is killed by the eight-role case. The deadline-bounded
-full-fixture dry run derives
-the projected-role count `R` and selected-case count `C` from the plan and vector
-fixtures at run time, then requires exactly `1 + 8R + 2G` calls, where `G` is
-the sum of non-empty authorization action groups over the `C` selected cases.
-The current full fixture has `R=8`, `C=158`, `G=159`, and therefore 383 calls.
-A dropped-call mutant kills the formula check. Its restored path keeps the full
-denominator. The descriptor-leak mutant and instrumented bounded-read lane run
-against the same reduced 24-case fixture with a five-second wall-clock cap. Each
-case samples
-`ls -1 /dev/fd`; the deterministic mutant opens and retains exactly one fresh
-descriptor per case, so every increment must be at least one, while the real
-lane's maximum-minus-minimum count must be at most two. The historical bug was a
-nested process substitution that leaked until case 126 on macOS Bash 3.2. That
-shape does not leak on Linux Bash 5, so the registered mutant is a deterministic
-stand-in with the same growth contract on both platforms; its registry action
-explicitly names macOS Bash 3.2 and Linux Bash 5. Duplicate Sids across
-combined role documents and any loaded vector case ID missing from the custom
-report fail before a role is created.
-After every policy put, the fake returns the stored bytes through
-`get-role-policy`, then answers one SCP-excluded readiness probe selected from
-the full pre-`--only` inventory. Readiness requires an expected decision and a
-required matched Sid; allowed and explicit-deny witnesses qualify, while
-attribution-only cases do not. `propagation_delay_calls` delays both readback and
-probe visibility, and reports retain the resulting per-projection
-`propagation_attempts`. Contracts cover a delayed full run, allowed-only,
-deny-only, and zero-selected projections, prove every committed projection has
-a deterministic witness, and kill retry removal while preserving cleanup after
-exhausted readback.
-Every selected case is simulated first with the exact SCP exclusion and then
-with the default effective-policy request. Every detail decision must first match
-the vector's scalar or per-resource expectation; a mismatch marks the record
-failed and makes the lane exit non-zero. The SCP-excluded decision is then compared
-to the custom lane's observed decision: disagreement is reportable divergence
-evidence, not a failed run. Default-versus-SCP differences are separately
-reported per action and resource with Organizations attribution. Every new
-contract has a killed mutation whose `FAIL:` line is printed by the suite.
+`bash tests/localstack-concurrency-signal.sh`
 
-## Phase 5 sweeper fixtures
+The signal contract proves the concurrency harness terminates and reaps the full process group even after its leader exits.
 
-Run the Stage 2 regression suite without AWS or LocalStack:
+`make test-concurrency TARGET=localstack OPERATOR_CIDR=203.0.113.0/24`
 
-```
-bash tests/sweeper.sh
-```
+With one running emulator, applied LocalStack bootstrap, and ARM64 placeholder image, the live harness overlaps two isolated environments and checks states, tags, clusters, lease refusals, generations, exact cleanup probes, and trap cleanup. It is the single-emulator lease-semantics proof.
 
-The suite reuses the repository AWS wrapper with a fake AWS CLI and a fake
-versioned S3 lease/state store. It covers every discovery class and age
-boundary, invalid inventory IDs, fresh-read Stage 1 selection, retry-budget
-and manual-intervention refusal, exact AWS deleted `ClientException` versus
-other non-zero describe errors, paginated/batched state-version and
-delete-marker removal, `DELETE_IN_PROGRESS`, malformed describe/candidate
-refusal, target-scoped LocalStack allowances and missing-allowance refusal,
-Stage-1 `passed:false` refusal, present-null version lists, malformed or
-incomplete `delete-objects` acknowledgements, zero-exit per-object errors,
-post-delete re-list refusal, partial deletion, a lease change between batches,
-stale-open generation replacement before Stage 1, exclusive Stage 2 claim and
-proof recording, an atomic-completion race that adds a new state version,
-stale-claim takeover and audit, young-claim and Stage-1-claim refusals,
-classification-to-claim manual escalation, signal release before and after
-claim-ending CAS operations, pending-resource hand-back, separate Stage 2
-failure accounting, cap escalation, exact state and `.tflock` cleanup with
-sibling isolation, an executable single-key selector mutant, prune-time
-If-Match loss, and ETag-conditional tombstone replacement, plus a TERM
-delivered during a refused Stage-2 takeover claim's own fresh read. The suite
-currently reports 41 cases.
+`ENV_ID=ord1 TARGET=localstack REF=main bash tests/dispatch-ordering.sh`
 
-Fixture provenance:
-
-- `discover-cases.json` — `authored` from ADR 0006 lifecycle thresholds.
-- `aws-deleted-client-exception.json` — `authored` from the AWS ECS deleted
-  DescribeTaskDefinition contract; replace with a sanitized recording during
-  real-AWS promotion.
-- `aws-delete-in-progress.json` — `authored` from the AWS ECS
-  `DELETE_IN_PROGRESS` contract.
-- `aws-malformed-describe.json` — `authored` fail-closed schema case.
-- `localstack-inactive-allowance.json` — `authored` Stage 2 response paired
-  with the Stage 1 allowance recorded from LocalStack 2026.8.1; the
-  orchestrator replaces it only from a sanitized in-job recording.
-- `aws-clientexception-mismatch.json`,
-  `aws-inactive-with-localstack-allowance.json`,
-  `localstack-inactive-no-allowance.json`, `aws-verification-failed.json`,
-  `delete-objects-errors.json`, `list-null-versions.json`,
-  `delete-null-entry.json`, `delete-incomplete-ack.json`, and
-  `aws-post-delete-relist.json` — `authored` fail-closed branch contracts;
-  replace only from sanitized backend recordings that preserve the same
-  condition.
-
-## Phase 4 live concurrency
-
-With one already-running LocalStack, an applied LocalStack bootstrap, and the
-ARM64 placeholder image present, run:
-
-```
-make test-concurrency TARGET=localstack OPERATOR_CIDR=203.0.113.0/24
-```
-
-`tests/localstack-concurrency.sh` generates a distinctive `cca...1`/`cca...2`
-pair unless `ENV_A` and `ENV_B` are supplied. On that one emulator it proves
-lease open/closing refusals and generation stability, overlaps both applies
-and both generation-bound closes, checks the isolated `.preview-runs/<id>`
-states and ECS cluster names, and queries the module `env_id` tag through
-`scripts/aws-cli.sh`. The two filtered ARN sets must be disjoint, and every
-returned record must carry exactly one `env_id` tag matching the requested
-environment; the ARN text cross-reference check remains an additional guard.
-Every record the post-close inventory still lists
-(the tagging API is eventually consistent, and LocalStack retains entries for
-deleted resources) is evaluated by `scripts/cleanup-verifier.sh` exact probes,
-which must report zero live, indeterminate, or pending; the test does not
-duplicate the verifier's LocalStack allowance or exact-resource predicates.
-Its exit trap closes every lease generation it acquired. Before starting
-those closes, the trap terminates
-each active apply/close process group and reaps every worker; a failed run
-retains only redacted diagnostics.
-
-This local, single-emulator run is the lease-semantics proof. Each hosted
-LocalStack workflow run gets a fresh runner and fresh emulator, so separate
-GitHub runs cannot observe one another's lease, state, CAS refusal, or
-generation increment.
-
-## Phase 4 dispatch ordering
-
-After the change is on `main`, run the LocalStack queue test with:
-
-```
-ENV_ID=ord1 TARGET=localstack REF=main bash tests/dispatch-ordering.sh
-```
-
-Each invocation generates a nonce, passes a distinct nonce-bearing
-`dispatch_note` to all three workflows, and captures exactly one new run whose
-display title contains that note, event is `workflow_dispatch`, and head branch
-equals `REF`. Both targets require three queue polls with the first apply
-in-progress and the second held (`pending`, GitHub's status for a run blocked
-by its concurrency group, or `queued`), then observe the destroy held behind it.
-After all runs are terminal, the test requires the first apply's latest job
-`completed_at` < the second apply's earliest job `started_at`, and the second
-apply's latest job `completed_at` < the destroy's earliest job `started_at`.
-Equal timestamps are inconclusive and fail closed.
-Job timestamps are used because GitHub stamps a run's `run_started_at` when
-it accepts the dispatch, before the concurrency group releases the run.
-Skipped jobs (for example the destroy job behind a refused validate-input)
-are excluded from the aggregation. Before aggregating, each jobs response must
-have `total_count` equal to the returned jobs-array length, at least one
-non-skipped job, and string `started_at` and `completed_at` values on every
-non-skipped job. A response that fails any condition is treated as lagging and
-the jobs endpoint is read up to three times ten seconds apart before failing
-closed with the condition that remained unsatisfied.
-
-For LocalStack, both applies must conclude `success`; destroy must conclude
-`failure` in `validate-input` with the exact `target=localstack` refusal. For
-AWS, the first apply and the destroy must conclude `success` and the second
-apply must conclude `failure`: per ADR 0006 the first apply leaves its lease
-`open`, so the queued second apply is refused at lease open before any
-resource is created. The AWS path always
-reads the final lease through `TARGET=aws scripts/lease.sh` and requires
-the destroy conclusion to be `success` before treating `closing` or `closed`
-as safe. Any non-success destroy conclusion, an `open` or `cleanup_failed` lease, an
-unreadable status, or invalid ordering leaves cleanup unchecked so the EXIT
-trap dispatches one recovery `session-destroy`; the failure names the destroy
-run id and observed lease status. Neither target is a cross-run
-lease test (each LocalStack run is a fresh emulator). Neither target cancels a
-run unless `CANCEL_ON_EXIT=1` is explicitly set.
-
-The session workflows execute jobs only on `main`. Supplying a non-main `REF`
-is expected to create a skipped run, so it cannot satisfy this ordering test.
+After landing on `main`, the live GitHub harness captures nonce-bound apply/apply/destroy runs, waits for the queued chain, compares job timestamps, and enforces target-specific conclusions. LocalStack destroy must refuse because a later runner cannot recover the prior emulator. AWS failures trigger one recovery destroy when final lease safety cannot be confirmed.

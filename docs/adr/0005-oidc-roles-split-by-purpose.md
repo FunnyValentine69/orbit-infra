@@ -34,10 +34,9 @@ before starting a job that reads `LOCALSTACK_AUTH_TOKEN` or
 Reruns of the owner-only LocalStack session lane by collaborators are refused
 because the triggering actor is checked.
 
-**Local-bootstrap deviation:** the Free Plan blocks IAM Identity Center,
-so bootstrap runs from an IAM user (MFA, keys local-only, deactivated
-between sessions) instead of SSO, confined to the operator's one-time
-bootstrap step; CI never uses static keys.
+**Local-bootstrap deviation:** bootstrap may run from an IAM user with MFA
+and local-only keys that are deactivated between sessions, confined to the
+operator's one-time bootstrap step; CI never uses static keys.
 
 ## Consequences
 
