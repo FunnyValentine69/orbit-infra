@@ -52,20 +52,19 @@ all_generator_paths() {
 
 init_generator_clone() {
   local destination=$1
-  local path parent
+  local path tracked_file parent
   mkdir -p "$destination"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    parent=${path%/*}
-    if [ "$parent" != "$path" ]; then
-      mkdir -p "$destination/$parent"
-    fi
-    cp -R "$REPO_ROOT/$path" "$destination/$path"
+    while IFS= read -r -d '' tracked_file; do
+      parent=${tracked_file%/*}
+      if [ "$parent" != "$tracked_file" ]; then
+        mkdir -p "$destination/$parent"
+      fi
+      cp -pP "$REPO_ROOT/$tracked_file" "$destination/$tracked_file"
+    done < <(git -C "$REPO_ROOT" ls-files -z -- "$path")
   done < <(all_generator_paths)
   cp "$REPO_ROOT/.gitignore" "$destination/.gitignore"
-  if [ -d "$destination/demo/out" ]; then
-    find "$destination/demo/out" -type f -delete
-  fi
   (
     cd "$destination"
     git init -q
@@ -817,6 +816,16 @@ fi
 positive_clone="$tmp_dir/generator-positive"
 init_generator_clone "$positive_clone"
 positive_commit="$(git -C "$positive_clone" rev-parse HEAD)"
+copied_runtime_dir="$(find "$positive_clone" -type d \( \
+  -name out -path '*/demo/out' -o \
+  -name .terraform -o \
+  -name '.terraform-localstack*' \
+\) -print -quit)"
+if [ -z "$copied_runtime_dir" ]; then
+  pass_case "generator clone excludes runtime directories"
+else
+  fail_case "generator clone excludes runtime directories" "$copied_runtime_dir"
+fi
 mkdir -p "$positive_clone/demo/out/run-x" \
   "$positive_clone/envs/preview/.terraform/cache" \
   "$positive_clone/modules/network/.terraform/cache"
@@ -832,6 +841,7 @@ if generator_clean_check "$positive_clone" "$positive_commit" >/dev/null 2>&1; t
 else
   fail_case "generator cleanliness allows runtime output, Terraform caches, and exact state files"
 fi
+rm -rf -- "$positive_clone"
 
 localstack_tfvars_clone="$tmp_dir/generator-ignored-localstack-auto-tfvars"
 init_generator_clone "$localstack_tfvars_clone"
@@ -852,6 +862,7 @@ else
   fail_case "generator cleanliness rejects ignored LocalStack auto tfvars" \
     "$localstack_tfvars_output"
 fi
+rm -rf -- "$localstack_tfvars_clone"
 
 generator_negative_ok=1
 for generator_case in committed-record committed-module staged-preview uncommitted-preview \
@@ -894,6 +905,7 @@ for generator_case in committed-record committed-module staged-preview uncommitt
       >/dev/null 2>&1; then
     generator_negative_ok=0
   fi
+  rm -rf -- "$clone"
 done
 unreachable_clone="$tmp_dir/generator-unreachable"
 init_generator_clone "$unreachable_clone"
@@ -905,6 +917,7 @@ if [ "$unreachable_rc" -eq 0 ] || \
    ! grep -Fq 'generator commit unreachable; fetch full history' <<< "$unreachable_output"; then
   generator_negative_ok=0
 fi
+rm -rf -- "$unreachable_clone"
 if [ "$generator_negative_ok" -eq 1 ]; then
   pass_case "generator drift negative mutation table and unreachable history"
 else
@@ -954,6 +967,7 @@ if [ "$default_reject_mutant_rc" -eq 0 ]; then
 else
   fail_case "mutant drop-ignored-default-reject killed"
 fi
+rm -rf -- "$default_reject_clone"
 
 kind_drift_ok=1
 for drift_case in \
@@ -982,6 +996,7 @@ for drift_case in \
       kind_drift_ok=0
     fi
   done
+  rm -rf -- "$clone"
 done
 if [ "$kind_drift_ok" -eq 1 ]; then
   pass_case "generator drift mutants are isolated per recording kind"
