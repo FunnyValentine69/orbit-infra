@@ -353,7 +353,7 @@ Prerequisites are P0-3b, an applied real-AWS bootstrap, the three GitHub role se
 
 Known gap: `ReadOnlyAccess` is AWS-managed, so this contract fixes its attachment but not its changing grant content. P0-3d remains open until every executable case is recorded at its required evidence level; P5-19 closes when this specification and drift contract are authored.
 
-## Simulator lane (2026-09-11)
+## Simulator lane (2026-09-12)
 
 The committed 2026-09-12 lanes contain 241 custom-policy records (240 passed, 1 failed, and 0 runner failures) and 158 selected role cases (158 passed and 0 failed, with 155 custom-lane agreements and 3 divergences). The Evidence join promotes 220 cases in 65 of 86 statement rows, leaving 21 rows at their lower label. The compared role run excludes service control policies so it can be compared to custom-policy evaluation, while the report records 429 Organizations-affected action/resource results separately and zero manual cleanup notes. These lanes prove IAM policy evaluation, not service enforcement or whether a service supplies a simulated condition key.
 
