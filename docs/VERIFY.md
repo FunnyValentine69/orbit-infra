@@ -27,7 +27,7 @@ Run the complete local gate dispatcher:
 scripts/gates.sh
 ```
 
-The dispatcher runs validation, lint, tests, documentation contracts, IAM policy-size checks, the no-NAT check, and Conftest. The documentation suite checks publication budgets and links, indexes every evidence file, rejects retired paths and private-scope wording, and kills 16 injected mutations before confirming the restored suite.
+The dispatcher runs validation, lint, tests, documentation contracts, IAM policy-size checks, the no-NAT check, and Conftest. The documentation suite checks publication budgets and links, indexes every evidence file, rejects retired paths and private-scope wording, and kills 17 injected mutations before confirming the restored suite.
 
 With LocalStack running and its bootstrap applied, regenerate the exact-field IAM matrix plan:
 

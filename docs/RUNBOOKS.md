@@ -244,6 +244,10 @@ TARGET=aws scripts/lease.sh get "$ENV_ID" | jq '{status,generation,owner,cleanup
 
 A forced run may take over a confirmed-dead stale Stage 1 claim and records the cleared claim. Never force while its process may run. If status is `closing`, return to the Sweeper procedure. A pending task definition consumes Stage 2 retries, not Stage 1 retries. Only the exact recorded LocalStack inactive-task allowance exists; stale tags, retained list entries, deleted endpoints, ENI ownership, and bucket emptiness are never generalized allowances.
 
+### Stuck-environment force-destroy
+
+A stuck environment left `cleanup_failed` or `closing` after its retry budget is exhausted has no separate force-destroy path. Terminal recovery is the Manual lease recovery procedure above, run with the exact generation and token from the lease read, followed by the nightly sweeper or a manual `scripts/sweep.sh` pass.
+
 ## Rotate secrets
 
 Use hidden `gh` prompts; never pass values on the command line, echo them, or write them to a file:

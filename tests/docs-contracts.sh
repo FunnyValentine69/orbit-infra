@@ -159,8 +159,12 @@ if publication:
     )
     for source in markdown + shell:
         text = (root / source).read_text(encoding="utf-8")
+        folded_text = text.lower()
         for token in forbidden:
-            if token in text:
+            if re.search(
+                rf"(?<![a-z0-9]){re.escape(token.lower())}(?![a-z0-9])",
+                folded_text,
+            ):
                 fail(f"forbidden public-scope token in {source}: {token}")
 
     for source in markdown:
@@ -262,6 +266,8 @@ else
 fi
 
 fixture_manifest="$tmp_dir/fixture-manifest.txt"
+mutation_count=0
+expected_mutations=17
 
 write_fixture() {
   local destination=$1
@@ -320,6 +326,7 @@ run_mutation() {
     echo "FAIL: docs mutation $label did not fail as required: rc=$rc output=$output" >&2
     exit 1
   fi
+  mutation_count=$((mutation_count + 1))
   echo "PASS: docs mutation $label -> $fail_line"
   write_fixture "$root"
   "$SELF" --scan "$root" "$fixture_manifest" publication >/dev/null
@@ -385,6 +392,7 @@ run_missing_on_disk_mutation() {
     echo "FAIL: docs mutation missing-on-disk did not fail as required: rc=$rc output=$output" >&2
     exit 1
   fi
+  mutation_count=$((mutation_count + 1))
   echo "PASS: docs mutation missing-on-disk -> $fail_line"
   printf '# Verify\n' >"$root/$tracked_path"
   "$SELF" --manifest "$root" "$output_manifest"
@@ -404,6 +412,7 @@ run_mutation readme-embed 'FAIL: README missing required image embed: docs/asset
 
 token_specs=(
   'free-plan|Free'' Plan'
+  'token-case|free'' plan'
   'paid-plan|Paid'' Plan'
   'closure-date|2027-''03-02'
   'credit-amount|$''100'
@@ -418,4 +427,9 @@ for spec in "${token_specs[@]}"; do
     mutate_token "$token"
 done
 
-echo "PASS: documentation contracts (16 mutations; restored suite passed)"
+if [ "$mutation_count" -ne "$expected_mutations" ]; then
+  echo "FAIL: documentation mutation count mismatch: $mutation_count != $expected_mutations" >&2
+  exit 1
+fi
+
+echo "PASS: documentation contracts ($mutation_count mutations; restored suite passed)"
