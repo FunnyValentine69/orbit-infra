@@ -6,8 +6,8 @@ This publication renders account `000000000000` only.
 
 | Field | Value |
 | --- | --- |
-| recorded_on | 2026-09-11 |
-| generator commit | af5240c |
+| recorded_on | 2026-09-12 |
+| generator commit | f82d4a5 |
 
 ## Case results
 
@@ -68,6 +68,7 @@ This publication renders account `000000000000` only.
 | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | custom | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | custom | allowed | allowed | SnsSubscriptionManage | yes |
 | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | custom | implicitDeny | implicitDeny | none | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:supplied | custom | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | custom | allowed | allowed | TagDiscovery | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:absent | custom-isolated | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | custom | allowed | allowed | Ec2CreateTagsForCreateActions | yes |
@@ -294,6 +295,7 @@ This publication renders account `000000000000` only.
 | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | principal | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | principal | allowed | allowed | SnsSubscriptionManage | yes |
 | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | principal | implicitDeny | implicitDeny | none | yes |
+| case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:supplied | principal | implicitDeny | implicitDeny | none | yes |
 | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | principal | allowed | allowed | TagDiscovery | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | principal | allowed | allowed | Ec2CreateTagsForCreateActions | yes |
 | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:ec2:CreateAction:matching | principal | allowed | allowed | Ec2CreateTagsForCreateActions | yes |
@@ -856,8 +858,8 @@ This publication renders account `000000000000` only.
 
 | Lane | Total | Passed | Failed | Runner failures |
 | --- | ---: | ---: | ---: | ---: |
-| custom | 240 | 239 | 1 | 0 |
-| role | 157 | 157 | 0 | 0 |
+| custom | 241 | 240 | 1 | 0 |
+| role | 158 | 158 | 0 | 0 |
 
 ## Submitted document SHA-256s
 
@@ -918,6 +920,7 @@ This publication renders account `000000000000` only.
 | custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:absent | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| custom | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:supplied | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | policy_input_list | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | custom | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:absent | policy_input_list | 8951f16ea43f83af2c03e7ceb015bf9872e4eac57c5b7e5cd85da7bb088c4f21 |
 | custom | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | policy_input_list | 6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b |
@@ -1207,6 +1210,8 @@ This publication renders account `000000000000` only.
 | role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:aws:ResourceTag/Project:non-matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:supplied | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
+| role | case:aws_iam_policy.deployer_data:SnsSubscriptionManage:ALL:resource:supplied | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | role | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | custom_lane | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | role | case:aws_iam_policy.deployer_data:TagDiscovery:ALL:none:matching | put_role_policy | 19e3305cb5dc2c3cd62591306040bb56380ba7ae3fc9897bef91d14885413b92 |
 | role | case:aws_iam_policy.deployer_ec2:Ec2CreateTagsForCreateActions:ALL:aws:RequestTag/Project:matching | custom_lane | 6ff61772e9e7e9dd8f02552601a8e6673ccce01fc613cb32ffb67ed5aa9d7d6b |
