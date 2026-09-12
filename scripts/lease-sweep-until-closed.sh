@@ -14,7 +14,7 @@ usage() {
 }
 
 refuse_manual() {
-  echo "lease-sweep-until-closed.sh: $1; follow RUNBOOKS.md#manual-lease-recovery" >&2
+  echo "lease-sweep-until-closed.sh: $1; follow docs/RUNBOOKS.md#manual-lease-recovery" >&2
   return 3
 }
 

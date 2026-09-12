@@ -4,8 +4,8 @@ Evidence gates: LocalStack apply, Stage 1, and the successful in-job Stage 2 all
 
 ## Purpose
 
-This document describes the target architecture; STATE.md and TODO.md
-record what is implemented and verified.
+This document describes the target architecture; TODO.md records what is
+implemented and verified.
 
 orbit-infra is an ephemeral, near-zero-idle AWS platform for running a
 containerized workload on demand. It is a portfolio project: the platform
@@ -394,7 +394,7 @@ evaluated (no metric data pipeline), so alarm state stays `INSUFFICIENT_DATA`.
 
 ## Decisions
 
-- [IAM action-condition matrix](docs/iam-matrix.md) — executable P0-3d specification for permission, trust, KMS, and binding evidence
+- [IAM action-condition matrix](docs/evidence/iam-matrix.md) — executable P0-3d specification for permission, trust, KMS, and binding evidence
 - [ADR 0001 — Ephemeral over always-on](docs/adr/0001-ephemeral-over-always-on.md)
 - [ADR 0002 — Private subnets, endpoints, no NAT](docs/adr/0002-private-subnets-endpoints-no-nat.md)
 - [ADR 0003 — Workload-agnostic contract](docs/adr/0003-workload-agnostic-contract.md)

@@ -119,7 +119,7 @@ This repo labels every claim by how it was checked:
 - **CODE-ONLY** — implemented and contract-tested, but not yet executed on real AWS.
 - **fixture-verified** — exercised through recorded fixtures rather than a live run.
 
-Full evidence table and gate descriptions: `docs/EVIDENCE.md`. Pinned tool versions and checksums: `tools.lock`.
+Full evidence table and gate descriptions: `docs/evidence/README.md`. Pinned tool versions and checksums: `tools.lock`.
 
 ## Status
 
@@ -151,7 +151,7 @@ mirror-images.lock    placeholder plus Redis/ClickHouse private-ECR digests
 ## Documentation map
 
 - `ARCHITECTURE.md` — system design and decisions
-- `RUNBOOKS.md` — operational procedures
+- `docs/RUNBOOKS.md` — operational procedures
 - `bootstrap/README.md` — persistent bootstrap setup and policy-size gate
 - `envs/preview/README.md` — preview composition variables, state keys, boundary, and commands
 - `images/clickhouse/README.md` — derived ClickHouse image and upstream schema build-context boundary
@@ -159,11 +159,10 @@ mirror-images.lock    placeholder plus Redis/ClickHouse private-ECR digests
 - `placeholder/README.md` — public workload image endpoints, region requirements, and build commands
 - `docs/adr/` — architecture decision records
 - `docs/THREAT_MODEL.md` — STRIDE-lite threats, controls, evidence labels, residual risk
-- `docs/iam-matrix.md` — IAM actions, conditions, bindings, cases, and evidence
-- `docs/EVIDENCE.md` — evidence labels, the evidence table, and PR gate requirements
+- `docs/evidence/iam-matrix.md` — IAM actions, conditions, bindings, cases, and evidence
+- `docs/evidence/README.md` — evidence labels, the evidence table, and PR gate requirements
 - `docs/assets/*_PROVENANCE*.md` — provenance for the three recordings and the storyboard
 - `policy/README.md` — what the Conftest gate denies and how to run it
-- `STATE.md` — current phase and evidence status
 - `TODO.md` — task tracking and follow-ups
 - `tests/README.md` — fixture provenance and test suite contracts
 

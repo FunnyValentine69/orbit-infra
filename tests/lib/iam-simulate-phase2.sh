@@ -2994,6 +2994,14 @@ replacements = {
         'recorded_values = [\n    report["recorded_at"] if "recorded_at" in report else None\n    for _, report in supplied_reports\n]\nmodern = ["recorded_at" in report for _, report in supplied_reports]',
         'recorded_values = [report.get("recorded_at") for _, report in supplied_reports]\nmodern = [isinstance(value, str) for value in recorded_values]',
     ),
+    "provenance-context": (
+        "Policy evaluation ran in `us-east-1`; account ",
+        "Evaluation context omitted; account ",
+    ),
+    "provenance-placeholder": (
+        'f"identifiers are rendered with the placeholder `{PLACEHOLDER_ACCOUNT}`. |"',
+        'f"identifiers are rendered with the placeholder `************`. |"',
+    ),
 }
 old, new = replacements[mutation]
 if mutation == "legacy-recorded-at" and source.count(old) == 0 and source.count(new) == 1:
@@ -3066,7 +3074,7 @@ required_provenance = (
     "| recorded_on |",
     "| generator commit |",
     "| commands |",
-    "Free Plan account in `us-east-1`",
+    "Policy evaluation ran in `us-east-1`; account identifiers are rendered with the placeholder",
     "## Exclusions",
     "isolated single-statement simulation has no principal equivalent",
     "## Hygiene review (what was actually checked)",
@@ -3388,6 +3396,30 @@ PY_FIELD_HEX
       fail_case "report renderer clean custom/role pair" "$output"
     fi
 
+    for provenance_mutation in context placeholder; do
+      provenance_mutant="$phase2_dir/renderer-provenance-$provenance_mutation.sh"
+      provenance_mutant_out="$phase2_dir/renderer-provenance-$provenance_mutation-out"
+      dispatch_registered_mutation \
+        "renderer-provenance-$provenance_mutation" "$provenance_mutant"
+      if output="$(run_report_renderer \
+        "$provenance_mutant" "$clean_custom" "$clean_role" \
+        "$provenance_mutant_out" 2>&1)"; then
+        expect_failure "renderer provenance $provenance_mutation" \
+          "rendered IAM simulation artifacts omit required content:" \
+          validate_rendered_iam_reports \
+            "$provenance_mutant_out/$report_name" \
+            "$provenance_mutant_out/$provenance_name"
+      else
+        fail_case "renderer provenance $provenance_mutation mutation setup" "$output"
+      fi
+      if output="$(validate_rendered_iam_reports \
+        "$clean_out/$report_name" "$clean_out/$provenance_name" 2>&1)"; then
+        pass_case "renderer provenance $provenance_mutation mutation restored PASS"
+      else
+        fail_case "renderer provenance $provenance_mutation mutation restoration" "$output"
+      fi
+    done
+
     if output="$(
       run_report_renderer \
         "$IAM_SIM_REPORT_RENDERER" "$CUSTOM_EVIDENCE_REPORT" \
@@ -3437,20 +3469,20 @@ PY_FIELD_HEX
     done
 
     if output="$(run_runbook_legacy_render \
-      "$REPO_ROOT/RUNBOOKS.md" "$CUSTOM_EVIDENCE_REPORT" \
+      "$REPO_ROOT/docs/RUNBOOKS.md" "$CUSTOM_EVIDENCE_REPORT" \
       "$ROLE_EVIDENCE_REPORT" "$runbook_out" 2>&1)"; then
       pass_case "${output#PASS: }"
     else
       fail_case "documented legacy IAM report render command" "$output"
     fi
     dispatch_registered_mutation renderer-runbook-legacy-recorded-on \
-      "$REPO_ROOT/RUNBOOKS.md" "$runbook_mutant"
+      "$REPO_ROOT/docs/RUNBOOKS.md" "$runbook_mutant"
     expect_failure "renderer runbook legacy recorded on" \
       "legacy reports require --recorded-on YYYY-MM-DD" \
       run_runbook_legacy_render "$runbook_mutant" "$CUSTOM_EVIDENCE_REPORT" \
         "$ROLE_EVIDENCE_REPORT" "$runbook_mutant_out"
     if output="$(run_runbook_legacy_render \
-      "$REPO_ROOT/RUNBOOKS.md" "$CUSTOM_EVIDENCE_REPORT" \
+      "$REPO_ROOT/docs/RUNBOOKS.md" "$CUSTOM_EVIDENCE_REPORT" \
       "$ROLE_EVIDENCE_REPORT" "$runbook_out" 2>&1)"; then
       pass_case "renderer runbook legacy recorded on mutation restored PASS"
     else

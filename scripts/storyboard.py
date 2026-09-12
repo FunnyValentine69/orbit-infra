@@ -14,7 +14,7 @@ import tempfile
 
 CAPTIONS = (
     "Pull request opens",
-    "Static gates: fmt, validate, lint, policy-size, conftest",
+    "Gates: fmt, validate, lint, docs, policy-size, conftest",
     "LocalStack plan posts a comment on the PR",
     "Preview lease opens: new generation, owner token",
     "Terraform applies; acceptance checks pass",

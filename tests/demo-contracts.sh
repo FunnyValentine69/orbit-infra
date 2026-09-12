@@ -1265,7 +1265,7 @@ for refusal_case in \
   run_helper "$refusal_name" "$refusal_lease" 1
   if [ "$HELPER_RC" -eq 0 ] || \
      grep -Eq '^(begin-cleanup|sweep) ' "$helper_calls" || \
-     ! grep -Eq 'lease belongs to another run|RUNBOOKS.md#manual-lease-recovery' \
+     ! grep -Eq 'lease belongs to another run|docs/RUNBOOKS.md#manual-lease-recovery' \
        <<< "$HELPER_OUTPUT"; then
     helper_refusal_ok=0
   fi
@@ -1302,7 +1302,7 @@ for sweep_mode in manual-after-first stage2-after-first; do
   if [ "$HELPER_RC" -ne 3 ] || \
      [ "$(grep -c '^sweep ' "$helper_calls" || true)" -ne 1 ] || \
      grep -q '^sleep ' "$helper_calls" || \
-     ! grep -Fq 'RUNBOOKS.md#manual-lease-recovery' <<< "$HELPER_OUTPUT"; then
+     ! grep -Fq 'docs/RUNBOOKS.md#manual-lease-recovery' <<< "$HELPER_OUTPUT"; then
     midloop_recovery_ok=0
   fi
 done
@@ -2840,8 +2840,8 @@ for failure_case in \
   'abort-open-intervening|closed|intervening generation recovery' \
   'abort-after-open|closed|abort after open' \
   'abort-after-apply|closed|abort after apply' \
-  'abort-close-claimed|closing|RUNBOOKS.md#manual-lease-recovery' \
-  'cleanup-failed|cleanup_failed|RUNBOOKS.md#manual-lease-recovery' \
+  'abort-close-claimed|closing|docs/RUNBOOKS.md#manual-lease-recovery' \
+  'cleanup-failed|cleanup_failed|docs/RUNBOOKS.md#manual-lease-recovery' \
   'cas-loss|open|lease belongs to another run' \
   'cas-close|open|lease belongs to another run' \
   'sweep-exhaustion|closing|final_status=closing'; do

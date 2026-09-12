@@ -190,6 +190,8 @@ evidence-generator-commit-stale	mutate_generator_commit:stale	FAIL: Evidence gen
 renderer-present-malformed-recorded-at	mutate_report_renderer:legacy-recorded-at	FAIL: renderer accepted present non-string recorded_at as legacy
 renderer-role-outcome-empty-pairs	mutate_renderer_role_outcome:empty-pairs	FAIL: role record
 renderer-runbook-legacy-recorded-on	mutate_runbook_legacy_recorded_on	FAIL: legacy reports require --recorded-on YYYY-MM-DD
+renderer-provenance-context	mutate_report_renderer:provenance-context	FAIL: rendered IAM simulation artifacts omit required content: Policy evaluation ran in `us-east-1`; account identifiers are rendered with the placeholder
+renderer-provenance-placeholder	mutate_report_renderer:provenance-placeholder	FAIL: rendered IAM simulation artifacts omit required content: 000000000000
 renderer-role-redacted-digest-doctored	mutate_role_redacted_policy_hash:digest	FAIL: renderer accepted doctored redacted_policy_sha256:
 renderer-role-redacted-document-doctored	mutate_role_redacted_policy_hash:document	FAIL: renderer accepted doctored redacted policy_document:
 renderer-role-redacted-hash-missing-live	mutate_role_redacted_policy_hash:missing	FAIL: renderer accepted live-account report without redacted_policy_sha256:

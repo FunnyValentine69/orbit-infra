@@ -70,7 +70,7 @@ exit 1 and report `aws_s3_bucket.open`, `aws_s3_bucket.half`,
 `aws_default_security_group.default`. It also requires the bad plan not to
 report the protected `aws_s3_bucket.database`. The suite also proves that a
 nested true `*_sensitive` marker and a sensitive output are rejected. The
-suite reports all 18 cases: `bad-plan.json` was re-recorded from the updated
+suite reports all 19 cases: `bad-plan.json` was re-recorded from the updated
 bad root, and the recorded bad-root plan is denied for
 `aws_vpc_security_group_ingress_rule.ipv6_open`. Bucket
 protection requires exactly one fully
@@ -528,7 +528,7 @@ prefix and within-envelope duplicate rejection, while `--jsonl` must flatten a
 validated envelope by materializing its schema version, document, and Sid.
 Embedded `policy_input_list` and `isolated_statement` repository-policy
 snapshots remain invalid. The schema is specified in
-`docs/iam-simulate-vector-schema.md`. This suite makes no external-service
+`docs/evidence/iam-simulate-vector-schema.md`. This suite makes no external-service
 calls. The validator also accepts a vector directory, validates its 81
 envelopes in sorted order in one process, and emits all prepared cases as JSONL;
 both execution lanes use that directory form.

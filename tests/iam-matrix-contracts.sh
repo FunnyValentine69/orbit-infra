@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="${IAM_MATRIX_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
-DOC="${IAM_MATRIX_DOC:-$DEFAULT_REPO_ROOT/docs/iam-matrix.md}"
+DOC="${IAM_MATRIX_DOC:-$DEFAULT_REPO_ROOT/docs/evidence/iam-matrix.md}"
 GENERATOR="$DEFAULT_REPO_ROOT/scripts/iam-matrix-inventory.sh"
 FIXTURES="${IAM_MATRIX_FIXTURES:-$DEFAULT_REPO_ROOT/tests/fixtures/iam-matrix}"
 CUSTOM_EVIDENCE_REPORT="${IAM_MATRIX_CUSTOM_EVIDENCE_REPORT:-$DEFAULT_REPO_ROOT/docs/assets/iam-simulation-custom-report.json}"
