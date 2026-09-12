@@ -228,6 +228,9 @@ manifest="$tmp_dir/tracked-files.txt"
 git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard | while IFS= read -r path; do
   if [ -f "$REPO_ROOT/$path" ]; then
     printf '%s\n' "$path"
+  else
+    echo "FAIL: tracked path missing on disk: $path" >&2
+    exit 1
   fi
 done | LC_ALL=C sort -u >"$manifest"
 
@@ -281,6 +284,7 @@ EOF_README
   printf 'gif\n' >"$destination/docs/assets/demo-supplychain.gif"
   cat >"$destination/docs/evidence/README.md" <<'EOF_INDEX'
 # Evidence
+[empty]( )
 [storyboard](../assets/storyboard.svg)
 [demo](<../assets/demo.gif> "demo")
 [lease](../assets/demo-lease.gif)
