@@ -70,6 +70,7 @@ allowed_ipv6_networks = (
     ipaddress.IPv6Network("2001:db8::/32"),
 )
 world_open = ipaddress.IPv6Network("::/0")
+trailing_punctuation = ".,;:)]\"'"
 
 
 def ipv4_allowed(candidate, network):
@@ -110,9 +111,16 @@ for string in json_strings(fixture_json):
             raise SystemExit(1)
 
     for candidate in ipv6_candidate_pattern.findall(string):
-        try:
-            network = ipaddress.ip_network(candidate, strict=False)
-        except ValueError:
+        while True:
+            try:
+                network = ipaddress.ip_network(candidate, strict=False)
+                break
+            except ValueError:
+                if not candidate or candidate[-1] not in trailing_punctuation:
+                    network = None
+                    break
+                candidate = candidate[:-1]
+        if network is None:
             continue
         if not isinstance(network, ipaddress.IPv6Network):
             continue

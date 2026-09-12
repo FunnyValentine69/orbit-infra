@@ -66,6 +66,10 @@ for hygiene_case in \
   'mapped-private|::ffff:10.0.0.1|allow' \
   'mapped-documentation|::ffff:203.0.113.9|allow' \
   'mapped-public|::ffff:8.8.8.8|reject' \
+  'ipv6-public-period|2001:4860:4860::8888.|reject' \
+  'mapped-public-period|::ffff:8.8.8.8.|reject' \
+  'ipv6-documentation-period|2001:db8::1.|allow' \
+  'mapped-private-comma|::ffff:10.0.0.1,|allow' \
   'loopback-cidr|127.0.0.1/32|allow' \
   'documentation-cidr|203.0.113.5/32|allow'; do
   IFS='|' read -r case_name address expected <<< "$hygiene_case"

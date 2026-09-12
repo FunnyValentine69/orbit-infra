@@ -88,7 +88,7 @@ generator_clean_check() {
   local root=${1:-}
   local commit=${2:-}
   local kind=${3:-${RECORDING_KIND:-lifecycle}}
-  local paths dirty ignored_file path failed diff_rc
+  local paths dirty ignored_file path basename failed diff_rc
   paths=$(demo_generator_paths "$kind") || return 2
   (
     cd -- "$root" 2>/dev/null || {
@@ -113,10 +113,25 @@ generator_clean_check() {
       if git ls-files --others --ignored --exclude-standard -z -- $paths > "$ignored_file" 2>/dev/null; then
         while IFS= read -r -d '' path; do
           case "$path" in
+            envs/preview/backend_override.tf)
+              continue
+              ;;
+          esac
+          basename=${path##*/}
+          case "$basename" in
+            *.tf|*.tf.json|*.tfvars|*.tfvars.json)
+              echo "ignored generator input present: $path" >&2
+              failed=1
+              continue
+              ;;
+          esac
+          case "$path" in
             demo/out/*|*/.terraform/*|*/.terraform-localstack/*|*/.terraform-localstack-*/*|\
-              envs/preview/backend_override.tf|envs/preview/backend.aws.hcl|\
-              envs/preview/terraform.localstack.tfstate*|\
-              envs/preview/terraform.localstack.*.tfstate*|\
+              envs/preview/backend.aws.hcl|\
+              envs/preview/terraform.localstack.tfstate|\
+              envs/preview/terraform.localstack.tfstate.backup|\
+              envs/preview/terraform.localstack.*.tfstate|\
+              envs/preview/terraform.localstack.*.tfstate.backup|\
               __pycache__/*|.preview-runs/*)
               continue
               ;;

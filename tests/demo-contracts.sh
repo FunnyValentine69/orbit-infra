@@ -830,8 +830,8 @@ mkdir -p "$positive_clone/demo/out/run-x" \
   "$positive_clone/envs/preview/.terraform/cache" \
   "$positive_clone/modules/network/.terraform/cache"
 printf '%s\n' runtime > "$positive_clone/demo/out/run-x/.started"
-printf '%s\n' runtime > "$positive_clone/envs/preview/.terraform/cache/provider.tf"
-printf '%s\n' runtime > "$positive_clone/modules/network/.terraform/cache/provider.tf"
+printf '%s\n' runtime > "$positive_clone/envs/preview/.terraform/cache/provider-cache"
+printf '%s\n' runtime > "$positive_clone/modules/network/.terraform/cache/provider-cache"
 printf '%s\n' state > "$positive_clone/envs/preview/terraform.localstack.tfstate"
 printf '%s\n' state > "$positive_clone/envs/preview/terraform.localstack.tfstate.backup"
 printf '%s\n' state > "$positive_clone/envs/preview/terraform.localstack.demo.tfstate"
@@ -843,11 +843,13 @@ else
 fi
 rm -rf -- "$positive_clone"
 
-localstack_tfvars_clone="$tmp_dir/generator-ignored-localstack-auto-tfvars"
+localstack_tfvars_clone="$tmp_dir/generator-ignored-localstack-state-suffixes"
 init_generator_clone "$localstack_tfvars_clone"
 localstack_tfvars_commit="$(git -C "$localstack_tfvars_clone" rev-parse HEAD)"
 printf '%s\n' 'unexpected = true' > \
-  "$localstack_tfvars_clone/envs/preview/terraform.localstack.auto.tfvars"
+  "$localstack_tfvars_clone/envs/preview/terraform.localstack.tfstate.auto.tfvars"
+printf '%s\n' 'not a state file' > \
+  "$localstack_tfvars_clone/envs/preview/terraform.localstack.tfstate.trailing"
 set +e
 localstack_tfvars_output="$(
   generator_clean_check "$localstack_tfvars_clone" "$localstack_tfvars_commit" 2>&1
@@ -855,12 +857,67 @@ localstack_tfvars_output="$(
 localstack_tfvars_rc=$?
 set -e
 if [ "$localstack_tfvars_rc" -ne 0 ] && \
-   grep -Fq 'ignored generator input present: envs/preview/terraform.localstack.auto.tfvars' \
+   grep -Fq 'ignored generator input present: envs/preview/terraform.localstack.tfstate.auto.tfvars' \
+     <<< "$localstack_tfvars_output" && \
+   grep -Fq 'ignored generator input present: envs/preview/terraform.localstack.tfstate.trailing' \
      <<< "$localstack_tfvars_output"; then
-  pass_case "generator cleanliness rejects ignored LocalStack auto tfvars"
+  pass_case "generator cleanliness rejects ignored LocalStack state suffixes"
 else
-  fail_case "generator cleanliness rejects ignored LocalStack auto tfvars" \
+  fail_case "generator cleanliness rejects ignored LocalStack state suffixes" \
     "$localstack_tfvars_output"
+fi
+
+loose_state_lib="$tmp_dir/loose-state-glob-mutant-lib.sh"
+python3 - "$REPO_ROOT/demo/lib.sh" "$loose_state_lib" <<'PY'
+from pathlib import Path
+import sys
+
+
+source_path = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+source = source_path.read_text(encoding="utf-8")
+tight_state_globs = """              envs/preview/terraform.localstack.tfstate|\\
+              envs/preview/terraform.localstack.tfstate.backup|\\
+              envs/preview/terraform.localstack.*.tfstate|\\
+              envs/preview/terraform.localstack.*.tfstate.backup|\\
+"""
+loose_state_globs = """              envs/preview/terraform.localstack.tfstate*|\\
+              envs/preview/terraform.localstack.*.tfstate*|\\
+"""
+if source.count(tight_state_globs) == 1:
+    source = source.replace(tight_state_globs, loose_state_globs)
+elif source.count(loose_state_globs) != 1:
+    raise SystemExit("could not build restore-loose-state-glob mutant")
+destination.write_text(source, encoding="utf-8")
+PY
+set +e
+loose_state_output="$(
+  (
+    # shellcheck disable=SC1090
+    source "$loose_state_lib"
+    mutant_output="$(
+      generator_clean_check "$localstack_tfvars_clone" "$localstack_tfvars_commit" 2>&1
+    )"
+    mutant_rc=$?
+    if [ "$mutant_rc" -ne 0 ] && \
+       grep -Fq 'ignored generator input present: envs/preview/terraform.localstack.tfstate.auto.tfvars' \
+         <<< "$mutant_output" && \
+       grep -Fq 'ignored generator input present: envs/preview/terraform.localstack.tfstate.trailing' \
+         <<< "$mutant_output"; then
+      exit 0
+    fi
+    echo "FAIL: restore-loose-state-glob mutant escaped the state suffix contract" >&2
+    exit 1
+  ) 2>&1
+)"
+loose_state_rc=$?
+set -e
+if [ "$loose_state_rc" -ne 0 ] && \
+   grep -Fq 'FAIL: restore-loose-state-glob mutant escaped the state suffix contract' \
+     <<< "$loose_state_output"; then
+  pass_case "mutant restore-loose-state-glob killed"
+else
+  fail_case "mutant restore-loose-state-glob killed" "$loose_state_output"
 fi
 rm -rf -- "$localstack_tfvars_clone"
 

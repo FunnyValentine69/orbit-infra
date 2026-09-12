@@ -92,11 +92,35 @@ for target in bootstrap-plan bootstrap-apply; do
   rm -f "$override_file"
 done
 
+permission_shell="$tmp_dir/permission-shell"
+cat > "$permission_shell" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = -c ] || exec /bin/sh "$@"
+script=$2
+needle='if ! ( set -C; : > "$dst" ) 2>"$noclobber_err"; then'
+replacement='if ! ( echo "$dst: Permission denied" >&2; false ) 2>"$noclobber_err"; then'
+mutated=${script/"$needle"/"$replacement"}
+[ "$mutated" = "$script" ] || : > "$PERMISSION_MARKER_FILE"
+exec /bin/sh -c "$mutated"
+EOF
+chmod +x "$permission_shell"
+
 for target in bootstrap-plan bootstrap-apply; do
   : > "$terraform_log"
   chmod 500 "$isolated_repo/bootstrap"
+  permission_make_shell=
+  permission_marker="$tmp_dir/$target-permission-marker"
+  permission_probe="$isolated_repo/bootstrap/.permission-probe"
+  if [ "$(id -u)" = 0 ]; then
+    permission_make_shell="$permission_shell"
+  elif mkdir "$permission_probe" 2>/dev/null; then
+    rmdir "$permission_probe"
+    permission_make_shell="$permission_shell"
+  fi
   set +e
-  output="$(run_make none 41 "$target" 2>&1)"
+  output="$(PERMISSION_MARKER_FILE="$permission_marker" \
+    MAKE_SHELL="$permission_make_shell" run_make none 41 "$target" 2>&1)"
   rc=$?
   set -e
   chmod 700 "$isolated_repo/bootstrap"
@@ -107,6 +131,10 @@ for target in bootstrap-plan bootstrap-apply; do
   fi
   if [ -s "$terraform_log" ] || [ -e "$override_file" ] || [ -L "$override_file" ]; then
     echo "$target permission failure must make zero Terraform calls and leave no override" >&2
+    exit 1
+  fi
+  if [ -n "$permission_make_shell" ] && [ ! -f "$permission_marker" ]; then
+    echo "$target permission wrapper did not reach the noclobber creation" >&2
     exit 1
   fi
   pass "$target noclobber permission failure"
