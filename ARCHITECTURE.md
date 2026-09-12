@@ -307,7 +307,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   close path, never cross-run lease semantics.
 - **Phase 5:** the stage-2 sweeper closes a stage-1 lease in the same
   LocalStack job (LOCALSTACK-VERIFIED in CI, run 33825140591) and its
-  40-case fixture suite covers the pending, hand-back, prune, and
+  41-case fixture suite covers the pending, hand-back, prune, and
   CAS-loss paths. Drift detection (P5-1) is not started; its acceptance
   criteria are a clean dispatch and detection of a deliberately modified
   bootstrap resource. `scripts/gates.sh` runs `validate` -> `lint` -> `test`
@@ -317,7 +317,7 @@ key. A $20/month AWS Budgets alarm fires at 80% utilization.
   LOCALSTACK-recorded locally and pass recording-hygiene checks. The added IPv6
   bad-root case's recorded bad-root plan is denied for
   `aws_vpc_security_group_ingress_rule.ipv6_open`, and the gate passes with all
-  18 cases. The
+  19 cases. The
   root-module policy considers only managed resources and denies a planned S3
   bucket without exactly one fully locked public-access block targeted by either
   one unambiguous whole-resource configuration reference or an equal known planned

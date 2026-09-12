@@ -115,7 +115,9 @@ generator_clean_check() {
           case "$path" in
             demo/out/*|*/.terraform/*|*/.terraform-localstack/*|*/.terraform-localstack-*/*|\
               envs/preview/backend_override.tf|envs/preview/backend.aws.hcl|\
-              envs/preview/terraform.localstack*|__pycache__/*|.preview-runs/*)
+              envs/preview/terraform.localstack.tfstate*|\
+              envs/preview/terraform.localstack.*.tfstate*|\
+              __pycache__/*|.preview-runs/*)
               continue
               ;;
             *)

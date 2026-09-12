@@ -132,6 +132,71 @@ state_list() {
   return "$rc"
 }
 
+list_recording_state_versions() {
+  local bucket=$1
+  local prefix=$2
+  local key_marker=""
+  local version_marker=""
+  local prior_token=""
+  local response is_truncated next_key next_version token
+  local inventory='{"Versions":[],"DeleteMarkers":[]}'
+  local -a args
+
+  while :; do
+    args=(
+      s3api list-object-versions --bucket "$bucket" --prefix "$prefix"
+      --output json --no-paginate
+    )
+    if [ -n "$key_marker" ]; then
+      args+=(--key-marker "$key_marker")
+      if [ -n "$version_marker" ]; then
+        args+=(--version-id-marker "$version_marker")
+      fi
+    fi
+    if ! response="$(scripts/aws-cli.sh "${args[@]}")"; then
+      echo "could not list retained state versions" >&2
+      return 1
+    fi
+    if ! jq -e '
+      type == "object"
+      and (.IsTruncated | type == "boolean")
+      and ((has("Versions") | not) or (.Versions | type == "array"))
+      and ((has("DeleteMarkers") | not) or (.DeleteMarkers | type == "array"))
+      and all((.Versions // [])[], (.DeleteMarkers // [])[];
+        type == "object" and (.Key | type == "string"))
+    ' <<< "$response" >/dev/null 2>&1; then
+      echo "list-object-versions returned malformed output" >&2
+      return 1
+    fi
+    if ! inventory="$(jq -c --argjson page "$response" '
+      .Versions += ($page.Versions // [])
+      | .DeleteMarkers += ($page.DeleteMarkers // [])
+    ' <<< "$inventory")"; then
+      echo "could not combine retained state inventory" >&2
+      return 1
+    fi
+    is_truncated="$(jq -r '.IsTruncated' <<< "$response")"
+    [ "$is_truncated" = true ] || break
+    if ! next_key="$(
+      jq -er '.NextKeyMarker | select(type == "string" and length > 0)' \
+        <<< "$response"
+    )"; then
+      echo "truncated state-version response has no NextKeyMarker" >&2
+      return 1
+    fi
+    next_version="$(jq -r '.NextVersionIdMarker // empty' <<< "$response")"
+    token="${next_key}|${next_version}"
+    if [ "$token" = "$prior_token" ]; then
+      echo "state-version pagination did not advance" >&2
+      return 1
+    fi
+    prior_token=$token
+    key_marker=$next_key
+    version_marker=$next_version
+  done
+  printf '%s\n' "$inventory"
+}
+
 assert_generator_clean() {
   generator_clean_check . || die "generator inputs are not clean (reason above); commit or remove them before recording"
 }
@@ -347,9 +412,8 @@ assert_steps() {
         "s/^LEASE_BUCKET=\"\${LEASE_BUCKET:-\\([^\"]*\\)}\"$/\\1/p" scripts/lease.sh)"
       [ -n "$state_bucket" ] || die "could not resolve the lease state bucket"
       state_key="envs/preview/$ENV_ID.tfstate"
-      inventory="$(scripts/aws-cli.sh s3api list-object-versions \
-        --bucket "$state_bucket" --prefix "envs/preview/$ENV_ID" \
-        --output json --no-paginate)" || \
+      inventory="$(list_recording_state_versions \
+        "$state_bucket" "envs/preview/$ENV_ID")" || \
         die "could not inventory retained state versions"
       version_count="$(jq --arg key "$state_key" '[(.Versions // [])[] | select(.Key == $key or .Key == ($key + ".tflock"))] | length' <<< "$inventory")"
       marker_count="$(jq --arg key "$state_key" '[(.DeleteMarkers // [])[] | select(.Key == $key or .Key == ($key + ".tflock"))] | length' <<< "$inventory")"

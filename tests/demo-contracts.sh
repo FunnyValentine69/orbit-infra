@@ -823,10 +823,34 @@ mkdir -p "$positive_clone/demo/out/run-x" \
 printf '%s\n' runtime > "$positive_clone/demo/out/run-x/.started"
 printf '%s\n' runtime > "$positive_clone/envs/preview/.terraform/cache/provider.tf"
 printf '%s\n' runtime > "$positive_clone/modules/network/.terraform/cache/provider.tf"
+printf '%s\n' state > "$positive_clone/envs/preview/terraform.localstack.tfstate"
+printf '%s\n' state > "$positive_clone/envs/preview/terraform.localstack.tfstate.backup"
+printf '%s\n' state > "$positive_clone/envs/preview/terraform.localstack.demo.tfstate"
+printf '%s\n' state > "$positive_clone/envs/preview/terraform.localstack.demo.tfstate.backup"
 if generator_clean_check "$positive_clone" "$positive_commit" >/dev/null 2>&1; then
-  pass_case "generator cleanliness allows runtime output and Terraform caches"
+  pass_case "generator cleanliness allows runtime output, Terraform caches, and exact state files"
 else
-  fail_case "generator cleanliness allows runtime output and Terraform caches"
+  fail_case "generator cleanliness allows runtime output, Terraform caches, and exact state files"
+fi
+
+localstack_tfvars_clone="$tmp_dir/generator-ignored-localstack-auto-tfvars"
+init_generator_clone "$localstack_tfvars_clone"
+localstack_tfvars_commit="$(git -C "$localstack_tfvars_clone" rev-parse HEAD)"
+printf '%s\n' 'unexpected = true' > \
+  "$localstack_tfvars_clone/envs/preview/terraform.localstack.auto.tfvars"
+set +e
+localstack_tfvars_output="$(
+  generator_clean_check "$localstack_tfvars_clone" "$localstack_tfvars_commit" 2>&1
+)"
+localstack_tfvars_rc=$?
+set -e
+if [ "$localstack_tfvars_rc" -ne 0 ] && \
+   grep -Fq 'ignored generator input present: envs/preview/terraform.localstack.auto.tfvars' \
+     <<< "$localstack_tfvars_output"; then
+  pass_case "generator cleanliness rejects ignored LocalStack auto tfvars"
+else
+  fail_case "generator cleanliness rejects ignored LocalStack auto tfvars" \
+    "$localstack_tfvars_output"
 fi
 
 generator_negative_ok=1
@@ -2261,6 +2285,7 @@ if [ -f .fake-final-inventory-observed ]; then
 fi
 echo "backend $*" >> .fake-calls.log
 mode=$(cat .record-mode)
+final_inventory_page=1
 case "$mode" in
   inventory-siblings)
     echo '{"IsTruncated":false,"Versions":[{"Key":"envs/preview/demo-lease2.tfstate"}],"DeleteMarkers":[{"Key":"envs/preview/demo-lease2.tfstate"}]}'
@@ -2268,12 +2293,29 @@ case "$mode" in
   inventory-matching-delete)
     echo '{"IsTruncated":false,"Versions":[],"DeleteMarkers":[{"Key":"envs/preview/demo-lease.tfstate"}]}'
     ;;
+  inventory-truncated-target-second-page)
+    case " $* " in
+      *' --key-marker page-1-key --version-id-marker page-1-version '*)
+        echo '{"IsTruncated":false,"Versions":[{"Key":"envs/preview/demo-lease.tfstate","VersionId":"target-version"}],"DeleteMarkers":[]}'
+        ;;
+      *' --key-marker '*)
+        echo "unexpected inventory continuation: $*" >&2
+        exit 2
+        ;;
+      *)
+        final_inventory_page=0
+        echo '{"IsTruncated":true,"NextKeyMarker":"page-1-key","NextVersionIdMarker":"page-1-version","Versions":[{"Key":"envs/preview/demo-lease2.tfstate","VersionId":"sibling-version"}],"DeleteMarkers":[]}'
+        ;;
+    esac
+    ;;
   *) echo '{"IsTruncated":false,"Versions":[],"DeleteMarkers":[]}' ;;
 esac
-if [ "$mode" = post-inventory-display-failure ]; then
-  mv "$RUN/close.log" "$RUN/close.log.removed"
+if [ "$final_inventory_page" -eq 1 ]; then
+  if [ "$mode" = post-inventory-display-failure ]; then
+    mv "$RUN/close.log" "$RUN/close.log.removed"
+  fi
+  touch .fake-final-inventory-observed
 fi
-touch .fake-final-inventory-observed
 EOF
 chmod +x "$recording_template/scripts/"*.sh
 
@@ -2486,6 +2528,31 @@ elif source.count(original_block) != 1:
 path.write_text(source, encoding="utf-8")
 PY
       ;;
+    restore-inventory-single-page-read)
+      python3 - "$repo/demo/record.sh" "$repo/.pagination-mutant-ready" <<'PY'
+from pathlib import Path
+import sys
+
+
+path = Path(sys.argv[1])
+marker = Path(sys.argv[2])
+source = path.read_text(encoding="utf-8")
+fixed = '''      inventory="$(list_recording_state_versions \\
+        "$state_bucket" "envs/preview/$ENV_ID")" || \\
+        die "could not inventory retained state versions"
+'''
+original = '''      inventory="$(scripts/aws-cli.sh s3api list-object-versions \\
+        --bucket "$state_bucket" --prefix "envs/preview/$ENV_ID" \\
+        --output json --no-paginate)" || \\
+        die "could not inventory retained state versions"
+'''
+if source.count(fixed) == 1:
+    path.write_text(source.replace(fixed, original), encoding="utf-8")
+    marker.touch()
+elif source.count(original) != 1:
+    raise SystemExit("could not build restore-inventory-single-page-read mutant")
+PY
+      ;;
   esac
   : > "$repo/.fake-calls.log"
   printf '%s\n' "$mode" > "$repo/.record-mode"
@@ -2634,6 +2701,34 @@ else
   recording_contract_ok=0
   fail_case "lease final inventory counts an exact-key delete marker" \
     "$LIFECYCLE_OUTPUT"
+fi
+
+run_lifecycle lease-inventory-paginated-target '' \
+  inventory-truncated-target-second-page empty '' none lease
+if [ "$LIFECYCLE_RC" -ne 0 ] && \
+   grep -Fq 'state or lock versions remain after Stage 2' <<< "$LIFECYCLE_OUTPUT" && \
+   grep -Fq -- '--key-marker page-1-key --version-id-marker page-1-version' \
+     "$LIFECYCLE_CALLS" && \
+   [ ! -f "$LIFECYCLE_RUN/final-inventory.complete" ]; then
+  pass_case "lease final inventory counts a target on the second page"
+else
+  recording_contract_ok=0
+  fail_case "lease final inventory counts a target on the second page" \
+    "$LIFECYCLE_OUTPUT"
+fi
+
+run_lifecycle mutant-restore-inventory-single-page-read '' \
+  inventory-truncated-target-second-page empty '' \
+  restore-inventory-single-page-read lease
+single_page_calls="$(grep -c '^backend s3api list-object-versions ' \
+  "$LIFECYCLE_CALLS" || true)"
+if [ -f "$LIFECYCLE_REPO/.pagination-mutant-ready" ] && \
+   [ "$LIFECYCLE_RC" -eq 0 ] && [ "$single_page_calls" -eq 1 ] && \
+   [ -f "$LIFECYCLE_RUN/final-inventory.complete" ]; then
+  pass_case "mutant restore-inventory-single-page-read killed"
+else
+  recording_contract_ok=0
+  fail_case "mutant restore-inventory-single-page-read killed" "$LIFECYCLE_OUTPUT"
 fi
 
 for inventory_mutant in restore-inventory-version-prefix-count \
