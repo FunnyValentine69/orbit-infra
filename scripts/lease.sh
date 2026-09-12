@@ -14,11 +14,11 @@ Usage: lease.sh <subcommand> [args]
 Subcommands:
   get <env_id>
   get-with-etag <env_id>
-  open <env_id> [--owner <token>] [--manifest <file>]
+  open <env_id> --owner <token> [--manifest <file>]
   transition <env_id> <from> cleanup_failed --generation <n> [--claim <token>] [--error <text>]
-  begin-cleanup <env_id> --generation <n> --from <open|closing|cleanup_failed> --claim <token> [--force-retry]
+  begin-cleanup <env_id> --expect-owner <token> --generation <n> --from <open|closing|cleanup_failed> --claim <token> [--force-retry]
   complete-stage1 <env_id> --generation <n> --claim <token>
-  claim-stage2 <env_id> --generation <n> [--token <token>] [--takeover-stale <seconds>]
+  claim-stage2 <env_id> --expect-owner <token> --generation <n> [--token <token>] [--takeover-stale <seconds>]
   release-stage2 <env_id> --generation <n> --claim <token>
   fail-stage2 <env_id> --generation <n> --claim <token> --error <text>
   set-manifest <env_id> <file> --generation <n> [--claim <token>]
@@ -27,8 +27,11 @@ Subcommands:
   list
 
 open creates generation N+1 only for an absent, closed, or deleted lease. Its
-optional owner and initial manifest are written by that same compare-and-swap PUT. Every
-mutation uses an S3 ETag compare-and-swap. begin-cleanup increments cleanup_attempt,
+owner is mandatory; it and the optional initial manifest are written by that same
+compare-and-swap PUT. begin-cleanup and claim-stage2 require --expect-owner. These
+cleanup predicates fail closed: an owner mismatch exits 3 without mutation; a
+missing or empty flag exits 2. Every mutation uses an S3 ETag compare-and-swap.
+begin-cleanup increments cleanup_attempt,
 requires the generation and source status observed by its caller, and allows at
 most three automatic stage-1 executions per generation. --force-retry is
 required after exhaustion; it clears an active Stage-2 claim and audits it.

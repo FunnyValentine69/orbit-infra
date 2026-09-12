@@ -681,6 +681,25 @@ young_claimed_at="$(test_epoch_to_iso "$(( $(date -u +%s) - 600 ))")"
 reset_store
 pending_fixture="$FIXTURES/aws-delete-in-progress.json"
 store_fixture "$pending_fixture"
+ownerless_stage2_seed="$(run_aws "$LEASE" get aws-pending | jq -c '.owner = null')"
+store_lease "$ownerless_stage2_seed"
+ownerless_stage2_before="$(run_aws "$LEASE" get aws-pending)"
+set +e
+ownerless_stage2_output="$(FAKE_SCENARIO_FILE="$pending_fixture" \
+  run_aws "$SWEEPER" env aws-pending 2>&1)"
+ownerless_stage2_rc=$?
+set -e
+ownerless_stage2_after="$(run_aws "$LEASE" get aws-pending)"
+if [ "$ownerless_stage2_rc" -ne 2 ] || \
+   [ "$ownerless_stage2_after" != "$ownerless_stage2_before" ] || \
+   [ -s "$tmp_dir/lease-bodies.log" ] || \
+   ! grep -Fq -- '--expect-owner requires a nonempty token' <<< "$ownerless_stage2_output"; then
+  fail "legacy ownerless Stage-2 lease must exit 2 without mutation: $ownerless_stage2_output"
+fi
+pass "legacy ownerless Stage-2 lease fails closed without mutation"
+
+reset_store
+store_fixture "$pending_fixture"
 stale_pending_seed="$(run_aws "$LEASE" get aws-pending | jq -c \
   --arg claimed_at "$stale_claimed_at" \
   '.stage2_claim = {token:"old-stage2-token",claimed_at:$claimed_at}')"

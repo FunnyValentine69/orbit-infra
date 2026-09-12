@@ -724,7 +724,7 @@ failure accounting, cap escalation, exact state and `.tflock` cleanup with
 sibling isolation, an executable single-key selector mutant, prune-time
 If-Match loss, and ETag-conditional tombstone replacement, plus a TERM
 delivered during a refused Stage-2 takeover claim's own fresh read. The suite
-currently reports 40 cases.
+currently reports 41 cases.
 
 Fixture provenance:
 
