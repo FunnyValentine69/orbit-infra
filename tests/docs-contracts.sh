@@ -73,9 +73,12 @@ for source in markdown:
     text = (root / source).read_text(encoding="utf-8")
     for line_number, raw_destination in destinations(text):
         destination = raw_destination.strip()
+        parts = destination.split()
+        if not destination or not parts:
+            continue
+        destination = parts[0]
         if destination.startswith("<") and destination.endswith(">"):
             destination = destination[1:-1]
-        destination = destination.split()[0]
         if (
             not destination
             or destination.startswith("#")
@@ -168,8 +171,18 @@ if publication:
     index_text = (root / index_path).read_text(encoding="utf-8")
     linked: set[str] = set()
     for _, raw_destination in destinations(index_text):
-        destination = raw_destination.strip().strip("<>").split()[0]
-        if destination.startswith("#") or scheme_pattern.match(destination):
+        destination = raw_destination.strip()
+        parts = destination.split()
+        if not destination or not parts:
+            continue
+        destination = parts[0]
+        if destination.startswith("<") and destination.endswith(">"):
+            destination = destination[1:-1]
+        if (
+            not destination
+            or destination.startswith("#")
+            or scheme_pattern.match(destination)
+        ):
             continue
         path_part = unquote(destination.split("#", 1)[0].split("?", 1)[0])
         linked.add(
@@ -213,7 +226,9 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/orbit-docs.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 manifest="$tmp_dir/tracked-files.txt"
 git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard | while IFS= read -r path; do
-  [ -f "$REPO_ROOT/$path" ] && printf '%s\n' "$path"
+  if [ -f "$REPO_ROOT/$path" ]; then
+    printf '%s\n' "$path"
+  fi
 done | LC_ALL=C sort -u >"$manifest"
 
 if [ -f "$REPO_ROOT/docs/VERIFY.md" ]; then
@@ -251,6 +266,7 @@ write_fixture() {
 [Verification](docs/VERIFY.md)
 [Runbooks](docs/RUNBOOKS.md)
 [Evidence](docs/evidence/README.md)
+[empty]( )
 EOF_README
   printf '# Architecture\n' >"$destination/ARCHITECTURE.md"
   printf '# Verify\n' >"$destination/docs/VERIFY.md"
@@ -266,13 +282,14 @@ EOF_README
   cat >"$destination/docs/evidence/README.md" <<'EOF_INDEX'
 # Evidence
 [storyboard](../assets/storyboard.svg)
-[demo](../assets/demo.gif)
+[demo](<../assets/demo.gif> "demo")
 [lease](../assets/demo-lease.gif)
 [supply](../assets/demo-supplychain.gif)
 [matrix](/docs/evidence/iam-matrix.md)
 [schema](./iam-simulate-vector-schema.md)
 EOF_INDEX
   printf '#!/usr/bin/env bash\ntrue\n' >"$destination/scripts/check.sh"
+  rm -f "$destination/STATE.md"
   find "$destination" -type f -print | sed "s#^$destination/##" | LC_ALL=C sort >"$fixture_manifest"
 }
 
@@ -307,12 +324,23 @@ mutate_index() {
     >"$1/docs/evidence/README.md.mutant"
   mv "$1/docs/evidence/README.md.mutant" "$1/docs/evidence/README.md"
 }
+mutate_state_tracked() {
+  printf '# State\n' >"$1/STATE.md"
+  printf 'STATE.md\n' >>"$fixture_manifest"
+}
+mutate_readme_embed() {
+  sed '/docs\/assets\/demo-lease\.gif/d' "$1/README.md" \
+    >"$1/README.md.mutant"
+  mv "$1/README.md.mutant" "$1/README.md"
+}
 mutate_token() { printf '%s\n' "$2" >>"$1/docs/VERIFY.md"; }
 
 run_mutation budget-overrun 'FAIL: documentation budget exceeded: README.md' mutate_budget
 run_mutation broken-link 'FAIL: unresolved documentation link in README.md' mutate_link
 run_mutation retired-name 'FAIL: retired documentation target in README.md' mutate_retired
 run_mutation missing-index-entry 'FAIL: evidence index missing link: docs/assets/demo.gif' mutate_index
+run_mutation state-tracked 'FAIL: STATE.md remains in the tracked manifest' mutate_state_tracked
+run_mutation readme-embed 'FAIL: README missing required image embed: docs/assets/demo-lease.gif' mutate_readme_embed
 
 token_specs=(
   'free-plan|Free'' Plan'
@@ -330,4 +358,4 @@ for spec in "${token_specs[@]}"; do
     mutate_token "$token"
 done
 
-echo "PASS: documentation contracts (11 mutations; restored suite passed)"
+echo "PASS: documentation contracts (13 mutations; restored suite passed)"

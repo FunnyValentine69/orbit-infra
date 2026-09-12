@@ -2,9 +2,9 @@
 
 ## What is left
 
-Still open: P0-5, P5-5, P5-6, P5-7, P5-8, P5-9, P5-10, P5-11, P5-29, P5-37, P5-65, P5-66, P5-67, and P5-68.
+Still open: P0-3b, P0-5, P5-5, P5-6, P5-7, P5-8, P5-9, P5-10, P5-11, P5-29, P5-37, P5-65, P5-66, P5-67, and P5-68.
 
-Parked behind P0-3b: P0-4, P0-6, P0-7, P0-8, P0-3f, P0-3d, P3-3b, P5-1, P5-x, P5-22, P5-28, P5-38, P5-39, P5-40, and P5-41.
+Parked behind P0-3b: P0-3, P0-4, P0-6, P0-7, P0-8, P0-3f, P0-3d, P3-3b, P5-1, P5-x, P5-22, P5-28, P5-38, P5-39, P5-40, and P5-41.
 
 - [x] P0-1 Install terraform, awscli, tflint, OrbStack
 - [x] P0-2 Install scanners, signing tools, gitleaks, session-manager-plugin; write tools.lock
@@ -15,7 +15,7 @@ Parked behind P0-3b: P0-4, P0-6, P0-7, P0-8, P0-3f, P0-3d, P3-3b, P5-1, P5-x, P5
 - [ ] P0-7 Confirm Budgets notification email (deferred with P0-3)
 - [ ] P0-8 oidc-smoke.yml role-assumption smoke workflow (written; run deferred with P0-3)
 - [x] P0-3c: add `redis_image` and `clickhouse_image` passthrough variables so real-AWS sessions use the locked private-ECR mirror digests
-- [ ] P0-3b: the real-AWS deployment tail is out of scope for this portfolio; deployed-service behaviour is verified on LocalStack and IAM policy evaluation with the AWS policy simulator against the real account. If resumed, re-run `bootstrap/preflight.sh`, apply `bootstrap/`, set the role-ARN and KMS secrets, dispatch `oidc-smoke.yml`, and run the P0-3d promotion gate before any preview apply; every item parked behind P0-3b waits on this
+- [ ] P0-3b: The real-AWS deployment boundary is documented in [Verification](docs/VERIFY.md). If resumed, re-run `bootstrap/preflight.sh`, apply `bootstrap/`, set the role-ARN and KMS secrets, dispatch `oidc-smoke.yml`, and run the P0-3d promotion gate before any preview apply; every item parked behind P0-3b waits on this
 - [ ] P0-3f: PR #5 Tier 3 overflow (bot pass 3 on aa2cf29, recorded under the one-fix-round cap; both are real-AWS-only paths, CODE-ONLY until P0-3b):
   - P1 tests/dispatch-ordering.sh, the `dispatch_and_capture session-destroy.yml "destroy"` call (search for it; line numbers drift): with `TARGET=aws` and an `ENV_ID` whose lease is already `open`, both test applies are refused by the lease CAS but the destroy still queues and tears down the pre-existing environment (session-destroy has no owner binding). Fix: before dispatching, read the lease with `TARGET=aws scripts/lease.sh get` and refuse unless it is absent or `closed`; or bind the destroy to the generation and owner the captured first apply created.
   - P2 bootstrap/kms.tf ~28: the key policy names the publisher role through `local.publisher_role_arn` (plan-time-known by design, no dependency edge), so a fresh real-AWS bootstrap may call CreateKey before the role exists and KMS rejects the invalid principal. Fix: `depends_on = [aws_iam_role.publisher]` on `aws_kms_key.signing`, keeping the document plan-time-known.

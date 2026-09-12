@@ -8,7 +8,7 @@ This STRIDE-lite review covers the ALB, ECS tasks, S3 state and leases, IAM, ima
 
 The attacker model includes an internet source, a same-repository pull-request author, a compromised workflow, and an over-privileged AWS principal. Only implemented controls appear as controls; proposed work remains residual risk.
 
-The real-AWS deployment tail is out of scope for this portfolio; deployed-service behaviour is verified on LocalStack and IAM policy evaluation with the AWS policy simulator against the real account.
+The real-AWS deployment boundary is documented in [Verification](VERIFY.md).
 
 ## Trust boundaries
 

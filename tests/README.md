@@ -17,7 +17,7 @@ env -u AWS_PROFILE bash tests/iam-simulate-contracts.sh
 
 `bash tests/docs-contracts.sh`
 
-The suite scans every tracked Markdown link and image, rejects retired documentation paths and seven forbidden public-scope strings, enforces the six publication line budgets, requires all four front-page embeds, indexes every file under `docs/assets/` and `docs/evidence/`, and confirms the removed state ledger is untracked. It injects and kills 11 mutations: one budget overflow, one broken link, one retired path, one missing evidence entry, and all seven forbidden strings. The restored scanner must pass with no skipped publication checks.
+The suite scans every tracked Markdown link and image, rejects retired documentation paths and seven forbidden public-scope strings, enforces the six publication line budgets, requires all four front-page embeds, indexes every file under `docs/assets/` and `docs/evidence/`, and confirms the removed state ledger is untracked. It injects and kills 13 mutations: one budget overflow, one broken link, one retired path, one missing evidence entry, one tracked state ledger, one missing front-page embed, and all seven forbidden strings. The restored scanner must pass with no skipped publication checks.
 
 ## Artifact hygiene
 
