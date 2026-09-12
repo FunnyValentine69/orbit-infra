@@ -1,14 +1,12 @@
 # ADR 0008: LocalStack development lane
 
-Status: Accepted (2026-09-02); amended 2026-09-08 — real-AWS promotion is not planned, see the amendment below
+Status: Accepted (2026-09-02); amended 2026-09-08 — the portfolio scope is recorded below
 
 ## Context
 
-The AWS Free Plan denies, via AWS-managed service control policies, several
-services this stack needs (S3 bucket creation, ECR, ECS, VPC, ALB, KMS,
-OIDC providers), and the account owner has chosen not to upgrade to the
-Paid Plan yet. Separately, the GitHub Student Developer Pack grants a
-LocalStack plan whose service coverage equals the Ultimate tier, with
+The portfolio needs repeatable infrastructure and lifecycle evidence without
+deploying the service stack into AWS. The GitHub Student Developer Pack grants
+a LocalStack license with the service coverage needed by the composition and
 sanctioned use in CI.
 
 ## Decision
@@ -17,9 +15,7 @@ Phases 2-4 develop and acceptance-test against LocalStack, both locally
 and in CI. Every root module takes a `target` variable (`"aws"` or
 `"localstack"`) that selects provider endpoints; the composition never
 contains LocalStack-only resources. The AWS Budgets resource is toggled
-off when `target = "localstack"`, since Budgets is not emulated. Real AWS
-remains the final promotion step once the platform is proven on
-LocalStack. Every LocalStack job runs `make bootstrap-apply TARGET=localstack`
+off when `target = "localstack"`, since Budgets is not emulated. The real-AWS deployment tail is out of scope for this portfolio; deployed-service behaviour is verified on LocalStack and IAM policy evaluation with the AWS policy simulator against the real account. Every LocalStack job runs `make bootstrap-apply TARGET=localstack`
 after the emulator health check and before any plan or apply so the versioned
 state bucket exists.
 
@@ -37,21 +33,17 @@ state bucket exists.
 
 ## Alternatives considered
 
-- **Upgrade to the AWS Paid Plan now:** rejected — the owner wants no AWS
-  spend until the platform is otherwise proven.
+- **Deploy the service stack to real AWS for this portfolio:** rejected — the
+  LocalStack and policy-simulator lanes cover the intended public evidence.
 - **LocalStack Community edition:** rejected — lacks ECS, ECR, and ALB
   support, which this stack depends on.
 - **Another cloud's free credits:** rejected — rewrites the AWS-specific
   design (OIDC provider, IAM roles, ECS Fargate) this project is built
   around.
 
-## Amendment 2026-09-08: promotion not planned
+## Amendment 2026-09-08: portfolio boundary
 
-The owner decided on 2026-09-08 not to upgrade the account to the Paid
-Plan for this portfolio. The Free Plan's service control policies still
-deny the services listed in the context above, and its unused credit
-balance cannot lift those denials, so real AWS is no longer a pending
-promotion step: the project closes at the LocalStack-verified level, the
-composition stays portable to real AWS, and the real-AWS runbook sequence
-in `TODO.md` (P0-3b) remains executable should the account ever be
-upgraded.
+Real AWS is not a pending portfolio milestone. The composition remains
+portable, while the public evidence stops at LocalStack execution and real-account
+IAM policy simulation. The optional deployment sequence remains in `TODO.md`
+under P0-3b for future use.

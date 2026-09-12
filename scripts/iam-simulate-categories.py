@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the IAM simulator case taxonomy from docs/iam-matrix.md."""
+"""Generate the IAM simulator case taxonomy from docs/evidence/iam-matrix.md."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import NoReturn
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MATRIX = REPO_ROOT / "docs" / "iam-matrix.md"
+DEFAULT_MATRIX = REPO_ROOT / "docs" / "evidence" / "iam-matrix.md"
 DEFAULT_OUTPUT = REPO_ROOT / "tests" / "fixtures" / "iam-simulate" / "categories.json"
 CATEGORIES = (
     "simulator-decision",

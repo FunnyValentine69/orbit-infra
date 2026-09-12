@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MATRIX="$REPO_ROOT/docs/iam-matrix.md"
+MATRIX="$REPO_ROOT/docs/evidence/iam-matrix.md"
 GENERATOR="$REPO_ROOT/scripts/iam-simulate-categories.py"
 TAXONOMY="$REPO_ROOT/tests/fixtures/iam-simulate/categories.json"
 CASE_ID_LIB="$REPO_ROOT/tests/lib/iam-simulate.sh"
@@ -10,7 +10,7 @@ VALIDATOR="$REPO_ROOT/scripts/iam-simulate-validate.py"
 VECTOR_FIXTURES="$REPO_ROOT/tests/fixtures/iam-simulate"
 VECTORS="$VECTOR_FIXTURES/vectors"
 UNRESOLVED="$VECTOR_FIXTURES/unresolved.json"
-SCHEMA_DOC="$REPO_ROOT/docs/iam-simulate-vector-schema.md"
+SCHEMA_DOC="$REPO_ROOT/docs/evidence/iam-simulate-vector-schema.md"
 PHASE2_CONTRACTS="$REPO_ROOT/tests/lib/iam-simulate-phase2.sh"
 MUTATION_REGISTRY="$REPO_ROOT/tests/lib/iam-simulate-mutations.txt"
 CUSTOM_EVIDENCE_REPORT="$REPO_ROOT/docs/assets/iam-simulation-custom-report.json"
@@ -1793,7 +1793,7 @@ fi
 
 echo "== iam simulate contracts: EVIDENCE =="
 group_failures=$failures
-if output="$(python3 - "$REPO_ROOT/RUNBOOKS.md" 2>&1 <<'PY_ROLE_HASH_DOC'
+if output="$(python3 - "$REPO_ROOT/docs/RUNBOOKS.md" 2>&1 <<'PY_ROLE_HASH_DOC'
 from pathlib import Path
 import sys
 
@@ -1817,13 +1817,13 @@ fi
 
 if output="$(python3 - \
   "$REPO_ROOT/TODO.md" "$MATRIX" "$REPO_ROOT/bootstrap/roles.tf" \
-  "$REPO_ROOT/STATE.md" 2>&1 <<'PY_PACKET_DOCS'
+  2>&1 <<'PY_PACKET_DOCS'
 from pathlib import Path
 import re
 import sys
 
 
-todo, matrix, roles, state = (
+todo, matrix, roles = (
     Path(path).read_text(encoding="utf-8") for path in sys.argv[1:]
 )
 for item in ("P5-38", "P5-39", "P5-40", "P5-41"):
@@ -1851,13 +1851,11 @@ for item, reason in follow_ups.items():
         raise SystemExit(
             f"FAIL: IAM matrix Follow-up for {item} lacks its P0-3b reason"
         )
-if "iam-condition-keys.md" in roles or roles.count("docs/iam-matrix.md") != 18:
+if "iam-condition-keys.md" in roles or roles.count("docs/evidence/iam-matrix.md") != 18:
     raise SystemExit(
-        "FAIL: bootstrap role comments do not cite docs/iam-matrix.md at all 18 sites"
+        "FAIL: bootstrap role comments do not cite docs/evidence/iam-matrix.md at all 18 sites"
     )
-if not re.search(r"(?m)^LOCATION   fix/iam-sim-followups-2$", state):
-    raise SystemExit("FAIL: STATE LOCATION does not name fix/iam-sim-followups-2")
-print("PASS: P0-3b deferrals, P5-68 filing, matrix citations, and STATE location")
+print("PASS: P0-3b deferrals, P5-68 filing, and matrix citations")
 PY_PACKET_DOCS
 )"; then
   pass_case "${output#PASS: }"
@@ -3030,6 +3028,29 @@ PY_PUBLICATION
     fail_case "Evidence publication metadata mutation setup" "$output"
   fi
 
+fi
+
+if output="$(python3 - "$EVIDENCE_PROVENANCE" 2>&1 <<'PY_PROVENANCE_WORDING'
+from pathlib import Path
+import sys
+
+provenance = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = (
+    "Policy evaluation ran in `us-east-1`; account identifiers are rendered with the placeholder",
+    "000000000000",
+)
+missing = [value for value in required if value not in provenance]
+if missing:
+    raise SystemExit(
+        "FAIL: committed IAM simulation provenance omits required content: "
+        f"{missing[0]}"
+    )
+print("PASS: committed IAM simulation provenance matches the renderer wording contract")
+PY_PROVENANCE_WORDING
+)"; then
+  pass_case "${output#PASS: }"
+else
+  fail_case "committed IAM simulation artifact wording" "$output"
 fi
 
 if [ "$failures" -eq "$group_failures" ]; then

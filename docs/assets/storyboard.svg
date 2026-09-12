@@ -42,7 +42,7 @@
   <g id="step-2" class="panel panel-2" transform="translate(40 156)">
     <rect width="500" height="52" rx="12"/>
     <text class="step-number" x="16" y="31">2</text>
-    <text class="caption" x="46" y="32">Static gates: fmt, validate, lint, policy-size, conftest</text>
+    <text class="caption" x="46" y="32">Gates: validate, lint, test, docs, policy, no-NAT, Conftest</text>
   </g>
   <path class="connector" d="M290 208 V226"/>
   <g id="step-3" class="panel panel-3" transform="translate(40 226)">

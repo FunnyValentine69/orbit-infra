@@ -112,7 +112,7 @@ if ! CALLER_ARN=$("${AWS_BASE[@]}" sts get-caller-identity --query Arn --output 
   CALLER_ERR="$(sed -E 's/[0-9]{12}/************/g' "$CALLER_ERR_FILE")"
   rm -f "$CALLER_ERR_FILE"
   echo "BLOCK: caller identity failed: $CALLER_ERR" >&2
-  echo "AWS credentials not available for profile $AWS_PROFILE; run: aws configure --profile orbit (Free Plan has no Identity Center; see RUNBOOKS.md)" >&2
+  echo "AWS credentials not available for profile $AWS_PROFILE; run: aws configure --profile orbit (see docs/RUNBOOKS.md)" >&2
   exit 3
 fi
 rm -f "$CALLER_ERR_FILE"

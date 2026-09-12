@@ -776,8 +776,8 @@ provenance_lines = [
     ],
     f"| commands | {'<br>'.join(commands)} |",
     (
-        "| account and region | Free Plan account in `us-east-1`; the rendered "
-        f"account identifier is always `{PLACEHOLDER_ACCOUNT}`. |"
+        "| account and region | Policy evaluation ran in `us-east-1`; account "
+        f"identifiers are rendered with the placeholder `{PLACEHOLDER_ACCOUNT}`. |"
     ),
     f"| case counts by outcome | {outcomes} |",
     "",

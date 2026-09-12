@@ -112,7 +112,7 @@ sweeper removes state versions and sets `closed`. `session-apply` runs that
 sweeper in-job for LocalStack; the nightly workflow is AWS-only. The
 LocalStack-only inactive task-definition deletion allowance is recorded in the
 manifest. Host-port plan drift is tracked separately and never changes cleanup predicates. See
-`RUNBOOKS.md`, "Stuck-environment force-destroy", for terminal recovery.
+`docs/RUNBOOKS.md`, "Stuck-environment force-destroy", for terminal recovery.
 
 ```
 make lease-list TARGET=aws

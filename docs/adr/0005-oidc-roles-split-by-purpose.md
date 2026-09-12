@@ -34,10 +34,9 @@ before starting a job that reads `LOCALSTACK_AUTH_TOKEN` or
 Reruns of the owner-only LocalStack session lane by collaborators are refused
 because the triggering actor is checked.
 
-**Local-bootstrap deviation:** the Free Plan blocks IAM Identity Center,
-so bootstrap runs from an IAM user (MFA, keys local-only, deactivated
-between sessions) instead of SSO, confined to the operator's one-time
-bootstrap step; CI never uses static keys.
+**Local-bootstrap deviation:** bootstrap may run from an IAM user with MFA
+and local-only keys that are deactivated between sessions, confined to the
+operator's one-time bootstrap step; CI never uses static keys.
 
 ## Consequences
 
@@ -49,7 +48,7 @@ bootstrap step; CI never uses static keys.
   the three jobs is designed to prove its role assumption fails with
   AccessDenied on every same-repo pull_request run and on every
   workflow_dispatch not from `refs/heads/main`; the real-AWS run is
-  recorded in STATE.md when executed. Fork PRs skip the jobs entirely
+  recorded in TODO.md when executed. Fork PRs skip the jobs entirely
   (green-by-skip, via the `head.repo.full_name == github.repository`
   guard); that guard is a cost/no-op filter, not a security boundary,
   since no role trusts the `pull_request` subject in the first place.
@@ -128,7 +127,7 @@ not shrink; the unconditioned wildcard tuple set does shrink.
 
 The AWS Service Authorization Reference was re-evaluated for every
 unconditioned wildcard action on 2026-09-08. The resulting table and follow-ups
-are in `docs/iam-matrix.md`; that review also removed the non-existent
+are in `docs/evidence/iam-matrix.md`; that review also removed the non-existent
 `lambda:GetLayerVersionByArn` action string because the valid IAM action is
 `lambda:GetLayerVersion`, which was already present. Static reference-backed
 values now scope all 12 EC2 describe actions by `ec2:Region`,

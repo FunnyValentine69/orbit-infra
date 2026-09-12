@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the policy gates in order (validate -> lint -> test -> policy-size -> no-nat-gateway -> conftest)
+# Runs the policy gates in order (validate -> lint -> test -> docs-contracts ->
+# policy-size -> no-nat-gateway -> conftest)
 # and prints a one-line PASS/FAIL summary per gate. Exits non-zero on any
 # failure. CI calls this from Phase 3 onward (terraform-plan.yml).
 set -u
@@ -26,6 +27,14 @@ run_gate() {
 run_gate validate
 run_gate lint
 run_gate test
+
+if bash tests/docs-contracts.sh >"$log_dir/gates-docs-contracts.log" 2>&1; then
+  echo "PASS: docs-contracts"
+else
+  echo "FAIL: docs-contracts"
+  cat "$log_dir/gates-docs-contracts.log"
+  status=1
+fi
 
 # F3 (PR#2 Tier 2b): every aws_iam_policy/aws_iam_role_policy document
 # stays under AWS's size quotas; this needs a real LocalStack plan

@@ -410,7 +410,7 @@ resource "aws_iam_policy" "deployer_state" {
 
 data "aws_iam_policy_document" "deployer_ec2" {
   # --- (b) EC2 networking. Every action below IS resource-scoped per the
-  # verified condition-key table (docs/iam-matrix.md, EC2 section);
+  # verified condition-key table (docs/evidence/iam-matrix.md, EC2 section);
   # `resources = ["*"]` is kept (the ARN is unknown before create, and
   # Terraform's IAM engine still enforces the conditions below against
   # any resource matched by "*"), scoped instead by tag conditions.
@@ -466,7 +466,7 @@ data "aws_iam_policy_document" "deployer_ec2" {
 
   # ec2:CreateTags is the dependent action the table shows carries
   # `ec2:CreateAction` on all 106 of its resource-type rows; scoped here
-  # to only the create actions above (docs/iam-matrix.md EC2 notes).
+  # to only the create actions above (docs/evidence/iam-matrix.md EC2 notes).
   statement {
     sid    = "Ec2CreateTagsForCreateActions"
     effect = "Allow"
@@ -527,7 +527,7 @@ data "aws_iam_policy_document" "deployer_ec2" {
   # blocks in modules/network/main.tf and envs/preview/main.tf (which
   # issue Authorize/Revoke calls with no tags on the call itself) keep
   # working. ec2:ReplaceRoute/ReplaceRouteTableAssociation/
-  # ModifySecurityGroupRules are not covered by docs/iam-matrix.md (no
+  # ModifySecurityGroupRules are not covered by docs/evidence/iam-matrix.md (no
   # verified condition key), but are conditioned here on the same
   # ec2:ResourceTag/Project pattern as their sibling route-table*/
   # security-group* actions per F1 direction, not table backing.
@@ -628,7 +628,7 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
 
   # --- (c) ALB + target group + listener. ---
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed * only ELBv2 Describe* actions, zero condition keys (docs/iam-matrix.md ELBv2 section)
+    #checkov:skip=CKV_AWS_111:table-confirmed * only ELBv2 Describe* actions, zero condition keys (docs/evidence/iam-matrix.md ELBv2 section)
     #checkov:skip=CKV_AWS_356:same as above
     sid    = "ElbDescribeStarOnly"
     effect = "Allow"
@@ -662,7 +662,7 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   }
 
   # F1: RegisterTargets/DeregisterTargets are not covered by
-  # docs/iam-matrix.md (no verified condition key), but are
+  # docs/evidence/iam-matrix.md (no verified condition key), but are
   # conditioned here on the same elasticloadbalancing:ResourceTag/Project
   # pattern as their sibling targetgroup* actions per F1 direction, not
   # table backing.
@@ -690,7 +690,7 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   }
 
   # AddTags carries elasticloadbalancing:CreateAction on all 10 of its
-  # resource-type rows (docs/iam-matrix.md ELBv2 notes).
+  # resource-type rows (docs/evidence/iam-matrix.md ELBv2 notes).
   statement {
     sid       = "ElbAddTags"
     effect    = "Allow"
@@ -742,11 +742,11 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
     }
   }
 
-  # DescribeTargetHealth is not covered by docs/iam-matrix.md; no
+  # DescribeTargetHealth is not covered by docs/evidence/iam-matrix.md; no
   # verified condition key, kept unconditioned (read-only, consistent
   # with the ELBv2 Describe* pattern).
   statement {
-    #checkov:skip=CKV_AWS_111:not covered by docs/iam-matrix.md (ELBv2 section); no verified condition key exists
+    #checkov:skip=CKV_AWS_111:not covered by docs/evidence/iam-matrix.md (ELBv2 section); no verified condition key exists
     #checkov:skip=CKV_AWS_356:same as above
     sid       = "ElbDescribeTargetHealth"
     effect    = "Allow"
@@ -756,7 +756,7 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
 
   # --- (d) ECS cluster/service/task definitions. ---
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed * only ECS actions (docs/iam-matrix.md ECS section: DeregisterTaskDefinition, DescribeTaskDefinition)
+    #checkov:skip=CKV_AWS_111:table-confirmed * only ECS actions (docs/evidence/iam-matrix.md ECS section: DeregisterTaskDefinition, DescribeTaskDefinition)
     #checkov:skip=CKV_AWS_356:same as above
     sid    = "EcsStarOnly"
     effect = "Allow"
@@ -805,7 +805,7 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   }
 
   # ecs:TagResource carries ecs:CreateAction on all 9 of its resource-type
-  # rows (docs/iam-matrix.md ECS notes).
+  # rows (docs/evidence/iam-matrix.md ECS notes).
   statement {
     sid       = "EcsTagResource"
     effect    = "Allow"
@@ -909,7 +909,7 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
   # ListTagsForResource is table-confirmed * only with zero condition
   # keys; ListNamespaces/ListServices are not covered by the table.
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed * only (ListTagsForResource) or uncovered (ListNamespaces/ListServices) Cloud Map actions (docs/iam-matrix.md Cloud Map section)
+    #checkov:skip=CKV_AWS_111:table-confirmed * only (ListTagsForResource) or uncovered (ListNamespaces/ListServices) Cloud Map actions (docs/evidence/iam-matrix.md Cloud Map section)
     #checkov:skip=CKV_AWS_356:same as above
     sid    = "ServiceDiscoveryStarOnlyNoCondition"
     effect = "Allow"
@@ -989,7 +989,7 @@ data "aws_iam_policy_document" "deployer_elb_ecs" {
 
   # Post-create tag updates on an already-tagged namespace/service:
   # servicediscovery:TagResource's own row lists no ResourceTag key
-  # (docs/iam-matrix.md Cloud Map section), but the generic
+  # (docs/evidence/iam-matrix.md Cloud Map section), but the generic
   # aws:ResourceTag/Project key documented on the namespace/service
   # resource types applies to the resource being retagged.
   statement {
@@ -1105,7 +1105,7 @@ data "aws_iam_policy_document" "deployer_data" {
 
   # --- (f) CloudWatch log groups, /orbit/<env_id>/<name>. ---
   statement {
-    #checkov:skip=CKV_AWS_111:table-confirmed * only (DescribeLogGroups) (docs/iam-matrix.md CloudWatch Logs section, A3)
+    #checkov:skip=CKV_AWS_111:table-confirmed * only (DescribeLogGroups) (docs/evidence/iam-matrix.md CloudWatch Logs section, A3)
     #checkov:skip=CKV_AWS_356:same as above
     sid       = "LogsDescribeStarOnly"
     effect    = "Allow"
@@ -1130,7 +1130,7 @@ data "aws_iam_policy_document" "deployer_data" {
   }
 
   # Post-create tag updates on an already-tagged log group; logs:TagResource
-  # also supports aws:ResourceTag/Project (docs/iam-matrix.md CloudWatch
+  # also supports aws:ResourceTag/Project (docs/evidence/iam-matrix.md CloudWatch
   # Logs section).
   statement {
     sid    = "LogsTagResourceExisting"
@@ -1183,7 +1183,7 @@ data "aws_iam_policy_document" "deployer_data" {
   }
 
   # Post-create tag updates on an already-tagged secret; secretsmanager:TagResource
-  # also supports aws:ResourceTag/Project (docs/iam-matrix.md Secrets
+  # also supports aws:ResourceTag/Project (docs/evidence/iam-matrix.md Secrets
   # Manager section).
   statement {
     sid    = "ClickhouseSecretTagResourceExisting"
@@ -1214,7 +1214,7 @@ data "aws_iam_policy_document" "deployer_data" {
     resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:${var.name}-*"]
 
     # F5: Secrets Manager has no service-specific ResourceTag condition
-    # key (docs/iam-matrix.md Secrets Manager section documents only
+    # key (docs/evidence/iam-matrix.md Secrets Manager section documents only
     # the literal string "tag-key", an unresolved AWS-docs template
     # artifact, not a real condition key); the generic aws:ResourceTag
     # key, also documented present on this row, is used instead.
@@ -1324,9 +1324,9 @@ data "aws_iam_policy_document" "deployer_data" {
   }
 
   # --- (h) tag-based resource discovery; tag:GetResources has no
-  # resource-level scoping, not covered by docs/iam-matrix.md. ---
+  # resource-level scoping, not covered by docs/evidence/iam-matrix.md. ---
   statement {
-    #checkov:skip=CKV_AWS_111:tag:GetResources documents no resource-level scoping; not covered by docs/iam-matrix.md
+    #checkov:skip=CKV_AWS_111:tag:GetResources documents no resource-level scoping; not covered by docs/evidence/iam-matrix.md
     #checkov:skip=CKV_AWS_356:same as above
     sid       = "TagDiscovery"
     effect    = "Allow"

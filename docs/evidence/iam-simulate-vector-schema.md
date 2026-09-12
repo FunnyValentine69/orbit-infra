@@ -179,7 +179,7 @@ simulator accepts `000000000000`, but committed vectors remain account-neutral.
 ## Worked matrix examples
 
 These examples use real case IDs, actions, resources, and expectations from
-`docs/iam-matrix.md`. Each is a valid one-case envelope; authored envelopes may
+`docs/evidence/iam-matrix.md`. Each is a valid one-case envelope; authored envelopes may
 hold multiple cases with the same document and Sid.
 
 ### Protected-resource deny
