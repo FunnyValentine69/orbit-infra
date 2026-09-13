@@ -164,8 +164,8 @@
       100.000% { opacity: 0.000; }
     }
     @keyframes track-coin-1-transform {
-      0.000% { transform: translate(0.000px, 0.000px); }
-      2.143% { transform: translate(0.000px, 0.000px); }
+      0.000% { transform: translate(0.000px, -64.000px); }
+      2.143% { transform: translate(0.000px, -64.000px); }
       5.179% { transform: translate(12.000px, -100.000px); }
       8.571% { transform: translate(55.000px, -67.000px); }
       100.000% { transform: translate(55.000px, -67.000px); }
@@ -179,8 +179,8 @@
       100.000% { opacity: 0.000; }
     }
     @keyframes track-coin-2-transform {
-      0.000% { transform: translate(0.000px, 0.000px); }
-      5.000% { transform: translate(0.000px, 0.000px); }
+      0.000% { transform: translate(0.000px, -64.000px); }
+      5.000% { transform: translate(0.000px, -64.000px); }
       8.036% { transform: translate(8.000px, -105.000px); }
       11.607% { transform: translate(43.000px, -76.000px); }
       100.000% { transform: translate(43.000px, -76.000px); }
@@ -194,8 +194,8 @@
       100.000% { opacity: 0.000; }
     }
     @keyframes track-coin-3-transform {
-      0.000% { transform: translate(0.000px, 0.000px); }
-      8.393% { transform: translate(0.000px, 0.000px); }
+      0.000% { transform: translate(0.000px, -64.000px); }
+      8.393% { transform: translate(0.000px, -64.000px); }
       11.964% { transform: translate(15.000px, -108.000px); }
       16.786% { transform: translate(70.000px, -82.000px); }
       100.000% { transform: translate(70.000px, -82.000px); }
@@ -213,7 +213,7 @@
       48.393% { transform: rotate(-65.000deg); }
       100.000% { transform: rotate(-65.000deg); }
     }
-    @keyframes track-orbit-left-arm-transform {
+    @keyframes track-orbit-left-arm-behind-transform {
       0.000% { transform: rotate(0.000deg); }
       21.429% { transform: rotate(0.000deg); }
       22.857% { transform: rotate(-38.000deg); }
@@ -223,7 +223,7 @@
       28.571% { transform: rotate(-12.000deg); }
       100.000% { transform: rotate(-12.000deg); }
     }
-    @keyframes track-orbit-right-arm-transform {
+    @keyframes track-orbit-right-arm-behind-transform {
       0.000% { transform: rotate(0.000deg); }
       21.429% { transform: rotate(0.000deg); }
       22.679% { transform: rotate(42.000deg); }
@@ -236,7 +236,7 @@
       37.679% { transform: rotate(-15.000deg); }
       100.000% { transform: rotate(-15.000deg); }
     }
-    @keyframes track-orbit-guardrails-transform {
+    @keyframes track-orbit-guardrails-behind-transform {
       0.000% { transform: translate(0.000px, 0.000px); }
       33.750% { transform: translate(0.000px, 0.000px); }
       35.893% { transform: translate(430.000px, 0.000px); }
@@ -244,7 +244,54 @@
       40.179% { transform: translate(0.000px, 0.000px); }
       100.000% { transform: translate(0.000px, 0.000px); }
     }
-    @keyframes track-gate-frame-transform {
+    @keyframes track-orbit-guardrails-behind-opacity {
+      0.000% { opacity: 1.000; }
+      35.018% { opacity: 1.000; }
+      35.021% { opacity: 0.000; }
+      39.114% { opacity: 0.000; }
+      39.118% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-orbit-left-arm-front-transform {
+      0.000% { transform: rotate(0.000deg); }
+      21.429% { transform: rotate(0.000deg); }
+      22.857% { transform: rotate(-38.000deg); }
+      24.286% { transform: rotate(22.000deg); }
+      25.714% { transform: rotate(-38.000deg); }
+      27.143% { transform: rotate(22.000deg); }
+      28.571% { transform: rotate(-12.000deg); }
+      100.000% { transform: rotate(-12.000deg); }
+    }
+    @keyframes track-orbit-right-arm-front-transform {
+      0.000% { transform: rotate(0.000deg); }
+      21.429% { transform: rotate(0.000deg); }
+      22.679% { transform: rotate(42.000deg); }
+      24.107% { transform: rotate(-36.000deg); }
+      25.536% { transform: rotate(42.000deg); }
+      26.964% { transform: rotate(-36.000deg); }
+      28.571% { transform: rotate(5.000deg); }
+      35.357% { transform: rotate(5.000deg); }
+      36.607% { transform: rotate(-58.000deg); }
+      37.679% { transform: rotate(-15.000deg); }
+      100.000% { transform: rotate(-15.000deg); }
+    }
+    @keyframes track-orbit-guardrails-front-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      33.750% { transform: translate(0.000px, 0.000px); }
+      35.893% { transform: translate(430.000px, 0.000px); }
+      38.393% { transform: translate(430.000px, 0.000px); }
+      40.179% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-orbit-guardrails-front-opacity {
+      0.000% { opacity: 0.000; }
+      35.018% { opacity: 0.000; }
+      35.021% { opacity: 1.000; }
+      39.114% { opacity: 1.000; }
+      39.118% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-gate-assembly-transform {
       0.000% { transform: translate(0.000px, 175.000px); }
       22.321% { transform: translate(0.000px, 175.000px); }
       28.036% { transform: translate(0.000px, 0.000px); }
@@ -269,10 +316,10 @@
       100.000% { fill: #4ade80; }
     }
     @keyframes track-gate-door-transform {
-      0.000% { transform: translate(0.000px, 0.000px); }
-      34.107% { transform: translate(0.000px, 0.000px); }
-      36.607% { transform: translate(0.000px, -175.000px); }
-      100.000% { transform: translate(0.000px, -175.000px); }
+      0.000% { transform: scale(1.000, 1.000); }
+      34.107% { transform: scale(1.000, 1.000); }
+      36.607% { transform: scale(1.000, 0.040); }
+      100.000% { transform: scale(1.000, 0.040); }
     }
     @keyframes track-prop-lease-timer-opacity {
       0.000% { opacity: 0.000; }
@@ -287,6 +334,12 @@
       36.786% { transform: rotate(0.000deg); }
       47.679% { transform: rotate(360.000deg); }
       100.000% { transform: rotate(360.000deg); }
+    }
+    @keyframes track-prop-seal-opacity {
+      0.000% { opacity: 0.000; }
+      35.354% { opacity: 0.000; }
+      35.357% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
     }
     @keyframes track-prop-seal-transform {
       0.000% { transform: translate(0.000px, -155.000px); }
@@ -334,8 +387,8 @@
       100.000% { transform: translate(520.000px, 20.000px); }
     }
     @keyframes track-scout-entry-transform {
-      0.000% { transform: translate(820.000px, 0.000px); }
-      50.000% { transform: translate(820.000px, 0.000px); }
+      0.000% { transform: translate(900.000px, 0.000px); }
+      50.000% { transform: translate(900.000px, 0.000px); }
       52.857% { transform: translate(0.000px, 0.000px); }
       100.000% { transform: translate(0.000px, 0.000px); }
     }
@@ -392,18 +445,18 @@
       100.000% { fill: #4ade80; }
     }
     @keyframes track-prop-code-card-transform {
-      0.000% { transform: translate(-140.000px, 0.000px); }
-      60.714% { transform: translate(-140.000px, 0.000px); }
+      0.000% { transform: translate(0.000px, -360.000px); }
+      60.714% { transform: translate(0.000px, -360.000px); }
       64.286% { transform: translate(0.000px, 0.000px); }
-      65.000% { transform: translate(-22.000px, 0.000px); }
+      65.000% { transform: translate(6.000px, 0.000px); }
       67.857% { transform: translate(0.000px, 0.000px); }
       100.000% { transform: translate(0.000px, 0.000px); }
     }
     @keyframes track-prop-doc-card-transform {
-      0.000% { transform: translate(140.000px, 0.000px); }
-      60.714% { transform: translate(140.000px, 0.000px); }
+      0.000% { transform: translate(0.000px, -360.000px); }
+      60.714% { transform: translate(0.000px, -360.000px); }
       64.286% { transform: translate(0.000px, 0.000px); }
-      65.000% { transform: translate(22.000px, 0.000px); }
+      65.000% { transform: translate(-6.000px, 0.000px); }
       67.857% { transform: translate(0.000px, 0.000px); }
       100.000% { transform: translate(0.000px, 0.000px); }
     }
@@ -485,8 +538,8 @@
       100.000% { transform: rotate(48.000deg); }
     }
     @keyframes track-prop-velvet-rope-transform {
-      0.000% { transform: translate(0.000px, -145.000px); }
-      77.500% { transform: translate(0.000px, -145.000px); }
+      0.000% { transform: translate(0.000px, -470.000px); }
+      77.500% { transform: translate(0.000px, -470.000px); }
       82.857% { transform: translate(0.000px, 0.000px); }
       100.000% { transform: translate(0.000px, 0.000px); }
     }
@@ -600,17 +653,20 @@
     #coin-3 { animation: track-coin-3-opacity 28s linear infinite, track-coin-3-transform 28s linear infinite; }
     #actor-orbit-ring { animation: track-actor-orbit-ring-transform 28s linear infinite; }
     #actor-bill-needle { animation: track-actor-bill-needle-transform 28s linear infinite; }
-    #orbit-left-arm { animation: track-orbit-left-arm-transform 28s linear infinite; }
-    #orbit-right-arm { animation: track-orbit-right-arm-transform 28s linear infinite; }
-    #orbit-guardrails { animation: track-orbit-guardrails-transform 28s linear infinite; }
-    #gate-frame { animation: track-gate-frame-transform 28s linear infinite; }
+    #orbit-left-arm-behind { animation: track-orbit-left-arm-behind-transform 28s linear infinite; }
+    #orbit-right-arm-behind { animation: track-orbit-right-arm-behind-transform 28s linear infinite; }
+    #orbit-guardrails-behind { animation: track-orbit-guardrails-behind-transform 28s linear infinite, track-orbit-guardrails-behind-opacity 28s linear infinite; }
+    #orbit-left-arm-front { animation: track-orbit-left-arm-front-transform 28s linear infinite; }
+    #orbit-right-arm-front { animation: track-orbit-right-arm-front-transform 28s linear infinite; }
+    #orbit-guardrails-front { animation: track-orbit-guardrails-front-transform 28s linear infinite, track-orbit-guardrails-front-opacity 28s linear infinite; }
+    #gate-assembly { animation: track-gate-assembly-transform 28s linear infinite; }
     #prop-gate-light-1 { animation: track-prop-gate-light-1-fill 28s linear infinite; }
     #prop-gate-light-2 { animation: track-prop-gate-light-2-fill 28s linear infinite; }
     #prop-gate-light-3 { animation: track-prop-gate-light-3-fill 28s linear infinite; }
     #gate-door { animation: track-gate-door-transform 28s linear infinite; }
     #prop-lease-timer { animation: track-prop-lease-timer-opacity 28s linear infinite; }
     #prop-lease-timer-hand { animation: track-prop-lease-timer-hand-transform 28s linear infinite; }
-    #prop-seal { animation: track-prop-seal-transform 28s linear infinite; }
+    #prop-seal { animation: track-prop-seal-opacity 28s linear infinite, track-prop-seal-transform 28s linear infinite; }
     #seal-strike { animation: track-seal-strike-transform 28s linear infinite; }
     #pip-seal-squash { animation: track-pip-seal-squash-transform 28s linear infinite; }
     #broombot-guardrails { animation: track-broombot-guardrails-transform 28s linear infinite; }
@@ -670,17 +726,18 @@
       <g id="prop-coins"><g transform="translate(792 438)"><g id="coin-1"><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g><g transform="translate(807 446)"><g id="coin-2"><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g><g transform="translate(780 452)"><g id="coin-3"><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g></g>
     </g>
     <g id="scene-guardrails">
-      <g transform="translate(150 305)"><g id="orbit-guardrails"><use href="#actor-orbit"/><g transform="translate(-42 -25)"><g id="actor-orbit-left-shoulder-pivot" transform="translate(0 0)"><g id="orbit-left-arm"><path d="M0 0 L-38 48" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="-41" cy="51" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g><g transform="translate(42 -25)"><g id="actor-orbit-right-shoulder-pivot" transform="translate(0 0)"><g id="orbit-right-arm"><path d="M0 0 L42 45" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="45" cy="48" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/><path d="M45 47 L69 70" stroke="#92400e" stroke-width="9"/><rect x="55" y="62" width="42" height="24" rx="6" fill="#94a3b8" stroke="#082f49" stroke-width="5"/></g></g></g></g></g>
-      <g id="prop-gate" transform="translate(405 274)"><g id="gate-frame"><path d="M-118 142 V-92 H118 V142 M-118 -92 H118" fill="none" stroke="#cbd5e1" stroke-width="20" stroke-linecap="round"/><path d="M-92 -64 H92" stroke="#22d3ee" stroke-width="8"/></g><g id="gate-door"><rect x="-91" y="-48" width="182" height="186" rx="10" fill="#1e3a5f" class="outline"/><path d="M-65 -18 H65 M-65 20 H65 M-65 58 H65 M-65 96 H65" stroke="#64748b" stroke-width="9"/></g><g id="prop-gate-lights" transform="translate(0 -120)"><g id="prop-gate-light-1" transform="translate(-48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g id="prop-gate-light-2"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g id="prop-gate-light-3" transform="translate(48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g></g></g>
+      <g transform="translate(150 305)"><g id="orbit-guardrails-behind"><use href="#actor-orbit"/><g transform="translate(-42 -25)"><g id="actor-orbit-left-shoulder-pivot-behind" transform="translate(0 0)"><g id="orbit-left-arm-behind"><path d="M0 0 L-38 48" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="-41" cy="51" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g><g transform="translate(42 -25)"><g id="actor-orbit-right-shoulder-pivot-behind" transform="translate(0 0)"><g id="orbit-right-arm-behind"><path d="M0 0 L42 45" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="45" cy="48" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/><path d="M45 47 L69 70" stroke="#92400e" stroke-width="9"/><rect x="55" y="62" width="42" height="24" rx="6" fill="#94a3b8" stroke="#082f49" stroke-width="5"/></g></g></g></g></g>
+      <g id="prop-gate" transform="translate(405 274)"><g id="gate-assembly"><path d="M-118 142 V-92 H118 V142 M-118 -92 H118" fill="none" stroke="#cbd5e1" stroke-width="20" stroke-linecap="round"/><path d="M-92 -64 H92" stroke="#22d3ee" stroke-width="8"/><g id="gate-door-pivot" transform="translate(0 -64)"><g id="gate-door"><g transform="translate(0 64)"><rect x="-91" y="-48" width="182" height="186" rx="10" fill="#1e3a5f" class="outline"/><path d="M-65 -18 H65 M-65 20 H65 M-65 58 H65 M-65 96 H65" stroke="#64748b" stroke-width="9"/></g></g></g><g id="prop-gate-lights" transform="translate(0 -120)"><g id="prop-gate-light-1" transform="translate(-48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g id="prop-gate-light-2"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g id="prop-gate-light-3" transform="translate(48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g></g></g></g>
+      <g transform="translate(150 305)"><g id="orbit-guardrails-front"><use href="#actor-orbit"/><g transform="translate(-42 -25)"><g id="actor-orbit-left-shoulder-pivot-front" transform="translate(0 0)"><g id="orbit-left-arm-front"><path d="M0 0 L-38 48" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="-41" cy="51" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g><g transform="translate(42 -25)"><g id="actor-orbit-right-shoulder-pivot-front" transform="translate(0 0)"><g id="orbit-right-arm-front"><path d="M0 0 L42 45" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="45" cy="48" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/><path d="M45 47 L69 70" stroke="#92400e" stroke-width="9"/><rect x="55" y="62" width="42" height="24" rx="6" fill="#94a3b8" stroke="#082f49" stroke-width="5"/></g></g></g></g></g>
       <g transform="translate(700 360)"><g id="cloud-guardrails"><path d="M-162 25 C-187 -43 -98 -90 -38 -52 C0 -126 126 -92 130 -17 C206 -9 211 91 124 98 H-124 C-199 94 -218 45 -162 25Z" fill="#dbeafe" class="outline"/><g transform="translate(-18 -72)"><g id="pip-seal-squash"><use href="#actor-pip"/></g></g><g id="prop-lease-timer" transform="translate(94 -116)"><circle r="52" fill="#f8fafc" class="outline"/><path d="M-22 -62 H22 M0 -62 V-50" stroke="#facc15" stroke-width="11" stroke-linecap="round"/><g id="prop-lease-timer-hand-pivot" transform="translate(0 0)"><g id="prop-lease-timer-hand"><path d="M0 0 V-34" stroke="#0f766e" stroke-width="9" stroke-linecap="round"/></g></g><circle r="8" fill="#0f766e"/></g><g transform="translate(24 -52)"><g id="prop-seal"><g id="seal-strike"><circle r="34" fill="#4ade80" class="outline"/><path d="M-17 0 L-5 15 L21 -18" fill="none" stroke="#052e16" stroke-width="9" stroke-linecap="round"/></g></g></g></g></g>
       <g transform="translate(370 443)"><g id="broombot-guardrails"><use href="#actor-broombot"/></g></g>
     </g>
     <g id="scene-proof">
       <g transform="translate(138 310)"><g id="scout-entry"><g id="scout-lean-pivot" transform="translate(0 0)"><g id="scout-lean"><g transform="scale(.8)"><use href="#actor-scout"/></g></g></g></g></g>
       <g id="prop-rec-reel-pivot" transform="translate(292 116)"><g id="prop-rec-reel"><circle r="52" fill="#e2e8f0" class="outline"/><circle cx="-21" cy="-13" r="11" fill="#082f49"/><circle cx="21" cy="-13" r="11" fill="#082f49"/><circle cy="25" r="11" fill="#082f49"/></g></g>
-      <rect x="359" y="82" width="84" height="52" rx="12" fill="#dc2626"/><text class="rec-text" x="378" y="117" font-size="24">REC</text>
+      <rect x="359" y="82" width="84" height="52" rx="12" fill="#dc2626"/><text class="rec-text" x="401" y="117" text-anchor="middle" font-size="24">REC</text>
       <g transform="translate(250 190)"><g id="prop-permission-row-1"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g id="prop-permission-row-2" transform="translate(0 44)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g id="prop-permission-row-3" transform="translate(0 88)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g id="prop-permission-row-4" transform="translate(0 132)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g></g>
-      <g id="code-doc-nudge"><g transform="translate(540 180)"><g id="prop-code-card"><rect width="126" height="170" rx="16" fill="#dbeafe" class="outline"/><path d="M25 48 H101 M25 82 H82 M25 116 H96" stroke="#2563eb" stroke-width="11" stroke-linecap="round"/></g></g><g transform="translate(690 180)"><g id="prop-doc-card"><rect width="126" height="170" rx="16" fill="#fef3c7" class="outline"/><path d="M25 48 H101 M25 82 H92 M25 116 H103" stroke="#d97706" stroke-width="11" stroke-linecap="round"/></g></g></g>
+      <g id="code-doc-nudge"><g transform="translate(496 180)"><g id="prop-code-card"><rect width="126" height="170" rx="16" fill="#dbeafe" class="outline"/><path d="M25 48 H101 M25 82 H82 M25 116 H96" stroke="#2563eb" stroke-width="11" stroke-linecap="round"/></g></g><g transform="translate(642 180)"><g id="prop-doc-card"><rect width="126" height="170" rx="16" fill="#fef3c7" class="outline"/><path d="M25 48 H101 M25 82 H92 M25 116 H103" stroke="#d97706" stroke-width="11" stroke-linecap="round"/></g></g></g>
       <g transform="translate(665 416)"><path d="M-44 16 H44 L30 62 H-30Z" fill="#475569" stroke="#0f172a" stroke-width="5"/><g id="prop-contract-lamp" transform="translate(0 -15)"><circle r="42" class="outline"/><circle r="18" fill="#ffffff" opacity=".5"/></g></g>
     </g>
     <g id="scene-stop">
@@ -691,8 +748,8 @@
       <g transform="translate(470 350)"><use href="#actor-pip"/></g>
       <g id="prop-velvet-rope"><path d="M205 455 V300 M825 455 V300" stroke="#facc15" stroke-width="22" stroke-linecap="round"/><circle cx="205" cy="300" r="17" fill="#facc15"/><circle cx="825" cy="300" r="17" fill="#facc15"/><path d="M205 317 Q515 470 825 317" fill="none" stroke="#e11d48" stroke-width="26" stroke-linecap="round"/></g>
       <g id="spectators"><g transform="translate(680 435)"><circle cy="-34" r="18" fill="#fde68a" class="outline"/><path d="M0 -16 V30" stroke="#60a5fa" stroke-width="18"/><g transform="translate(-7 -6)"><g id="spectator-1-left-pivot" transform="translate(0 0)"><g id="spectator-1-left-arm"><path d="M0 0 L-24 -24" stroke="#fde68a" stroke-width="9" stroke-linecap="round"/></g></g></g><g transform="translate(7 -6)"><g id="spectator-1-right-pivot" transform="translate(0 0)"><g id="spectator-1-right-arm"><path d="M0 0 L24 -24" stroke="#fde68a" stroke-width="9" stroke-linecap="round"/></g></g></g></g><g transform="translate(755 435)"><circle cy="-34" r="18" fill="#fbcfe8" class="outline"/><path d="M0 -16 V30" stroke="#a78bfa" stroke-width="18"/><g transform="translate(-7 -6)"><g id="spectator-2-left-pivot" transform="translate(0 0)"><g id="spectator-2-left-arm"><path d="M0 0 L-24 -24" stroke="#fbcfe8" stroke-width="9" stroke-linecap="round"/></g></g></g><g transform="translate(7 -6)"><g id="spectator-2-right-pivot" transform="translate(0 0)"><g id="spectator-2-right-arm"><path d="M0 0 L24 -24" stroke="#fbcfe8" stroke-width="9" stroke-linecap="round"/></g></g></g></g></g>
-      <g id="prop-endcard"><rect x="205" y="52" width="550" height="112" rx="28" fill="#166534" stroke="#86efac" stroke-width="7"/><text class="end-text" x="244" y="121" font-size="30">PROVED. STOPPED ON PURPOSE.</text></g>
-      <g id="wipe-ring-pivot" transform="translate(430 280)"><g id="wipe-ring"><circle r="68" fill="#0f172a" stroke="#bae6fd" stroke-width="24"/></g><g id="wipe-cloud-outline"><path d="M-185 38 C-218 -42 -116 -105 -42 -58 C-4 -146 145 -110 151 -18 C238 -12 246 110 143 116 H-142 C-231 111 -250 60 -185 38Z" fill="#0f172a" stroke="#dbeafe" stroke-width="9"/></g></g>
+      <g id="prop-endcard"><rect x="205" y="52" width="550" height="112" rx="28" fill="#166534" stroke="#86efac" stroke-width="7"/><text class="end-text" x="480" y="119" text-anchor="middle" font-size="30">PROVED. STOPPED ON PURPOSE.</text></g>
+      <g id="wipe-ring-pivot" transform="translate(400 300)"><g id="wipe-ring"><circle r="68" fill="#0f172a" stroke="#bae6fd" stroke-width="24"/></g><g id="wipe-cloud-outline"><path d="M-185 38 C-218 -42 -116 -105 -42 -58 C-4 -146 145 -110 151 -18 C238 -12 246 110 143 116 H-142 C-231 111 -250 60 -185 38Z" fill="#0f172a" stroke="#dbeafe" stroke-width="9"/></g></g>
     </g>
   </g>
   <g id="reduced-motion-summary">

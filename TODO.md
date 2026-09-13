@@ -150,6 +150,7 @@ Parked behind P0-3b: P0-3, P0-4, P0-6, P0-7, P0-8, P0-3f, P0-3d, P3-3b, P5-1, P5
 - [ ] P5-67: `scripts/fixture-hygiene.sh` IPv4 candidates keep trailing sentence punctuation (`8.8.8.8.` fails to parse and is skipped), the same gap closed for IPv6 in PR #28; trim the candidate and add accept/reject cases in `tests/conftest-gate.sh` (Codex Tier 3 P2 on PR #28, 2026-09-11; closure file, waits for the next re-record)
 - [ ] P5-68: `generator_clean_check` rejects `*.tf` under `.terraform/modules/` caches before exemptions; Codex P2 on PR #28
 - [x] P5-69: README hero and animated mini-cartoon — centered emblem, plain-terms animation, transcript, provenance, and contract coverage. Closed 2026-09-12 (PR #31)
+- [x] P5-70: cartoon choreography polish — gate-layer crossing, unified gate motion, off-canvas entrances, collision-free proof cards, centered labels, and executable geometry/mutation contracts. Closed 2026-09-13 (PR #32)
 
 ## Repository history decisions (closed)
 - [x] Rewrite or keep the institutional author email on early commits of main — decided 2026-09-08: keep; 39 commits on main carry the author's two school addresses and a history rewrite of the public repository is not worth the SHA churn
