@@ -164,8 +164,8 @@
       100.000% { opacity: 0.000; }
     }
     @keyframes track-coin-1-transform {
-      0.000% { transform: translate(0.000px, -60.000px); }
-      2.143% { transform: translate(0.000px, -60.000px); }
+      0.000% { transform: translate(0.000px, -64.000px); }
+      2.143% { transform: translate(0.000px, -64.000px); }
       5.179% { transform: translate(12.000px, -100.000px); }
       8.571% { transform: translate(55.000px, -67.000px); }
       100.000% { transform: translate(55.000px, -67.000px); }
@@ -179,8 +179,8 @@
       100.000% { opacity: 0.000; }
     }
     @keyframes track-coin-2-transform {
-      0.000% { transform: translate(0.000px, -60.000px); }
-      5.000% { transform: translate(0.000px, -60.000px); }
+      0.000% { transform: translate(0.000px, -64.000px); }
+      5.000% { transform: translate(0.000px, -64.000px); }
       8.036% { transform: translate(8.000px, -105.000px); }
       11.607% { transform: translate(43.000px, -76.000px); }
       100.000% { transform: translate(43.000px, -76.000px); }
@@ -194,8 +194,8 @@
       100.000% { opacity: 0.000; }
     }
     @keyframes track-coin-3-transform {
-      0.000% { transform: translate(0.000px, -60.000px); }
-      8.393% { transform: translate(0.000px, -60.000px); }
+      0.000% { transform: translate(0.000px, -64.000px); }
+      8.393% { transform: translate(0.000px, -64.000px); }
       11.964% { transform: translate(15.000px, -108.000px); }
       16.786% { transform: translate(70.000px, -82.000px); }
       100.000% { transform: translate(70.000px, -82.000px); }
