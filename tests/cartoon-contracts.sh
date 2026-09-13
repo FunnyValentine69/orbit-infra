@@ -240,8 +240,6 @@ styles = list(root.iter(ns + "style"))
 if len(styles) != 1:
     raise SystemExit("emblem style block differs")
 style = "".join(styles[0].itertext())
-if "6s" not in style:
-    raise SystemExit("emblem style lacks 6s")
 reduced_motion = """    @media (prefers-reduced-motion: reduce) {
       #emblem-orbit-ring, #emblem-shield { animation: none; }
     }"""
@@ -252,7 +250,45 @@ if re.search(r"@import|url\s*\(|data\s*:", style, re.IGNORECASE):
 for forbidden in ("script", "foreignObject", "image"):
     if list(root.iter(ns + forbidden)):
         raise SystemExit(f"emblem contains forbidden element: {forbidden}")
-id_set = {node.attrib["id"] for node in nodes if "id" in node.attrib}
+ids = [node.attrib["id"] for node in nodes if "id" in node.attrib]
+id_set = set(ids)
+keyframes = set(re.findall(r"@keyframes\s+([A-Za-z_][\w.-]*)", style))
+animation_targets = set()
+active_targets = set()
+for rule in re.finditer(r"([^{}]+)\{([^{}]*)\}", style):
+    declarations = {}
+    for declaration in rule.group(2).split(";"):
+        if ":" in declaration:
+            name, value = declaration.split(":", 1)
+            declarations[name.strip().casefold()] = value.strip()
+    if "animation" not in declarations:
+        continue
+    targets = re.findall(r"#([A-Za-z_][\w.-]*)", rule.group(1))
+    if not targets:
+        raise SystemExit("emblem animation selector lacks an id target")
+    for target in targets:
+        if ids.count(target) != 1:
+            raise SystemExit(f"emblem animation target count differs: {target}")
+        animation_targets.add(target)
+    animation = declarations["animation"]
+    if animation.casefold() == "none":
+        continue
+    names = keyframes.intersection(re.findall(r"[A-Za-z_][\w.-]*", animation))
+    if len(names) != 1:
+        raise SystemExit("emblem animation keyframes differ")
+    if not re.search(r"(?<![\w.])6s(?![\w.])", animation):
+        raise SystemExit("emblem style lacks 6s")
+    active_targets.update(targets)
+if animation_targets != active_targets:
+    missing = sorted(animation_targets - active_targets)[0]
+    raise SystemExit(f"emblem animation target lacks keyframes: {missing}")
+parents = {child: parent for parent in nodes for child in parent}
+ring = next(node for node in nodes if node.attrib.get("id") == "emblem-orbit-ring")
+pivot = parents[ring]
+if pivot.tag != ns + "g" or pivot.attrib.get("id") != "emblem-orbit-pivot":
+    raise SystemExit("emblem orbit ring parent is not its pivot group")
+if pivot.attrib.get("transform") != "translate(80 80)":
+    raise SystemExit("emblem orbit pivot transform differs")
 values = []
 for node in nodes:
     values.extend(node.attrib.values())
@@ -309,6 +345,7 @@ PY_STYLE_VALUE
 assert_snapshot_scene() {
   local svg=$1 visible=$2 marker=$3
   python3 - "$svg" "$visible" "$marker" <<'PY_SNAPSHOT'
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -318,13 +355,26 @@ marker = sys.argv[3]
 scenes = ("scene-problem", "scene-guardrails", "scene-proof", "scene-stop")
 
 
-def style(node):
+def declarations(source):
     values = {}
-    for declaration in node.attrib.get("style", "").split(";"):
+    for declaration in source.split(";"):
         if ":" in declaration:
             name, value = declaration.split(":", 1)
-            values[name.strip()] = value.strip()
+            values[name.strip().casefold()] = value.strip()
     return values
+
+
+def style(node):
+    return declarations(node.attrib.get("style", ""))
+
+
+def reject_hidden(node, label):
+    inline = style(node)
+    for prop, hidden in (("display", "none"), ("visibility", "hidden")):
+        attribute = node.attrib.get(prop, "").strip().casefold()
+        inline_value = inline.get(prop, "").casefold()
+        if attribute == hidden or inline_value == hidden:
+            raise SystemExit(f"{label} has {prop}={hidden}")
 
 
 by_id = {node.attrib["id"]: node for node in root.iter() if "id" in node.attrib}
@@ -333,11 +383,29 @@ for scene in scenes:
     actual = style(by_id[scene]).get("opacity")
     if actual != want:
         raise SystemExit(f"{scene} opacity is {actual}, expected {want}")
+    reject_hidden(by_id[scene], scene)
+for node in list(by_id[visible].iter())[1:]:
+    label = node.attrib.get("id", node.tag.rsplit("}", 1)[-1])
+    reject_hidden(node, label)
 if marker not in {node.attrib.get("id") for node in by_id[visible].iter()}:
     raise SystemExit(f"{marker} is not a descendant of {visible}")
+smil = {"animate", "animateTransform", "animateMotion", "set"}
+if any(node.tag.rsplit("}", 1)[-1] in smil for node in root.iter()):
+    raise SystemExit("snapshot contains SMIL animation")
 styles = list(root.iter("{http://www.w3.org/2000/svg}style"))
-if any("animation:" in "".join(node.itertext()) for node in styles):
-    raise SystemExit("snapshot retains style animation")
+for style_node in styles:
+    css = "".join(style_node.itertext())
+    if "animation:" in css:
+        raise SystemExit("snapshot retains style animation")
+    for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        properties = declarations(body)
+        if not ({"display", "visibility"} & properties.keys()):
+            continue
+        scene_targets = re.findall(r"#(scene-[A-Za-z_][\w.-]*)", selectors)
+        if scene_targets:
+            raise SystemExit(
+                f"snapshot CSS hides scene target: {scene_targets[0]}"
+            )
 PY_SNAPSHOT
 }
 
@@ -363,6 +431,53 @@ assert_boundary() {
     "$before_svg" "$after_svg" "$before" "$after" "$old_scene" "$new_scene"
 }
 
+inspect_provenance_metadata() {
+  python3 - "$1" "$2" "$3" <<'PY_PROVENANCE_METADATA'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+expected_scene_count = sys.argv[2]
+expected_cycle_seconds = sys.argv[3]
+expected_fields = {
+    "generator commit",
+    "cartoon sha256",
+    "transcript sha256",
+    "emblem sha256",
+    "scene count",
+    "cycle seconds",
+    "command",
+}
+lines = path.read_text(encoding="utf-8").splitlines()
+try:
+    divider = lines.index("| --- | --- |")
+except ValueError:
+    raise SystemExit("cartoon provenance table header differs")
+table = lines[divider + 1:]
+if len(table) != 7:
+    raise SystemExit(f"cartoon provenance row count differs: {len(table)} != 7")
+rows = []
+for line in table:
+    match = re.fullmatch(r"\| ([^|]+) \| ([^|]+) \|", line)
+    if match is None:
+        raise SystemExit("cartoon provenance row format differs")
+    rows.append(match.groups())
+fields = [field for field, _value in rows]
+if len(fields) != len(set(fields)):
+    raise SystemExit("cartoon provenance fields are not unique")
+if set(fields) != expected_fields:
+    raise SystemExit("cartoon provenance fields differ")
+values = dict(rows)
+if values["scene count"] != expected_scene_count:
+    raise SystemExit("cartoon provenance scene count differs")
+if values["cycle seconds"] != expected_cycle_seconds:
+    raise SystemExit("cartoon provenance cycle seconds differs")
+if values["command"] != "python3 scripts/cartoon.py --provenance":
+    raise SystemExit("cartoon provenance command differs")
+PY_PROVENANCE_METADATA
+}
+
 check_asset_group() {
   local root=$1
   local files=(
@@ -371,18 +486,26 @@ check_asset_group() {
     docs/assets/CARTOON_TRANSCRIPT.md
     docs/assets/CARTOON_PROVENANCE.md
   )
-  local present=0 path provenance recorded actual commit
+  local present=0 path provenance recorded actual commit scenes scene_count cycle_seconds
   for path in "${files[@]}"; do
     [ -f "$root/$path" ] && present=$((present + 1))
   done
   if [ "$present" -eq 0 ]; then
-    echo "SKIP: cartoon assets absent"
+    echo "SKIP: cartoon assets absent (source-only; not a publication pass)"
+    asset_group_ran=0
     return 0
   fi
+  asset_group_ran=1
   [ "$present" -eq "${#files[@]}" ] || \
     fail "cartoon assets must all exist or all be absent"
 
   provenance="$root/docs/assets/CARTOON_PROVENANCE.md"
+  scenes="$(cd "$root" && python3 scripts/cartoon.py --scenes)" || return 1
+  scene_count="$(awk 'NF { count++ } END { print count + 0 }' <<<"$scenes")"
+  cycle_seconds="$(awk 'NF { last = $3 } END { print last }' <<<"$scenes")"
+  [ "$cycle_seconds" = 28 ] || fail "cartoon --scenes cycle seconds differs"
+  inspect_provenance_metadata \
+    "$provenance" "$scene_count" "$cycle_seconds" || return 1
   commit="$(sed -n 's/^| generator commit | \([0-9a-f]\{7,40\}\) |$/\1/p' "$provenance")"
   [ -n "$commit" ] || fail "cartoon provenance lacks generator commit row"
   git -C "$root" cat-file -e "$commit^{commit}" 2>/dev/null || \
@@ -529,6 +652,15 @@ mutate_inline_transform_origin() {
   replace_once "$1" '<g id="emblem-shield">' \
     '<g id="emblem-shield" style="TrAnSfOrM-OrIgIn: center">'
 }
+mutate_emblem_renamed_target() {
+  replace_once "$1" '<g id="emblem-orbit-ring">' \
+    '<g id="emblem-orbit-ring-renamed">'
+}
+mutate_emblem_wrong_pivot() {
+  replace_once "$1" \
+    '<g id="emblem-orbit-pivot" transform="translate(80 80)">' \
+    '<g id="emblem-orbit-pivot" transform="translate(0 0)">'
+}
 mutate_emblem_duration() {
   python3 - "$1" <<'PY_EMBLEM_DURATION'
 from pathlib import Path
@@ -661,7 +793,7 @@ grep -Fq 'cartoon assets must all exist or all be absent' <<<"$partial_output" |
   fail "partial cartoon asset set missed the pairing failure: $partial_output"
 
 mutation_count=0
-expected_mutations=26
+expected_mutations=30
 run_source_failure delete-scene 'scene ids must be problem, guardrails, proof, stop' \
   '    ("problem", 0, 6, "The problem", PROBLEM_SUMMARY),' ''
 run_source_failure shift-boundary 'scene guardrails must begin at 6' \
@@ -722,6 +854,21 @@ assert_boundary_files \
   "$boundary_before" "$boundary_after" 5.9 6.1 problem guardrails
 mutation_count=$((mutation_count + 1))
 
+hidden_scene="$tmp_dir/hidden-scene.svg"
+cp "$boundary_after" "$hidden_scene"
+replace_once "$hidden_scene" \
+  '<g id="scene-guardrails" style="opacity: 1.000;">' \
+  '<g id="scene-guardrails" display="none" style="opacity: 1.000;">'
+hidden_scene_rc=0
+hidden_scene_output="$(assert_snapshot_scene "$hidden_scene" \
+  guardrails prop-seal 2>&1)" || hidden_scene_rc=$?
+[ "$hidden_scene_rc" -ne 0 ] || fail "cartoon mutation hidden-scene survived"
+grep -Fq 'scene-guardrails has display=none' <<<"$hidden_scene_output" || \
+  fail "cartoon mutation hidden-scene missed expected failure: $hidden_scene_output"
+cp "$boundary_after" "$hidden_scene"
+assert_snapshot_scene "$hidden_scene" guardrails prop-seal
+mutation_count=$((mutation_count + 1))
+
 run_source_failure cycle-duration 'scene stop must end at 27' \
   'CYCLE_SECONDS = 28' 'CYCLE_SECONDS = 27'
 run_file_failure reduced-motion 'cartoon reduced-motion block differs' mutate_drop_motion
@@ -746,6 +893,11 @@ run_emblem_file_failure emblem-reduced-motion \
   'emblem reduced-motion block differs' mutate_emblem_drop_motion
 run_emblem_file_failure emblem-duration 'emblem style lacks 6s' \
   mutate_emblem_duration
+run_emblem_file_failure emblem-renamed-target \
+  'emblem animation target count differs: emblem-orbit-ring' \
+  mutate_emblem_renamed_target
+run_emblem_file_failure emblem-wrong-pivot \
+  'emblem orbit pivot transform differs' mutate_emblem_wrong_pivot
 run_emblem_file_failure inline-transform-origin \
   'emblem contains forbidden transform pivot shortcuts' \
   mutate_inline_transform_origin
@@ -779,6 +931,21 @@ tamper_output="$(check_asset_group "$tamper_root" 2>&1)" || tamper_rc=$?
 grep -Fq 'cartoon: regenerate the cartoon' <<<"$tamper_output" || \
   fail "cartoon mutation tampered-asset missed byte validation: $tamper_output"
 (cd "$tamper_root" && python3 scripts/cartoon.py >/dev/null)
+check_asset_group "$tamper_root" >/dev/null
+mutation_count=$((mutation_count + 1))
+
+replace_once "$tamper_root/docs/assets/CARTOON_PROVENANCE.md" \
+  '| cycle seconds | 28 |' '| cycle seconds | 27 |'
+stale_metadata_rc=0
+stale_metadata_output="$(check_asset_group "$tamper_root" 2>&1)" || \
+  stale_metadata_rc=$?
+[ "$stale_metadata_rc" -ne 0 ] || \
+  fail "cartoon mutation stale-provenance-metadata survived"
+grep -Fq 'cartoon provenance cycle seconds differs' \
+  <<<"$stale_metadata_output" || \
+  fail "cartoon mutation stale-provenance-metadata missed expected failure: $stale_metadata_output"
+replace_once "$tamper_root/docs/assets/CARTOON_PROVENANCE.md" \
+  '| cycle seconds | 27 |' '| cycle seconds | 28 |'
 check_asset_group "$tamper_root" >/dev/null
 mutation_count=$((mutation_count + 1))
 
@@ -996,19 +1163,20 @@ git -C "$untracked_root" -c user.name=t -c user.email=t@localhost \
 mutation_count=$((mutation_count + 1))
 echo "PASS: cartoon generator provenance guard"
 
+asset_group_ran=0
 if [ "${CARTOON_SKIP_ASSET_GROUP:-0}" = 1 ]; then
-  asset_group_skipped=1
   echo "SKIP: cartoon asset group (source-only mode; not a publication pass)"
 else
-  asset_group_skipped=0
   check_asset_group "$REPO_ROOT"
-  echo "PASS: cartoon asset contracts"
+  if [ "$asset_group_ran" -eq 1 ]; then
+    echo "PASS: cartoon asset contracts"
+  fi
 fi
 
 if [ "$mutation_count" -ne "$expected_mutations" ]; then
   fail "cartoon mutation count mismatch: $mutation_count != $expected_mutations"
 fi
-if [ "$asset_group_skipped" -eq 1 ]; then
+if [ "$asset_group_ran" -eq 0 ]; then
   echo "PASS: cartoon source contracts ($mutation_count mutations; asset group skipped)"
 else
   echo "PASS: cartoon contracts ($mutation_count mutations; restored suite passed)"
