@@ -393,6 +393,14 @@ cartoon.validate_keyframe_percentages(tracks)
 track_map = {(target, prop): points for target, prop, points in tracks}
 ns = "{http://www.w3.org/2000/svg}"
 
+try:
+    cartoon.css_value(("skew", 1.0))
+except ValueError as error:
+    if str(error) != "unknown transform kind: 'skew'":
+        raise SystemExit(f"unknown transform failure differs: {error}")
+else:
+    raise SystemExit("unknown transform kind did not fail")
+
 
 def fail(message):
     raise SystemExit(message)
@@ -665,7 +673,11 @@ def door_box(second):
     scale = track_value("gate-door", "transform", second)
     if not isinstance(scale, tuple) or len(scale) != 3 or scale[0] != "scale":
         fail("gate door scale differs")
-    if declarations(snapshot_door).get("transform") != cartoon.css_value(scale):
+    expected_rendered_scale = {
+        7.0: "scale(1.000, 1.000)",
+        10.5: "scale(1.000, 0.040)",
+    }[second]
+    if declarations(snapshot_door).get("transform") != expected_rendered_scale:
         fail("gate door rendered scale differs")
     return (
         pivot_y + float(scale[2]) * (inner_y + local[1]),
@@ -756,6 +768,13 @@ for target, second in (("coin-1", 0.65), ("coin-2", 1.45), ("coin-3", 2.40)):
 seal_points = track_map.get(("prop-seal", "opacity"))
 if seal_points is None or tuple(cartoon.evaluate(seal_points, second) for second in (8.0, 9.5, 10.0)) != (0.0, 0.0, 1.0):
     fail("seal opacity differs")
+seal_drop_points = track_map.get(("prop-seal", "transform"))
+if seal_drop_points is None:
+    fail("seal drop track differs")
+for second, expected_y in ((9.95, -155.0), (10.35, 0.0), (12.0, 0.0)):
+    _seal_x, seal_y = translate(cartoon.evaluate(seal_drop_points, second), "seal drop")
+    if not math.isclose(seal_y, expected_y, abs_tol=1e-9):
+        fail(f"seal drop differs at {second:.2f}")
 
 scout = by_id["actor-scout"]
 scout_ellipse = next(scout.iter(ns + "ellipse"))
@@ -1232,6 +1251,11 @@ mutate_door_geometry() {
   replace_once "$1" 'transform="translate(0 64)"' \
     'transform="translate(0 0)"'
 }
+mutate_door_scale_format() {
+  replace_once "$1" \
+    '        return f"scale({value[1]:.3f}, {value[2]:.3f})"' \
+    '        return f"scale({value[2]:.3f}, {value[1]:.3f})"'
+}
 mutate_rope_onstage() {
   replace_once "$1" \
     '("prop-velvet-rope", transform, ((0, move(0, -470)), (21.7, move(0, -470)), (23.2, move(0, 0)), (28, move(0, 0)))),' \
@@ -1272,6 +1296,11 @@ mutate_seal_early() {
   replace_once "$1" \
     '        ("prop-seal", opacity, ((0, 0.0), (9.899, 0.0), (9.9, 1.0), (28, 1.0))),
 ' ''
+}
+mutate_seal_no_drop() {
+  replace_once "$1" \
+    '("prop-seal", transform, ((0, move(0, -155)), (9.95, move(0, -155)), (10.35, move(0, 0)), (28, move(0, 0)))),' \
+    '("prop-seal", transform, ((0, move(0, -155)), (9.95, move(0, -155)), (10.35, move(0, -155)), (28, move(0, -155)))),'
 }
 mutate_scout_onstage() {
   replace_once "$1" \
@@ -1402,7 +1431,7 @@ grep -Fq 'cartoon assets must all exist or all be absent' <<<"$partial_output" |
   fail "partial cartoon asset set missed the pairing failure: $partial_output"
 
 mutation_count=0
-expected_mutations=44
+expected_mutations=46
 run_source_failure delete-scene 'scene ids must be problem, guardrails, proof, stop' \
   '    ("problem", 0, 6, "The problem", PROBLEM_SUMMARY),' ''
 run_source_failure shift-boundary 'scene guardrails must begin at 6' \
@@ -1517,6 +1546,8 @@ run_behavior_failure gate-detached \
   'gate assembly hierarchy differs' mutate_gate_detached
 run_behavior_failure door-geometry \
   'gate door geometry differs' mutate_door_geometry
+run_behavior_failure door-scale-format \
+  'gate door rendered scale differs' mutate_door_scale_format
 run_behavior_failure rope-onstage \
   'velvet rope remains on canvas' mutate_rope_onstage
 run_behavior_failure cards-parked-onstage \
@@ -1530,6 +1561,7 @@ run_behavior_failure cards-collide \
 run_behavior_failure coin-on-wallet \
   'coin spawns on wallet' mutate_coin_on_wallet
 run_behavior_failure seal-early 'seal opacity differs' mutate_seal_early
+run_behavior_failure seal-no-drop 'seal drop differs' mutate_seal_no_drop
 run_behavior_failure scout-onstage \
   'Scout remains on canvas at the cut' mutate_scout_onstage
 run_behavior_failure wipe-misregistered \

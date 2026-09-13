@@ -216,7 +216,9 @@ def css_value(value: Value) -> str:
         return f"rotate({value[1]:.3f}deg)"
     if value[0] == "scale" and len(value) == 3:
         return f"scale({value[1]:.3f}, {value[2]:.3f})"
-    return f"scale({value[1]:.3f})"
+    if value[0] == "scale" and len(value) == 2:
+        return f"scale({value[1]:.3f})"
+    raise ValueError(f"unknown transform kind: {value[0]!r}")
 
 
 def snapshot_styles(second: float | None, tracks: tuple[Track, ...]) -> dict[str, str]:
