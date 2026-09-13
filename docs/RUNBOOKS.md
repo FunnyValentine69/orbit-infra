@@ -146,6 +146,21 @@ make storyboard
 bash tests/storyboard-contracts.sh
 ```
 
+### Cartoon and emblem
+
+1. Commit any generator change first; `scripts/cartoon.py` and `scripts/emblem.py` must be clean at `HEAD`.
+
+2. Before committing any generated output, run these commands in order so provenance names the generator commit:
+
+```bash
+python3 scripts/cartoon.py
+python3 scripts/emblem.py
+python3 scripts/cartoon.py --provenance
+bash tests/cartoon-contracts.sh
+```
+
+3. Commit `docs/assets/orbit-cartoon.svg`, `docs/assets/emblem.svg`, `docs/assets/CARTOON_TRANSCRIPT.md`, and `docs/assets/CARTOON_PROVENANCE.md` together.
+
 For recordings, start LocalStack, apply its bootstrap once, and build the placeholder. The supply recording needs vhs, FFmpeg/ffprobe, and jq, but not OCR tooling:
 
 ```bash
