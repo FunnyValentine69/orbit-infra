@@ -78,8 +78,15 @@ def animation_tracks() -> tuple[Track, ...]:
         return ("rotate", float(degrees))
     def scale(amount: float) -> Transform:
         return ("scale", float(amount))
+    def scale_xy(x: float, y: float) -> Transform:
+        return ("scale", float(x), float(y))
     transform, opacity, fill = "transform", "opacity", "fill"
     off, green, red = "#53657a", "#4ade80", "#fb7185"
+    guardrail_move = ((0, move(0, 0)), (9.45, move(0, 0)), (10.05, move(430, 0)), (10.75, move(430, 0)), (11.25, move(0, 0)), (28, move(0, 0)))
+    guardrail_left_arm = ((0, rotate(0)), (6, rotate(0)), (6.4, rotate(-38)), (6.8, rotate(22)), (7.2, rotate(-38)), (7.6, rotate(22)), (8, rotate(-12)), (28, rotate(-12)))
+    guardrail_right_arm = ((0, rotate(0)), (6, rotate(0)), (6.35, rotate(42)), (6.75, rotate(-36)), (7.15, rotate(42)), (7.55, rotate(-36)), (8, rotate(5)), (9.9, rotate(5)), (10.25, rotate(-58)), (10.55, rotate(-15)), (28, rotate(-15)))
+    guardrail_opacity_behind = ((0, 1.0), (9.805, 1.0), (9.806, 0.0), (10.952, 0.0), (10.953, 1.0), (28, 1.0))
+    guardrail_opacity_front = ((0, 0.0), (9.805, 0.0), (9.806, 1.0), (10.952, 1.0), (10.953, 0.0), (28, 0.0))
     beats: tuple[Track, ...] = (
         ("friend-hand", opacity, ((0, 0.0), (.1, 1.0), (1.45, 1.0), (1.7, 0.0), (28, 0.0))),
         ("friend-hand", transform, ((0, move(-220, 35)), (.35, move(-30, 0)), (1.15, move(30, -24)), (1.7, move(165, 38)), (28, move(165, 38)))),
@@ -98,30 +105,36 @@ def animation_tracks() -> tuple[Track, ...]:
         ("prop-server-glow", opacity, ((0, .55), (1, 1.0), (2, .55), (3, 1.0), (4, .55), (5, 1.0), (6, .55), (28, .55))),
         ("prop-server-glow", transform, ((0, scale(.94)), (1, scale(1.06)), (2, scale(.94)), (3, scale(1.06)), (4, scale(.94)), (5, scale(1.06)), (6, scale(.94)), (28, scale(.94)))),
         ("coin-1", opacity, ((0, 0.0), (.55, 0.0), (.6, 1.0), (2.3, 1.0), (2.4, 0.0), (28, 0.0))),
-        ("coin-1", transform, ((0, move(0, 0)), (.6, move(0, 0)), (1.45, move(12, -100)), (2.4, move(55, -67)), (28, move(55, -67)))),
+        ("coin-1", transform, ((0, move(0, -60)), (.6, move(0, -60)), (1.45, move(12, -100)), (2.4, move(55, -67)), (28, move(55, -67)))),
         ("coin-2", opacity, ((0, 0.0), (1.35, 0.0), (1.4, 1.0), (3.15, 1.0), (3.25, 0.0), (28, 0.0))),
-        ("coin-2", transform, ((0, move(0, 0)), (1.4, move(0, 0)), (2.25, move(8, -105)), (3.25, move(43, -76)), (28, move(43, -76)))),
+        ("coin-2", transform, ((0, move(0, -60)), (1.4, move(0, -60)), (2.25, move(8, -105)), (3.25, move(43, -76)), (28, move(43, -76)))),
         ("coin-3", opacity, ((0, 0.0), (2.3, 0.0), (2.35, 1.0), (4.55, 1.0), (4.7, 0.0), (28, 0.0))),
-        ("coin-3", transform, ((0, move(0, 0)), (2.35, move(0, 0)), (3.35, move(15, -108)), (4.7, move(70, -82)), (28, move(70, -82)))),
+        ("coin-3", transform, ((0, move(0, -60)), (2.35, move(0, -60)), (3.35, move(15, -108)), (4.7, move(70, -82)), (28, move(70, -82)))),
         ("actor-orbit-ring", transform, ((0, rotate(0)), (28, rotate(720)))),
         ("actor-bill-needle", transform, ((0, rotate(-65)), (.5, rotate(-65)), (5.8, rotate(1015)), (6, rotate(120)), (13.15, rotate(120)), (13.55, rotate(-65)), (28, rotate(-65)))),
-        ("orbit-left-arm", transform, ((0, rotate(0)), (6, rotate(0)), (6.4, rotate(-38)), (6.8, rotate(22)), (7.2, rotate(-38)), (7.6, rotate(22)), (8, rotate(-12)), (28, rotate(-12)))),
-        ("orbit-right-arm", transform, ((0, rotate(0)), (6, rotate(0)), (6.35, rotate(42)), (6.75, rotate(-36)), (7.15, rotate(42)), (7.55, rotate(-36)), (8, rotate(5)), (9.9, rotate(5)), (10.25, rotate(-58)), (10.55, rotate(-15)), (28, rotate(-15)))),
-        ("orbit-guardrails", transform, ((0, move(0, 0)), (9.45, move(0, 0)), (10.05, move(430, 0)), (10.75, move(430, 0)), (11.25, move(0, 0)), (28, move(0, 0)))),
-        ("gate-frame", transform, ((0, move(0, 175)), (6.25, move(0, 175)), (7.85, move(0, 0)), (28, move(0, 0)))),
+        ("orbit-left-arm-behind", transform, guardrail_left_arm),
+        ("orbit-right-arm-behind", transform, guardrail_right_arm),
+        ("orbit-guardrails-behind", transform, guardrail_move),
+        ("orbit-guardrails-behind", opacity, guardrail_opacity_behind),
+        ("orbit-left-arm-front", transform, guardrail_left_arm),
+        ("orbit-right-arm-front", transform, guardrail_right_arm),
+        ("orbit-guardrails-front", transform, guardrail_move),
+        ("orbit-guardrails-front", opacity, guardrail_opacity_front),
+        ("gate-assembly", transform, ((0, move(0, 175)), (6.25, move(0, 175)), (7.85, move(0, 0)), (28, move(0, 0)))),
         ("prop-gate-light-1", fill, ((0, off), (8, off), (8.1, green), (28, green))),
         ("prop-gate-light-2", fill, ((0, off), (8.7, off), (8.8, green), (28, green))),
         ("prop-gate-light-3", fill, ((0, off), (9.4, off), (9.5, green), (28, green))),
-        ("gate-door", transform, ((0, move(0, 0)), (9.55, move(0, 0)), (10.25, move(0, -175)), (28, move(0, -175)))),
+        ("gate-door", transform, ((0, scale_xy(1, 1)), (9.55, scale_xy(1, 1)), (10.25, scale_xy(1, .04)), (28, scale_xy(1, .04)))),
         ("prop-lease-timer", opacity, ((0, 0.0), (10.2, 0.0), (10.3, 1.0), (13.55, 1.0), (13.8, 0.0), (28, 0.0))),
         ("prop-lease-timer-hand", transform, ((0, rotate(0)), (10.3, rotate(0)), (13.35, rotate(360)), (28, rotate(360)))),
+        ("prop-seal", opacity, ((0, 0.0), (9.899, 0.0), (9.9, 1.0), (28, 1.0))),
         ("prop-seal", transform, ((0, move(0, -155)), (9.95, move(0, -155)), (10.35, move(0, 0)), (28, move(0, 0)))),
         ("seal-strike", transform, ((0, scale(1)), (10.34, scale(1)), (10.48, scale(1.24)), (10.65, scale(.84)), (10.85, scale(1)), (28, scale(1)))),
         ("pip-seal-squash", transform, ((0, scale(1)), (10.34, scale(1)), (10.52, scale(.82)), (10.72, scale(1.08)), (10.9, scale(1)), (28, scale(1)))),
         ("broombot-guardrails", transform, ((0, move(-300, 0)), (11.35, move(-300, 0)), (13.85, move(500, 0)), (28, move(500, 0)))),
         ("broombot-broom", transform, ((0, rotate(-28)), (11.4, rotate(-28)), (11.8, rotate(30)), (12.2, rotate(-30)), (12.6, rotate(30)), (13, rotate(-30)), (13.4, rotate(30)), (13.85, rotate(-28)), (28, rotate(-28)))),
         ("cloud-guardrails", transform, ((0, move(0, 0)), (13.05, move(0, 0)), (13.9, move(520, 20)), (28, move(520, 20)))),
-        ("scout-entry", transform, ((0, move(820, 0)), (14, move(820, 0)), (14.8, move(0, 0)), (28, move(0, 0)))),
+        ("scout-entry", transform, ((0, move(900, 0)), (14, move(900, 0)), (14.8, move(0, 0)), (28, move(0, 0)))),
         ("scout-lean", transform, ((0, rotate(0)), (14.75, rotate(0)), (15.25, rotate(-10)), (18.9, rotate(-10)), (19.2, rotate(0)), (28, rotate(0)))),
         ("scout-head", transform, ((0, rotate(0)), (19.15, rotate(0)), (19.5, rotate(15)), (19.85, rotate(-7)), (20.25, rotate(0)), (28, rotate(0)))),
         ("scout-brow", transform, ((0, move(0, 0)), (19, move(0, 0)), (19.35, move(0, 7)), (28, move(0, 7)))),
@@ -130,15 +143,15 @@ def animation_tracks() -> tuple[Track, ...]:
         ("prop-permission-row-2", fill, ((0, off), (15.7, off), (15.8, green), (28, green))),
         ("prop-permission-row-3", fill, ((0, off), (16.4, off), (16.5, green), (28, green))),
         ("prop-permission-row-4", fill, ((0, off), (17.1, off), (17.2, green), (28, green))),
-        ("prop-code-card", transform, ((0, move(-140, 0)), (17, move(-140, 0)), (18, move(0, 0)), (18.2, move(-22, 0)), (19, move(0, 0)), (28, move(0, 0)))),
-        ("prop-doc-card", transform, ((0, move(140, 0)), (17, move(140, 0)), (18, move(0, 0)), (18.2, move(22, 0)), (19, move(0, 0)), (28, move(0, 0)))),
+        ("prop-code-card", transform, ((0, move(0, -300)), (17, move(0, -300)), (18, move(0, 0)), (18.2, move(8, 0)), (19, move(0, 0)), (28, move(0, 0)))),
+        ("prop-doc-card", transform, ((0, move(0, -300)), (17, move(0, -300)), (18, move(0, 0)), (18.2, move(-8, 0)), (19, move(0, 0)), (28, move(0, 0)))),
         ("prop-contract-lamp", fill, ((0, off), (18, off), (18.05, red), (18.8, red), (19, green), (28, green))),
         ("prop-runway", opacity, ((0, .35), (21, .35), (21.4, 1.0), (28, 1.0))),
         ("runway-sparkle-1", opacity, ((0, 0.0), (21.3, 0.0), (21.55, 1.0), (22, .15), (22.45, 1.0), (22.9, .15), (23.35, 1.0), (24.1, 1.0), (24.5, .15), (24.9, 1.0), (25.3, .15), (25.7, 1.0), (26.1, .15), (26.5, 1.0), (26.9, .15), (27.2, 1.0), (28, 1.0))),
         ("runway-sparkle-2", opacity, ((0, 0.0), (21.55, 0.0), (21.9, 1.0), (22.35, .15), (22.8, 1.0), (23.25, .15), (23.7, 1.0), (24.1, 1.0), (24.35, .15), (24.75, 1.0), (25.15, .15), (25.55, 1.0), (25.95, .15), (26.35, 1.0), (26.75, .15), (27.15, 1.0), (28, 1.0))),
         ("runway-sparkle-3", opacity, ((0, 0.0), (21.8, 0.0), (22.15, 1.0), (22.6, .15), (23.05, 1.0), (23.5, .15), (23.95, 1.0), (24.1, 1.0), (24.6, .15), (25, 1.0), (25.4, .15), (25.8, 1.0), (26.2, .15), (26.6, 1.0), (27, .15), (27.2, 1.0), (28, 1.0))),
         ("orbit-rope-arm", transform, ((0, rotate(-68)), (21.25, rotate(-68)), (23.2, rotate(48)), (28, rotate(48)))),
-        ("prop-velvet-rope", transform, ((0, move(0, -145)), (21.7, move(0, -145)), (23.2, move(0, 0)), (28, move(0, 0)))),
+        ("prop-velvet-rope", transform, ((0, move(0, -470)), (21.7, move(0, -470)), (23.2, move(0, 0)), (28, move(0, 0)))),
         ("wallet-flap", transform, ((0, rotate(58)), (23.15, rotate(58)), (23.45, rotate(-8)), (23.62, rotate(4)), (23.8, rotate(0)), (28, rotate(0)))),
         ("prop-wallet", transform, ((0, scale(1)), (23.2, scale(1)), (23.5, scale(.92)), (23.75, scale(1)), (28, scale(1)))),
         ("bill-face-greedy", opacity, ((0, 1.0), (21.7, 1.0), (21.8, 0.0), (28, 0.0))),
@@ -201,6 +214,8 @@ def css_value(value: Value) -> str:
         return f"translate({value[1]:.3f}px, {value[2]:.3f}px)"
     if value[0] == "rotate":
         return f"rotate({value[1]:.3f}deg)"
+    if value[0] == "scale" and len(value) == 3:
+        return f"scale({value[1]:.3f}, {value[2]:.3f})"
     return f"scale({value[1]:.3f})"
 
 
@@ -238,6 +253,21 @@ def actor_bill(styles: dict[str, str]) -> str:
 
 def actor_broombot(styles: dict[str, str]) -> str:
     return f"""    <g {ident("actor-broombot", styles)}><circle cy="-8" r="38" fill="#fbbf24" stroke="#78350f" stroke-width="6"/><rect x="-27" y="-20" width="54" height="30" rx="14" fill="#fef3c7" stroke="#78350f" stroke-width="5"/><circle cx="-13" cy="-5" r="7" fill="#0f172a"/><circle cx="13" cy="-5" r="7" fill="#0f172a"/><circle cy="36" r="18" fill="#64748b" stroke="#0f172a" stroke-width="6"/><g {ident("broombot-broom-pivot", styles)} transform="translate(31 8)"><g {ident("broombot-broom", styles)}><path d="M0 0 L47 58" stroke="#92400e" stroke-width="8" stroke-linecap="round"/><path d="M34 47 L65 39 M39 54 L70 48 M44 61 L73 58" stroke="#f59e0b" stroke-width="8" stroke-linecap="round"/></g></g></g>"""
+
+
+def orbit_guardrails(suffix: str, styles: dict[str, str]) -> str:
+    return f"""      <g transform="translate(150 305)"><g {ident(f"orbit-guardrails-{suffix}", styles)}><use href="#actor-orbit"/><g transform="translate(-42 -25)"><g id="actor-orbit-left-shoulder-pivot-{suffix}" transform="translate(0 0)"><g {ident(f"orbit-left-arm-{suffix}", styles)}><path d="M0 0 L-38 48" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="-41" cy="51" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g><g transform="translate(42 -25)"><g id="actor-orbit-right-shoulder-pivot-{suffix}" transform="translate(0 0)"><g {ident(f"orbit-right-arm-{suffix}", styles)}><path d="M0 0 L42 45" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="45" cy="48" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/><path d="M45 47 L69 70" stroke="#92400e" stroke-width="9"/><rect x="55" y="62" width="42" height="24" rx="6" fill="#94a3b8" stroke="#082f49" stroke-width="5"/></g></g></g></g></g>"""
+
+
+def gate(styles: dict[str, str]) -> str:
+    gate_frame = '<path d="M-118 142 V-92 H118 V142 M-118 -92 H118" fill="none" stroke="#cbd5e1" stroke-width="20" stroke-linecap="round"/><path d="M-92 -64 H92" stroke="#22d3ee" stroke-width="8"/>'
+    gate_door = f'<g id="gate-door-pivot" transform="translate(0 -64)"><g {ident("gate-door", styles)}><g transform="translate(0 64)"><rect x="-91" y="-48" width="182" height="186" rx="10" fill="#1e3a5f" class="outline"/><path d="M-65 -18 H65 M-65 20 H65 M-65 58 H65 M-65 96 H65" stroke="#64748b" stroke-width="9"/></g></g></g>'
+    gate_lights = f'<g {ident("prop-gate-lights", styles)} transform="translate(0 -120)"><g {ident("prop-gate-light-1", styles)} transform="translate(-48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g {ident("prop-gate-light-2", styles)}><circle r="16" stroke="#052e16" stroke-width="5"/></g><g {ident("prop-gate-light-3", styles)} transform="translate(48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g></g>'
+    return (
+        f'      <g {ident("prop-gate", styles)} transform="translate(405 274)">'
+        f'<g {ident("gate-assembly", styles)}>'
+        f"{gate_frame}{gate_door}{gate_lights}</g></g>"
+    )
 
 
 def style_block(tracks: tuple[Track, ...], snapshot: float | None) -> list[str]:
@@ -308,17 +338,18 @@ def render(snapshot: float | None = None) -> str:
         f'      <g {ident("prop-coins", styles)}><g transform="translate(792 438)"><g {ident("coin-1", styles)}><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g><g transform="translate(807 446)"><g {ident("coin-2", styles)}><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g><g transform="translate(780 452)"><g {ident("coin-3", styles)}><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g></g>',
         "    </g>",
         f"    <g {ident('scene-guardrails', styles)}>",
-        f'      <g transform="translate(150 305)"><g {ident("orbit-guardrails", styles)}><use href="#actor-orbit"/><g transform="translate(-42 -25)"><g id="actor-orbit-left-shoulder-pivot" transform="translate(0 0)"><g {ident("orbit-left-arm", styles)}><path d="M0 0 L-38 48" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="-41" cy="51" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g><g transform="translate(42 -25)"><g id="actor-orbit-right-shoulder-pivot" transform="translate(0 0)"><g {ident("orbit-right-arm", styles)}><path d="M0 0 L42 45" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="45" cy="48" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/><path d="M45 47 L69 70" stroke="#92400e" stroke-width="9"/><rect x="55" y="62" width="42" height="24" rx="6" fill="#94a3b8" stroke="#082f49" stroke-width="5"/></g></g></g></g></g>',
-        f'      <g {ident("prop-gate", styles)} transform="translate(405 274)"><g {ident("gate-frame", styles)}><path d="M-118 142 V-92 H118 V142 M-118 -92 H118" fill="none" stroke="#cbd5e1" stroke-width="20" stroke-linecap="round"/><path d="M-92 -64 H92" stroke="#22d3ee" stroke-width="8"/></g><g {ident("gate-door", styles)}><rect x="-91" y="-48" width="182" height="186" rx="10" fill="#1e3a5f" class="outline"/><path d="M-65 -18 H65 M-65 20 H65 M-65 58 H65 M-65 96 H65" stroke="#64748b" stroke-width="9"/></g><g {ident("prop-gate-lights", styles)} transform="translate(0 -120)"><g {ident("prop-gate-light-1", styles)} transform="translate(-48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g {ident("prop-gate-light-2", styles)}><circle r="16" stroke="#052e16" stroke-width="5"/></g><g {ident("prop-gate-light-3", styles)} transform="translate(48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g></g></g>',
+        orbit_guardrails("behind", styles),
+        gate(styles),
+        orbit_guardrails("front", styles),
         f'      <g transform="translate(700 360)"><g {ident("cloud-guardrails", styles)}><path d="M-162 25 C-187 -43 -98 -90 -38 -52 C0 -126 126 -92 130 -17 C206 -9 211 91 124 98 H-124 C-199 94 -218 45 -162 25Z" fill="#dbeafe" class="outline"/><g transform="translate(-18 -72)"><g {ident("pip-seal-squash", styles)}><use href="#actor-pip"/></g></g><g {ident("prop-lease-timer", styles)} transform="translate(94 -116)"><circle r="52" fill="#f8fafc" class="outline"/><path d="M-22 -62 H22 M0 -62 V-50" stroke="#facc15" stroke-width="11" stroke-linecap="round"/><g {ident("prop-lease-timer-hand-pivot", styles)} transform="translate(0 0)"><g {ident("prop-lease-timer-hand", styles)}><path d="M0 0 V-34" stroke="#0f766e" stroke-width="9" stroke-linecap="round"/></g></g><circle r="8" fill="#0f766e"/></g><g transform="translate(24 -52)"><g {ident("prop-seal", styles)}><g {ident("seal-strike", styles)}><circle r="34" fill="#4ade80" class="outline"/><path d="M-17 0 L-5 15 L21 -18" fill="none" stroke="#052e16" stroke-width="9" stroke-linecap="round"/></g></g></g></g></g>',
         f'      <g transform="translate(370 443)"><g {ident("broombot-guardrails", styles)}><use href="#actor-broombot"/></g></g>',
         "    </g>",
         f"    <g {ident('scene-proof', styles)}>",
         f'      <g transform="translate(138 310)"><g {ident("scout-entry", styles)}><g id="scout-lean-pivot" transform="translate(0 0)"><g {ident("scout-lean", styles)}><g transform="scale(.8)"><use href="#actor-scout"/></g></g></g></g></g>',
         f'      <g {ident("prop-rec-reel-pivot", styles)} transform="translate(292 116)"><g {ident("prop-rec-reel", styles)}><circle r="52" fill="#e2e8f0" class="outline"/><circle cx="-21" cy="-13" r="11" fill="#082f49"/><circle cx="21" cy="-13" r="11" fill="#082f49"/><circle cy="25" r="11" fill="#082f49"/></g></g>',
-        '      <rect x="359" y="82" width="84" height="52" rx="12" fill="#dc2626"/><text class="rec-text" x="378" y="117" font-size="24">REC</text>',
+        '      <rect x="359" y="82" width="84" height="52" rx="12" fill="#dc2626"/><text class="rec-text" x="401" y="117" text-anchor="middle" font-size="24">REC</text>',
         f'      <g transform="translate(250 190)"><g {ident("prop-permission-row-1", styles)}><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g {ident("prop-permission-row-2", styles)} transform="translate(0 44)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g {ident("prop-permission-row-3", styles)} transform="translate(0 88)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g {ident("prop-permission-row-4", styles)} transform="translate(0 132)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g></g>',
-        f'      <g {ident("code-doc-nudge", styles)}><g transform="translate(540 180)"><g {ident("prop-code-card", styles)}><rect width="126" height="170" rx="16" fill="#dbeafe" class="outline"/><path d="M25 48 H101 M25 82 H82 M25 116 H96" stroke="#2563eb" stroke-width="11" stroke-linecap="round"/></g></g><g transform="translate(690 180)"><g {ident("prop-doc-card", styles)}><rect width="126" height="170" rx="16" fill="#fef3c7" class="outline"/><path d="M25 48 H101 M25 82 H92 M25 116 H103" stroke="#d97706" stroke-width="11" stroke-linecap="round"/></g></g></g>',
+        f'      <g {ident("code-doc-nudge", styles)}><g transform="translate(490 180)"><g {ident("prop-code-card", styles)}><rect width="126" height="170" rx="16" fill="#dbeafe" class="outline"/><path d="M25 48 H101 M25 82 H82 M25 116 H96" stroke="#2563eb" stroke-width="11" stroke-linecap="round"/></g></g><g transform="translate(640 180)"><g {ident("prop-doc-card", styles)}><rect width="126" height="170" rx="16" fill="#fef3c7" class="outline"/><path d="M25 48 H101 M25 82 H92 M25 116 H103" stroke="#d97706" stroke-width="11" stroke-linecap="round"/></g></g></g>',
         f'      <g transform="translate(665 416)"><path d="M-44 16 H44 L30 62 H-30Z" fill="#475569" stroke="#0f172a" stroke-width="5"/><g {ident("prop-contract-lamp", styles)} transform="translate(0 -15)"><circle r="42" class="outline"/><circle r="18" fill="#ffffff" opacity=".5"/></g></g>',
         "    </g>",
         f"    <g {ident('scene-stop', styles)}>",
@@ -329,8 +360,8 @@ def render(snapshot: float | None = None) -> str:
         '      <g transform="translate(470 350)"><use href="#actor-pip"/></g>',
         f'      <g {ident("prop-velvet-rope", styles)}><path d="M205 455 V300 M825 455 V300" stroke="#facc15" stroke-width="22" stroke-linecap="round"/><circle cx="205" cy="300" r="17" fill="#facc15"/><circle cx="825" cy="300" r="17" fill="#facc15"/><path d="M205 317 Q515 470 825 317" fill="none" stroke="#e11d48" stroke-width="26" stroke-linecap="round"/></g>',
         f'      <g {ident("spectators", styles)}><g transform="translate(680 435)"><circle cy="-34" r="18" fill="#fde68a" class="outline"/><path d="M0 -16 V30" stroke="#60a5fa" stroke-width="18"/><g transform="translate(-7 -6)"><g id="spectator-1-left-pivot" transform="translate(0 0)"><g {ident("spectator-1-left-arm", styles)}><path d="M0 0 L-24 -24" stroke="#fde68a" stroke-width="9" stroke-linecap="round"/></g></g></g><g transform="translate(7 -6)"><g id="spectator-1-right-pivot" transform="translate(0 0)"><g {ident("spectator-1-right-arm", styles)}><path d="M0 0 L24 -24" stroke="#fde68a" stroke-width="9" stroke-linecap="round"/></g></g></g></g><g transform="translate(755 435)"><circle cy="-34" r="18" fill="#fbcfe8" class="outline"/><path d="M0 -16 V30" stroke="#a78bfa" stroke-width="18"/><g transform="translate(-7 -6)"><g id="spectator-2-left-pivot" transform="translate(0 0)"><g {ident("spectator-2-left-arm", styles)}><path d="M0 0 L-24 -24" stroke="#fbcfe8" stroke-width="9" stroke-linecap="round"/></g></g></g><g transform="translate(7 -6)"><g id="spectator-2-right-pivot" transform="translate(0 0)"><g {ident("spectator-2-right-arm", styles)}><path d="M0 0 L24 -24" stroke="#fbcfe8" stroke-width="9" stroke-linecap="round"/></g></g></g></g></g>',
-        f'      <g {ident("prop-endcard", styles)}><rect x="205" y="52" width="550" height="112" rx="28" fill="#166534" stroke="#86efac" stroke-width="7"/><text class="end-text" x="244" y="121" font-size="30">PROVED. STOPPED ON PURPOSE.</text></g>',
-        f'      <g {ident("wipe-ring-pivot", styles)} transform="translate(430 280)"><g {ident("wipe-ring", styles)}><circle r="68" fill="#0f172a" stroke="#bae6fd" stroke-width="24"/></g><g {ident("wipe-cloud-outline", styles)}><path d="M-185 38 C-218 -42 -116 -105 -42 -58 C-4 -146 145 -110 151 -18 C238 -12 246 110 143 116 H-142 C-231 111 -250 60 -185 38Z" fill="#0f172a" stroke="#dbeafe" stroke-width="9"/></g></g>',
+        f'      <g {ident("prop-endcard", styles)}><rect x="205" y="52" width="550" height="112" rx="28" fill="#166534" stroke="#86efac" stroke-width="7"/><text class="end-text" x="480" y="119" text-anchor="middle" font-size="30">PROVED. STOPPED ON PURPOSE.</text></g>',
+        f'      <g {ident("wipe-ring-pivot", styles)} transform="translate(400 300)"><g {ident("wipe-ring", styles)}><circle r="68" fill="#0f172a" stroke="#bae6fd" stroke-width="24"/></g><g {ident("wipe-cloud-outline", styles)}><path d="M-185 38 C-218 -42 -116 -105 -42 -58 C-4 -146 145 -110 151 -18 C238 -12 246 110 143 116 H-142 C-231 111 -250 60 -185 38Z" fill="#0f172a" stroke="#dbeafe" stroke-width="9"/></g></g>',
         "    </g>",
         "  </g>",
         f"  <g {ident('reduced-motion-summary', styles)}>",

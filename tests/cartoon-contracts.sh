@@ -375,6 +375,403 @@ else:
 PY_STYLE_VALUE
 }
 
+inspect_cartoon_behavior() {
+  python3 - "$1" <<'PY_CARTOON_BEHAVIOR'
+import math
+from pathlib import Path
+import re
+import sys
+import types
+import xml.etree.ElementTree as ET
+
+path = Path(sys.argv[1])
+cartoon = types.ModuleType("cartoon_contract_target")
+cartoon.__file__ = str(path)
+exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), cartoon.__dict__)
+tracks = cartoon.animation_tracks()
+cartoon.validate_keyframe_percentages(tracks)
+track_map = {(target, prop): points for target, prop, points in tracks}
+ns = "{http://www.w3.org/2000/svg}"
+
+
+def fail(message):
+    raise SystemExit(message)
+
+
+def root_at(second=None):
+    return ET.fromstring(cartoon.render(second))
+
+
+def index(root):
+    nodes = list(root.iter())
+    by_id = {node.attrib["id"]: node for node in nodes if "id" in node.attrib}
+    parents = {child: parent for parent in nodes for child in parent}
+    return nodes, by_id, parents
+
+
+def declarations(node):
+    values = {}
+    for declaration in node.attrib.get("style", "").split(";"):
+        if ":" in declaration:
+            name, value = declaration.split(":", 1)
+            values[name.strip()] = value.strip()
+    return values
+
+
+def track_value(target, prop, second):
+    points = track_map.get((target, prop))
+    if points is None:
+        fail(f"missing animation track: {target} {prop}")
+    return cartoon.evaluate(points, second)
+
+
+def translate(value, label):
+    if not isinstance(value, tuple) or len(value) != 3 or value[0] != "translate":
+        fail(f"{label} is not a two-axis translate")
+    return float(value[1]), float(value[2])
+
+
+def parse_transform(source, name, label):
+    match = re.fullmatch(
+        rf"{name}\(\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+        rf"(?:[ ,]+([+-]?(?:\d+(?:\.\d*)?|\.\d+)))?\s*\)",
+        source,
+    )
+    if match is None:
+        fail(f"{label} static {name} differs: {source}")
+    second = match.group(2)
+    return float(match.group(1)), float(second or match.group(1) if name == "scale" else second or 0.0)
+
+
+def outline_width(root):
+    style = "".join(next(root.iter(ns + "style")).itertext())
+    match = re.search(r"\.outline\s*\{[^}]*stroke-width:\s*([\d.]+)", style)
+    if match is None:
+        fail("cartoon outline stroke width is unreadable")
+    return float(match.group(1))
+
+
+def stroke_width(node, root):
+    if "stroke-width" in node.attrib:
+        return float(node.attrib["stroke-width"])
+    if "outline" in node.attrib.get("class", "").split():
+        return outline_width(root)
+    return 0.0
+
+
+def rect_box(node, root):
+    half = stroke_width(node, root) / 2.0
+    x = float(node.attrib.get("x", 0.0))
+    y = float(node.attrib.get("y", 0.0))
+    return (
+        x - half,
+        y - half,
+        x + float(node.attrib["width"]) + half,
+        y + float(node.attrib["height"]) + half,
+    )
+
+
+def union(*boxes):
+    return (
+        min(box[0] for box in boxes), min(box[1] for box in boxes),
+        max(box[2] for box in boxes), max(box[3] for box in boxes),
+    )
+
+
+def shifted(box, x, y):
+    return box[0] + x, box[1] + y, box[2] + x, box[3] + y
+
+
+def intersects(left, right):
+    return not (
+        left[2] <= right[0] or right[2] <= left[0]
+        or left[3] <= right[1] or right[3] <= left[1]
+    )
+
+
+def path_bounds(source):
+    tokens = re.findall(
+        r"[A-Za-z]|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?",
+        source,
+    )
+    cursor = 0
+    command = None
+    x = y = start_x = start_y = 0.0
+    xs = []
+    ys = []
+
+    def add(px, py):
+        xs.append(float(px))
+        ys.append(float(py))
+
+    def take(count):
+        nonlocal cursor
+        chosen = tokens[cursor:cursor + count]
+        if len(chosen) != count or any(re.fullmatch(r"[A-Za-z]", token) for token in chosen):
+            fail(f"unsupported path data: {source}")
+        cursor += count
+        return tuple(float(token) for token in chosen)
+
+    def quadratic(p0, p1, p2):
+        values = [p0, p2]
+        denominator = p0 - 2.0 * p1 + p2
+        if denominator:
+            at = (p0 - p1) / denominator
+            if 0.0 < at < 1.0:
+                values.append(
+                    (1.0 - at) ** 2 * p0
+                    + 2.0 * (1.0 - at) * at * p1
+                    + at ** 2 * p2
+                )
+        return values
+
+    while cursor < len(tokens):
+        if re.fullmatch(r"[A-Za-z]", tokens[cursor]):
+            command = tokens[cursor]
+            cursor += 1
+        if command in ("M", "m"):
+            next_x, next_y = take(2)
+            if command == "m":
+                next_x += x
+                next_y += y
+            x, y = next_x, next_y
+            start_x, start_y = x, y
+            add(x, y)
+            command = "L" if command == "M" else "l"
+        elif command in ("L", "l"):
+            next_x, next_y = take(2)
+            if command == "l":
+                next_x += x
+                next_y += y
+            add(x, y)
+            add(next_x, next_y)
+            x, y = next_x, next_y
+        elif command in ("H", "h"):
+            (next_x,) = take(1)
+            if command == "h":
+                next_x += x
+            add(x, y)
+            add(next_x, y)
+            x = next_x
+        elif command in ("V", "v"):
+            (next_y,) = take(1)
+            if command == "v":
+                next_y += y
+            add(x, y)
+            add(x, next_y)
+            y = next_y
+        elif command in ("Q", "q"):
+            control_x, control_y, next_x, next_y = take(4)
+            if command == "q":
+                control_x += x
+                control_y += y
+                next_x += x
+                next_y += y
+            xs.extend(quadratic(x, control_x, next_x))
+            ys.extend(quadratic(y, control_y, next_y))
+            x, y = next_x, next_y
+        elif command in ("Z", "z"):
+            add(x, y)
+            add(start_x, start_y)
+            x, y = start_x, start_y
+            command = None
+        else:
+            fail(f"unsupported path command in: {source}")
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def painted_path(node, root):
+    box = path_bounds(node.attrib["d"])
+    half = stroke_width(node, root) / 2.0
+    return box[0] - half, box[1] - half, box[2] + half, box[3] + half
+
+
+def is_descendant(node, ancestor, parents):
+    while node in parents:
+        node = parents[node]
+        if node is ancestor:
+            return True
+    return False
+
+
+static_root = root_at()
+nodes, by_id, parents = index(static_root)
+ordered_ids = [node.attrib.get("id") for node in nodes]
+orbit_ids = tuple(
+    f"{base}-{suffix}"
+    for suffix in ("behind", "front")
+    for base in (
+        "orbit-guardrails", "actor-orbit-left-shoulder-pivot",
+        "actor-orbit-right-shoulder-pivot", "orbit-left-arm", "orbit-right-arm",
+    )
+)
+if any(ordered_ids.count(element_id) != 1 for element_id in orbit_ids):
+    fail("orbit guardrail crossing ids differ")
+if not (
+    ordered_ids.index("orbit-guardrails-behind")
+    < ordered_ids.index("prop-gate")
+    < ordered_ids.index("orbit-guardrails-front")
+    < ordered_ids.index("cloud-guardrails")
+):
+    fail("orbit guardrail crossing order differs")
+for second, expected in (
+    (9.80, ("1.000", "0.000")), (9.81, ("0.000", "1.000")),
+    (10.95, ("0.000", "1.000")), (10.96, ("1.000", "0.000")),
+):
+    _nodes, ids, _parents = index(root_at(second))
+    actual = (
+        declarations(ids["orbit-guardrails-behind"]).get("opacity"),
+        declarations(ids["orbit-guardrails-front"]).get("opacity"),
+    )
+    if actual != expected:
+        fail(f"orbit guardrail crossing opacity differs at {second:.2f}")
+_nodes, ids, _parents = index(root_at(9.81))
+if declarations(ids["orbit-guardrails-behind"]).get("transform") != declarations(ids["orbit-guardrails-front"]).get("transform"):
+    fail("orbit guardrail crossing transforms differ")
+
+for text_value in ("REC", "PROVED. STOPPED ON PURPOSE."):
+    text_node = next(node for node in static_root.iter(ns + "text") if "".join(node.itertext()) == text_value)
+    siblings = list(parents[text_node])
+    backing = next(node for node in reversed(siblings[:siblings.index(text_node)]) if node.tag == ns + "rect")
+    center = float(backing.attrib.get("x", 0.0)) + float(backing.attrib["width"]) / 2.0
+    if text_node.attrib.get("text-anchor") != "middle" or not math.isclose(float(text_node.attrib["x"]), center, abs_tol=1e-9):
+        fail("cartoon text centering differs")
+
+assembly = by_id.get("gate-assembly")
+door = by_id.get("gate-door")
+lights = by_id.get("prop-gate-lights")
+if assembly is None or door is None or lights is None or not (
+    is_descendant(door, assembly, parents) and is_descendant(lights, assembly, parents)
+):
+    fail("gate assembly hierarchy differs")
+_gate_x, gate_y = translate(track_value("gate-assembly", "transform", 7.0), "gate assembly")
+door_points = track_map.get(("gate-door", "transform"))
+if not 0.0 < gate_y < 175.0 or door_points is None or any(
+    not isinstance(value, tuple) or len(value) != 3 or value[0] != "scale"
+    for _second, value in door_points
+):
+    fail("gate assembly motion differs")
+
+
+def door_box(second):
+    root = root_at(second)
+    _nodes, ids, snapshot_parents = index(root)
+    snapshot_door = ids["gate-door"]
+    pivot = snapshot_parents[snapshot_door]
+    inner = next(child for child in snapshot_door if child.tag == ns + "g")
+    local = rect_box(next(inner.iter(ns + "rect")), root)
+    _pivot_x, pivot_y = parse_transform(pivot.attrib["transform"], "translate", "gate door pivot")
+    _inner_x, inner_y = parse_transform(inner.attrib["transform"], "translate", "gate door inner offset")
+    scale = track_value("gate-door", "transform", second)
+    if not isinstance(scale, tuple) or len(scale) != 3 or scale[0] != "scale":
+        fail("gate door scale differs")
+    if declarations(snapshot_door).get("transform") != cartoon.css_value(scale):
+        fail("gate door rendered scale differs")
+    return (
+        pivot_y + float(scale[2]) * (inner_y + local[1]),
+        pivot_y + float(scale[2]) * (inner_y + local[3]),
+    )
+
+
+closed_top, closed_bottom = door_box(7.0)
+open_top, open_bottom = door_box(10.5)
+retract_path = next(node for node in assembly if node.tag == ns + "path" and node.attrib.get("stroke") == "#22d3ee")
+match = re.match(r"M\s*[+-]?[\d.]+\s+([+-]?[\d.]+)", retract_path.attrib["d"])
+if match is None:
+    fail("gate retract line is unreadable")
+retract_y = float(match.group(1))
+if not (
+    math.isclose(closed_top, -51.0, abs_tol=1e-9)
+    and math.isclose(closed_bottom, 141.0, abs_tol=1e-9)
+    and open_bottom - open_top <= 10.0
+    and abs(open_top - retract_y) <= 2.0
+):
+    fail("gate door geometry differs")
+
+rope = by_id["prop-velvet-rope"]
+posts = next(node for node in rope if node.tag == ns + "path" and node.attrib.get("stroke-width") == "22")
+segments = re.findall(r"M\s*[+-]?[\d.]+\s+([+-]?[\d.]+)\s+V\s*([+-]?[\d.]+)", posts.attrib["d"])
+if not segments:
+    fail("velvet rope post geometry is unreadable")
+rope_low = max(float(value) for segment in segments for value in segment) + stroke_width(posts, static_root) / 2.0
+_rope_x, rope_y = translate(track_value("prop-velvet-rope", "transform", 21.5), "velvet rope")
+if rope_y + rope_low >= 0.0:
+    fail("velvet rope remains on canvas")
+
+
+def card_box(target, second):
+    node = by_id[target]
+    base_x, base_y = parse_transform(parents[node].attrib["transform"], "translate", target)
+    tx, ty = translate(track_value(target, "transform", second), target)
+    return shifted(rect_box(next(node.iter(ns + "rect")), static_root), base_x + tx, base_y + ty)
+
+
+bill = by_id["actor-bill"]
+bill_body = next(node for node in bill if node.tag == ns + "path" and node.attrib.get("fill") == "#fb7185")
+bill_arms = next(node for node in bill if node.tag == ns + "path" and node.attrib.get("stroke-width") == "15")
+bill_wallet = next(node for node in bill if node.tag == ns + "rect" and node.attrib.get("fill") == "#f8fafc")
+bill_local = union(painted_path(bill_body, static_root), painted_path(bill_arms, static_root), rect_box(bill_wallet, static_root))
+bill_slot = by_id["prop-coin-slot"]
+bill_x, bill_y = parse_transform(parents[bill_slot].attrib["transform"], "translate", "Bill")
+bill_box = shifted(bill_local, bill_x, bill_y)
+
+grid_rows = [by_id[f"prop-permission-row-{row}"] for row in range(1, 5)]
+grid_x, grid_y = parse_transform(parents[grid_rows[0]].attrib["transform"], "translate", "permission grid")
+grid_boxes = []
+for row in grid_rows:
+    row_x = row_y = 0.0
+    if "transform" in row.attrib:
+        row_x, row_y = parse_transform(row.attrib["transform"], "translate", row.attrib["id"])
+    grid_boxes.append(shifted(rect_box(next(row.iter(ns + "rect")), static_root), grid_x + row_x, grid_y + row_y))
+grid_box = union(*grid_boxes)
+card_seconds = (14.5, 16.5, 18.1, 18.2, 18.5, 20.5)
+for second in card_seconds:
+    if intersects(card_box("prop-doc-card", second), bill_box):
+        fail(f"doc card intersects Bill at {second:.1f}")
+for second in card_seconds:
+    if intersects(card_box("prop-code-card", second), grid_box):
+        fail(f"code card intersects permission grid at {second:.1f}")
+for second in (*card_seconds, 18.3):
+    if intersects(card_box("prop-code-card", second), card_box("prop-doc-card", second)):
+        fail(f"proof cards intersect at {second:.1f}")
+
+wallet = by_id["prop-wallet"]
+_wallet_x, wallet_y = parse_transform(parents[wallet].attrib["transform"], "translate", "wallet")
+wallet_top = wallet_y + painted_path(next(wallet.iter(ns + "path")), static_root)[1]
+for target, second in (("coin-1", 0.65), ("coin-2", 1.45), ("coin-3", 2.40)):
+    coin = by_id[target]
+    _coin_x, coin_y = parse_transform(parents[coin].attrib["transform"], "translate", target)
+    _tx, ty = translate(track_value(target, "transform", second), target)
+    circle = next(coin.iter(ns + "circle"))
+    painted_radius = float(circle.attrib["r"]) + stroke_width(circle, static_root) / 2.0
+    if coin_y + ty + painted_radius >= wallet_top:
+        fail(f"coin spawns on wallet: {target}")
+
+seal_points = track_map.get(("prop-seal", "opacity"))
+if seal_points is None or tuple(cartoon.evaluate(seal_points, second) for second in (8.0, 9.5, 10.0)) != (0.0, 0.0, 1.0):
+    fail("seal opacity differs")
+
+scout = by_id["actor-scout"]
+scout_ellipse = next(scout.iter(ns + "ellipse"))
+scout_arm = next(node for node in scout if node.tag == ns + "path" and node.attrib.get("fill") == "#8b5cf6")
+scout_head = next(node for node in scout.iter(ns + "path") if node.attrib.get("fill") == "#c4b5fd")
+scout_left = min(
+    float(scout_ellipse.attrib.get("cx", 0.0)) - float(scout_ellipse.attrib["rx"]) - stroke_width(scout_ellipse, static_root) / 2.0,
+    painted_path(scout_arm, static_root)[0], painted_path(scout_head, static_root)[0],
+)
+scout_entry = by_id["scout-entry"]
+scout_base_x, _scout_base_y = parse_transform(parents[scout_entry].attrib["transform"], "translate", "Scout base")
+scout_use = next(node for node in static_root.iter(ns + "use") if node.attrib.get("href") == "#actor-scout")
+scout_scale, _scout_scale_y = parse_transform(parents[scout_use].attrib["transform"], "scale", "Scout scale")
+scout_tx, _scout_ty = translate(track_value("scout-entry", "transform", 14.0), "Scout entry")
+if scout_base_x + scout_tx + scout_scale * scout_left < 960.0:
+    fail("Scout remains on canvas at the cut")
+
+if by_id["wipe-ring-pivot"].attrib.get("transform") != by_id["prop-cloud"].attrib.get("transform"):
+    fail("wipe registration differs")
+PY_CARTOON_BEHAVIOR
+}
+
 assert_snapshot_scene() {
   local svg=$1 visible=$2 marker=$3
   python3 - "$svg" "$visible" "$marker" <<'PY_SNAPSHOT'
@@ -675,6 +1072,20 @@ run_source_failure() {
   mutation_count=$((mutation_count + 1))
 }
 
+run_behavior_failure() {
+  local label=$1 expected=$2 mutation=$3
+  local root output rc=0
+  root="$(new_mutant_root "$label")"
+  "$mutation" "$root/scripts/cartoon.py"
+  output="$(inspect_cartoon_behavior "$root/scripts/cartoon.py" 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] || fail "cartoon mutation $label survived"
+  grep -Fq "$expected" <<<"$output" || \
+    fail "cartoon mutation $label missed expected failure: $output"
+  cp "$CARTOON" "$root/scripts/cartoon.py"
+  inspect_cartoon_behavior "$root/scripts/cartoon.py"
+  mutation_count=$((mutation_count + 1))
+}
+
 run_file_failure() {
   local label=$1 expected=$2 mutation=$3
   local path="$tmp_dir/file-$label.svg" output rc=0
@@ -797,6 +1208,68 @@ path.write_text(
 )
 PY_EMBLEM_DURATION
 }
+mutate_orbit_no_crossing() {
+  replace_once "$1" \
+    '("orbit-guardrails-front", opacity, guardrail_opacity_front),' \
+    '("orbit-guardrails-front", opacity, guardrail_opacity_behind),'
+}
+mutate_endcard_offcenter() {
+  replace_once "$1" 'x="480" y="119" text-anchor="middle"' \
+    'x="244" y="119"'
+}
+mutate_gate_detached() {
+  replace_once "$1" \
+    'f"{gate_frame}{gate_door}{gate_lights}</g></g>"' \
+    'f"{gate_frame}{gate_lights}</g>{gate_door}</g>"'
+}
+mutate_door_geometry() {
+  replace_once "$1" 'transform="translate(0 64)"' \
+    'transform="translate(0 0)"'
+}
+mutate_rope_onstage() {
+  replace_once "$1" \
+    '("prop-velvet-rope", transform, ((0, move(0, -470)), (21.7, move(0, -470)), (23.2, move(0, 0)), (28, move(0, 0)))),' \
+    '("prop-velvet-rope", transform, ((0, move(0, -400)), (21.7, move(0, -400)), (23.2, move(0, 0)), (28, move(0, 0)))),'
+}
+mutate_card_over_bill() {
+  replace_once "$1" 'transform="translate(640 180)"' \
+    'transform="translate(690 180)"'
+}
+mutate_code_card_over_grid() {
+  replace_once "$1" 'transform="translate(490 180)"' \
+    'transform="translate(470 180)"'
+}
+mutate_cards_collide() {
+  replace_once "$1" '(18.2, move(8, 0))' '(18.2, move(14, 0))'
+  replace_once "$1" '(18.2, move(-8, 0))' '(18.2, move(-14, 0))'
+}
+mutate_coin_on_wallet() {
+  replace_once "$1" \
+    '((0, move(0, -60)), (.6, move(0, -60)),' \
+    '((0, move(0, 0)), (.6, move(0, 0)),'
+  replace_once "$1" \
+    '((0, move(0, -60)), (1.4, move(0, -60)),' \
+    '((0, move(0, 0)), (1.4, move(0, 0)),'
+  replace_once "$1" \
+    '((0, move(0, -60)), (2.35, move(0, -60)),' \
+    '((0, move(0, 0)), (2.35, move(0, 0)),'
+}
+mutate_seal_early() {
+  replace_once "$1" \
+    '        ("prop-seal", opacity, ((0, 0.0), (9.899, 0.0), (9.9, 1.0), (28, 1.0))),
+' ''
+}
+mutate_scout_onstage() {
+  replace_once "$1" \
+    '("scout-entry", transform, ((0, move(900, 0)), (14, move(900, 0)), (14.8, move(0, 0)), (28, move(0, 0)))),' \
+    '("scout-entry", transform, ((0, move(820, 0)), (14, move(820, 0)), (14.8, move(0, 0)), (28, move(0, 0)))),'
+}
+mutate_wipe_misregistered() {
+  replace_once "$1" \
+    '{ident("wipe-ring-pivot", styles)} transform="translate(400 300)"' \
+    '{ident("wipe-ring-pivot", styles)} transform="translate(430 280)"'
+}
+
 mutate_oversize() {
   python3 - "$1" <<'PY_OVERSIZE'
 from pathlib import Path
@@ -841,6 +1314,7 @@ cmp -s "$tmp_dir/emblem-first.svg" "$tmp_dir/emblem-second.svg" || \
   fail "two emblem renders differ"
 assert_css_scene_boundaries "$tmp_dir/cartoon-first.svg"
 inspect_cartoon "$tmp_dir/cartoon-first.svg"
+inspect_cartoon_behavior "$CARTOON"
 inspect_transcript "$tmp_dir/transcript-first.md"
 inspect_emblem "$tmp_dir/emblem-first.svg"
 
@@ -914,7 +1388,7 @@ grep -Fq 'cartoon assets must all exist or all be absent' <<<"$partial_output" |
   fail "partial cartoon asset set missed the pairing failure: $partial_output"
 
 mutation_count=0
-expected_mutations=31
+expected_mutations=43
 run_source_failure delete-scene 'scene ids must be problem, guardrails, proof, stop' \
   '    ("problem", 0, 6, "The problem", PROBLEM_SUMMARY),' ''
 run_source_failure shift-boundary 'scene guardrails must begin at 6' \
@@ -1020,6 +1494,30 @@ run_emblem_file_failure emblem-wrong-pivot \
 run_emblem_file_failure inline-transform-origin \
   'emblem contains forbidden transform pivot shortcuts' \
   mutate_inline_transform_origin
+
+run_behavior_failure orbit-no-crossing \
+  'orbit guardrail crossing opacity differs' mutate_orbit_no_crossing
+run_behavior_failure endcard-offcenter \
+  'cartoon text centering differs' mutate_endcard_offcenter
+run_behavior_failure gate-detached \
+  'gate assembly hierarchy differs' mutate_gate_detached
+run_behavior_failure door-geometry \
+  'gate door geometry differs' mutate_door_geometry
+run_behavior_failure rope-onstage \
+  'velvet rope remains on canvas' mutate_rope_onstage
+run_behavior_failure card-over-bill \
+  'doc card intersects Bill' mutate_card_over_bill
+run_behavior_failure code-card-over-grid \
+  'code card intersects permission grid' mutate_code_card_over_grid
+run_behavior_failure cards-collide \
+  'proof cards intersect' mutate_cards_collide
+run_behavior_failure coin-on-wallet \
+  'coin spawns on wallet' mutate_coin_on_wallet
+run_behavior_failure seal-early 'seal opacity differs' mutate_seal_early
+run_behavior_failure scout-onstage \
+  'Scout remains on canvas at the cut' mutate_scout_onstage
+run_behavior_failure wipe-misregistered \
+  'wipe registration differs' mutate_wipe_misregistered
 
 tamper_root="$tmp_dir/tamper-root"
 mkdir -p "$tamper_root/scripts"
