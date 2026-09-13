@@ -2,8 +2,8 @@
 
 | field | value |
 | --- | --- |
-| generator commit | 2bec8044b3a343ec272f0ffeb8ed484e5fcfd4ca |
-| cartoon sha256 | 996899880ca3c4af5c11ae3db24b20dc794b36ed85e47c77dac6de81957df549 |
+| generator commit | 53b27eef957f8395a0aca02f7c94af11a3e71515 |
+| cartoon sha256 | 8b8b45b0f08eb90371b82e9251b72c448e1648c517cafb4197113f420561a63d |
 | transcript sha256 | 96030a60872816f2eeaf5aed861cbbcfb069f85408d26bb34d6471ae66992524 |
 | emblem sha256 | ac89c2c4a7c9d9d6b4900225d75c42833995c8dcd23cf0893c302755e7b0d5a6 |
 | scene count | 4 |
