@@ -113,9 +113,24 @@ reduced_motion = """    @media (prefers-reduced-motion: reduce) {
     }"""
 if reduced_motion not in style:
     fail("cartoon reduced-motion block differs")
-stop_keyframes = style.split("@keyframes track-scene-stop-opacity {", 1)
-if len(stop_keyframes) != 2 or stop_keyframes[1].split("\n    }", 1)[0].count("100.000%") != 1:
-    fail("cartoon last scene has duplicate 100% keyframes")
+keyframe_pattern = re.compile(
+    r"@keyframes\s+([A-Za-z_][\w.-]*)\s*\{((?:[^{}]|\{[^{}]*\})*)\}",
+    re.DOTALL,
+)
+for keyframe_name, body in keyframe_pattern.findall(style):
+    seen_percentages = set()
+    for selectors in re.findall(r"([^{}]+)\{[^{}]*\}", body):
+        for selector in selectors.split(","):
+            match = re.fullmatch(r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))%", selector.strip())
+            if match is None:
+                continue
+            percentage = float(match.group(1))
+            if percentage in seen_percentages:
+                fail(
+                    f"cartoon keyframes duplicate percentage: "
+                    f"{keyframe_name} {selector.strip()}"
+                )
+            seen_percentages.add(percentage)
 if re.search(r"@import", style, re.IGNORECASE):
     fail("cartoon style contains @import")
 if re.search(r"url\s*\(", style, re.IGNORECASE):
@@ -245,6 +260,24 @@ reduced_motion = """    @media (prefers-reduced-motion: reduce) {
     }"""
 if reduced_motion not in style:
     raise SystemExit("emblem reduced-motion block differs")
+keyframe_pattern = re.compile(
+    r"@keyframes\s+([A-Za-z_][\w.-]*)\s*\{((?:[^{}]|\{[^{}]*\})*)\}",
+    re.DOTALL,
+)
+for keyframe_name, body in keyframe_pattern.findall(style):
+    seen_percentages = set()
+    for selectors in re.findall(r"([^{}]+)\{[^{}]*\}", body):
+        for selector in selectors.split(","):
+            match = re.fullmatch(r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))%", selector.strip())
+            if match is None:
+                continue
+            percentage = float(match.group(1))
+            if percentage in seen_percentages:
+                raise SystemExit(
+                    f"emblem keyframes duplicate percentage: "
+                    f"{keyframe_name} {selector.strip()}"
+                )
+            seen_percentages.add(percentage)
 if re.search(r"@import|url\s*\(|data\s*:", style, re.IGNORECASE):
     raise SystemExit("emblem style contains an external reference")
 for forbidden in ("script", "foreignObject", "image"):
@@ -429,6 +462,83 @@ assert_boundary() {
   run_cartoon --snapshot "$after" --output "$after_svg"
   assert_boundary_files \
     "$before_svg" "$after_svg" "$before" "$after" "$old_scene" "$new_scene"
+}
+
+assert_css_scene_boundaries() {
+  python3 - "$1" <<'PY_CSS_SCENE_BOUNDARIES'
+import math
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+style = "".join(
+    next(root.iter("{http://www.w3.org/2000/svg}style")).itertext()
+)
+cycle_seconds = 28.0
+scene_intervals = {
+    "track-scene-problem-opacity": (0.0, 6.0),
+    "track-scene-guardrails-opacity": (6.0, 14.0),
+    "track-scene-proof-opacity": (14.0, 21.0),
+    "track-scene-stop-opacity": (21.0, 28.0),
+}
+keyframe_pattern = re.compile(
+    r"@keyframes\s+([A-Za-z_][\w.-]*)\s*\{((?:[^{}]|\{[^{}]*\})*)\}",
+    re.DOTALL,
+)
+blocks = dict(keyframe_pattern.findall(style))
+
+
+def selector_at(second):
+    if second == cycle_seconds:
+        return 100.0
+    return round((second % cycle_seconds) / cycle_seconds * 100.0, 3)
+
+
+def opacity_points(body):
+    points = {}
+    for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", body):
+        match = re.search(r"(?:^|;)\s*opacity\s*:\s*([\d.]+)\s*;", declarations)
+        if match is None:
+            continue
+        opacity = float(match.group(1))
+        for selector in selectors.split(","):
+            percentage = re.fullmatch(
+                r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))%", selector.strip()
+            )
+            if percentage is not None:
+                # CSS combines duplicate selectors; the last declaration wins.
+                points[float(percentage.group(1))] = opacity
+    return sorted(points.items())
+
+
+def linear_value(points, percentage):
+    for (left_at, left), (right_at, right) in zip(points, points[1:]):
+        if percentage <= right_at:
+            fraction = (percentage - left_at) / (right_at - left_at)
+            return left + ((right - left) * fraction)
+    return points[-1][1]
+
+
+missing = sorted(scene_intervals.keys() - blocks.keys())
+if missing:
+    raise SystemExit(f"cartoon lacks scene keyframes: {', '.join(missing)}")
+for name, (start, end) in scene_intervals.items():
+    points = opacity_points(blocks[name])
+    checks = (
+        (start - 0.1, 0.0),
+        (start, 1.0),
+        (end - 0.1, 1.0),
+        (end, 0.0),
+    )
+    for second, expected in checks:
+        actual = linear_value(points, selector_at(second))
+        if not math.isclose(actual, expected, abs_tol=1e-9):
+            raise SystemExit(
+                f"{name} opacity at {second:.1f}s is {actual:.3f}, "
+                f"expected {expected:.3f}"
+            )
+PY_CSS_SCENE_BOUNDARIES
 }
 
 inspect_provenance_metadata() {
@@ -644,6 +754,16 @@ mutate_missing_style_id() {
 mutate_style_url() {
   replace_once "$1" "  </style>" $'    #movie { fill: url(#x); }\n  </style>'
 }
+mutate_duplicate_keyframe() {
+  replace_once "$1" \
+    $'    @keyframes track-scene-problem-opacity {\n      0.000% { opacity: 1.000; }' \
+    $'    @keyframes track-scene-problem-opacity {\n      0.000% { opacity: 1.000; }\n      0.000% { opacity: 0.000; }'
+}
+mutate_css_ramp() {
+  replace_once "$1" \
+    $'    @keyframes track-scene-guardrails-opacity {\n      0.000% { opacity: 0.000; }\n      21.425% { opacity: 0.000; }' \
+    $'    @keyframes track-scene-guardrails-opacity {\n      0.000% { opacity: 0.000; }\n      21.429% { opacity: 0.000; }'
+}
 mutate_emblem_drop_motion() {
   replace_once "$1" \
     $'    @media (prefers-reduced-motion: reduce) {\n      #emblem-orbit-ring, #emblem-shield { animation: none; }\n    }\n' ""
@@ -719,6 +839,7 @@ cmp -s "$tmp_dir/transcript-first.md" "$tmp_dir/transcript-second.md" || \
   fail "two transcript renders differ"
 cmp -s "$tmp_dir/emblem-first.svg" "$tmp_dir/emblem-second.svg" || \
   fail "two emblem renders differ"
+assert_css_scene_boundaries "$tmp_dir/cartoon-first.svg"
 inspect_cartoon "$tmp_dir/cartoon-first.svg"
 inspect_transcript "$tmp_dir/transcript-first.md"
 inspect_emblem "$tmp_dir/emblem-first.svg"
@@ -793,7 +914,7 @@ grep -Fq 'cartoon assets must all exist or all be absent' <<<"$partial_output" |
   fail "partial cartoon asset set missed the pairing failure: $partial_output"
 
 mutation_count=0
-expected_mutations=30
+expected_mutations=31
 run_source_failure delete-scene 'scene ids must be problem, guardrails, proof, stop' \
   '    ("problem", 0, 6, "The problem", PROBLEM_SUMMARY),' ''
 run_source_failure shift-boundary 'scene guardrails must begin at 6' \
@@ -817,22 +938,18 @@ cp "$CARTOON" "$track_root/scripts/cartoon.py"
 assert_snapshot_scene "$track_root/proof-track.svg" guardrails prop-seal
 mutation_count=$((mutation_count + 1))
 
-blank_root="$(new_mutant_root blank-boundary)"
-replace_once "$blank_root/scripts/cartoon.py" \
-  '(visible_start, 1.0),' '(visible_start + .001, 1.0),'
-(cd "$blank_root" && python3 scripts/cartoon.py --snapshot 6 \
-  --output "$blank_root/blank-boundary.svg")
-blank_rc=0
-blank_output="$(assert_snapshot_scene "$blank_root/blank-boundary.svg" \
-  guardrails prop-seal 2>&1)" || blank_rc=$?
-[ "$blank_rc" -ne 0 ] || fail "cartoon mutation blank-boundary survived"
-grep -Fq 'scene-guardrails opacity is 0.000, expected 1.000' \
-  <<<"$blank_output" || \
-  fail "cartoon mutation blank-boundary missed expected failure: $blank_output"
-cp "$CARTOON" "$blank_root/scripts/cartoon.py"
-(cd "$blank_root" && python3 scripts/cartoon.py --snapshot 6 \
-  --output "$blank_root/blank-boundary.svg")
-assert_snapshot_scene "$blank_root/blank-boundary.svg" guardrails prop-seal
+css_ramp="$tmp_dir/css-ramp.svg"
+cp "$tmp_dir/cartoon-first.svg" "$css_ramp"
+mutate_css_ramp "$css_ramp"
+css_ramp_rc=0
+css_ramp_output="$(assert_css_scene_boundaries "$css_ramp" 2>&1)" || \
+  css_ramp_rc=$?
+[ "$css_ramp_rc" -ne 0 ] || fail "cartoon mutation css-ramp survived"
+grep -Fq 'track-scene-guardrails-opacity opacity at 5.9s' \
+  <<<"$css_ramp_output" || \
+  fail "cartoon mutation css-ramp missed expected failure: $css_ramp_output"
+cp "$tmp_dir/cartoon-first.svg" "$css_ramp"
+assert_css_scene_boundaries "$css_ramp"
 mutation_count=$((mutation_count + 1))
 
 boundary_before="$tmp_dir/boundary-mutant-before.svg"
@@ -888,6 +1005,8 @@ run_file_failure missing-aria-labelledby 'cartoon aria-labelledby differs' \
 run_file_failure missing-style-id 'cartoon style references missing id: no-such-id' \
   mutate_missing_style_id
 run_file_failure style-url 'cartoon style contains url(' mutate_style_url
+run_file_failure duplicate-keyframe 'cartoon keyframes duplicate percentage' \
+  mutate_duplicate_keyframe
 run_file_failure oversize 'cartoon exceeds 153600 bytes' mutate_oversize
 run_emblem_file_failure emblem-reduced-motion \
   'emblem reduced-motion block differs' mutate_emblem_drop_motion
@@ -1090,6 +1209,7 @@ git -C "$guard_root" -c user.name=t -c user.email=t@localhost \
   --provenance-output "$tmp_dir/override-provenance.md")
 [ -f "$tmp_dir/override-provenance.md" ] || \
   fail "cartoon provenance output override did not write output"
+python_bin="$(python3 -c 'import sys; print(sys.executable)')"
 missing_git_root="$tmp_dir/missing-git-root"
 mkdir -p "$missing_git_root/scripts" "$missing_git_root/bin"
 cp "$CARTOON" "$missing_git_root/scripts/cartoon.py"
@@ -1098,7 +1218,10 @@ git -C "$missing_git_root" init -q
 git -C "$missing_git_root" add scripts/cartoon.py scripts/emblem.py
 git -C "$missing_git_root" -c user.name=t -c user.email=t@localhost \
   commit -q -m fixture
-ln -s "$(command -v python3)" "$missing_git_root/bin/python3"
+ln -s "$python_bin" "$missing_git_root/bin/python3"
+hash -r
+! PATH="$missing_git_root/bin" command -v git || \
+  fail "cartoon mutation git-missing restricted PATH contains git"
 missing_git_rc=0
 missing_git_output="$(cd "$missing_git_root" && \
   PATH="$missing_git_root/bin" python3 scripts/cartoon.py \

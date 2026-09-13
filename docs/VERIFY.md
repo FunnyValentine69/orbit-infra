@@ -44,7 +44,7 @@ With LocalStack, vhs, FFmpeg, and the placeholder image available, record the li
 make demo
 ```
 
-The complete front-page set is `make demo`, `make demo NAME=lease`, and `make demo NAME=supply`, or `make demo-all`. Each recorder validates inputs, tears down its environment, renders provenance, and publishes the GIF and provenance as a guarded pair. `make storyboard` deterministically regenerates the SVG and its provenance. The storyboard and recording contracts verify accessibility, hygiene, per-kind generator closure, transaction failure, and drift from the recorded generator commit. The cartoon contracts verify determinism, scene timing snapshots, structural hygiene, provenance and closure drift, and 30 mutants.
+The complete front-page set is `make demo`, `make demo NAME=lease`, and `make demo NAME=supply`, or `make demo-all`. Each recorder validates inputs, tears down its environment, renders provenance, and publishes the GIF and provenance as a guarded pair. `make storyboard` deterministically regenerates the SVG and its provenance. The storyboard and recording contracts verify accessibility, hygiene, per-kind generator closure, transaction failure, and drift from the recorded generator commit. The cartoon contracts verify determinism, scene timing snapshots, structural hygiene, provenance and closure drift, and 31 mutants.
 
 The custom-policy and temporary-role simulator commands, their dry-run boundary, cleanup rules, redaction fields, and report-rendering command are in [IAM simulator lanes](RUNBOOKS.md#iam-simulator-lanes). Those lanes intentionally use the repository wrappers; do not replace them with direct AWS CLI calls.
 

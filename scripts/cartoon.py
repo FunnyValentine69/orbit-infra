@@ -49,12 +49,25 @@ def validate_scenes() -> None:
 
 def scene_track(scene_id: str, start: int, end: int) -> Track:
     visible_start = float(start)
+    visible_end = float(end)
     if start == 0:
-        points: tuple[tuple[float, Value], ...] = ((0.0, 1.0), (end - .001, 1.0), (float(end), 0.0), (float(CYCLE_SECONDS), 0.0))
+        points: tuple[tuple[float, Value], ...] = (
+            (0.0, 1.0),
+            (visible_end - 0.001, 1.0),
+            (visible_end, 0.0),
+            (CYCLE_SECONDS - 0.001, 0.0),
+            (float(CYCLE_SECONDS), 1.0),
+        )
     else:
-        points = ((0.0, 0.0), (visible_start, 0.0), (visible_start, 1.0), (end - .001, 1.0), (float(end), 0.0), (float(CYCLE_SECONDS), 0.0))
-    if end == CYCLE_SECONDS:
-        points = points[:-1]
+        points = (
+            (0.0, 0.0),
+            (visible_start - 0.001, 0.0),
+            (visible_start, 1.0),
+            (visible_end - 0.001, 1.0),
+            (visible_end, 0.0),
+        )
+        if end < CYCLE_SECONDS:
+            points += ((float(CYCLE_SECONDS), 0.0),)
     return (f"scene-{scene_id}", "opacity", points)
 
 
@@ -151,14 +164,32 @@ def interpolate(left: Value, right: Value, fraction: float) -> Value:
     return left
 
 
+def css_percentage(second: float) -> float:
+    return float(f"{second / CYCLE_SECONDS * 100:.3f}")
+
+
+def validate_keyframe_percentages(tracks: tuple[Track, ...]) -> None:
+    for target, prop, points in tracks:
+        seen: set[float] = set()
+        for second, _value in points:
+            percentage = css_percentage(second)
+            if percentage in seen:
+                name = f"track-{target}-{prop}"
+                raise ValueError(
+                    f"duplicate keyframe percentage after formatting: "
+                    f"{name} {percentage:.3f}%"
+                )
+            seen.add(percentage)
+
+
 def evaluate(points: tuple[tuple[float, Value], ...], second: float) -> Value:
-    second %= CYCLE_SECONDS
-    for (left_time, left), (right_time, right) in zip(points, points[1:]):
-        if second < right_time:
-            width = right_time - left_time
-            fraction = 0.0 if width == 0 else (second - left_time) / width
+    percentage = css_percentage(second % CYCLE_SECONDS)
+    css_points = tuple((css_percentage(at), value) for at, value in points)
+    for (left_at, left), (right_at, right) in zip(css_points, css_points[1:]):
+        if percentage <= right_at:
+            fraction = (percentage - left_at) / (right_at - left_at)
             return interpolate(left, right, fraction)
-    return points[-1][1]
+    return css_points[-1][1]
 
 
 def css_value(value: Value) -> str:
@@ -230,7 +261,7 @@ def style_block(tracks: tuple[Track, ...], snapshot: float | None) -> list[str]:
         name = f"track-{target}-{prop}"
         lines.append(f"    @keyframes {name} {{")
         for second, value in points:
-            percentage = second / CYCLE_SECONDS * 100
+            percentage = css_percentage(second)
             lines.append(f"      {percentage:.3f}% {{ {prop}: {css_value(value)}; }}")
         lines.append("    }")
         animations.setdefault(target, []).append(name)
@@ -246,6 +277,7 @@ def style_block(tracks: tuple[Track, ...], snapshot: float | None) -> list[str]:
 def render(snapshot: float | None = None) -> str:
     validate_scenes()
     tracks = animation_tracks()
+    validate_keyframe_percentages(tracks)
     styles = snapshot_styles(snapshot, tracks)
     desc = " ".join(scene[4] for scene in SCENES)
     lines = [
