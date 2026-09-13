@@ -479,6 +479,14 @@ def rect_box(node, root):
     )
 
 
+def circle_box(node, root):
+    half = stroke_width(node, root) / 2.0
+    cx = float(node.attrib.get("cx", 0.0))
+    cy = float(node.attrib.get("cy", 0.0))
+    radius = float(node.attrib["r"]) + half
+    return cx - radius, cy - radius, cx + radius, cy + radius
+
+
 def union(*boxes):
     return (
         min(box[0] for box in boxes), min(box[1] for box in boxes),
@@ -594,6 +602,14 @@ def painted_path(node, root):
     return box[0] - half, box[1] - half, box[2] + half, box[3] + half
 
 
+def painted_shape(node, root):
+    if node.tag == ns + "path":
+        return painted_path(node, root)
+    if node.tag == ns + "circle":
+        return circle_box(node, root)
+    fail(f"unsupported painted shape: {node.tag}")
+
+
 def is_descendant(node, ancestor, parents):
     while node in parents:
         node = parents[node]
@@ -701,13 +717,9 @@ if not (
     fail("gate door geometry differs")
 
 rope = by_id["prop-velvet-rope"]
-posts = next(node for node in rope if node.tag == ns + "path" and node.attrib.get("stroke-width") == "22")
-segments = re.findall(r"M\s*[+-]?[\d.]+\s+([+-]?[\d.]+)\s+V\s*([+-]?[\d.]+)", posts.attrib["d"])
-if not segments:
-    fail("velvet rope post geometry is unreadable")
-rope_low = max(float(value) for segment in segments for value in segment) + stroke_width(posts, static_root) / 2.0
-_rope_x, rope_y = translate(track_value("prop-velvet-rope", "transform", 21.5), "velvet rope")
-if rope_y + rope_low >= 0.0:
+rope_local = union(*(painted_shape(child, static_root) for child in rope))
+rope_x, rope_y = translate(track_value("prop-velvet-rope", "transform", 21.5), "velvet rope")
+if shifted(rope_local, rope_x, rope_y)[3] >= 0.0:
     fail("velvet rope remains on canvas")
 
 
@@ -756,14 +768,33 @@ for second in card_seconds:
 wallet = by_id["prop-wallet"]
 _wallet_x, wallet_y = parse_transform(parents[wallet].attrib["transform"], "translate", "wallet")
 wallet_top = wallet_y + painted_path(next(wallet.iter(ns + "path")), static_root)[1]
-for target, second in (("coin-1", 0.65), ("coin-2", 1.45), ("coin-3", 2.40)):
+
+
+def opacity_ramp(target):
+    key = (target, "opacity")
+    if key not in track_map:
+        fail(f"missing animation track: {target} opacity")
+    points = track_map[key]
+    ramps = [
+        (float(left_at), float(right_at))
+        for (left_at, left), (right_at, right) in zip(points, points[1:])
+        if left == 0.0 and right == 1.0
+    ]
+    if len(ramps) != 1:
+        fail(f"coin opacity ramp differs: {target}")
+    return ramps[0]
+
+
+for target in ("coin-1", "coin-2", "coin-3"):
     coin = by_id[target]
     _coin_x, coin_y = parse_transform(parents[coin].attrib["transform"], "translate", target)
-    _tx, ty = translate(track_value(target, "transform", second), target)
     circle = next(coin.iter(ns + "circle"))
     painted_radius = float(circle.attrib["r"]) + stroke_width(circle, static_root) / 2.0
-    if coin_y + ty + painted_radius >= wallet_top:
-        fail(f"coin spawns on wallet: {target}")
+    ramp_start, ramp_end = opacity_ramp(target)
+    for second in (ramp_start, ramp_end, ramp_end + 0.05):
+        _tx, ty = translate(track_value(target, "transform", second), target)
+        if coin_y + ty + painted_radius >= wallet_top:
+            fail(f"coin spawns on wallet: {target}")
 
 seal_points = track_map.get(("prop-seal", "opacity"))
 if seal_points is None or tuple(cartoon.evaluate(seal_points, second) for second in (8.0, 9.5, 10.0)) != (0.0, 0.0, 1.0):
@@ -1261,6 +1292,9 @@ mutate_rope_onstage() {
     '("prop-velvet-rope", transform, ((0, move(0, -470)), (21.7, move(0, -470)), (23.2, move(0, 0)), (28, move(0, 0)))),' \
     '("prop-velvet-rope", transform, ((0, move(0, -400)), (21.7, move(0, -400)), (23.2, move(0, 0)), (28, move(0, 0)))),'
 }
+mutate_rope_curve_onstage() {
+  replace_once "$1" 'Q515 470' 'Q515 1200'
+}
 mutate_cards_parked_onstage() {
   replace_once "$1" \
     '("prop-code-card", transform, ((0, move(0, -360)), (17, move(0, -360)), (18, move(0, 0)), (18.2, move(6, 0)), (19, move(0, 0)), (28, move(0, 0)))),' \
@@ -1283,13 +1317,13 @@ mutate_cards_collide() {
 }
 mutate_coin_on_wallet() {
   replace_once "$1" \
-    '((0, move(0, -60)), (.6, move(0, -60)),' \
+    '((0, move(0, -64)), (.6, move(0, -64)),' \
     '((0, move(0, 0)), (.6, move(0, 0)),'
   replace_once "$1" \
-    '((0, move(0, -60)), (1.4, move(0, -60)),' \
+    '((0, move(0, -64)), (1.4, move(0, -64)),' \
     '((0, move(0, 0)), (1.4, move(0, 0)),'
   replace_once "$1" \
-    '((0, move(0, -60)), (2.35, move(0, -60)),' \
+    '((0, move(0, -64)), (2.35, move(0, -64)),' \
     '((0, move(0, 0)), (2.35, move(0, 0)),'
 }
 mutate_seal_early() {
@@ -1431,7 +1465,7 @@ grep -Fq 'cartoon assets must all exist or all be absent' <<<"$partial_output" |
   fail "partial cartoon asset set missed the pairing failure: $partial_output"
 
 mutation_count=0
-expected_mutations=46
+expected_mutations=47
 run_source_failure delete-scene 'scene ids must be problem, guardrails, proof, stop' \
   '    ("problem", 0, 6, "The problem", PROBLEM_SUMMARY),' ''
 run_source_failure shift-boundary 'scene guardrails must begin at 6' \
@@ -1550,6 +1584,8 @@ run_behavior_failure door-scale-format \
   'gate door rendered scale differs' mutate_door_scale_format
 run_behavior_failure rope-onstage \
   'velvet rope remains on canvas' mutate_rope_onstage
+run_behavior_failure rope-curve-onstage \
+  'velvet rope remains on canvas' mutate_rope_curve_onstage
 run_behavior_failure cards-parked-onstage \
   'remains on canvas while parked' mutate_cards_parked_onstage
 run_behavior_failure card-over-bill \
