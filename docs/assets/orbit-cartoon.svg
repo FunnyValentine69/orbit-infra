@@ -10,11 +10,12 @@
       0.000% { opacity: 1.000; }
       21.425% { opacity: 1.000; }
       21.429% { opacity: 0.000; }
-      100.000% { opacity: 0.000; }
+      99.996% { opacity: 0.000; }
+      100.000% { opacity: 1.000; }
     }
     @keyframes track-scene-guardrails-opacity {
       0.000% { opacity: 0.000; }
-      21.429% { opacity: 0.000; }
+      21.425% { opacity: 0.000; }
       21.429% { opacity: 1.000; }
       49.996% { opacity: 1.000; }
       50.000% { opacity: 0.000; }
@@ -22,7 +23,7 @@
     }
     @keyframes track-scene-proof-opacity {
       0.000% { opacity: 0.000; }
-      50.000% { opacity: 0.000; }
+      49.996% { opacity: 0.000; }
       50.000% { opacity: 1.000; }
       74.996% { opacity: 1.000; }
       75.000% { opacity: 0.000; }
@@ -30,7 +31,7 @@
     }
     @keyframes track-scene-stop-opacity {
       0.000% { opacity: 0.000; }
-      75.000% { opacity: 0.000; }
+      74.996% { opacity: 0.000; }
       75.000% { opacity: 1.000; }
       99.996% { opacity: 1.000; }
       100.000% { opacity: 0.000; }
