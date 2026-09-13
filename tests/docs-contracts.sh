@@ -120,6 +120,7 @@ for source in markdown + shell:
 
 readme = (root / "README.md").read_text(encoding="utf-8")
 for required_embed in (
+    "docs/assets/orbit-cartoon.svg",
     "docs/assets/storyboard.svg",
     "docs/assets/demo.gif",
     "docs/assets/demo-lease.gif",
@@ -265,7 +266,7 @@ fi
 
 fixture_manifest="$tmp_dir/fixture-manifest.txt"
 mutation_count=0
-expected_mutations=19
+expected_mutations=20
 
 write_fixture() {
   local destination=$1
@@ -273,6 +274,7 @@ write_fixture() {
     "$destination/tests" "$destination/scripts"
   cat >"$destination/README.md" <<'EOF_README'
 # Fixture
+![cartoon](docs/assets/orbit-cartoon.svg)
 ![storyboard](docs/assets/storyboard.svg)
 ![demo](docs/assets/demo.gif)
 ![lease](docs/assets/demo-lease.gif)
@@ -290,6 +292,10 @@ EOF_README
   printf '# Tests\n' >"$destination/tests/README.md"
   printf '# Matrix\n' >"$destination/docs/evidence/iam-matrix.md"
   printf '# Schema\n' >"$destination/docs/evidence/iam-simulate-vector-schema.md"
+  printf '<svg/>\n' >"$destination/docs/assets/orbit-cartoon.svg"
+  printf '<svg/>\n' >"$destination/docs/assets/emblem.svg"
+  printf '# Transcript\n' >"$destination/docs/assets/CARTOON_TRANSCRIPT.md"
+  printf '# Provenance\n' >"$destination/docs/assets/CARTOON_PROVENANCE.md"
   printf '<svg/>\n' >"$destination/docs/assets/storyboard.svg"
   printf 'gif\n' >"$destination/docs/assets/demo.gif"
   printf 'gif\n' >"$destination/docs/assets/demo-lease.gif"
@@ -297,6 +303,10 @@ EOF_README
   cat >"$destination/docs/evidence/README.md" <<'EOF_INDEX'
 # Evidence
 [empty]( )
+[cartoon](../assets/orbit-cartoon.svg)
+[emblem](../assets/emblem.svg)
+[transcript](../assets/CARTOON_TRANSCRIPT.md)
+[cartoon provenance](../assets/CARTOON_PROVENANCE.md)
 [storyboard](../assets/storyboard.svg)
 [demo](<../assets/demo.gif> "demo")
 [lease](../assets/demo-lease.gif)
@@ -366,9 +376,21 @@ mutate_retired_file() {
   printf 'docs/%s\n' "$retired" >>"$fixture_manifest"
 }
 mutate_readme_embed() {
-  sed '/docs\/assets\/demo-lease\.gif/d' "$1/README.md" \
+  sed '/docs\/assets\/orbit-cartoon\.svg/d' "$1/README.md" \
     >"$1/README.md.mutant"
   mv "$1/README.md.mutant" "$1/README.md"
+}
+mutate_assets_absent() {
+  local root=$1 path
+  for path in \
+    docs/assets/orbit-cartoon.svg \
+    docs/assets/emblem.svg \
+    docs/assets/CARTOON_TRANSCRIPT.md \
+    docs/assets/CARTOON_PROVENANCE.md; do
+    rm -f "$root/$path"
+    sed "\#^$path\$#d" "$fixture_manifest" >"$fixture_manifest.mutant"
+    mv "$fixture_manifest.mutant" "$fixture_manifest"
+  done
 }
 mutate_token() { printf '%s\n' "$2" >>"$1/docs/VERIFY.md"; }
 
@@ -414,7 +436,9 @@ run_mutation state-tracked 'FAIL: retired documentation file is tracked: STATE.m
 run_mutation verify-missing 'FAIL: documentation budget file is not tracked: docs/VERIFY.md' mutate_verify_missing
 run_mutation retired-file 'FAIL: retired documentation file is tracked: docs/'"EVIDENCE.md" mutate_retired_file
 run_missing_on_disk_mutation
-run_mutation readme-embed 'FAIL: README missing required image embed: docs/assets/demo-lease.gif' mutate_readme_embed
+run_mutation readme-embed 'FAIL: README missing required image embed: docs/assets/orbit-cartoon.svg' mutate_readme_embed
+run_mutation assets-absent 'FAIL: unresolved documentation link in README.md' \
+  mutate_assets_absent
 
 token_specs=(
   'free-plan|Free'' Plan'
@@ -439,3 +463,4 @@ if [ "$mutation_count" -ne "$expected_mutations" ]; then
 fi
 
 echo "PASS: documentation contracts ($mutation_count mutations; restored suite passed)"
+env -u CARTOON_SKIP_ASSET_GROUP bash "$(dirname "$0")/cartoon-contracts.sh"

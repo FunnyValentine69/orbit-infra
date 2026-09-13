@@ -1,0 +1,704 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="cartoon-title cartoon-desc">
+  <title id="cartoon-title">Orbit-infra: guardrails, proof, and a deliberate stop</title>
+  <desc id="cartoon-desc">Putting an app on the cloud is easy; doing it so nothing leaks, nothing is left running and billing you, and every step can be checked by a stranger is hard. The project takes a friend&#x27;s app, builds the cloud plumbing around it, and wraps every action in rules: changes must pass gates before they merge, every environment has a lease that expires and cleans itself up, and only signed images can run. Instead of trusting a demo, the repo records evidence: terminal recordings, a permission-by-permission test against AWS&#x27;s own policy simulator, and checks that fail if the docs drift from the code. The whole system is shown working on a local emulator and the permissions are proven on the real account; the live deployment tail was deliberately not paid for, because the cost is real and the audience is small.</desc>
+  <style>
+    .outline { stroke: #082f49; stroke-width: 6; stroke-linejoin: round; }
+    .rec-text, .end-text { fill: #ffffff; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-weight: 800; }
+    #reduced-motion-summary { display: none; }
+    @keyframes track-scene-problem-opacity {
+      0.000% { opacity: 1.000; }
+      21.425% { opacity: 1.000; }
+      21.429% { opacity: 0.000; }
+      99.996% { opacity: 0.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-scene-guardrails-opacity {
+      0.000% { opacity: 0.000; }
+      21.425% { opacity: 0.000; }
+      21.429% { opacity: 1.000; }
+      49.996% { opacity: 1.000; }
+      50.000% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-scene-proof-opacity {
+      0.000% { opacity: 0.000; }
+      49.996% { opacity: 0.000; }
+      50.000% { opacity: 1.000; }
+      74.996% { opacity: 1.000; }
+      75.000% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-scene-stop-opacity {
+      0.000% { opacity: 0.000; }
+      74.996% { opacity: 0.000; }
+      75.000% { opacity: 1.000; }
+      99.996% { opacity: 1.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-friend-hand-opacity {
+      0.000% { opacity: 0.000; }
+      0.357% { opacity: 1.000; }
+      5.179% { opacity: 1.000; }
+      6.071% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-friend-hand-transform {
+      0.000% { transform: translate(-220.000px, 35.000px); }
+      1.250% { transform: translate(-30.000px, 0.000px); }
+      4.107% { transform: translate(30.000px, -24.000px); }
+      6.071% { transform: translate(165.000px, 38.000px); }
+      100.000% { transform: translate(165.000px, 38.000px); }
+    }
+    @keyframes track-pip-toss-opacity {
+      0.000% { opacity: 0.000; }
+      0.357% { opacity: 1.000; }
+      21.425% { opacity: 1.000; }
+      21.429% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-pip-toss-transform {
+      0.000% { transform: translate(-330.000px, -20.000px); }
+      1.607% { transform: translate(-270.000px, -105.000px); }
+      3.750% { transform: translate(-170.000px, -165.000px); }
+      5.536% { transform: translate(-75.000px, -120.000px); }
+      7.143% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-pip-face-happy-opacity {
+      0.000% { opacity: 1.000; }
+      8.750% { opacity: 1.000; }
+      8.929% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-pip-face-worried-opacity {
+      0.000% { opacity: 0.000; }
+      8.750% { opacity: 0.000; }
+      8.929% { opacity: 1.000; }
+      37.321% { opacity: 1.000; }
+      37.500% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-pip-face-relieved-opacity {
+      0.000% { opacity: 0.000; }
+      37.321% { opacity: 0.000; }
+      37.500% { opacity: 1.000; }
+      74.996% { opacity: 1.000; }
+      75.000% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-pip-face-proud-opacity {
+      0.000% { opacity: 0.000; }
+      74.996% { opacity: 0.000; }
+      75.000% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-leak-drip-1-opacity {
+      0.000% { opacity: 0.000; }
+      9.464% { opacity: 0.000; }
+      9.643% { opacity: 1.000; }
+      20.357% { opacity: 1.000; }
+      21.071% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-leak-drip-1-transform {
+      0.000% { transform: translate(0.000px, -12.000px); }
+      9.643% { transform: translate(0.000px, -12.000px); }
+      21.071% { transform: translate(0.000px, 72.000px); }
+      100.000% { transform: translate(0.000px, 72.000px); }
+    }
+    @keyframes track-leak-drip-2-opacity {
+      0.000% { opacity: 0.000; }
+      11.250% { opacity: 0.000; }
+      11.429% { opacity: 1.000; }
+      20.536% { opacity: 1.000; }
+      21.250% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-leak-drip-2-transform {
+      0.000% { transform: translate(0.000px, -12.000px); }
+      11.429% { transform: translate(0.000px, -12.000px); }
+      21.250% { transform: translate(0.000px, 66.000px); }
+      100.000% { transform: translate(0.000px, 66.000px); }
+    }
+    @keyframes track-leak-drip-3-opacity {
+      0.000% { opacity: 0.000; }
+      13.036% { opacity: 0.000; }
+      13.214% { opacity: 1.000; }
+      20.714% { opacity: 1.000; }
+      21.357% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-leak-drip-3-transform {
+      0.000% { transform: translate(0.000px, -12.000px); }
+      13.214% { transform: translate(0.000px, -12.000px); }
+      21.357% { transform: translate(0.000px, 62.000px); }
+      100.000% { transform: translate(0.000px, 62.000px); }
+    }
+    @keyframes track-prop-server-glow-opacity {
+      0.000% { opacity: 0.550; }
+      3.571% { opacity: 1.000; }
+      7.143% { opacity: 0.550; }
+      10.714% { opacity: 1.000; }
+      14.286% { opacity: 0.550; }
+      17.857% { opacity: 1.000; }
+      21.429% { opacity: 0.550; }
+      100.000% { opacity: 0.550; }
+    }
+    @keyframes track-prop-server-glow-transform {
+      0.000% { transform: scale(0.940); }
+      3.571% { transform: scale(1.060); }
+      7.143% { transform: scale(0.940); }
+      10.714% { transform: scale(1.060); }
+      14.286% { transform: scale(0.940); }
+      17.857% { transform: scale(1.060); }
+      21.429% { transform: scale(0.940); }
+      100.000% { transform: scale(0.940); }
+    }
+    @keyframes track-coin-1-opacity {
+      0.000% { opacity: 0.000; }
+      1.964% { opacity: 0.000; }
+      2.143% { opacity: 1.000; }
+      8.214% { opacity: 1.000; }
+      8.571% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-coin-1-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      2.143% { transform: translate(0.000px, 0.000px); }
+      5.179% { transform: translate(12.000px, -100.000px); }
+      8.571% { transform: translate(55.000px, -67.000px); }
+      100.000% { transform: translate(55.000px, -67.000px); }
+    }
+    @keyframes track-coin-2-opacity {
+      0.000% { opacity: 0.000; }
+      4.821% { opacity: 0.000; }
+      5.000% { opacity: 1.000; }
+      11.250% { opacity: 1.000; }
+      11.607% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-coin-2-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      5.000% { transform: translate(0.000px, 0.000px); }
+      8.036% { transform: translate(8.000px, -105.000px); }
+      11.607% { transform: translate(43.000px, -76.000px); }
+      100.000% { transform: translate(43.000px, -76.000px); }
+    }
+    @keyframes track-coin-3-opacity {
+      0.000% { opacity: 0.000; }
+      8.214% { opacity: 0.000; }
+      8.393% { opacity: 1.000; }
+      16.250% { opacity: 1.000; }
+      16.786% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-coin-3-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      8.393% { transform: translate(0.000px, 0.000px); }
+      11.964% { transform: translate(15.000px, -108.000px); }
+      16.786% { transform: translate(70.000px, -82.000px); }
+      100.000% { transform: translate(70.000px, -82.000px); }
+    }
+    @keyframes track-actor-orbit-ring-transform {
+      0.000% { transform: rotate(0.000deg); }
+      100.000% { transform: rotate(720.000deg); }
+    }
+    @keyframes track-actor-bill-needle-transform {
+      0.000% { transform: rotate(-65.000deg); }
+      1.786% { transform: rotate(-65.000deg); }
+      20.714% { transform: rotate(1015.000deg); }
+      21.429% { transform: rotate(120.000deg); }
+      46.964% { transform: rotate(120.000deg); }
+      48.393% { transform: rotate(-65.000deg); }
+      100.000% { transform: rotate(-65.000deg); }
+    }
+    @keyframes track-orbit-left-arm-transform {
+      0.000% { transform: rotate(0.000deg); }
+      21.429% { transform: rotate(0.000deg); }
+      22.857% { transform: rotate(-38.000deg); }
+      24.286% { transform: rotate(22.000deg); }
+      25.714% { transform: rotate(-38.000deg); }
+      27.143% { transform: rotate(22.000deg); }
+      28.571% { transform: rotate(-12.000deg); }
+      100.000% { transform: rotate(-12.000deg); }
+    }
+    @keyframes track-orbit-right-arm-transform {
+      0.000% { transform: rotate(0.000deg); }
+      21.429% { transform: rotate(0.000deg); }
+      22.679% { transform: rotate(42.000deg); }
+      24.107% { transform: rotate(-36.000deg); }
+      25.536% { transform: rotate(42.000deg); }
+      26.964% { transform: rotate(-36.000deg); }
+      28.571% { transform: rotate(5.000deg); }
+      35.357% { transform: rotate(5.000deg); }
+      36.607% { transform: rotate(-58.000deg); }
+      37.679% { transform: rotate(-15.000deg); }
+      100.000% { transform: rotate(-15.000deg); }
+    }
+    @keyframes track-orbit-guardrails-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      33.750% { transform: translate(0.000px, 0.000px); }
+      35.893% { transform: translate(430.000px, 0.000px); }
+      38.393% { transform: translate(430.000px, 0.000px); }
+      40.179% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-gate-frame-transform {
+      0.000% { transform: translate(0.000px, 175.000px); }
+      22.321% { transform: translate(0.000px, 175.000px); }
+      28.036% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-prop-gate-light-1-fill {
+      0.000% { fill: #53657a; }
+      28.571% { fill: #53657a; }
+      28.929% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-prop-gate-light-2-fill {
+      0.000% { fill: #53657a; }
+      31.071% { fill: #53657a; }
+      31.429% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-prop-gate-light-3-fill {
+      0.000% { fill: #53657a; }
+      33.571% { fill: #53657a; }
+      33.929% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-gate-door-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      34.107% { transform: translate(0.000px, 0.000px); }
+      36.607% { transform: translate(0.000px, -175.000px); }
+      100.000% { transform: translate(0.000px, -175.000px); }
+    }
+    @keyframes track-prop-lease-timer-opacity {
+      0.000% { opacity: 0.000; }
+      36.429% { opacity: 0.000; }
+      36.786% { opacity: 1.000; }
+      48.393% { opacity: 1.000; }
+      49.286% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-prop-lease-timer-hand-transform {
+      0.000% { transform: rotate(0.000deg); }
+      36.786% { transform: rotate(0.000deg); }
+      47.679% { transform: rotate(360.000deg); }
+      100.000% { transform: rotate(360.000deg); }
+    }
+    @keyframes track-prop-seal-transform {
+      0.000% { transform: translate(0.000px, -155.000px); }
+      35.536% { transform: translate(0.000px, -155.000px); }
+      36.964% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-seal-strike-transform {
+      0.000% { transform: scale(1.000); }
+      36.929% { transform: scale(1.000); }
+      37.429% { transform: scale(1.240); }
+      38.036% { transform: scale(0.840); }
+      38.750% { transform: scale(1.000); }
+      100.000% { transform: scale(1.000); }
+    }
+    @keyframes track-pip-seal-squash-transform {
+      0.000% { transform: scale(1.000); }
+      36.929% { transform: scale(1.000); }
+      37.571% { transform: scale(0.820); }
+      38.286% { transform: scale(1.080); }
+      38.929% { transform: scale(1.000); }
+      100.000% { transform: scale(1.000); }
+    }
+    @keyframes track-broombot-guardrails-transform {
+      0.000% { transform: translate(-300.000px, 0.000px); }
+      40.536% { transform: translate(-300.000px, 0.000px); }
+      49.464% { transform: translate(500.000px, 0.000px); }
+      100.000% { transform: translate(500.000px, 0.000px); }
+    }
+    @keyframes track-broombot-broom-transform {
+      0.000% { transform: rotate(-28.000deg); }
+      40.714% { transform: rotate(-28.000deg); }
+      42.143% { transform: rotate(30.000deg); }
+      43.571% { transform: rotate(-30.000deg); }
+      45.000% { transform: rotate(30.000deg); }
+      46.429% { transform: rotate(-30.000deg); }
+      47.857% { transform: rotate(30.000deg); }
+      49.464% { transform: rotate(-28.000deg); }
+      100.000% { transform: rotate(-28.000deg); }
+    }
+    @keyframes track-cloud-guardrails-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      46.607% { transform: translate(0.000px, 0.000px); }
+      49.643% { transform: translate(520.000px, 20.000px); }
+      100.000% { transform: translate(520.000px, 20.000px); }
+    }
+    @keyframes track-scout-entry-transform {
+      0.000% { transform: translate(820.000px, 0.000px); }
+      50.000% { transform: translate(820.000px, 0.000px); }
+      52.857% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-scout-lean-transform {
+      0.000% { transform: rotate(0.000deg); }
+      52.679% { transform: rotate(0.000deg); }
+      54.464% { transform: rotate(-10.000deg); }
+      67.500% { transform: rotate(-10.000deg); }
+      68.571% { transform: rotate(0.000deg); }
+      100.000% { transform: rotate(0.000deg); }
+    }
+    @keyframes track-scout-head-transform {
+      0.000% { transform: rotate(0.000deg); }
+      68.393% { transform: rotate(0.000deg); }
+      69.643% { transform: rotate(15.000deg); }
+      70.893% { transform: rotate(-7.000deg); }
+      72.321% { transform: rotate(0.000deg); }
+      100.000% { transform: rotate(0.000deg); }
+    }
+    @keyframes track-scout-brow-transform {
+      0.000% { transform: translate(0.000px, 0.000px); }
+      67.857% { transform: translate(0.000px, 0.000px); }
+      69.107% { transform: translate(0.000px, 7.000px); }
+      100.000% { transform: translate(0.000px, 7.000px); }
+    }
+    @keyframes track-prop-rec-reel-transform {
+      0.000% { transform: rotate(0.000deg); }
+      50.000% { transform: rotate(0.000deg); }
+      75.000% { transform: rotate(1080.000deg); }
+      100.000% { transform: rotate(1080.000deg); }
+    }
+    @keyframes track-prop-permission-row-1-fill {
+      0.000% { fill: #53657a; }
+      53.571% { fill: #53657a; }
+      53.929% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-prop-permission-row-2-fill {
+      0.000% { fill: #53657a; }
+      56.071% { fill: #53657a; }
+      56.429% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-prop-permission-row-3-fill {
+      0.000% { fill: #53657a; }
+      58.571% { fill: #53657a; }
+      58.929% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-prop-permission-row-4-fill {
+      0.000% { fill: #53657a; }
+      61.071% { fill: #53657a; }
+      61.429% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-prop-code-card-transform {
+      0.000% { transform: translate(-140.000px, 0.000px); }
+      60.714% { transform: translate(-140.000px, 0.000px); }
+      64.286% { transform: translate(0.000px, 0.000px); }
+      65.000% { transform: translate(-22.000px, 0.000px); }
+      67.857% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-prop-doc-card-transform {
+      0.000% { transform: translate(140.000px, 0.000px); }
+      60.714% { transform: translate(140.000px, 0.000px); }
+      64.286% { transform: translate(0.000px, 0.000px); }
+      65.000% { transform: translate(22.000px, 0.000px); }
+      67.857% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-prop-contract-lamp-fill {
+      0.000% { fill: #53657a; }
+      64.286% { fill: #53657a; }
+      64.464% { fill: #fb7185; }
+      67.143% { fill: #fb7185; }
+      67.857% { fill: #4ade80; }
+      100.000% { fill: #4ade80; }
+    }
+    @keyframes track-prop-runway-opacity {
+      0.000% { opacity: 0.350; }
+      75.000% { opacity: 0.350; }
+      76.429% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-runway-sparkle-1-opacity {
+      0.000% { opacity: 0.000; }
+      76.071% { opacity: 0.000; }
+      76.964% { opacity: 1.000; }
+      78.571% { opacity: 0.150; }
+      80.179% { opacity: 1.000; }
+      81.786% { opacity: 0.150; }
+      83.393% { opacity: 1.000; }
+      86.071% { opacity: 1.000; }
+      87.500% { opacity: 0.150; }
+      88.929% { opacity: 1.000; }
+      90.357% { opacity: 0.150; }
+      91.786% { opacity: 1.000; }
+      93.214% { opacity: 0.150; }
+      94.643% { opacity: 1.000; }
+      96.071% { opacity: 0.150; }
+      97.143% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-runway-sparkle-2-opacity {
+      0.000% { opacity: 0.000; }
+      76.964% { opacity: 0.000; }
+      78.214% { opacity: 1.000; }
+      79.821% { opacity: 0.150; }
+      81.429% { opacity: 1.000; }
+      83.036% { opacity: 0.150; }
+      84.643% { opacity: 1.000; }
+      86.071% { opacity: 1.000; }
+      86.964% { opacity: 0.150; }
+      88.393% { opacity: 1.000; }
+      89.821% { opacity: 0.150; }
+      91.250% { opacity: 1.000; }
+      92.679% { opacity: 0.150; }
+      94.107% { opacity: 1.000; }
+      95.536% { opacity: 0.150; }
+      96.964% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-runway-sparkle-3-opacity {
+      0.000% { opacity: 0.000; }
+      77.857% { opacity: 0.000; }
+      79.107% { opacity: 1.000; }
+      80.714% { opacity: 0.150; }
+      82.321% { opacity: 1.000; }
+      83.929% { opacity: 0.150; }
+      85.536% { opacity: 1.000; }
+      86.071% { opacity: 1.000; }
+      87.857% { opacity: 0.150; }
+      89.286% { opacity: 1.000; }
+      90.714% { opacity: 0.150; }
+      92.143% { opacity: 1.000; }
+      93.571% { opacity: 0.150; }
+      95.000% { opacity: 1.000; }
+      96.429% { opacity: 0.150; }
+      97.143% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-orbit-rope-arm-transform {
+      0.000% { transform: rotate(-68.000deg); }
+      75.893% { transform: rotate(-68.000deg); }
+      82.857% { transform: rotate(48.000deg); }
+      100.000% { transform: rotate(48.000deg); }
+    }
+    @keyframes track-prop-velvet-rope-transform {
+      0.000% { transform: translate(0.000px, -145.000px); }
+      77.500% { transform: translate(0.000px, -145.000px); }
+      82.857% { transform: translate(0.000px, 0.000px); }
+      100.000% { transform: translate(0.000px, 0.000px); }
+    }
+    @keyframes track-wallet-flap-transform {
+      0.000% { transform: rotate(58.000deg); }
+      82.679% { transform: rotate(58.000deg); }
+      83.750% { transform: rotate(-8.000deg); }
+      84.357% { transform: rotate(4.000deg); }
+      85.000% { transform: rotate(0.000deg); }
+      100.000% { transform: rotate(0.000deg); }
+    }
+    @keyframes track-prop-wallet-transform {
+      0.000% { transform: scale(1.000); }
+      82.857% { transform: scale(1.000); }
+      83.929% { transform: scale(0.920); }
+      84.821% { transform: scale(1.000); }
+      100.000% { transform: scale(1.000); }
+    }
+    @keyframes track-bill-face-greedy-opacity {
+      0.000% { opacity: 1.000; }
+      77.500% { opacity: 1.000; }
+      77.857% { opacity: 0.000; }
+      100.000% { opacity: 0.000; }
+    }
+    @keyframes track-bill-face-sulk-opacity {
+      0.000% { opacity: 0.000; }
+      77.500% { opacity: 0.000; }
+      77.857% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-spectator-1-left-arm-transform {
+      0.000% { transform: rotate(-25.000deg); }
+      76.429% { transform: rotate(-25.000deg); }
+      77.679% { transform: rotate(25.000deg); }
+      78.929% { transform: rotate(-25.000deg); }
+      80.179% { transform: rotate(25.000deg); }
+      81.429% { transform: rotate(-25.000deg); }
+      82.679% { transform: rotate(25.000deg); }
+      100.000% { transform: rotate(25.000deg); }
+    }
+    @keyframes track-spectator-1-right-arm-transform {
+      0.000% { transform: rotate(25.000deg); }
+      76.429% { transform: rotate(25.000deg); }
+      77.679% { transform: rotate(-25.000deg); }
+      78.929% { transform: rotate(25.000deg); }
+      80.179% { transform: rotate(-25.000deg); }
+      81.429% { transform: rotate(25.000deg); }
+      82.679% { transform: rotate(-25.000deg); }
+      100.000% { transform: rotate(-25.000deg); }
+    }
+    @keyframes track-spectator-2-left-arm-transform {
+      0.000% { transform: rotate(-25.000deg); }
+      76.964% { transform: rotate(-25.000deg); }
+      78.214% { transform: rotate(25.000deg); }
+      79.464% { transform: rotate(-25.000deg); }
+      80.714% { transform: rotate(25.000deg); }
+      81.964% { transform: rotate(-25.000deg); }
+      83.214% { transform: rotate(25.000deg); }
+      100.000% { transform: rotate(25.000deg); }
+    }
+    @keyframes track-spectator-2-right-arm-transform {
+      0.000% { transform: rotate(25.000deg); }
+      76.964% { transform: rotate(25.000deg); }
+      78.214% { transform: rotate(-25.000deg); }
+      79.464% { transform: rotate(25.000deg); }
+      80.714% { transform: rotate(-25.000deg); }
+      81.964% { transform: rotate(25.000deg); }
+      83.214% { transform: rotate(-25.000deg); }
+      100.000% { transform: rotate(-25.000deg); }
+    }
+    @keyframes track-prop-endcard-opacity {
+      0.000% { opacity: 0.000; }
+      87.139% { opacity: 0.000; }
+      87.143% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-wipe-ring-opacity {
+      0.000% { opacity: 0.000; }
+      97.139% { opacity: 0.000; }
+      97.143% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    @keyframes track-wipe-ring-transform {
+      0.000% { transform: scale(0.080); }
+      97.143% { transform: scale(0.080); }
+      99.929% { transform: scale(8.400); }
+      100.000% { transform: scale(8.400); }
+    }
+    @keyframes track-wipe-cloud-outline-opacity {
+      0.000% { opacity: 0.000; }
+      99.429% { opacity: 0.000; }
+      99.857% { opacity: 1.000; }
+      100.000% { opacity: 1.000; }
+    }
+    #scene-problem { animation: track-scene-problem-opacity 28s linear infinite; }
+    #scene-guardrails { animation: track-scene-guardrails-opacity 28s linear infinite; }
+    #scene-proof { animation: track-scene-proof-opacity 28s linear infinite; }
+    #scene-stop { animation: track-scene-stop-opacity 28s linear infinite; }
+    #friend-hand { animation: track-friend-hand-opacity 28s linear infinite, track-friend-hand-transform 28s linear infinite; }
+    #pip-toss { animation: track-pip-toss-opacity 28s linear infinite, track-pip-toss-transform 28s linear infinite; }
+    #pip-face-happy { animation: track-pip-face-happy-opacity 28s linear infinite; }
+    #pip-face-worried { animation: track-pip-face-worried-opacity 28s linear infinite; }
+    #pip-face-relieved { animation: track-pip-face-relieved-opacity 28s linear infinite; }
+    #pip-face-proud { animation: track-pip-face-proud-opacity 28s linear infinite; }
+    #leak-drip-1 { animation: track-leak-drip-1-opacity 28s linear infinite, track-leak-drip-1-transform 28s linear infinite; }
+    #leak-drip-2 { animation: track-leak-drip-2-opacity 28s linear infinite, track-leak-drip-2-transform 28s linear infinite; }
+    #leak-drip-3 { animation: track-leak-drip-3-opacity 28s linear infinite, track-leak-drip-3-transform 28s linear infinite; }
+    #prop-server-glow { animation: track-prop-server-glow-opacity 28s linear infinite, track-prop-server-glow-transform 28s linear infinite; }
+    #coin-1 { animation: track-coin-1-opacity 28s linear infinite, track-coin-1-transform 28s linear infinite; }
+    #coin-2 { animation: track-coin-2-opacity 28s linear infinite, track-coin-2-transform 28s linear infinite; }
+    #coin-3 { animation: track-coin-3-opacity 28s linear infinite, track-coin-3-transform 28s linear infinite; }
+    #actor-orbit-ring { animation: track-actor-orbit-ring-transform 28s linear infinite; }
+    #actor-bill-needle { animation: track-actor-bill-needle-transform 28s linear infinite; }
+    #orbit-left-arm { animation: track-orbit-left-arm-transform 28s linear infinite; }
+    #orbit-right-arm { animation: track-orbit-right-arm-transform 28s linear infinite; }
+    #orbit-guardrails { animation: track-orbit-guardrails-transform 28s linear infinite; }
+    #gate-frame { animation: track-gate-frame-transform 28s linear infinite; }
+    #prop-gate-light-1 { animation: track-prop-gate-light-1-fill 28s linear infinite; }
+    #prop-gate-light-2 { animation: track-prop-gate-light-2-fill 28s linear infinite; }
+    #prop-gate-light-3 { animation: track-prop-gate-light-3-fill 28s linear infinite; }
+    #gate-door { animation: track-gate-door-transform 28s linear infinite; }
+    #prop-lease-timer { animation: track-prop-lease-timer-opacity 28s linear infinite; }
+    #prop-lease-timer-hand { animation: track-prop-lease-timer-hand-transform 28s linear infinite; }
+    #prop-seal { animation: track-prop-seal-transform 28s linear infinite; }
+    #seal-strike { animation: track-seal-strike-transform 28s linear infinite; }
+    #pip-seal-squash { animation: track-pip-seal-squash-transform 28s linear infinite; }
+    #broombot-guardrails { animation: track-broombot-guardrails-transform 28s linear infinite; }
+    #broombot-broom { animation: track-broombot-broom-transform 28s linear infinite; }
+    #cloud-guardrails { animation: track-cloud-guardrails-transform 28s linear infinite; }
+    #scout-entry { animation: track-scout-entry-transform 28s linear infinite; }
+    #scout-lean { animation: track-scout-lean-transform 28s linear infinite; }
+    #scout-head { animation: track-scout-head-transform 28s linear infinite; }
+    #scout-brow { animation: track-scout-brow-transform 28s linear infinite; }
+    #prop-rec-reel { animation: track-prop-rec-reel-transform 28s linear infinite; }
+    #prop-permission-row-1 { animation: track-prop-permission-row-1-fill 28s linear infinite; }
+    #prop-permission-row-2 { animation: track-prop-permission-row-2-fill 28s linear infinite; }
+    #prop-permission-row-3 { animation: track-prop-permission-row-3-fill 28s linear infinite; }
+    #prop-permission-row-4 { animation: track-prop-permission-row-4-fill 28s linear infinite; }
+    #prop-code-card { animation: track-prop-code-card-transform 28s linear infinite; }
+    #prop-doc-card { animation: track-prop-doc-card-transform 28s linear infinite; }
+    #prop-contract-lamp { animation: track-prop-contract-lamp-fill 28s linear infinite; }
+    #prop-runway { animation: track-prop-runway-opacity 28s linear infinite; }
+    #runway-sparkle-1 { animation: track-runway-sparkle-1-opacity 28s linear infinite; }
+    #runway-sparkle-2 { animation: track-runway-sparkle-2-opacity 28s linear infinite; }
+    #runway-sparkle-3 { animation: track-runway-sparkle-3-opacity 28s linear infinite; }
+    #orbit-rope-arm { animation: track-orbit-rope-arm-transform 28s linear infinite; }
+    #prop-velvet-rope { animation: track-prop-velvet-rope-transform 28s linear infinite; }
+    #wallet-flap { animation: track-wallet-flap-transform 28s linear infinite; }
+    #prop-wallet { animation: track-prop-wallet-transform 28s linear infinite; }
+    #bill-face-greedy { animation: track-bill-face-greedy-opacity 28s linear infinite; }
+    #bill-face-sulk { animation: track-bill-face-sulk-opacity 28s linear infinite; }
+    #spectator-1-left-arm { animation: track-spectator-1-left-arm-transform 28s linear infinite; }
+    #spectator-1-right-arm { animation: track-spectator-1-right-arm-transform 28s linear infinite; }
+    #spectator-2-left-arm { animation: track-spectator-2-left-arm-transform 28s linear infinite; }
+    #spectator-2-right-arm { animation: track-spectator-2-right-arm-transform 28s linear infinite; }
+    #prop-endcard { animation: track-prop-endcard-opacity 28s linear infinite; }
+    #wipe-ring { animation: track-wipe-ring-opacity 28s linear infinite, track-wipe-ring-transform 28s linear infinite; }
+    #wipe-cloud-outline { animation: track-wipe-cloud-outline-opacity 28s linear infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      #movie { display: none; }
+      #reduced-motion-summary { display: inline; }
+    }
+  </style>
+  <defs>
+    <g id="actor-pip"><rect x="-55" y="-44" width="110" height="88" rx="22" fill="#7dd3fc" stroke="#082f49" stroke-width="6"/><path d="M-38 -34 Q0 -55 38 -34" fill="#bae6fd" stroke="#082f49" stroke-width="5"/><g id="pip-face-happy"><circle cx="-20" cy="-8" r="9" fill="#082f49"/><circle cx="20" cy="-8" r="9" fill="#082f49"/><path d="M-24 13 Q0 36 24 13" fill="none" stroke="#082f49" stroke-width="6" stroke-linecap="round"/></g><g id="pip-face-worried"><circle cx="-20" cy="-5" r="9" fill="#082f49"/><circle cx="20" cy="-5" r="9" fill="#082f49"/><path d="M-32 -22 L-12 -16 M12 -16 L32 -22 M-22 27 Q0 5 22 27" fill="none" stroke="#082f49" stroke-width="6" stroke-linecap="round"/></g><g id="pip-face-relieved"><path d="M-30 -5 Q-20 7 -10 -5 M10 -5 Q20 7 30 -5 M-22 19 Q0 34 22 19" fill="none" stroke="#082f49" stroke-width="6" stroke-linecap="round"/></g><g id="pip-face-proud"><path d="M-31 -5 Q-20 -17 -9 -5 M9 -5 Q20 -17 31 -5 M-25 14 Q0 37 25 14" fill="none" stroke="#082f49" stroke-width="6" stroke-linecap="round"/></g></g>
+    <g id="actor-orbit"><path d="M-42 -28 Q-42 -48 -22 -48 H22 Q42 -48 42 -28 V44 Q42 62 24 62 H-24 Q-42 62 -42 44Z" fill="#e2e8f0" stroke="#082f49" stroke-width="6"/><rect x="-27" y="-14" width="54" height="42" rx="12" fill="#0e7490" stroke="#082f49" stroke-width="5"/><circle cx="-12" cy="7" r="8" fill="#67e8f9"/><circle cx="14" cy="7" r="8" fill="#facc15"/><path d="M-25 62 L-34 80 M25 62 L34 80" stroke="#e2e8f0" stroke-width="14" stroke-linecap="round"/><g id="actor-orbit-ring-pivot" transform="translate(0 -72)"><g id="actor-orbit-ring"><ellipse rx="52" ry="19" fill="none" stroke="#22d3ee" stroke-width="9"/><circle cx="52" r="8" fill="#facc15" stroke="#082f49" stroke-width="4"/></g></g><circle cy="-72" r="26" fill="#cffafe" stroke="#082f49" stroke-width="6"/><circle cx="-9" cy="-76" r="7" fill="#082f49"/><circle cx="9" cy="-76" r="7" fill="#082f49"/><path d="M-12 -60 Q0 -51 12 -60" fill="none" stroke="#082f49" stroke-width="5" stroke-linecap="round"/></g>
+    <g id="actor-scout"><ellipse cy="22" rx="48" ry="56" fill="#a78bfa" stroke="#312e81" stroke-width="6"/><path d="M-42 22 Q-72 48 -42 69 M42 22 Q72 48 42 69" fill="#8b5cf6" stroke="#312e81" stroke-width="6"/><path d="M-24 72 L-35 88 M24 72 L35 88" stroke="#facc15" stroke-width="8" stroke-linecap="round"/><g id="scout-head-pivot" transform="translate(0 -27)"><g id="scout-head"><path d="M-46 -14 L-31 -53 L-10 -27 Q0 -34 10 -27 L31 -53 L46 -14 Q54 30 0 40 Q-54 30 -46 -14Z" fill="#c4b5fd" stroke="#312e81" stroke-width="6"/><circle cx="-20" cy="-5" r="19" fill="#ffffff" stroke="#312e81" stroke-width="5"/><circle cx="20" cy="-5" r="19" fill="#ffffff" stroke="#312e81" stroke-width="5"/><circle cx="-17" cy="-3" r="9" fill="#111827"/><circle cx="17" cy="-3" r="9" fill="#111827"/><path d="M-9 18 L0 31 L9 18Z" fill="#facc15" stroke="#312e81" stroke-width="4"/><g id="scout-brow"><path d="M-38 -27 L-10 -20 M10 -20 L38 -32" stroke="#312e81" stroke-width="7" stroke-linecap="round"/></g><g id="actor-scout-lens"><circle cx="36" cy="12" r="26" fill="none" stroke="#facc15" stroke-width="8"/><path d="M54 31 L73 51" stroke="#facc15" stroke-width="10" stroke-linecap="round"/></g></g></g></g>
+    <g id="actor-bill"><path d="M-58 -38 L-43 -62 L-25 -42 Q0 -55 25 -42 L43 -62 L58 -38 V38 Q58 58 38 58 H-38 Q-58 58 -58 38Z" fill="#fb7185" stroke="#4c0519" stroke-width="6"/><circle cx="-34" cy="-18" r="9" fill="#fef08a"/><circle cx="34" cy="-18" r="9" fill="#fef08a"/><g id="bill-face-greedy"><path d="M-43 -31 L-25 -23 M25 -23 L43 -31 M-28 14 Q0 43 28 14" fill="none" stroke="#4c0519" stroke-width="6" stroke-linecap="round"/><path d="M-17 25 L-9 15 L0 27 L9 15 L17 25" fill="#ffffff"/></g><g id="bill-face-sulk"><path d="M-43 -24 L-25 -31 M25 -31 L43 -24 M-27 32 Q0 6 27 32" fill="none" stroke="#4c0519" stroke-width="6" stroke-linecap="round"/></g><rect x="-42" y="9" width="84" height="55" rx="14" fill="#f8fafc" stroke="#4c0519" stroke-width="6"/><path d="M-30 48 A34 34 0 0 1 30 48" fill="none" stroke="#facc15" stroke-width="7"/><g id="actor-bill-needle-pivot" transform="translate(0 48)"><g id="actor-bill-needle"><path d="M0 0 L0 -31" stroke="#4c0519" stroke-width="7" stroke-linecap="round"/></g></g><path d="M-58 12 Q-77 22 -47 42 M58 12 Q77 22 47 42" fill="none" stroke="#fb7185" stroke-width="15" stroke-linecap="round"/></g>
+    <g id="actor-broombot"><circle cy="-8" r="38" fill="#fbbf24" stroke="#78350f" stroke-width="6"/><rect x="-27" y="-20" width="54" height="30" rx="14" fill="#fef3c7" stroke="#78350f" stroke-width="5"/><circle cx="-13" cy="-5" r="7" fill="#0f172a"/><circle cx="13" cy="-5" r="7" fill="#0f172a"/><circle cy="36" r="18" fill="#64748b" stroke="#0f172a" stroke-width="6"/><g id="broombot-broom-pivot" transform="translate(31 8)"><g id="broombot-broom"><path d="M0 0 L47 58" stroke="#92400e" stroke-width="8" stroke-linecap="round"/><path d="M34 47 L65 39 M39 54 L70 48 M44 61 L73 58" stroke="#f59e0b" stroke-width="8" stroke-linecap="round"/></g></g></g>
+  </defs>
+  <rect width="960" height="540" fill="#0f172a"/>
+  <g id="movie">
+    <g transform="translate(835 465)"><g id="prop-wallet"><path d="M-78 -50 H62 Q82 -50 82 -30 V50 H-78 Q-94 50 -94 32 V-32 Q-94 -50 -78 -50Z" fill="#a16207" class="outline"/><rect x="10" y="-18" width="82" height="44" rx="12" fill="#fbbf24" class="outline"/><g transform="translate(-72 -50)"><g id="wallet-flap-pivot" transform="translate(0 0)"><g id="wallet-flap"><path d="M0 0 H125 Q142 0 142 17 V38 H0Z" fill="#d97706" class="outline"/></g></g></g></g></g>
+    <g transform="translate(850 342)"><g id="prop-coin-slot"><use href="#actor-bill"/></g></g>
+    <g id="scene-problem">
+      <g transform="translate(102 275)"><g id="friend-hand"><path d="M-110 -28 H-10 L38 -58 Q54 -68 65 -53 Q72 -40 57 -28 L35 -10 L89 -2 Q108 2 105 19 Q102 34 84 32 L25 24 Q2 21 -14 8 H-110Z" fill="#f5c2a7" stroke="#7c2d12" stroke-width="6"/><path d="M-112 -30 H-38 V38 H-112Z" fill="#2563eb" stroke="#082f49" stroke-width="6"/></g></g>
+      <g transform="translate(690 172)"><g id="prop-server-glow"><rect x="-76" y="-76" width="152" height="152" rx="22" fill="#164e63" class="outline"/><rect x="-48" y="-42" width="96" height="84" rx="14" fill="#22d3ee" stroke="#083344" stroke-width="6"/><path d="M-30 -20 H30 M-30 2 H30 M-30 24 H12" stroke="#ecfeff" stroke-width="8" stroke-linecap="round"/><circle cx="43" cy="24" r="9" fill="#facc15"/></g></g>
+      <g id="prop-cloud" transform="translate(400 300)"><path d="M-185 38 C-218 -42 -116 -105 -42 -58 C-4 -146 145 -110 151 -18 C238 -12 246 110 143 116 H-142 C-231 111 -250 60 -185 38Z" fill="#dbeafe" class="outline"/></g>
+      <g transform="translate(400 225)"><g id="pip-toss"><use href="#actor-pip"/></g></g>
+      <g id="prop-leak"><g transform="translate(505 390)"><g id="leak-drip-1"><path d="M0 -18 C-15 2 -14 19 0 27 C14 19 15 2 0 -18Z" fill="#38bdf8" stroke="#075985" stroke-width="4"/></g></g><g transform="translate(545 400)"><g id="leak-drip-2"><path d="M0 -18 C-14 1 -13 18 0 26 C13 18 14 1 0 -18Z" fill="#38bdf8" stroke="#075985" stroke-width="4"/></g></g><g transform="translate(585 387)"><g id="leak-drip-3"><path d="M0 -18 C-15 2 -14 19 0 27 C14 19 15 2 0 -18Z" fill="#38bdf8" stroke="#075985" stroke-width="4"/></g></g></g>
+      <g id="prop-coins"><g transform="translate(792 438)"><g id="coin-1"><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g><g transform="translate(807 446)"><g id="coin-2"><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g><g transform="translate(780 452)"><g id="coin-3"><circle r="17" fill="#facc15" class="outline"/><path d="M0 -9 V9" stroke="#854d0e" stroke-width="5"/></g></g></g>
+    </g>
+    <g id="scene-guardrails">
+      <g transform="translate(150 305)"><g id="orbit-guardrails"><use href="#actor-orbit"/><g transform="translate(-42 -25)"><g id="actor-orbit-left-shoulder-pivot" transform="translate(0 0)"><g id="orbit-left-arm"><path d="M0 0 L-38 48" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="-41" cy="51" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g><g transform="translate(42 -25)"><g id="actor-orbit-right-shoulder-pivot" transform="translate(0 0)"><g id="orbit-right-arm"><path d="M0 0 L42 45" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="45" cy="48" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/><path d="M45 47 L69 70" stroke="#92400e" stroke-width="9"/><rect x="55" y="62" width="42" height="24" rx="6" fill="#94a3b8" stroke="#082f49" stroke-width="5"/></g></g></g></g></g>
+      <g id="prop-gate" transform="translate(405 274)"><g id="gate-frame"><path d="M-118 142 V-92 H118 V142 M-118 -92 H118" fill="none" stroke="#cbd5e1" stroke-width="20" stroke-linecap="round"/><path d="M-92 -64 H92" stroke="#22d3ee" stroke-width="8"/></g><g id="gate-door"><rect x="-91" y="-48" width="182" height="186" rx="10" fill="#1e3a5f" class="outline"/><path d="M-65 -18 H65 M-65 20 H65 M-65 58 H65 M-65 96 H65" stroke="#64748b" stroke-width="9"/></g><g id="prop-gate-lights" transform="translate(0 -120)"><g id="prop-gate-light-1" transform="translate(-48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g id="prop-gate-light-2"><circle r="16" stroke="#052e16" stroke-width="5"/></g><g id="prop-gate-light-3" transform="translate(48 0)"><circle r="16" stroke="#052e16" stroke-width="5"/></g></g></g>
+      <g transform="translate(700 360)"><g id="cloud-guardrails"><path d="M-162 25 C-187 -43 -98 -90 -38 -52 C0 -126 126 -92 130 -17 C206 -9 211 91 124 98 H-124 C-199 94 -218 45 -162 25Z" fill="#dbeafe" class="outline"/><g transform="translate(-18 -72)"><g id="pip-seal-squash"><use href="#actor-pip"/></g></g><g id="prop-lease-timer" transform="translate(94 -116)"><circle r="52" fill="#f8fafc" class="outline"/><path d="M-22 -62 H22 M0 -62 V-50" stroke="#facc15" stroke-width="11" stroke-linecap="round"/><g id="prop-lease-timer-hand-pivot" transform="translate(0 0)"><g id="prop-lease-timer-hand"><path d="M0 0 V-34" stroke="#0f766e" stroke-width="9" stroke-linecap="round"/></g></g><circle r="8" fill="#0f766e"/></g><g transform="translate(24 -52)"><g id="prop-seal"><g id="seal-strike"><circle r="34" fill="#4ade80" class="outline"/><path d="M-17 0 L-5 15 L21 -18" fill="none" stroke="#052e16" stroke-width="9" stroke-linecap="round"/></g></g></g></g></g>
+      <g transform="translate(370 443)"><g id="broombot-guardrails"><use href="#actor-broombot"/></g></g>
+    </g>
+    <g id="scene-proof">
+      <g transform="translate(138 310)"><g id="scout-entry"><g id="scout-lean-pivot" transform="translate(0 0)"><g id="scout-lean"><g transform="scale(.8)"><use href="#actor-scout"/></g></g></g></g></g>
+      <g id="prop-rec-reel-pivot" transform="translate(292 116)"><g id="prop-rec-reel"><circle r="52" fill="#e2e8f0" class="outline"/><circle cx="-21" cy="-13" r="11" fill="#082f49"/><circle cx="21" cy="-13" r="11" fill="#082f49"/><circle cy="25" r="11" fill="#082f49"/></g></g>
+      <rect x="359" y="82" width="84" height="52" rx="12" fill="#dc2626"/><text class="rec-text" x="378" y="117" font-size="24">REC</text>
+      <g transform="translate(250 190)"><g id="prop-permission-row-1"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g id="prop-permission-row-2" transform="translate(0 44)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g id="prop-permission-row-3" transform="translate(0 88)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g><g id="prop-permission-row-4" transform="translate(0 132)"><rect width="235" height="28" rx="14" stroke="#052e16" stroke-width="4"/></g></g>
+      <g id="code-doc-nudge"><g transform="translate(540 180)"><g id="prop-code-card"><rect width="126" height="170" rx="16" fill="#dbeafe" class="outline"/><path d="M25 48 H101 M25 82 H82 M25 116 H96" stroke="#2563eb" stroke-width="11" stroke-linecap="round"/></g></g><g transform="translate(690 180)"><g id="prop-doc-card"><rect width="126" height="170" rx="16" fill="#fef3c7" class="outline"/><path d="M25 48 H101 M25 82 H92 M25 116 H103" stroke="#d97706" stroke-width="11" stroke-linecap="round"/></g></g></g>
+      <g transform="translate(665 416)"><path d="M-44 16 H44 L30 62 H-30Z" fill="#475569" stroke="#0f172a" stroke-width="5"/><g id="prop-contract-lamp" transform="translate(0 -15)"><circle r="42" class="outline"/><circle r="18" fill="#ffffff" opacity=".5"/></g></g>
+    </g>
+    <g id="scene-stop">
+      <g id="prop-runway"><path d="M145 455 L365 175 H745 L900 455Z" fill="#334155" stroke="#cbd5e1" stroke-width="8" stroke-dasharray="22 14"/></g>
+      <g id="proof-lights-stop" transform="translate(500 205)"><circle cx="-66" r="17" fill="#4ade80" stroke="#052e16" stroke-width="5"/><circle cx="-22" r="17" fill="#4ade80" stroke="#052e16" stroke-width="5"/><circle cx="22" r="17" fill="#4ade80" stroke="#052e16" stroke-width="5"/><circle cx="66" r="17" fill="#4ade80" stroke="#052e16" stroke-width="5"/></g>
+      <g transform="translate(360 324)"><g id="runway-sparkle-1"><path d="M0 -18 L6 -6 L18 0 L6 6 L0 18 L-6 6 L-18 0 L-6 -6Z" fill="#fef08a"/></g></g><g transform="translate(570 290)"><g id="runway-sparkle-2"><path d="M0 -19 L6 -6 L19 0 L6 6 L0 19 L-6 6 L-19 0 L-6 -6Z" fill="#67e8f9"/></g></g><g transform="translate(730 385)"><g id="runway-sparkle-3"><path d="M0 -18 L6 -6 L18 0 L6 6 L0 18 L-6 6 L-18 0 L-6 -6Z" fill="#fef08a"/></g></g>
+      <g transform="translate(155 336)"><use href="#actor-orbit"/><g transform="translate(-42 -25)"><g id="orbit-stop-left-shoulder-pivot" transform="translate(0 0)"><g id="orbit-stop-left-arm"><path d="M0 0 L-35 46" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="-38" cy="49" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g><g transform="translate(42 -25)"><g id="orbit-rope-shoulder-pivot" transform="translate(0 0)"><g id="orbit-rope-arm"><path d="M0 0 L52 10" stroke="#e2e8f0" stroke-width="18" stroke-linecap="round"/><circle cx="56" cy="11" r="12" fill="#67e8f9" stroke="#082f49" stroke-width="5"/></g></g></g></g>
+      <g transform="translate(470 350)"><use href="#actor-pip"/></g>
+      <g id="prop-velvet-rope"><path d="M205 455 V300 M825 455 V300" stroke="#facc15" stroke-width="22" stroke-linecap="round"/><circle cx="205" cy="300" r="17" fill="#facc15"/><circle cx="825" cy="300" r="17" fill="#facc15"/><path d="M205 317 Q515 470 825 317" fill="none" stroke="#e11d48" stroke-width="26" stroke-linecap="round"/></g>
+      <g id="spectators"><g transform="translate(680 435)"><circle cy="-34" r="18" fill="#fde68a" class="outline"/><path d="M0 -16 V30" stroke="#60a5fa" stroke-width="18"/><g transform="translate(-7 -6)"><g id="spectator-1-left-pivot" transform="translate(0 0)"><g id="spectator-1-left-arm"><path d="M0 0 L-24 -24" stroke="#fde68a" stroke-width="9" stroke-linecap="round"/></g></g></g><g transform="translate(7 -6)"><g id="spectator-1-right-pivot" transform="translate(0 0)"><g id="spectator-1-right-arm"><path d="M0 0 L24 -24" stroke="#fde68a" stroke-width="9" stroke-linecap="round"/></g></g></g></g><g transform="translate(755 435)"><circle cy="-34" r="18" fill="#fbcfe8" class="outline"/><path d="M0 -16 V30" stroke="#a78bfa" stroke-width="18"/><g transform="translate(-7 -6)"><g id="spectator-2-left-pivot" transform="translate(0 0)"><g id="spectator-2-left-arm"><path d="M0 0 L-24 -24" stroke="#fbcfe8" stroke-width="9" stroke-linecap="round"/></g></g></g><g transform="translate(7 -6)"><g id="spectator-2-right-pivot" transform="translate(0 0)"><g id="spectator-2-right-arm"><path d="M0 0 L24 -24" stroke="#fbcfe8" stroke-width="9" stroke-linecap="round"/></g></g></g></g></g>
+      <g id="prop-endcard"><rect x="205" y="52" width="550" height="112" rx="28" fill="#166534" stroke="#86efac" stroke-width="7"/><text class="end-text" x="244" y="121" font-size="30">PROVED. STOPPED ON PURPOSE.</text></g>
+      <g id="wipe-ring-pivot" transform="translate(430 280)"><g id="wipe-ring"><circle r="68" fill="#0f172a" stroke="#bae6fd" stroke-width="24"/></g><g id="wipe-cloud-outline"><path d="M-185 38 C-218 -42 -116 -105 -42 -58 C-4 -146 145 -110 151 -18 C238 -12 246 110 143 116 H-142 C-231 111 -250 60 -185 38Z" fill="#0f172a" stroke="#dbeafe" stroke-width="9"/></g></g>
+    </g>
+  </g>
+  <g id="reduced-motion-summary">
+    <rect x="25" y="92" width="215" height="356" rx="26" fill="#1e3a5f" class="outline"/><path d="M54 315 C38 257 98 226 140 252 C167 205 237 247 215 311Z" fill="#dbeafe" stroke="#082f49" stroke-width="5"/><rect x="82" y="166" width="110" height="88" rx="22" fill="#7dd3fc" stroke="#082f49" stroke-width="6"/><circle cx="112" cy="198" r="9" fill="#082f49"/><circle cx="162" cy="198" r="9" fill="#082f49"/><path d="M113 225 Q137 242 161 225" fill="none" stroke="#082f49" stroke-width="6"/>
+    <rect x="255" y="92" width="215" height="356" rx="26" fill="#1e3a5f" class="outline"/><path d="M292 370 V188 H430 V370 M292 188 H430" fill="none" stroke="#4ade80" stroke-width="18"/><rect x="320" y="225" width="82" height="108" rx="14" fill="#e2e8f0" stroke="#082f49" stroke-width="6"/><ellipse cx="361" cy="191" rx="53" ry="19" fill="none" stroke="#22d3ee" stroke-width="9"/><circle cx="333" cy="253" r="9" fill="#67e8f9"/><circle cx="389" cy="253" r="9" fill="#facc15"/>
+    <rect x="485" y="92" width="215" height="356" rx="26" fill="#1e3a5f" class="outline"/><ellipse cx="563" cy="285" rx="50" ry="64" fill="#a78bfa" stroke="#312e81" stroke-width="6"/><path d="M520 238 L535 191 L557 222 L584 191 L604 238" fill="#c4b5fd" stroke="#312e81" stroke-width="6"/><circle cx="548" cy="245" r="19" fill="#fff" stroke="#312e81" stroke-width="5"/><circle cx="579" cy="245" r="19" fill="#fff" stroke="#312e81" stroke-width="5"/><circle cx="605" cy="280" r="27" fill="none" stroke="#facc15" stroke-width="8"/><path d="M624 300 L646 324" stroke="#facc15" stroke-width="10"/>
+    <rect x="715" y="92" width="220" height="356" rx="26" fill="#1e3a5f" class="outline"/><path d="M740 395 L790 196 H850 L910 395Z" fill="#475569" stroke="#cbd5e1" stroke-width="6"/><path d="M746 282 Q824 390 907 282" fill="none" stroke="#e11d48" stroke-width="24"/><circle cx="824" cy="220" r="24" fill="#4ade80" stroke="#052e16" stroke-width="6"/><path d="M812 220 L822 232 L840 207" fill="none" stroke="#052e16" stroke-width="7"/>
+  </g>
+</svg>

@@ -28,7 +28,7 @@ scripts/gates.sh
 ```
 
 The policy-size step needs LocalStack on `http://localhost:4566` (`make localstack-up`); run `GATES_POLICY_SIZE=skip scripts/gates.sh` to omit that step.
-The dispatcher runs validation, lint, tests, documentation contracts, IAM policy-size checks, the no-NAT check, and Conftest. The documentation suite checks publication budgets and links, indexes every evidence file, rejects retired paths and private-scope wording, and kills 19 injected mutations before confirming the restored suite.
+The dispatcher runs validation, lint, tests, documentation contracts, IAM policy-size checks, the no-NAT check, and Conftest. The documentation suite checks publication budgets and links, indexes every evidence file, rejects retired paths and private-scope wording, and kills 20 injected mutations before confirming the restored suite.
 
 With LocalStack running and its bootstrap applied, regenerate the exact-field IAM matrix plan:
 
@@ -44,7 +44,7 @@ With LocalStack, vhs, FFmpeg, and the placeholder image available, record the li
 make demo
 ```
 
-The complete front-page set is `make demo`, `make demo NAME=lease`, and `make demo NAME=supply`, or `make demo-all`. Each recorder validates inputs, tears down its environment, renders provenance, and publishes the GIF and provenance as a guarded pair. `make storyboard` deterministically regenerates the SVG and its provenance. The storyboard and recording contracts verify accessibility, hygiene, per-kind generator closure, transaction failure, and drift from the recorded generator commit.
+The complete front-page set is `make demo`, `make demo NAME=lease`, and `make demo NAME=supply`, or `make demo-all`. Each recorder validates inputs, tears down its environment, renders provenance, and publishes the GIF and provenance as a guarded pair. `make storyboard` deterministically regenerates the SVG and its provenance. The storyboard and recording contracts verify accessibility, hygiene, per-kind generator closure, transaction failure, and drift from the recorded generator commit. The cartoon contracts verify determinism, scene timing snapshots, structural hygiene, provenance and closure drift, and 31 mutants.
 
 The custom-policy and temporary-role simulator commands, their dry-run boundary, cleanup rules, redaction fields, and report-rendering command are in [IAM simulator lanes](RUNBOOKS.md#iam-simulator-lanes). Those lanes intentionally use the repository wrappers; do not replace them with direct AWS CLI calls.
 
