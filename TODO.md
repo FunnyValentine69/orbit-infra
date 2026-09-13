@@ -149,7 +149,7 @@ Parked behind P0-3b: P0-3, P0-4, P0-6, P0-7, P0-8, P0-3f, P0-3d, P3-3b, P5-1, P5
 - [ ] P5-66: `demo/record.sh` final-inventory pagination guards only against an immediately repeated marker pair; an `A -> B -> A` marker cycle would loop instead of failing closed; track every observed marker pair or bound the page count, with a cycle mutant in `tests/demo-contracts.sh` (Codex Tier 2 P2 on the residual bundle, 2026-09-11; closure file, so it waits for the next re-record)
 - [ ] P5-67: `scripts/fixture-hygiene.sh` IPv4 candidates keep trailing sentence punctuation (`8.8.8.8.` fails to parse and is skipped), the same gap closed for IPv6 in PR #28; trim the candidate and add accept/reject cases in `tests/conftest-gate.sh` (Codex Tier 3 P2 on PR #28, 2026-09-11; closure file, waits for the next re-record)
 - [ ] P5-68: `generator_clean_check` rejects `*.tf` under `.terraform/modules/` caches before exemptions; Codex P2 on PR #28
-- [x] P5-69: README hero and animated mini-cartoon — centered emblem, plain-terms animation, transcript, provenance, and contract coverage. Closed 2026-09-12 (cartoon PR, number pending)
+- [x] P5-69: README hero and animated mini-cartoon — centered emblem, plain-terms animation, transcript, provenance, and contract coverage. Closed 2026-09-12 (PR #31)
 
 ## Repository history decisions (closed)
 - [x] Rewrite or keep the institutional author email on early commits of main — decided 2026-09-08: keep; 39 commits on main carry the author's two school addresses and a history rewrite of the public repository is not worth the SHA churn
