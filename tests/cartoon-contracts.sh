@@ -706,6 +706,12 @@ def card_box(target, second):
     return shifted(rect_box(next(node.iter(ns + "rect")), static_root), base_x + tx, base_y + ty)
 
 
+for second in (14.5, 16.5):
+    for target in ("prop-code-card", "prop-doc-card"):
+        if card_box(target, second)[3] >= 0.0:
+            fail(f"{target} remains on canvas while parked at {second:.1f}")
+
+
 bill = by_id["actor-bill"]
 bill_body = next(node for node in bill if node.tag == ns + "path" and node.attrib.get("fill") == "#fb7185")
 bill_arms = next(node for node in bill if node.tag == ns + "path" and node.attrib.get("stroke-width") == "15")
@@ -724,14 +730,14 @@ for row in grid_rows:
         row_x, row_y = parse_transform(row.attrib["transform"], "translate", row.attrib["id"])
     grid_boxes.append(shifted(rect_box(next(row.iter(ns + "rect")), static_root), grid_x + row_x, grid_y + row_y))
 grid_box = union(*grid_boxes)
-card_seconds = (14.5, 16.5, 18.1, 18.2, 18.5, 20.5)
+card_seconds = (14.5, 16.5, 18.1, 18.2, 18.3, 18.5, 20.5)
 for second in card_seconds:
     if intersects(card_box("prop-doc-card", second), bill_box):
         fail(f"doc card intersects Bill at {second:.1f}")
 for second in card_seconds:
     if intersects(card_box("prop-code-card", second), grid_box):
         fail(f"code card intersects permission grid at {second:.1f}")
-for second in (*card_seconds, 18.3):
+for second in card_seconds:
     if intersects(card_box("prop-code-card", second), card_box("prop-doc-card", second)):
         fail(f"proof cards intersect at {second:.1f}")
 
@@ -1231,17 +1237,25 @@ mutate_rope_onstage() {
     '("prop-velvet-rope", transform, ((0, move(0, -470)), (21.7, move(0, -470)), (23.2, move(0, 0)), (28, move(0, 0)))),' \
     '("prop-velvet-rope", transform, ((0, move(0, -400)), (21.7, move(0, -400)), (23.2, move(0, 0)), (28, move(0, 0)))),'
 }
+mutate_cards_parked_onstage() {
+  replace_once "$1" \
+    '("prop-code-card", transform, ((0, move(0, -360)), (17, move(0, -360)), (18, move(0, 0)), (18.2, move(6, 0)), (19, move(0, 0)), (28, move(0, 0)))),' \
+    '("prop-code-card", transform, ((0, move(0, -300)), (17, move(0, -300)), (18, move(0, 0)), (18.2, move(6, 0)), (19, move(0, 0)), (28, move(0, 0)))),'
+  replace_once "$1" \
+    '("prop-doc-card", transform, ((0, move(0, -360)), (17, move(0, -360)), (18, move(0, 0)), (18.2, move(-6, 0)), (19, move(0, 0)), (28, move(0, 0)))),' \
+    '("prop-doc-card", transform, ((0, move(0, -300)), (17, move(0, -300)), (18, move(0, 0)), (18.2, move(-6, 0)), (19, move(0, 0)), (28, move(0, 0)))),'
+}
 mutate_card_over_bill() {
-  replace_once "$1" 'transform="translate(640 180)"' \
+  replace_once "$1" 'transform="translate(642 180)"' \
     'transform="translate(690 180)"'
 }
 mutate_code_card_over_grid() {
-  replace_once "$1" 'transform="translate(490 180)"' \
+  replace_once "$1" 'transform="translate(496 180)"' \
     'transform="translate(470 180)"'
 }
 mutate_cards_collide() {
-  replace_once "$1" '(18.2, move(8, 0))' '(18.2, move(14, 0))'
-  replace_once "$1" '(18.2, move(-8, 0))' '(18.2, move(-14, 0))'
+  replace_once "$1" '(18.2, move(6, 0))' '(18.2, move(12, 0))'
+  replace_once "$1" '(18.2, move(-6, 0))' '(18.2, move(-12, 0))'
 }
 mutate_coin_on_wallet() {
   replace_once "$1" \
@@ -1388,7 +1402,7 @@ grep -Fq 'cartoon assets must all exist or all be absent' <<<"$partial_output" |
   fail "partial cartoon asset set missed the pairing failure: $partial_output"
 
 mutation_count=0
-expected_mutations=43
+expected_mutations=44
 run_source_failure delete-scene 'scene ids must be problem, guardrails, proof, stop' \
   '    ("problem", 0, 6, "The problem", PROBLEM_SUMMARY),' ''
 run_source_failure shift-boundary 'scene guardrails must begin at 6' \
@@ -1505,6 +1519,8 @@ run_behavior_failure door-geometry \
   'gate door geometry differs' mutate_door_geometry
 run_behavior_failure rope-onstage \
   'velvet rope remains on canvas' mutate_rope_onstage
+run_behavior_failure cards-parked-onstage \
+  'remains on canvas while parked' mutate_cards_parked_onstage
 run_behavior_failure card-over-bill \
   'doc card intersects Bill' mutate_card_over_bill
 run_behavior_failure code-card-over-grid \
