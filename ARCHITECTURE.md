@@ -78,7 +78,7 @@ Stage 2 re-reads the lease, requires a passing Stage 1 record and no active Stag
 
 Stage 1 and Stage 2 each allow three automatic executions per generation. Exhaustion requires an audited force retry. A stale Stage 2 claim can be replaced after two hours through a fresh-read CAS; a superseded worker fails at its next lease precondition. Closed leases remain readable for seven days before an ETag-conditioned prune leaves a generation tombstone.
 
-LocalStack apply, acceptance, Stage 1, and Stage 2 run in one hosted job because emulator state is job-local; cross-job LocalStack destroy is refused. The AWS path keeps separate apply and destroy jobs, with the nightly sweeper sharing the environment concurrency group. Operational recovery is in [docs/RUNBOOKS.md](docs/RUNBOOKS.md).
+LocalStack apply, acceptance, Stage 1, and Stage 2 run in one hosted job because emulator state is job-local; cross-job LocalStack destroy is refused. The AWS path keeps separate apply and destroy jobs. The nightly sweeper shares the environment concurrency group only while `sweeper.yml` is enabled. It is currently disabled in repository settings, so AWS Stage 2 is a manual `scripts/sweep.sh` pass; see [pull-request checks](docs/VERIFY.md#pull-request-checks). Operational recovery is in [docs/RUNBOOKS.md](docs/RUNBOOKS.md).
 
 ## Image supply chain
 

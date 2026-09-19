@@ -176,9 +176,11 @@ Each invocation validates, tears down, renders provenance, and publishes as one 
 
 Every lease opens with a non-empty owner. Stage 1 `begin-cleanup` and Stage 2 `claim-stage2` require the owner from the same fresh read as status and generation. Legacy ownerless records refuse without mutation and require manual inspection.
 
-When enabled, the workflow runs at 03:17 UTC on `main`, only against AWS. More than 20 actionable leases fails discovery instead of truncating work. At most three environments run in parallel; each retains the `preview-<env_id>` concurrency group, and one failure does not cancel siblings. Dispatch an extra run when necessary:
+When enabled, the workflow runs at 03:17 UTC on `main`, only against AWS. More than 20 actionable leases fails discovery instead of truncating work. At most three environments run in parallel; each retains the `preview-<env_id>` concurrency group, and one failure does not cancel siblings.
 
-This workflow is disabled in repository settings. The run also requires the `AWS_ROLE_DEPLOYER` repository secret to be published; before dispatching, run `gh workflow enable sweeper.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+The sweeper workflow is disabled in repository settings. A run also needs the `AWS_ROLE_DEPLOYER` repository secret published. Before dispatching, run `gh workflow enable sweeper.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+
+Dispatch an extra run when necessary:
 
 ```bash
 gh workflow run sweeper.yml --ref main -f target=aws -f dispatch_note=manual
@@ -294,7 +296,7 @@ gh workflow run mirror-images.yml --ref main
 
 Re-dispatch both producers with the existing lock values, then inspect their runs:
 
-The image mirror workflow is disabled in repository settings. The run also requires the `AWS_ROLE_PUBLISHER` and `AWS_KMS_SIGNING_KEY_ARN` repository secrets to be published; before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+The image mirror workflow is disabled in repository settings. A run also needs the `AWS_ROLE_PUBLISHER` and `AWS_KMS_SIGNING_KEY_ARN` repository secrets published. Before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
 
 ```bash
 UPSTREAM_SHA="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
@@ -308,35 +310,37 @@ Each producer rescans and publishes a fresh scan predicate. Valid signatures are
 
 ## Refresh a stale scan attestation
 
-AWS apply accepts a passing scan predicate for 10 days by default; `scan_freshness_days` may be 1 through 60. When `mirror-images.yml` is enabled, mirrors refresh weekly on Monday at 06:00 UTC; while it is disabled in repository settings nothing refreshes them, so a stale predicate clears only after the workflow is re-enabled and dispatched. Upstream mode has no schedule, so run `sign-images.yml` for the locked commit inside the selected window.
+AWS apply accepts a passing scan predicate for 10 days by default; `scan_freshness_days` may be 1 through 60. Mirrors refresh weekly on Monday at 06:00 UTC when `mirror-images.yml` is enabled. While it is disabled in repository settings, nothing refreshes them, so a stale predicate clears only after the workflow is re-enabled and dispatched. Upstream mode has no schedule, so run `sign-images.yml` for the locked commit inside the selected window.
 
 Re-run `sign-images.yml` for an upstream API or ClickHouse digest; use `mirror-images.yml` for the placeholder, Redis, or mirrored ClickHouse. Missing, malformed, future, failed, wrong-digest, or wrong-version predicates require a successful producer run; never widen the window to accept invalid evidence. A placeholder dependency-lock change produces a new digest on the next mirror run.
 
 ## Image bump
 
+The image mirror workflow is disabled in repository settings. A run also needs the `AWS_ROLE_PUBLISHER` and `AWS_KMS_SIGNING_KEY_ARN` repository secrets published. Before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+
 1. For Redis or ClickHouse, resolve the new ARM64 manifest digest and update the matching source and digest in `mirror-images.lock`. Keep repository fields fixed. For the placeholder, set its digest and source SHA to explicit pending markers, dispatch once, then replace both from the run.
 
-2. Run the producer twice to prove both publication and idempotency. The image mirror workflow is disabled in repository settings, and the run also requires the `AWS_ROLE_PUBLISHER` and `AWS_KMS_SIGNING_KEY_ARN` repository secrets to be published; before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+2. Run the producer twice to prove both publication and idempotency:
 
-```bash
-gh workflow run mirror-images.yml --ref main
-gh workflow run mirror-images.yml --ref main
-```
+   ```bash
+   gh workflow run mirror-images.yml --ref main
+   gh workflow run mirror-images.yml --ref main
+   ```
 
 3. A ClickHouse mirror change alters the private ClickHouse build inputs. Set `repo_build_inputs_sha256` to a pending marker, run the archive-only builder without pushing, and record its archive hash, build-input hash, and three local IDs:
 
-```bash
-UPSTREAM_DIR="${UPSTREAM_DIR:?set UPSTREAM_DIR to the clean locked clone}"
-PUSH=0 UPSTREAM_DIR="$UPSTREAM_DIR" scripts/build-upstream.sh
-```
+   ```bash
+   UPSTREAM_DIR="${UPSTREAM_DIR:?set UPSTREAM_DIR to the clean locked clone}"
+   PUSH=0 UPSTREAM_DIR="$UPSTREAM_DIR" scripts/build-upstream.sh
+   ```
 
 4. For an upstream commit bump, update `upstream_sha` and repeat the no-push build. The builder verifies origin, exact HEAD, cleanliness, archive hash, and repository input hash.
 
 5. After authorized registry setup, push the exact builds and dispatch signing:
 
-```bash
-ECR_REGISTRY="${ECR_REGISTRY:?set the private ECR registry without printing it}"
-PUSH=1 UPSTREAM_DIR="$UPSTREAM_DIR" ECR_REGISTRY="$ECR_REGISTRY" scripts/build-upstream.sh
-UPSTREAM_SHA="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
-gh workflow run sign-images.yml --ref main -f upstream_sha="$UPSTREAM_SHA"
-```
+   ```bash
+   ECR_REGISTRY="${ECR_REGISTRY:?set the private ECR registry without printing it}"
+   PUSH=1 UPSTREAM_DIR="$UPSTREAM_DIR" ECR_REGISTRY="$ECR_REGISTRY" scripts/build-upstream.sh
+   UPSTREAM_SHA="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
+   gh workflow run sign-images.yml --ref main -f upstream_sha="$UPSTREAM_SHA"
+   ```
