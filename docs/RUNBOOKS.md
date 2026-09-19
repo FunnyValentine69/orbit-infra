@@ -176,9 +176,9 @@ Each invocation validates, tears down, renders provenance, and publishes as one 
 
 Every lease opens with a non-empty owner. Stage 1 `begin-cleanup` and Stage 2 `claim-stage2` require the owner from the same fresh read as status and generation. Legacy ownerless records refuse without mutation and require manual inspection.
 
-The workflow runs at 03:17 UTC on `main`, only against AWS. More than 20 actionable leases fails discovery instead of truncating work. At most three environments run in parallel; each retains the `preview-<env_id>` concurrency group, and one failure does not cancel siblings. Dispatch an extra run when necessary:
+When enabled, the workflow runs at 03:17 UTC on `main`, only against AWS. More than 20 actionable leases fails discovery instead of truncating work. At most three environments run in parallel; each retains the `preview-<env_id>` concurrency group, and one failure does not cancel siblings. Dispatch an extra run when necessary:
 
-This workflow is disabled in repository settings. Before dispatching, run `gh workflow enable sweeper.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+This workflow is disabled in repository settings. The run also requires the `AWS_ROLE_DEPLOYER` repository secret to be published; before dispatching, run `gh workflow enable sweeper.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
 
 ```bash
 gh workflow run sweeper.yml --ref main -f target=aws -f dispatch_note=manual
@@ -294,7 +294,7 @@ gh workflow run mirror-images.yml --ref main
 
 Re-dispatch both producers with the existing lock values, then inspect their runs:
 
-The image mirror workflow is disabled in repository settings. Before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+The image mirror workflow is disabled in repository settings. The run also requires the `AWS_ROLE_PUBLISHER` and `AWS_KMS_SIGNING_KEY_ARN` repository secrets to be published; before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
 
 ```bash
 UPSTREAM_SHA="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
@@ -308,7 +308,7 @@ Each producer rescans and publishes a fresh scan predicate. Valid signatures are
 
 ## Refresh a stale scan attestation
 
-AWS apply accepts a passing scan predicate for 10 days by default; `scan_freshness_days` may be 1 through 60. Mirrors refresh weekly on Monday at 06:00 UTC. Upstream mode has no schedule, so run `sign-images.yml` for the locked commit inside the selected window.
+AWS apply accepts a passing scan predicate for 10 days by default; `scan_freshness_days` may be 1 through 60. When `mirror-images.yml` is enabled, mirrors refresh weekly on Monday at 06:00 UTC; while it is disabled in repository settings nothing refreshes them, so a stale predicate clears only after the workflow is re-enabled and dispatched. Upstream mode has no schedule, so run `sign-images.yml` for the locked commit inside the selected window.
 
 Re-run `sign-images.yml` for an upstream API or ClickHouse digest; use `mirror-images.yml` for the placeholder, Redis, or mirrored ClickHouse. Missing, malformed, future, failed, wrong-digest, or wrong-version predicates require a successful producer run; never widen the window to accept invalid evidence. A placeholder dependency-lock change produces a new digest on the next mirror run.
 
@@ -316,7 +316,7 @@ Re-run `sign-images.yml` for an upstream API or ClickHouse digest; use `mirror-i
 
 1. For Redis or ClickHouse, resolve the new ARM64 manifest digest and update the matching source and digest in `mirror-images.lock`. Keep repository fields fixed. For the placeholder, set its digest and source SHA to explicit pending markers, dispatch once, then replace both from the run.
 
-2. Run the producer twice to prove both publication and idempotency. The image mirror workflow is disabled in repository settings. Before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+2. Run the producer twice to prove both publication and idempotency. The image mirror workflow is disabled in repository settings, and the run also requires the `AWS_ROLE_PUBLISHER` and `AWS_KMS_SIGNING_KEY_ARN` repository secrets to be published; before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
 
 ```bash
 gh workflow run mirror-images.yml --ref main
