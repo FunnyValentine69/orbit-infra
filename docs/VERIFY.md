@@ -66,9 +66,18 @@ The authoritative contract inventory and current suite denominators are in [`tes
 
 `gates` must be green on every pull request. For same-repository pull requests authored by the repository owner, `plan-localstack` and `infracost` must also be green. `gates` is secret-free; the other two use their narrowly scoped service credentials without AWS role assumption.
 
-The `oidc-smoke.yml` workflow has `decode-subject` plus three `assume-*` jobs. All four skip fork pull requests and runs by `dependabot[bot]`. On other same-repository pull requests, each `assume-*` check is expected to stop red at its initial `Require AWS_ROLE_*` step because the real-account role ARN secrets have not been published. If those values are later published, the checks instead prove that pull-request and non-main tokens cannot assume the main-ref-only roles.
+The `oidc-smoke.yml` workflow has `decode-subject` plus three `assume-*` jobs. All four skip fork pull requests and runs by `dependabot[bot]`. The workflow is disabled in repository settings while no real-account role ARNs are published, so no `oidc-smoke` check appears on pull requests. If it is re-enabled before those secrets are published, each `assume-*` check stops red at its initial `Require AWS_ROLE_*` step. Once those role ARNs are published and the workflow is re-enabled, the checks prove that pull-request and non-main tokens cannot assume the main-ref-only roles.
 
-The `iam-matrix-plan.yml` workflow applies the LocalStack bootstrap and runs exact-field plan mode after changes reach `main`, on its weekly schedule, or by default-branch dispatch. This closes the field-level drift window that secret-free fork checks cannot close.
+The two scheduled real-account workflows (`sweeper.yml` nightly and `mirror-images.yml` weekly) are disabled in repository settings for the same reason. While disabled, none of the three runs on any trigger, including `gh workflow run`. Their schedules and contracts remain in the tree. Re-enable all three and confirm the state with:
+
+```bash
+gh workflow enable sweeper.yml
+gh workflow enable mirror-images.yml
+gh workflow enable oidc-smoke.yml
+gh workflow list --all
+```
+
+The `iam-matrix-plan.yml` workflow stays enabled. It applies the LocalStack bootstrap and runs exact-field plan mode after changes reach `main`, on its weekly schedule, or by default-branch dispatch. This closes the field-level drift window that secret-free fork checks cannot close.
 
 ## Runtime checks and SLO
 
@@ -81,6 +90,6 @@ curl -fsS "$ALB_URL/health"
 curl -fsS "$ALB_URL/s3-roundtrip"
 ```
 
-The separate AWS close retains state in `closing` until the sweeper verifies asynchronous deletion and removes every state version.
+The separate AWS close retains state in `closing` until the sweeper verifies asynchronous deletion and removes every state version. While `sweeper.yml` is disabled, that step is a manual `scripts/sweep.sh` pass.
 
 The written availability objective is at least 99% healthy-host time during an eight-hour session, a 4.8-minute error budget. `UnHealthyHostCount` supplies the measurement and `HTTPCode_Target_5XX_Count` is the leading indicator. LocalStack creates the alarms but has no metric pipeline, so their state remains `INSUFFICIENT_DATA`.

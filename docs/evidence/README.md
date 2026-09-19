@@ -12,7 +12,7 @@ This directory is the ledger layer for orbit-infra. The four evidence labels and
 | IAM specification | The taxonomy contains 290 cases and the vector set contains 241; 220 cases in 65 matrix rows are `AWS-SIMULATED`. Lower-labelled rows still require their named evidence. |
 | IAM simulator publication | The custom lane has 241 results and the role lane has 158 results. The report records policy evaluation, redaction, divergences, and excluded cases; it does not claim service enforcement. |
 | Image supply chain | Canonical SBOM, scan freshness, signing, attestation, and apply-side verification are contract-tested; service-backed publication and verification remain `CODE-ONLY`. |
-| Pull-request checks | See [PR checks](../VERIFY.md#pull-request-checks) for the required green checks and the intentionally red role-assumption checks. |
+| Pull-request checks | See [PR checks](../VERIFY.md#pull-request-checks) for the required green checks and the role-assumption checks that stop red when `oidc-smoke.yml` is enabled before its role ARN secrets are published. The workflow is currently disabled in repository settings. |
 | Open work | [TODO.md](../../TODO.md) is the public follow-up ledger. |
 
 ## Asset and ledger inventory

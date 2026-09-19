@@ -54,6 +54,7 @@ Claims use four labels: `LOCALSTACK-VERIFIED`, `AWS-SIMULATED`, `CODE-ONLY`, and
 
 The complete preview lifecycle runs on LocalStack, and real-account IAM policy evaluation is published with its evidence.
 The real-AWS deployment tail is out of scope for this portfolio; deployed-service behaviour is verified on LocalStack and IAM policy evaluation with the AWS policy simulator against the real account.
+The workflows that need a real account (the nightly sweeper, the weekly image mirror, and the OIDC smoke check) are disabled in repository settings; see [pull-request checks](docs/VERIFY.md#pull-request-checks).
 
 ## Documentation map
 
