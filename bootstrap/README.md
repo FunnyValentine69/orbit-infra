@@ -105,6 +105,11 @@ AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw pl
 AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw deployer_role_arn | gh secret set AWS_ROLE_DEPLOYER
 AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw publisher_role_arn | gh secret set AWS_ROLE_PUBLISHER
 AWS_PROFILE=orbit AWS_REGION=us-east-1 terraform -chdir=bootstrap output -raw kms_signing_key_arn | gh secret set AWS_KMS_SIGNING_KEY_ARN
+```
+
+The workflow is disabled in repository settings. Before dispatching, run `gh workflow enable oidc-smoke.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](../docs/VERIFY.md#pull-request-checks).
+
+```
 gh workflow run oidc-smoke.yml
 ```
 

@@ -178,6 +178,8 @@ Every lease opens with a non-empty owner. Stage 1 `begin-cleanup` and Stage 2 `c
 
 The workflow runs at 03:17 UTC on `main`, only against AWS. More than 20 actionable leases fails discovery instead of truncating work. At most three environments run in parallel; each retains the `preview-<env_id>` concurrency group, and one failure does not cancel siblings. Dispatch an extra run when necessary:
 
+This workflow is disabled in repository settings. Before dispatching, run `gh workflow enable sweeper.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+
 ```bash
 gh workflow run sweeper.yml --ref main -f target=aws -f dispatch_note=manual
 gh run list --workflow sweeper.yml --branch main --limit 5
@@ -210,7 +212,7 @@ LEASE_JSON="$(TARGET=aws scripts/lease.sh get "$ENV_ID")"
 jq '{status,generation,owner,stage1_claim,stage2_claim,cleanup_attempt,stage2_attempt,next_retry_at,manual_intervention_required,initial_target:.manifest.target,initial_mode:.manifest.mode,last_verification:.manifest.verification_runs[-1]}' <<< "$LEASE_JSON"
 ```
 
-If Stage 1 owns the lease, do not close or sweep. If a Stage 2 claimant is confirmed dead, release only its exact token and generation, then re-read. The nightly sweeper can take over a two-hour-old claim with the same fresh-read CAS and audit record.
+If Stage 1 owns the lease, do not close or sweep. If a Stage 2 claimant is confirmed dead, release only its exact token and generation, then re-read. The nightly sweeper can take over a two-hour-old claim with the same fresh-read CAS and audit record. While `sweeper.yml` is disabled in repository settings, that takeover happens only through a manual `scripts/sweep.sh` pass.
 
 ```bash
 GENERATION="$(jq -er '.generation' <<< "$LEASE_JSON")"
@@ -261,7 +263,7 @@ A forced run may take over a confirmed-dead stale Stage 1 claim and records the 
 
 ### Stuck-environment force-destroy
 
-A stuck environment left `cleanup_failed` or `closing` after its retry budget is exhausted has no separate force-destroy path. Terminal recovery is the Manual lease recovery procedure above, run with the exact generation and token from the lease read, followed by the nightly sweeper or a manual `scripts/sweep.sh` pass.
+A stuck environment left `cleanup_failed` or `closing` after its retry budget is exhausted has no separate force-destroy path. Terminal recovery is the Manual lease recovery procedure above, run with the exact generation and token from the lease read, followed by a manual `scripts/sweep.sh` pass, or by the nightly sweeper once `sweeper.yml` is re-enabled (see [pull-request checks](VERIFY.md#pull-request-checks)).
 
 ## Rotate secrets
 
@@ -280,6 +282,8 @@ gh secret list
 
 Exercise each consumer: OIDC smoke for role ARNs, a LocalStack session for its token, an owner pull request for Infracost, the CIDR procedure for ingress, and the image workflows for the publisher and signing key.
 
+The OIDC smoke and image mirror workflows are disabled in repository settings. Before dispatching, run `gh workflow enable oidc-smoke.yml` and `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
+
 ```bash
 gh workflow run oidc-smoke.yml --ref main
 gh workflow run session-apply.yml --ref main -f env_id=rot1 -f target=localstack -f mode=public
@@ -289,6 +293,8 @@ gh workflow run mirror-images.yml --ref main
 ## Re-sign an already-signed digest
 
 Re-dispatch both producers with the existing lock values, then inspect their runs:
+
+The image mirror workflow is disabled in repository settings. Before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
 
 ```bash
 UPSTREAM_SHA="$(awk '$1 == "upstream_sha:" { print $2 }' upstream.lock)"
@@ -310,7 +316,7 @@ Re-run `sign-images.yml` for an upstream API or ClickHouse digest; use `mirror-i
 
 1. For Redis or ClickHouse, resolve the new ARM64 manifest digest and update the matching source and digest in `mirror-images.lock`. Keep repository fields fixed. For the placeholder, set its digest and source SHA to explicit pending markers, dispatch once, then replace both from the run.
 
-2. Run the producer twice to prove both publication and idempotency:
+2. Run the producer twice to prove both publication and idempotency. The image mirror workflow is disabled in repository settings. Before dispatching, run `gh workflow enable mirror-images.yml` and confirm the state with `gh workflow list --all`; see [pull-request checks](VERIFY.md#pull-request-checks).
 
 ```bash
 gh workflow run mirror-images.yml --ref main
