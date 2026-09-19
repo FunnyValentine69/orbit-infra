@@ -151,7 +151,7 @@ Parked behind P0-3b: P0-3, P0-4, P0-6, P0-7, P0-8, P0-3f, P0-3d, P3-3b, P5-1, P5
 - [ ] P5-68: `generator_clean_check` rejects `*.tf` under `.terraform/modules/` caches before exemptions; Codex P2 on PR #28
 - [x] P5-69: README hero and animated mini-cartoon — centered emblem, plain-terms animation, transcript, provenance, and contract coverage. Closed 2026-09-12 (PR #31)
 - [x] P5-70: cartoon choreography polish — gate-layer crossing, unified gate motion, off-canvas entrances, collision-free proof cards, centered labels, and executable geometry/mutation contracts. Closed 2026-09-13 (PR #32)
-- [ ] P5-71: disable the real-account workflows (sweeper, mirror-images, oidc-smoke) in repository settings while no role ARNs are published; document the state and the re-enable commands
+- [x] P5-71: disable the real-account workflows (sweeper, mirror-images, oidc-smoke) in repository settings while no role ARNs are published; document the state and the re-enable commands. Closed 2026-09-18 (PR #33)
 
 ## Repository history decisions (closed)
 - [x] Rewrite or keep the institutional author email on early commits of main — decided 2026-09-08: keep; 39 commits on main carry the author's two school addresses and a history rewrite of the public repository is not worth the SHA churn
